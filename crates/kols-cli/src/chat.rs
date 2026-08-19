@@ -6,11 +6,25 @@ use intranet_crypto::{Timestamp, to_hex};
 use intranet_governance::{GovernanceState, LogEntry};
 use intranet_identity::PerNetworkIdentity;
 use intranet_storage::ChunkSpec;
+use kols_api::{Actor, Command, PlacementMap, authorize, placement};
 use kols_core::{
-    AuthorLog, Authority, ChannelEntry, ChannelEntryBody, ChannelId, ChannelKind, ChatPolicy,
-    ChannelView, Hlc, Placement, Privacy, Record, RecordBody, StateAuthority,
+    AuthorLog, ChannelEntry, ChannelEntryBody, ChannelId, ChannelKind, ChannelView, Hlc, Placement,
+    Privacy, Record, RecordBody, StateAuthority,
 };
 use std::path::PathBuf;
+
+/// Where replay says each channel sits, for the boundary to resolve against.
+///
+/// Built from replayed state rather than from anything a caller supplied, which
+/// is the whole reason [`kols_api::Channels`] is a lookup: a channel's category
+/// decides which grant authorizes an action on it, so whoever supplies the
+/// category chooses the answer.
+fn placements(channels: &std::collections::BTreeMap<ChannelId, network::Channel>) -> PlacementMap {
+    channels
+        .values()
+        .map(|channel| (channel.id, placement(channel.id, channel.category)))
+        .collect()
+}
 
 /// Wall-clock now, in milliseconds.
 ///
@@ -34,7 +48,42 @@ pub fn create_channel(
     let store = Store::open(root).map_err(|e| e.to_string())?;
     let author = store.identity().map_err(|e| e.to_string())?;
     let state = store.state().map_err(|e| e.to_string())?;
-    network::require_server(&state)?;
+
+    // Through the boundary, which settles the network profile, the scope of the
+    // create-channel grant and the field bounds in one place (`design/05` §3).
+    // A terminal is an interface like any other, and gets no shortcut past it.
+    let (existing, _) = network::channels(&store, &state).map_err(|e| e.to_string())?;
+    let index = placements(&existing);
+    let authority = StateAuthority { state: &state };
+    let authorized = authorize(
+        Command::CreateChannel {
+            name: name.to_owned(),
+            category: None,
+            privacy: if private {
+                Privacy::Private
+            } else {
+                Privacy::Public
+            },
+            topic: topic.to_owned(),
+        },
+        &Actor {
+            identity: author.id(),
+            authority: &authority,
+            state: &state,
+            channels: &index,
+        },
+    )
+    .map_err(|refusal| refusal.to_string())?;
+
+    let Command::CreateChannel {
+        name,
+        category,
+        privacy,
+        topic,
+    } = authorized.into_command()
+    else {
+        unreachable!("authorize hands back the command it was given")
+    };
 
     // The nonce is what makes two channels of the same name distinct objects
     // rather than one; the id is derived from it and the network id, so nobody
@@ -45,15 +94,11 @@ pub fn create_channel(
     let entry = ChannelEntry::new(
         channel,
         ChannelEntryBody::Definition {
-            name: name.to_owned(),
-            category: None,
+            name: name.clone(),
+            category,
             kind: ChannelKind::Text,
-            privacy: if private {
-                Privacy::Private
-            } else {
-                Privacy::Public
-            },
-            topic: topic.to_owned(),
+            privacy,
+            topic,
             slowmode: 0,
         },
     );
@@ -90,7 +135,7 @@ pub fn create_channel(
     println!("  id       {}", to_hex(channel.as_bytes()));
     println!(
         "  privacy  {}",
-        if private {
+        if privacy == Privacy::Private {
             "private (roster keying is not implemented yet — see design/03 §3)"
         } else {
             "public"
@@ -153,42 +198,49 @@ pub fn post(root: PathBuf, needle: &str, text: &str) -> Result<(), String> {
     let channel = network::resolve(&channels, needle)
         .ok_or_else(|| format!("no channel matching {needle:?}. `kols channel list`"))?;
 
-    let placement = Placement {
-        channel: channel.id,
-        category: channel.category,
-    };
-
-    // The author's own client enforces the ceiling first, so a user who types
-    // too fast is told rather than having their records silently refused by
-    // every reader (`design/01` §10.2).
+    // Both questions the boundary exists to settle before anything is signed —
+    // may they post here, and is this within the network's ceilings — in one
+    // place rather than open-coded here (`design/05` §3, `design/01` §10.2).
+    let index = placements(&channels);
     let authority = StateAuthority { state: &state };
-    if !authority.may_post(&author.id(), &placement) {
-        return Err(format!(
-            "you may not post in #{}. Posting needs chat:post at this channel, \
-             its category or the network, and publish:chat-log alongside it.",
-            channel.name
-        ));
-    }
-
-    let policy = ChatPolicy::of(&state.policy);
-    if text.len() > policy.message_max_bytes() {
-        return Err(format!(
-            "message is {} bytes, and this network's ceiling is {}",
-            text.len(),
-            policy.message_max_bytes()
-        ));
-    }
-
-    let mut log = rebuild_log(&store, &author, channel.id, &state)?;
-    let hlc = next_hlc(&log, now_millis());
-    let record = Record::create(
-        &author,
-        channel.id,
-        hlc,
-        RecordBody::Message {
+    let authorized = authorize(
+        Command::SendMessage {
+            channel: channel.id,
             body: text.to_owned(),
             reply_to: None,
             attachments: Vec::new(),
+        },
+        &Actor {
+            identity: author.id(),
+            authority: &authority,
+            state: &state,
+            channels: &index,
+        },
+    )
+    .map_err(|refusal| refusal.to_string())?;
+
+    // The executor takes the authorized value apart rather than reaching back
+    // for what it built, so the check is on the path rather than beside it.
+    let Command::SendMessage {
+        channel: channel_id,
+        body,
+        reply_to,
+        attachments,
+    } = authorized.into_command()
+    else {
+        unreachable!("authorize hands back the command it was given")
+    };
+
+    let mut log = rebuild_log(&store, &author, channel_id, &state)?;
+    let hlc = next_hlc(&log, now_millis());
+    let record = Record::create(
+        &author,
+        channel_id,
+        hlc,
+        RecordBody::Message {
+            body,
+            reply_to,
+            attachments,
         },
     );
     let stored = record.clone();
@@ -197,7 +249,7 @@ pub fn post(root: PathBuf, needle: &str, text: &str) -> Result<(), String> {
         .map_err(|err| format!("the record was refused: {err}"))?;
 
     store
-        .put_record(&channel.id, &stored)
+        .put_record(&channel_id, &stored)
         .map_err(|e| e.to_string())?;
 
     println!("posted to #{}", channel.name);
@@ -217,12 +269,32 @@ pub fn read(root: PathBuf, needle: &str) -> Result<(), String> {
     let channel = network::resolve(&channels, needle)
         .ok_or_else(|| format!("no channel matching {needle:?}. `kols channel list`"))?;
 
+    // Reading crosses the boundary too, and needs `chat:read` for this channel.
+    // The command carries a page, which this build then ignores: a terminal has
+    // no scroll position to page from, the same reason `kols serve` walks to the
+    // start of history. A UI bounds it by pages (`design/01` §5).
+    let index = placements(&channels);
+    let authority = StateAuthority { state: &state };
+    authorize(
+        Command::OpenChannel {
+            channel: channel.id,
+            before: None,
+            limit: usize::MAX,
+        },
+        &Actor {
+            identity: store.identity().map_err(|e| e.to_string())?.id(),
+            authority: &authority,
+            state: &state,
+            channels: &index,
+        },
+    )
+    .map_err(|refusal| refusal.to_string())?;
+
     let placement = Placement {
         channel: channel.id,
         category: channel.category,
     };
     let mut view = ChannelView::new(placement);
-    let authority = StateAuthority { state: &state };
 
     // Only this member's own records, because that is all this node holds: a
     // second author's log arrives over the wire, which `kols serve` is for and

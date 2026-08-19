@@ -1,0 +1,13 @@
+[package]
+name = "kols-api"
+description = "The command/event boundary between ko-ls's interface and its core"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+kols-core.workspace = true
+intranet-crypto.workspace = true
+intranet-identity.workspace = true
+intranet-governance.workspace = true

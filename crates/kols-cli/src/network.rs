@@ -8,7 +8,7 @@ use intranet_governance::{
 use intranet_identity::{NetworkId, PerNetworkIdentity};
 use kols_core::{
     CHAT_LOG_CONTENT_TYPE, CategoryId, ChannelEntry, ChannelEntryBody, ChannelId, ChannelKind,
-    ChatPolicy, NetworkProfile, Privacy,
+    ChatPolicy, Privacy,
 };
 use std::collections::BTreeMap;
 
@@ -197,16 +197,4 @@ pub fn resolve<'a>(
                 .values()
                 .find(|c| intranet_crypto::to_hex(c.id.as_bytes()).starts_with(needle))
         })
-}
-
-/// Whether this network is a server, which is the only profile this CLI drives.
-pub fn require_server(state: &GovernanceState) -> Result<(), String> {
-    match ChatPolicy::of(&state.policy).profile() {
-        NetworkProfile::Server => Ok(()),
-        NetworkProfile::Conversation => Err(
-            "this is a conversation, which has one implied channel and no channel structure \
-             (spec 07 §1.2). The CLI drives servers."
-                .to_owned(),
-        ),
-    }
 }

@@ -68,7 +68,27 @@ pub fn holds(
     if state.identity_holds(identity, &channel_cap(verb, &placement.channel)) {
         return true;
     }
-    if let Some(category) = &placement.category
+    holds_in_scope(state, identity, verb, placement.category.as_ref())
+}
+
+/// Whether `identity` holds `verb` at category or network scope.
+///
+/// The same resolution as [`holds`] with its first step removed, for the
+/// questions asked about a channel that does not exist yet. Creating one is the
+/// case: a definition can only ever be authorized by a category or network
+/// grant, because the channel's id is minted by the entry that creates it and
+/// nobody could hold a grant naming it beforehand.
+///
+/// Separate from [`holds`] rather than reached by passing a placeholder channel,
+/// so a caller cannot invent an id to ask about and have the answer quietly
+/// depend on it.
+pub fn holds_in_scope(
+    state: &GovernanceState,
+    identity: &PerNetworkIdentityId,
+    verb: &str,
+    category: Option<&CategoryId>,
+) -> bool {
+    if let Some(category) = category
         && state.identity_holds(identity, &category_cap(verb, category))
     {
         return true;

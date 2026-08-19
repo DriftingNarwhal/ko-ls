@@ -47,7 +47,7 @@ pub use record::{
     Attachment, DEFAULT_MAX_BODY_BYTES, MAX_ATTACHMENT_NAME_BYTES, MAX_REACTION_KEY_BYTES,
     Record, RecordBody, RecordClass,
 };
-pub use permissions::{Authority, CategoryId, Placement, StateAuthority, holds};
+pub use permissions::{Authority, CategoryId, Placement, StateAuthority, holds, holds_in_scope};
 pub use policy::{
     ChatPolicy, NetworkProfile, Retention, conversation_genesis_values, defaults, keys,
 };

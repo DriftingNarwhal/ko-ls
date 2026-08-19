@@ -1,6 +1,6 @@
 # Client Architecture
 
-**Document status:** v1.1 — `kols-core` and `kols-net` exist; the API boundary, store, media and UI do not
+**Document status:** v1.1 — `kols-core`, `kols-net` and §3's boundary exist, the boundary's command half only; the store, media and UI do not
 **Depends on:** all preceding documents; App Hosting Spec §1–§3 for the sandbox path
 **Consumed by:** implementation; `09` for the interface built on §3's boundary
 

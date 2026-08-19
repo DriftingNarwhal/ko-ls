@@ -1,8 +1,8 @@
 # ko-ls — Implementation Status
 
-**Updated:** 2026-08-19 (S3 done — the environment can build and run a Tauri app)
-**Phase:** P1 — two nodes talk live and durably, and a joiner reads back through sealed
-history. The interface is designed, and the environment for it now builds and runs
+**Updated:** 2026-08-19 (`kols-api` — the boundary exists and the CLI crosses it)
+**Phase:** P1 — two nodes talk live and durably, a joiner reads back through sealed
+history, and every command the client runs now crosses the API boundary
 **Design:** [`design/`](design/) — `00`–`08` at v1.0, `09` at v0.2. **`distributed-intranet/specs/07` is normative** where it and the design set overlap.
 
 This file is the answer to "where are we?". It is updated in the same change that moves
@@ -26,11 +26,27 @@ The client builds against the sibling checkout by **path dependency**, not a pub
 version, and deliberately so while the extensions are still moving. A fresh machine needs
 both repos cloned side by side.
 
-**Next task:** **P1's client work** — the first thing that is not setup. `design/07` §2's
-list is exhausted: S3 is done, `design/09` is written, and E12's protocol half has landed, so
-nothing environmental is in the way. The two obvious starting points are the `kols-api`
-boundary (`design/05` §3), which everything in the interface has to cross, and the small owed
-E12 client item below.
+**Next task:** **the executor, and then the event half of `kols-api`.** The boundary now
+exists and refuses, but each caller still takes its `Authorized` apart and does the work
+inline — so there is a gate and no dispatcher behind it. `Event` is deliberately absent until
+there is something emitting events: the sync engine (`design/05` §4) is `kols serve`, whose
+records do not yet cross this boundary, and an event vocabulary written before anything
+emits one is a contract with no implementation to keep it honest.
+
+**`kols-api` is the boundary `design/05` §3 describes, and two of its three properties are
+now held rather than intended.** *No ambient authority*: every command names its target, the
+gate resolves permission by replaying governance state, and `Authorized` has no public
+constructor — so an executor takes one and "somebody forgot to check" stops being something
+a reviewer has to notice. The compiler runs that claim as a `compile_fail` doctest. *Consent
+is a decorator*: every command carries a `Sensitivity`, derived from the tier the capability
+vocabulary assigns rather than from how consequential an action feels, with a drift test
+against `capabilities::VERBS` so re-tiering a verb and forgetting the classification fails
+loudly instead of in a prompt that quietly stopped appearing.
+
+**The CLI crosses it, which is the only reason to believe it works.** `channel create`, `post`
+and `read` all go through `authorize` now, and the checks they used to open-code — may-post,
+the message ceiling, the network profile — are gone from `kols-cli` rather than duplicated
+beside it. The binary-driving tests still pass unchanged, which is what says the seam holds.
 
 **S3 is done and was confirmed by running, not by installing.** A scaffolded Tauri v2 app
 compiled and linked against the system webview in 44 seconds and mapped an 800×600 window on
@@ -106,9 +122,9 @@ left green.
 
 | | |
 |---|---|
-| **Working on** | P1 client work — nothing environmental is left |
+| **Working on** | P1 — `kols-api` landed; the executor and the event half are next |
 | **Blocked on** | Nothing |
-| **Runnable** | **`kols`** — init, attach, admit, revoke, serve, channel create/list, post, read. Two nodes hold a conversation. `cargo test` — 98 tests here and 644 in `../distributed-intranet`, clippy clean in both; `scripts/cross-check.sh` for big-endian |
+| **Runnable** | **`kols`** — init, attach, admit, revoke, serve, channel create/list, post, read. Two nodes hold a conversation. `cargo test` — 117 tests here and 644 in `../distributed-intranet`, clippy clean in both; `scripts/cross-check.sh` for big-endian |
 | **Next decision needed from the user** | Nothing blocking |
 
 ---
@@ -160,7 +176,7 @@ both green.
 | `kols-cli` | **`kols`, and its node daemon** — creates a network, admits and keys in joiners, serves and fetches content, renders a merged view across authors. 119 tests that drive the real binaries, eight of them over a live wire between two processes |
 | `kols-store` | Not created |
 | `kols-media` | Not created |
-| `kols-api` | Not created |
+| `kols-api` | **The command surface and its gate** — `Command`, `Sensitivity`, `Refusal`, and `authorize` returning an `Authorized` nothing else can construct. `kols-cli` crosses it for create, post and read. No `Event` yet, deliberately — §1. 18 tests |
 | `kols-app` | Not created |
 | `kols-ui` | Not created |
 
@@ -197,6 +213,55 @@ design changes before anything else is built.
 ## 8. Log
 
 Newest first. One line per change that moved the state above.
+
+- **2026-08-19** — **`kols-api`: the boundary exists, and the CLI is the first thing to
+  cross it.** `design/05` §3 fixes three properties and says retrofitting any of them is
+  expensive. Two are now held; the third has nothing to hold yet.
+
+  **`Authorized` is the shape that makes the check unavoidable.** It wraps a `Command`, has
+  no public constructor and no public field, so the only way to hold one is to have passed
+  `authorize` — an executor takes an `Authorized` rather than a `Command`, and skipping the
+  gate stops being a thing a reviewer has to notice and starts being a thing that does not
+  compile. That claim is a `compile_fail` doctest rather than a sentence. It is the same
+  structural move the protocol repo made with the media relay's guard, where `authorize` is
+  the only way to learn a frame's recipients, and for the same reason: a check a caller can
+  route around eventually is.
+
+  **`Sensitivity` is derived from the capability vocabulary, not from judgement.** App
+  Hosting §3.3 requires a platform prompt before any signed action on the user's behalf, so
+  the line that matters is whether a command signs. Above that line the class follows the
+  *tier* `design/02` §2.2 assigns — which is why `Pin` is `Governs` and `SendMessage` is not,
+  despite pinning being the smaller act: pinning needs `chat:moderate`, which is
+  governance-tier. A drift test resolves every command's verb against
+  `capabilities::VERBS`, so re-tiering a verb and forgetting this classification fails there
+  rather than in a consent prompt that silently stopped appearing.
+
+  **One small thing was missing from `kols-core` and is now there.** Creating a channel can
+  only ever be authorized at category or network scope, because the channel's id is minted by
+  the entry that creates it and no grant could name it beforehand. `holds_in_scope` is
+  `holds` with its first step removed — separate rather than reached by passing a placeholder
+  channel id, so a caller cannot invent an id to ask about and have the answer quietly depend
+  on it.
+
+  **The CLI crosses the boundary for `channel create`, `post` and `read`**, and the checks
+  those used to open-code are gone rather than duplicated: `may_post`, the message ceiling
+  and the network-profile test all live in one place now, and `network::require_server` was
+  deleted because the boundary answers it. The binary-driving tests pass unchanged, which is
+  the only evidence worth having that the seam holds — it is the same argument `kols` itself
+  was written for.
+
+  **What is deliberately not in this crate.** No `Event`: the sync engine that would emit one
+  is `kols serve`, whose records do not cross this boundary yet, and an event vocabulary
+  written before anything emits one is a contract with no implementation to keep it honest.
+  No DM, search, voice or stage commands — each has a line in `design/05` §3 and no code
+  behind it, and adding the variants now would put a claim in a type nothing could serve.
+  Two checks are named in `authorize`'s own docs as *not* done there, with where they are
+  done instead: that an edit targets a message you wrote (a fact about the record set, caught
+  on read by `ChannelView`), and the message rate ceiling (computed over the author's own
+  HLCs, so also the store). A check that looks complete and is not is worse than one that
+  says what it does not cover.
+
+  98 → 117 tests, clippy clean.
 
 - **2026-08-19** — **S3 done: the environment builds and runs a Tauri app, and the list of
   what it needed was wrong in two places.** Installing the packages is not the interesting

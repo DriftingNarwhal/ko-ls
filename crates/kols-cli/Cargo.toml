@@ -13,6 +13,7 @@ path = "src/main.rs"
 [dependencies]
 kols-core.workspace = true
 kols-net.workspace = true
+kols-api.workspace = true
 intranet-crypto.workspace = true
 intranet-identity.workspace = true
 intranet-governance.workspace = true

@@ -1967,6 +1967,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "kols-api"
+version = "0.1.0"
+dependencies = [
+ "intranet-crypto",
+ "intranet-governance",
+ "intranet-identity",
+ "kols-core",
+]
+
+[[package]]
 name = "kols-cli"
 version = "0.1.0"
 dependencies = [
@@ -1978,6 +1988,7 @@ dependencies = [
  "intranet-ledger",
  "intranet-storage",
  "intranet-transport",
+ "kols-api",
  "kols-core",
  "kols-net",
  "libp2p",
