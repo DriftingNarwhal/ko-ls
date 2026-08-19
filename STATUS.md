@@ -1,8 +1,8 @@
 # ko-ls — Implementation Status
 
 **Updated:** 2026-08-19
-**Phase:** P0 complete; F2 done. P1 not started
-**Design:** [`design/`](design/) — `00`–`08`. `08-record-encoding.md` is normative.
+**Phase:** P0, F1, F2, F3 complete. P1 not started
+**Design:** [`design/`](design/) — `00`–`08`, all v1.0. **`distributed-intranet/specs/07` is normative** where it and the design set overlap.
 
 This file is the answer to "where are we?". It is updated in the same change that moves
 work, never afterwards from memory — a status file that lags is worse than none, because
@@ -14,7 +14,7 @@ it is believed.
 
 | | |
 |---|---|
-| **Working on** | Nothing in flight — P0 closed, spec 07 landed upstream |
+| **Working on** | Nothing in flight — ready to start P1 |
 | **Blocked on** | Nothing |
 | **Runnable** | `cargo test` — 32 tests incl. two live-node tests, clippy clean. No binary yet |
 | **Next decision needed from the user** | Whether to start P1 with E9/E2 in the protocol repo, or build a runnable CLI first |
@@ -27,7 +27,7 @@ it is believed.
 |---|---|---|
 | F1 record encoding | **Done** | `design/08-record-encoding.md`, normative |
 | F2 spec 07 in protocol repo | **Done** | `distributed-intranet/specs/07-chat-application-spec.md`, committed there. README and CLAUDE.md updated — the repo no longer claims six specs |
-| F3 design set → v1.0 | Not started | P0 taught us two things, both folded into `08` and `01`. Worth doing before P1 grows the set further |
+| F3 design set → v1.0 | **Done** | All nine documents at v1.0. The review pass demoted `08` from normative (its content is upstream now), refreshed the roadmap and scale claims, and turned `05` §8's test plan into a table with real state per row |
 
 ## 3. Setup
 
@@ -94,6 +94,13 @@ design changes before anything else is built.
 
 Newest first. One line per change that moved the state above.
 
+- **2026-08-19** — **F3 done: design set reviewed and bumped to v1.0.** The pass earned its
+  keep: `08` stopped being normative, since its content moved upstream in F2 and two
+  normative descriptions of one wire format is the drift this project criticises elsewhere.
+  It also caught the set claiming no implementation existed, a roadmap listing P0 as future
+  work, a scale section calling two now-measured numbers guesses, and a test plan with no
+  column for what had actually been written. Four new decisions recorded (D22–D24 plus the
+  precedence rule).
 - **2026-08-19** — **F2 done: spec 07 written and committed upstream.** The first
   application-layer spec, carrying the channel and record model, the normative encoding,
   the capability vocabulary, the keying tiers, and §7's five platform amendments. Written

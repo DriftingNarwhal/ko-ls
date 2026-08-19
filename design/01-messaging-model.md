@@ -1,6 +1,6 @@
 # Messaging Model
 
-**Document status:** v0.1 — draft for review
+**Document status:** v1.0 — implemented in `kols-core`; spec 07 is normative where they overlap
 **Depends on:** Core Protocol Spec §2 (governance log), Storage Spec §1–§5, Search Spec §3
 **Consumed by:** `02-membership-and-permissions`, `03-confidentiality`, `05-client-architecture`
 
@@ -59,7 +59,7 @@ bindings need both.
 
 ```
 ChannelDefinition {
-  channel_id:    derived from network id and a nonce — `08` §7 is normative
+  channel_id:    derived from network id and a nonce — Chat Application Spec §3.6 is normative
   name:          human-readable, unique within the network at definition time
   category:      Option<CategoryId>                          — permission scope, §4 of `02`
   kind:          Text | Voice | Stage
@@ -75,14 +75,14 @@ the same `channel_id`; current state is whatever replay produces. Gated on
 
 **All of this applies to `server`-profile networks only.** A `conversation`-profile
 network (`03` §4.1) has exactly one channel, its id derived as
-`08` §7 specifies, declared nowhere — and a `ChannelDefinition` entry
+spec 07 §3.6 specifies, declared nowhere — and a `ChannelDefinition` entry
 in such a network is **invalid and rejected on replay**, so the distinction is enforced
 rather than merely presented. Everything else in this document — segments, ordering,
 edits, reactions, retention, the live path — applies identically to both profiles, since
 a conversation is a channel like any other once you are inside it.
 
 **A best-effort append-set mirrors every definition** to
-`collection_id(network_id, "chat:channels")` (`08` §7), purely so a client can enumerate
+`collection_id(network_id, "chat:channels")` (spec 07 §3.6), purely so a client can enumerate
 channels without walking the log. It is never authoritative — if it disagrees with
 replay, replay wins, and a missing entry costs a slower listing, not a lost channel.
 
@@ -91,7 +91,7 @@ replay, replay wins, and a missing entry costs a slower listing, not a lost chan
 A thread is a channel whose id is **derived, not declared**:
 
 ```
-thread_channel_id = H(domain ‖ parent_channel_id ‖ root_message_id)      — `08` §7
+thread_channel_id = H(domain ‖ parent_channel_id ‖ root_message_id)      — spec 07 §3.6
 ```
 
 It inherits the parent's privacy, keying and permissions, and needs no governance entry
@@ -134,7 +134,7 @@ target sits well below the network bound on purpose.
 
 Within an open segment, appending a record republishes the *same object* under the same
 DEK. Everything ahead of the record list is fixed-width and the list itself carries no
-count prefix (`08` §6), so an append changes only the tail — measured at **1,556 bytes
+count prefix (spec 07 §3.5), so an append changes only the tail — measured at **1,556 bytes
 moved out of 176,115** for one message appended to a full segment. Because chunking happens on plaintext before deterministic encryption (Storage
 §1.2), every chunk except the tail re-derives to an identical CID, so readers delta-fetch
 only what is new. This is the single property that makes the model affordable, and it is
@@ -177,7 +177,7 @@ and two devices writing simultaneously the expensive one; neither loses anything
 Each author log has exactly one mutable pointer, whose id is **derived**:
 
 ```
-pointer_id = H(domain ‖ channel_id ‖ author_id)                          — `08` §7
+pointer_id = H(domain ‖ channel_id ‖ author_id)                          — spec 07 §3.6
 ```
 
 `owner_identity` is the author. `content_type` is `chat-log`, which the network's
@@ -191,7 +191,7 @@ pointer id and ask for it — with no dependence on any index being fresh or com
 
 That path is O(members) and too slow to use on every channel open, so a **best-effort
 participant index** sits in front of it: an append-set at
-`collection_id(network_id, "chat:authors:" ++ hex(channel_id))` (`08` §7) where an author
+`collection_id(network_id, "chat:authors:" ++ hex(channel_id))` (spec 07 §3.6) where an author
 announces having posted here. Stale or missing entries cost a slower first load, never a
 lost message — which is precisely the durability property Storage §2.5 says an append-set
 must not be relied on for, and precisely why it is not relied on here.
@@ -214,7 +214,7 @@ every record additionally carries: author, device, signature
 message_id = H(canonical record bytes)
 ```
 
-**The canonical bytes are normative and specified in [`08-record-encoding`](08-record-encoding.md)**, not left to an implementation — every reference below is that hash, so encoding drift means references silently failing to resolve.
+**The canonical bytes are normative and specified in Chat Application Spec §3** (`distributed-intranet/specs/07`), not left to an implementation — every reference below is that hash, so encoding drift means references silently failing to resolve.
 
 **Every record is individually signed**, over its canonical encoding, by the author's
 per-network identity key (with the signing device recorded — `05` §6). This is
@@ -448,7 +448,7 @@ entry: ordered, replayable, tamper-evident, and visible to every member.
 |---|---|---|
 | `chat:message-rate-per-minute` | 30 | `Message`, `Edit` and `Tombstone` records, per author per channel |
 | `chat:reaction-rate-per-minute` | 60 | `Reaction` and `Pin` records, per author per channel |
-| `chat:message-max-bytes` | 8 KiB | One message or edit body, as UTF-8 (`08` §4.3) |
+| `chat:message-max-bytes` | 8 KiB | One message or edit body, as UTF-8 (spec 07 §4.3) |
 | `chat:attachment-max-bytes` | 25 MiB | One attachment |
 | `chat:attachment-max-count` | 10 | Attachments on one message |
 | `chat:segment-max-bytes` | 8 MiB | A published segment — without this, one author can force every reader to fetch an arbitrarily large object |

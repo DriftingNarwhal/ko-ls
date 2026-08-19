@@ -1,6 +1,6 @@
 # Voice, Video and Stage
 
-**Document status:** v0.1 — draft for review
+**Document status:** v1.0 — design reviewed. Nothing implemented; P3/P4
 **Depends on:** Real-Time Transport Spec (all), Core Protocol Spec §4.4 (relay roles), `03-confidentiality`
 **Consumed by:** `05-client-architecture`, `06-protocol-extensions`
 

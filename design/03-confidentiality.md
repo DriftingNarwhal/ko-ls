@@ -1,6 +1,6 @@
 # Confidentiality: Channel Keying, Private Channels and Direct Messages
 
-**Document status:** v0.1 — draft for review
+**Document status:** v1.0 — design reviewed. Only the network tier is implemented; channel and session tiers are P2/P3
 **Depends on:** Core Protocol Spec §3 (epoch keying), Storage Spec §5 (envelope encryption), Search Spec §3, Real-Time Spec §3.5
 **Consumed by:** `01-messaging-model`, `04-realtime`, `05-client-architecture`
 

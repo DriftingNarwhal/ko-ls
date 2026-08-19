@@ -1,8 +1,9 @@
 # ko-ls — Design Overview
 
 **Project:** ko-ls (working name, may be replaced; nothing in the design depends on it)
-**Document status:** v0.1 — draft for review. No implementation exists yet.
-**Depends on:** Distributed Intranet Protocol v1.0, all six specification documents
+**Document status:** v1.0 — reviewed against a working P0 implementation.
+**Precedence:** `distributed-intranet/specs/07` is normative where it and this set overlap; this set owns client design, rationale and sequencing.
+**Depends on:** Distributed Intranet Protocol v1.0 (specs `01`–`06`) and the Chat Application Spec (`07`)
 **Consumed by:** every other document in this set
 
 ---
@@ -35,7 +36,7 @@ rather than papering over it — the same posture the protocol specs take with r
 | `05-client-architecture` | Desktop client structure, the API boundary, local state |
 | `06-protocol-extensions` | Every change required in `distributed-intranet`, with acceptance criteria |
 | `07-build-plan` | What remains before code: spec text, repo and environment setup, P0 |
-| `08-record-encoding` | **Normative.** Canonical bytes for every record, segment and derived id |
+| `08-record-encoding` | Conformance obligations and module map. The encoding itself moved to spec 07 §3 |
 
 ---
 
@@ -131,6 +132,9 @@ the document named.
 | D19 | DM delivery is **asynchronous with overlap** — send to an offline contact, delivered at the next mutual online window; three honest states (sent / delivered / read) | `03` §4.5 |
 | D20 | Two **network profiles**, declared at genesis and enforced on replay: `server` (channels, roles, categories) and `conversation` (one implied channel, nothing else) | `03` §4.1 |
 | D21 | A **group conversation is its own network**, distinct from every pairwise one among the same people, with **every participant a Founder** | `03` §4.4 |
+| D22 | The segment record list carries **no count prefix** — the one departure from the project's framing rule, because a count at the head re-chunks the whole object on every append. *Found by measurement in P0* | spec 07 §3.5 |
+| D23 | HLC strictness is per **(author, device)**, not per author — two devices cannot share a counter without a lock across machines, and a merged segment interleaves them | spec 07 §2.6 |
+| D24 | A **losing pointer version republishes the union** of both record sets, discarding nothing — the content-merge semantics Storage §2.2 defers to the application layer | `01` §3.1.1 |
 
 ---
 
@@ -150,9 +154,11 @@ already sits in the design.
 | Many conversations | Each DM is a whole network with its own log and keying | Paid by the two participants only; no shared network carries any of it (`03` §4) |
 | Large voice | Relay bandwidth, O(n) key envelopes | Stage mode switches to live-stream distribution (`04` §4) |
 
-**Nothing here is tuned yet, and the design deliberately does not pretend otherwise.**
-Segment sealing thresholds, gossip fanout, backfill depth and presence cadence all want
-measurements from a real deployment. `06` §7 lists what to instrument first.
+**Two of these are now measured; the rest are not, and the design does not pretend
+otherwise.** An append moves 1,556 bytes of 176,115 locally and one chunk of three across
+the wire (`08` §4), which is what makes per-author fan-in affordable. Segment sealing
+thresholds, gossip fanout, backfill depth and presence cadence remain unmeasured beyond a
+single spike, and want data from a real deployment rather than another guess.
 
 ---
 
@@ -161,9 +167,10 @@ measurements from a real deployment. `06` §7 lists what to instrument first.
 Phases are ordered so that each one is independently usable and each one de-risks the
 next. Estimates are deliberately absent — sequence is the useful part.
 
-- **P0 — Spike.** Two nodes, one network, one public channel, text only, durable path
-  only, no UI beyond a CLI. Proves the author-log model against the real storage layer,
-  including delta-fetch and pointer collision behaviour.
+- **P0 — Spike. ✅ Complete.** Proved the author-log model against the real storage layer
+  and across two live nodes: delta-fetch, merge convergence under permutation and
+  partition, reader-side refusal, and pointer-collision recovery. It also falsified two
+  things the design had wrong (D22, D23), which is what it was for.
 - **P1 — Text chat MVP.** Channels and categories, roles and permissions, live gossip
   path, history backfill, edits/deletes/reactions/threads, invites and onboarding, the
   Tauri desktop client. Public channels only.

@@ -1,6 +1,6 @@
 # Required Protocol Extensions
 
-**Document status:** v0.1 — draft for review
+**Document status:** v1.0 — E1 and E3 withdrawn, E11 added; none implemented yet
 **Depends on:** all preceding documents
 **Consumed by:** work in `distributed-intranet`
 

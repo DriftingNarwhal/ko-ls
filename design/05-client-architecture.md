@@ -1,6 +1,6 @@
 # Client Architecture
 
-**Document status:** v0.1 — draft for review
+**Document status:** v1.0 — `kols-core` and `kols-net` exist; the API boundary, store, media and UI do not
 **Depends on:** all preceding documents; App Hosting Spec §1–§3 for the sandbox path
 **Consumed by:** implementation
 
@@ -227,14 +227,23 @@ boundary, which is worth having regardless.
 
 ## 8. Testing
 
-| Layer | Approach |
-|---|---|
-| `kols-core` | Property tests on merge ordering: any permutation and any partition of a record set must converge to the same rendered history. This is the correctness claim of the whole design |
-| Permissions | Table-driven cases over replayed governance states, including the tricky ones — frozen pointers after a narrowed grant, waiting-room members, voided revocations |
-| Keying | A removed member must fail to decrypt content wrapped after the rotation, and must still decrypt what they held. Assert the honest guarantee, not a stronger one |
-| Multi-node | Extend the existing Docker NAT harness with chat scenarios: partition two members, both post, heal, assert identical history on both |
-| Media | Loss and jitter injection against both `MediaTransport` impls; the fallback is expected to degrade badly and the test should record how badly, not skip it |
+| Layer | Approach | State |
+|---|---|---|
+| `kols-core` | Property tests on merge ordering: any permutation and any partition of a record set must converge to the same rendered history. This is the correctness claim of the whole design | **Done** — 40 permutations, reversal, duplicates, two-sided partition |
+| Encoding | Frozen vectors, round-trip, injectivity, domain separation, id stability (`08` §3) | **Done** except the big-endian target |
+| Wire | Two live nodes: publish, pointer sync, fetch, reassemble, render identically | **Done** — plus the delta measurement between fetch rounds |
+| Permissions | Table-driven cases over replayed governance states, including the tricky ones — frozen pointers after a narrowed grant, waiting-room members, voided revocations | Partial — non-member, forged signature and wrong-channel covered; frozen pointers and waiting-room members not |
+| Keying | A removed member must fail to decrypt content wrapped after the rotation, and must still decrypt what they held. Assert the honest guarantee, not a stronger one | Not started (P2) |
+| Multi-node | Extend the existing Docker NAT harness with chat scenarios: partition two members over a real network, heal, assert identical history | Not started — the in-process partition test is not this |
+| Media | Loss and jitter injection against both `MediaTransport` impls; the fallback is expected to degrade badly and the test should record how badly, not skip it | Not started (P3) |
 
 The protocol repo's gate applies to this work too: `cargo test --workspace` and
 `cargo clippy --workspace --all-targets` both stay clean, and a run that skipped clippy
 because the toolchain lacked it has checked half the gate and should say so.
+
+**One measurement discipline learned in P0, worth keeping.** A test that asserts on bytes
+moved must measure at the point the cost is actually incurred. The first version of the
+wire test ran both fetch rounds — manifest, then chunks — and then asked what the reader
+still wanted, which is zero by construction and proves nothing. The number that matters is
+what it wanted *between* the rounds. A green test that asserts nothing is worse than no
+test, because it is believed.

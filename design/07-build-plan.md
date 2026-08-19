@@ -1,6 +1,6 @@
 # Finalization and P0 Build Plan
 
-**Document status:** v0.1 — the checklist between "design reviewed" and "code being written"
+**Document status:** v1.0 — F1, F2, S1 and P0 complete; F3 done; P1 not started
 **Depends on:** `00`–`06`
 **Consumed by:** whoever starts building
 
@@ -60,10 +60,17 @@ authoritative and the code implements them. Adding entry types, a capability voc
 and two wire protocols without writing them down would make that claim false, and the
 README says so in its own words.
 
-### F3 — Mark the design set reviewed
+### F3 — Mark the design set reviewed ✅ **done**
 
-Bump `00`–`06` from v0.1 draft to v1.0, once F1 and F2 have shaken out whatever they
-shake out. Expect them to shake out something; encoding work usually does.
+Bumped `00`–`08` to v1.0 after a review pass against the working P0 implementation, which
+did shake something out, as expected: **`08` stopped being normative.** Its content moved
+upstream in F2, and leaving two normative descriptions of one wire format in place would
+have been precisely the drift this project criticises elsewhere. `08` is now the client's
+conformance obligations and module map; Chat Application Spec §3 is the contract.
+
+The review also caught the design set claiming no implementation existed, a roadmap
+listing P0 as future work, and a scale section calling every threshold a guess when two of
+them had since been measured.
 
 ---
 
@@ -150,8 +157,8 @@ attachments, moderation, retention.
 ### Outcome
 
 **All five met.** Two findings changed the design rather than the code: the record list
-carries no count prefix (`08` §6), and HLC strictness is per device rather than per author
-(`08` §4.1). Both were found by measurement and assertion, not review — which is the
+carries no count prefix (spec 07 §3.5), and HLC strictness is per device rather than per
+author (spec 07 §2.6). Both were found by measurement and assertion, not review — which is the
 argument for putting a byte-level test at the front of a plan rather than at the end.
 
 Three things the protocol's own guidance warned about were all real, and all cost time

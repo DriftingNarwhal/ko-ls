@@ -1,6 +1,6 @@
 # Membership and Permissions
 
-**Document status:** v0.1 — draft for review
+**Document status:** v1.0 — permission resolution implemented; E11 outstanding, see `06` §11
 **Depends on:** Core Protocol Spec §1 (identity), §2 (governance), §5.6 (invites)
 **Consumed by:** `01-messaging-model`, `03-confidentiality`, `04-realtime`
 
