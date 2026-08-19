@@ -1,0 +1,206 @@
+//! Creating a network, and reading channel structure back out of its log.
+
+use crate::store::{Store, StoreError};
+use intranet_crypto::Timestamp;
+use intranet_governance::{
+    Capability, ContentType, EntryBody, GovernanceState, LogEntry, NetworkPolicy,
+};
+use intranet_identity::{NetworkId, PerNetworkIdentity};
+use kols_core::{
+    CHAT_LOG_CONTENT_TYPE, CategoryId, ChannelEntry, ChannelEntryBody, ChannelId, ChannelKind,
+    ChatPolicy, NetworkProfile, Privacy,
+};
+use std::collections::BTreeMap;
+
+/// The genesis entry for a new `server`-profile network.
+///
+/// Three things have to be right here or the network is quietly unusable, and
+/// each was learned by getting it wrong:
+///
+/// 1. **`chat-log` must be on the content-type allowlist.** Publishing a pointer
+///    is gated on both an allowlisted type and a `publish:<type>` capability
+///    (Core §2.8's two gates); missing either one means every post is refused by
+///    the author's own node.
+/// 2. **The chat capability vocabulary must be registered.** An unregistered
+///    extension name is refused outright rather than assumed ordinary, so a
+///    network that skips this cannot grant a chat permission at all.
+///
+/// The profile is deliberately *not* written: absent means `server` (spec 07
+/// §1.2), and writing today's default into a network freezes it there. A network
+/// name is likewise not a policy value — spec 07 defines no key for one, and
+/// inventing vocabulary the normative document does not have is how two clients
+/// end up disagreeing about what a network is called. The CLI keeps it locally.
+pub fn genesis(founder: &PerNetworkIdentity, network: NetworkId) -> LogEntry {
+    let mut policy = NetworkPolicy::conservative_default();
+    policy
+        .content_type_allowlist
+        .insert(ContentType::new(CHAT_LOG_CONTENT_TYPE));
+    policy
+        .extension_capabilities
+        .extend(kols_core::capabilities::network_scoped());
+    LogEntry::create(
+        founder,
+        None,
+        Timestamp::from_millis(0),
+        EntryBody::Genesis {
+            network,
+            policy,
+            // What every member gets on arrival. Reading and posting are
+            // ordinary; creating channels is not granted here, so a founder
+            // hands it out deliberately rather than it being ambient.
+            everyone_capabilities: [
+                Capability::ReadContent,
+                Capability::publish(CHAT_LOG_CONTENT_TYPE),
+                Capability::extension("chat:post:*"),
+                Capability::extension("chat:read:*"),
+            ]
+            .into_iter()
+            .collect(),
+        },
+    )
+}
+
+/// A channel as replay currently understands it.
+#[derive(Debug, Clone)]
+pub struct Channel {
+    /// Its derived id.
+    pub id: ChannelId,
+    /// Its current name.
+    pub name: String,
+    /// The category it sits in, which is where permissions bind.
+    pub category: Option<CategoryId>,
+    /// What it is for. Text is the only kind this build drives; voice and
+    /// stage channels are P3 work and would be listed but not enterable.
+    #[allow(dead_code)]
+    pub kind: ChannelKind,
+    /// Whether the network at large may read it.
+    pub privacy: Privacy,
+    /// Its current topic.
+    pub topic: String,
+    /// Seconds between one author's messages.
+    pub slowmode: u32,
+    /// Whether it has been archived.
+    pub archived: bool,
+}
+
+/// Replays the chat namespace into current channel state.
+///
+/// This is the consuming half of Core §2.7.2: the protocol carries application
+/// entries without knowing what they mean, and each consuming spec replays the
+/// log filtering for its own namespace. Anything this reader refuses is skipped
+/// rather than fatal — one malformed entry from one member must not make the
+/// whole network unreadable — but every refusal is returned so a caller can say
+/// so rather than silently showing less than exists.
+pub fn channels(
+    store: &Store,
+    state: &GovernanceState,
+) -> Result<(BTreeMap<ChannelId, Channel>, Vec<String>), StoreError> {
+    let log = store.log()?;
+    let profile = ChatPolicy::of(&state.policy).profile();
+    let mut channels: BTreeMap<ChannelId, Channel> = BTreeMap::new();
+    let mut refused = Vec::new();
+
+    for hash in log.canonical_chain() {
+        let Some(entry) = log.get(&hash) else { continue };
+        let EntryBody::AppEntry { namespace, .. } = &entry.body else {
+            continue;
+        };
+        if namespace != kols_core::CHAT_NAMESPACE {
+            continue;
+        }
+
+        // The category a channel is already known to sit in, which is what lets
+        // a category-scoped grant authorize a later entry against it.
+        let known = channel_of(&entry.body).and_then(|id| channels.get(&id)).and_then(|c| c.category);
+        let read = ChannelEntry::read(&entry.body, profile, known.as_ref());
+        let channel_entry = match read {
+            Ok(entry) => entry,
+            Err(refusal) => {
+                refused.push(refusal.to_string());
+                continue;
+            }
+        };
+
+        match channel_entry.body {
+            ChannelEntryBody::Definition {
+                name,
+                category,
+                kind,
+                privacy,
+                topic,
+                slowmode,
+            } => {
+                channels.insert(
+                    channel_entry.channel,
+                    Channel {
+                        id: channel_entry.channel,
+                        name,
+                        category,
+                        kind,
+                        privacy,
+                        topic,
+                        slowmode,
+                        archived: false,
+                    },
+                );
+            }
+            ChannelEntryBody::Update { change } => {
+                let Some(channel) = channels.get_mut(&channel_entry.channel) else {
+                    refused.push("update for a channel never defined".to_owned());
+                    continue;
+                };
+                match change {
+                    kols_core::ChannelChange::Rename(name) => channel.name = name,
+                    kols_core::ChannelChange::Recategorise(category) => channel.category = category,
+                    kols_core::ChannelChange::SetTopic(topic) => channel.topic = topic,
+                    kols_core::ChannelChange::SetSlowmode(seconds) => channel.slowmode = seconds,
+                    kols_core::ChannelChange::Archive => channel.archived = true,
+                    kols_core::ChannelChange::Delete => {
+                        channels.remove(&channel_entry.channel);
+                    }
+                }
+            }
+            // Roster and rotation state belong to the keying layer, which is P2
+            // work. Skipped rather than mis-modelled: pretending to track a
+            // roster that nothing enforces would be worse than not showing one.
+            ChannelEntryBody::Membership { .. } | ChannelEntryBody::Rotation { .. } => {}
+        }
+    }
+
+    Ok((channels, refused))
+}
+
+fn channel_of(body: &EntryBody) -> Option<ChannelId> {
+    let EntryBody::AppEntry { payload, .. } = body else {
+        return None;
+    };
+    ChannelEntry::decode_payload(payload).ok().map(|e| e.channel)
+}
+
+/// Finds a channel by name, or by the leading hex of its id.
+pub fn resolve<'a>(
+    channels: &'a BTreeMap<ChannelId, Channel>,
+    needle: &str,
+) -> Option<&'a Channel> {
+    let needle = needle.strip_prefix('#').unwrap_or(needle);
+    channels
+        .values()
+        .find(|c| c.name == needle)
+        .or_else(|| {
+            channels
+                .values()
+                .find(|c| intranet_crypto::to_hex(c.id.as_bytes()).starts_with(needle))
+        })
+}
+
+/// Whether this network is a server, which is the only profile this CLI drives.
+pub fn require_server(state: &GovernanceState) -> Result<(), String> {
+    match ChatPolicy::of(&state.policy).profile() {
+        NetworkProfile::Server => Ok(()),
+        NetworkProfile::Conversation => Err(
+            "this is a conversation, which has one implied channel and no channel structure \
+             (spec 07 §1.2). The CLI drives servers."
+                .to_owned(),
+        ),
+    }
+}

@@ -1,7 +1,7 @@
 # ko-ls — Implementation Status
 
-**Updated:** 2026-08-19 (chat channel entries **in the working tree, uncommitted**)
-**Phase:** P1 — E9, E2 and E5 landed; chat channel entries done, live gossip (E4) next
+**Updated:** 2026-08-19 (`kols` CLI landed; **in the working tree, uncommitted**)
+**Phase:** P1 — E9, E2, E5 and chat channel entries landed; `kols` runs on one node, wire half next
 **Design:** [`design/`](design/) — `00`–`08`, all v1.0. **`distributed-intranet/specs/07` is normative** where it and the design set overlap.
 
 This file is the answer to "where are we?". It is updated in the same change that moves
@@ -25,9 +25,10 @@ The client builds against the sibling checkout by **path dependency**, not a pub
 version, and deliberately so while the extensions are still moving. A fresh machine needs
 both repos cloned side by side.
 
-**Next task:** E4 — the live gossip path. `kols-core::channel` now carries channel
-structure, so the remaining P1 gaps are gossipsub in `MemberBehaviour`, history backfill,
-and the Tauri shell (blocked on S3).
+**Next task:** the CLI's wire half — `serve`, `attach`, `admit`, `sync` — so two `kols`
+installs can reach each other. `kols-net` already does publish/fetch between two live nodes
+in tests; nothing drives it from the binary. After that, E4 (gossipsub) and history
+backfill; the Tauri shell stays blocked on S3.
 
 **Just done:** the chat side of E2. `ChannelEntry` encodes all four kinds as `chat`-namespace
 payloads (spec 07 §3.8, written for this and normative), and `ChannelEntry::read` is the
@@ -41,7 +42,7 @@ readers are unavoidable rather than optional:
 2. **A channel entry is invalid in a `conversation`-profile network.** The protocol carries
    `chat` payloads without decoding them, so it cannot reach this verdict.
 
-**To pick up:** `cargo test` in this repo should show 62 passing and clippy silent. If it
+**To pick up:** `cargo test` in this repo should show 69 passing and clippy silent. If it
 does not, fix that before anything else — the tree was left green.
 
 ---
@@ -50,10 +51,10 @@ does not, fix that before anything else — the tree was left green.
 
 | | |
 |---|---|
-| **Working on** | E4 — gossipsub live delivery |
+| **Working on** | The CLI's wire half — two `kols` installs reaching each other |
 | **Blocked on** | Nothing |
-| **Runnable** | `cargo test` — 62 tests, clippy clean; `scripts/cross-check.sh` for big-endian. No binary yet |
-| **Next decision needed from the user** | Whether to do E4 next, or build a runnable CLI first so P1 has something to drive |
+| **Runnable** | **`kols`** — init, whoami, channel create/list, post, read, on one node. `cargo test` — 69 tests, clippy clean; `scripts/cross-check.sh` for big-endian. No binary yet |
+| **Next decision needed from the user** | Nothing blocking |
 
 ---
 
@@ -99,6 +100,7 @@ both green.
 |---|---|
 | `kols-core` | **Encoding, author logs, merge, collision recovery, chat policy, channel structure** — records/segments/ids, `AuthorLog` incl. `rebase`, `ChannelView`, permissions, capability vocabulary, `ChatPolicy`, `ChannelEntry`. 60 tests |
 | `kols-net` | **Publish and fetch** — stores/announces chunks, accepts pointers, reassembles segments. Two live two-node tests |
+| `kols-cli` | **`kols`, the first runnable thing here** — creates a network, defines channels, posts and renders, persisted between invocations. 7 tests that drive the real binary |
 | `kols-store` | Not created |
 | `kols-media` | Not created |
 | `kols-api` | Not created |
@@ -139,6 +141,40 @@ design changes before anything else is built.
 
 Newest first. One line per change that moved the state above.
 
+- **2026-08-19** — **`kols` exists, and the project is runnable for the first time.**
+  Chosen over E4 deliberately: gossip is an optimization of a path that already works
+  (`design/01` §7 — "a client with gossip entirely disabled is slower and completely
+  correct"), while nothing had ever composed genesis, permission resolution, channel
+  entries, author logs and rendering into one path. That seam had a bug in it the same day
+  it was written, which is the argument in miniature.
+
+  `init`, `whoami`, `channel create`, `channel list`, `post`, `read` — persisted between
+  invocations, replaying a real governance log each time rather than caching state.
+  Seven tests drive the actual binary rather than the library, because what is under test
+  is that separate processes agree through the store, which an in-process test would
+  share its way past.
+
+  Three things worth carrying:
+
+  - **Genesis has three requirements and each is silent when missed.** `chat-log` must be
+    on the content-type allowlist, the chat vocabulary must be registered, and `everyone`
+    needs `publish:chat-log` alongside `chat:post`. Miss any one and the network looks fine
+    until the first post is refused by the author's own node. `kols-cli::network::genesis`
+    is now the one place that gets it right.
+  - **The CLI's DEK is a stand-in and says so where it lives.** Storage §5 wraps a
+    per-object DEK under the epoch key; none of that is wired up (E7/P2), and the existing
+    two-node test papers over it with a hardcoded key on both sides. The CLI derives one
+    from the network id instead, so **anyone who learns the network id can decrypt any
+    segment they obtain** — what keeps a non-member out is honest nodes refusing to serve
+    them, a serving policy rather than cryptography. Named in `Store::channel_dek` rather
+    than buried.
+  - **A network name is not a policy value.** Spec 07 defines no key for one, so the CLI
+    keeps a local label rather than inventing vocabulary the normative document lacks —
+    which is how two clients end up disagreeing about what a network is called.
+
+  **What it cannot do: reach another node.** `kols-net` publishes and fetches between two
+  live nodes in tests, and nothing in the binary drives it. That is the next task, not a
+  gap being glossed. 62 → 69 tests.
 - **2026-08-19** — **Chat channel entries landed, and spec 07 gained the bytes they
   needed.** E2 put channel structure in one generic application entry rather than four
   chat-shaped variants; `kols-core::channel` is the chat side of that. All four kinds —

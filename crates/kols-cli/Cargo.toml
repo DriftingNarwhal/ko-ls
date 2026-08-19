@@ -1,0 +1,25 @@
+[package]
+name = "kols-cli"
+description = "A terminal client for ko-ls — the first thing in this repo you can actually run"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "kols"
+path = "src/main.rs"
+
+[dependencies]
+kols-core.workspace = true
+kols-net.workspace = true
+intranet-crypto.workspace = true
+intranet-identity.workspace = true
+intranet-governance.workspace = true
+intranet-ledger.workspace = true
+intranet-storage.workspace = true
+intranet-transport.workspace = true
+
+clap.workspace = true
+libp2p.workspace = true
+tokio = { workspace = true, features = ["rt-multi-thread", "macros", "time"] }
