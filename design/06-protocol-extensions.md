@@ -1,6 +1,6 @@
 # Required Protocol Extensions
 
-**Document status:** v1.1 — E1 and E3 withdrawn, E11 added, **E9 landed**
+**Document status:** v1.2 — E1 and E3 withdrawn, E11 added, **E9 and E2 landed**
 **Depends on:** all preceding documents
 **Consumed by:** work in `distributed-intranet`
 
@@ -27,7 +27,7 @@ Two rules govern this list:
 | # | Extension | Blocks | Size |
 |---|---|---|---|
 | ~~E1~~ | ~~Extension-capability tier registry~~ — **already implemented**, needs configuration only | — | None |
-| E2 | Governance entry variants for channels | P1 | Medium |
+| ~~E2~~ | Channel governance entries — **landed generically**, Core §2.7.2 | — | Done |
 | ~~E3~~ | ~~Derived pointer ids~~ — **already possible**, no change needed | — | None |
 | E4 | Gossipsub behaviour for live delivery | P1 | Medium |
 | E5 | Media fan-out at the relay | P3 | Medium |
@@ -56,11 +56,20 @@ assert.
 
 ---
 
-## 2. E2 — Governance Entry Variants for Channels
+## 2. E2 — Channel Governance Entries ✅ **landed, in generalised form**
 
 `EntryBody` is a closed enum. Channels need durable, ordered, non-lapsing state, which is
 exactly what App Hosting §4.3 concluded for names after finding append-sets insufficient
 on both counts.
+
+**What landed is not what this section proposed, and the change is the point.** Four
+chat-shaped variants in the core enum would have been the same mistake E9 was careful to
+avoid one section later — Core §0 says the platform must not be shaped around one
+application. It had already happened once (`AppNameRegistration` is App Hosting's record in
+the core vocabulary); four more would have made a pattern of the exception. So the log
+gained **one generic application entry** (Core §2.7.2): namespace, kind, declared
+capability, opaque payload. Chat's four records below are payloads in the `chat` namespace,
+decoded by `kols-core`.
 
 ```
 EntryBody::ChannelDefinition { channel_id, name, category, kind, privacy, topic, slowmode }

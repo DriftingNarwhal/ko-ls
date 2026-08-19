@@ -1,7 +1,7 @@
 # ko-ls — Implementation Status
 
 **Updated:** 2026-08-19
-**Phase:** P1 — E9 landed; E2 next
+**Phase:** P1 — E9 and E2 landed; chat entry payloads next
 **Design:** [`design/`](design/) — `00`–`08`, all v1.0. **`distributed-intranet/specs/07` is normative** where it and the design set overlap.
 
 This file is the answer to "where are we?". It is updated in the same change that moves
@@ -14,7 +14,7 @@ it is believed.
 
 | | |
 |---|---|
-| **Working on** | E2 — channel governance entry variants |
+| **Working on** | Chat channel records as `chat`-namespace payloads in `kols-core` |
 | **Blocked on** | Nothing |
 | **Runnable** | `cargo test` — 37 tests, clippy clean; `scripts/cross-check.sh` for big-endian. No binary yet |
 | **Next decision needed from the user** | Whether to start P1 with E9/E2 in the protocol repo, or build a runnable CLI first |
@@ -34,7 +34,7 @@ it is believed.
 | Item | State | Notes |
 |---|---|---|
 | S1 client repo | **Done** | `/workspaces/ko-ls/ko-ls`, git initialised, design moved in, `kols-core` scaffolded. **Nothing committed yet** — no commit has been made in either repo |
-| S2 protocol changes on `main` | In progress | E9 landed with spec text (Core §2.6.2), implementation and tests together, both gates green. E2 next |
+| S2 protocol changes on `main` | In progress | E9 (Core §2.6.2) and E2 (Core §2.7.2) landed, each with spec text, implementation and tests together. E11 remains for P1 |
 | S3 Tauri environment | Not started | Node and webkit2gtk absent. Blocks P1, not P0 |
 
 ## 4. Protocol Extensions
@@ -46,7 +46,7 @@ both green.
 | # | Extension | State |
 |---|---|---|
 | E1 | Extension capability registry | **Withdrawn** — already implemented upstream, needs configuration only |
-| E2 | Channel governance entry variants | Not started (P1) |
+| E2 | Channel governance entries | **Landed, generalised** — one `AppEntry` variant (Core §2.7.2) rather than four chat-shaped ones; chat records become payloads |
 | E3 | Derived pointer ids | **Withdrawn** — `PointerId::from_bytes` is already public; derivation lives in `kols-core::ids` |
 | E4 | Gossipsub live delivery | Not started (P1) |
 | E5 | Media fan-out at the relay | Not started (P3) |
@@ -94,6 +94,15 @@ design changes before anything else is built.
 
 Newest first. One line per change that moved the state above.
 
+- **2026-08-19** — **E2 landed, but generically.** Four chat-shaped entry variants would have
+  repeated the mistake E9 avoided, so the log gained one application entry instead:
+  namespace, kind, declared capability, opaque payload. Two claims weakened honestly as a
+  result — the protocol enforces the capability an entry *declares* rather than the right
+  one, and rejecting channel entries in a conversation network is now every conformant
+  reader's job rather than the protocol's. Application entries also do **not** count toward
+  branch length, reversing this design's earlier reasoning, because the metric cannot
+  resolve a capability's tier. A variant-discriminant collision found on the way is now
+  guarded by a round-trip test over every entry body, including distinct action hashes.
 - **2026-08-19** — **E9 landed in the protocol repo.** `NetworkPolicy` now carries namespaced
   application-layer values it stores, orders, encodes and hash-covers without interpreting —
   the same division `extension_capabilities` already used. Specified in Core §2.6.2, six
