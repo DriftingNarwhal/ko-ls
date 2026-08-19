@@ -69,7 +69,7 @@ E11 lands (`06` §11). `kols-core::capabilities` builds the entries.
 
 | Capability | Effect | Tier |
 |---|---|---|
-| `chat:create-channel` | Create a new channel in this network | Ordinary |
+| `chat:create-channel:<scope>` | Create a new channel, in a category or network-wide | Ordinary |
 | `chat:manage-channel:<scope>` | Rename, re-categorise, archive, delete; bind permissions; set slowmode (`01` §10.3); **change a private channel's roster** | Governance-tier |
 | `chat:post:<scope>` | Write messages in scope | Ordinary |
 | `chat:read:<scope>` | Read scope. For private channels this is the record of intent; the *enforcement* is key possession (`03`) | Ordinary |
