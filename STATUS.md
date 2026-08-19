@@ -1,7 +1,7 @@
 # ko-ls — Implementation Status
 
-**Updated:** 2026-08-19 (retention policy and epoch catch-up; **in the working tree, uncommitted**)
-**Phase:** P1 — two nodes talk, a founder survives a restart; E4 next
+**Updated:** 2026-08-19 (E4 live delivery; **in the working tree, uncommitted**)
+**Phase:** P1 — two nodes talk live and durably; E11 and history backfill remain
 **Design:** [`design/`](design/) — `00`–`08`, all v1.0. **`distributed-intranet/specs/07` is normative** where it and the design set overlap.
 
 This file is the answer to "where are we?". It is updated in the same change that moves
@@ -19,14 +19,16 @@ Two repositories on this machine, **both pushed and current**:
 | Repo | Remote |
 |---|---|
 | `ko-ls` (this one) | `DriftingNarwhal/ko-ls` (private), branch `main` |
-| `../distributed-intranet` | `DriftingNarwhal/distributed-intranet`, branch `main` — carries spec 07, E9 (Core §2.6.2), E2 (Core §2.7.2) and E5 (Real-Time §2.2.1). **Media relay ceilings (§2.2.2) are in the working tree, uncommitted** |
+| `../distributed-intranet` | `DriftingNarwhal/distributed-intranet`, branch `main` — carries spec 07, E9 (Core §2.6.2), E2 (Core §2.7.2), E5 (Real-Time §2.2.1), MLS persistence (Core §3.3.1) and E4 (gossipsub, Core §5.1). **E4 is in the working tree, uncommitted** |
 
 The client builds against the sibling checkout by **path dependency**, not a published
 version, and deliberately so while the extensions are still moving. A fresh machine needs
 both repos cloned side by side.
 
-**Next task:** **E4 — gossipsub live delivery**, and history backfill behind it. The Tauri
-shell stays blocked on S3.
+**Next task:** **E11** (namespace registration for extension capabilities — small, and it
+removes the per-scope policy churn `kols-core::capabilities` currently works around), then
+**history backfill**: nothing yet walks `previous_segment` chains, so a reader sees only
+what a peer's current head segment holds. The Tauri shell stays blocked on S3.
 
 The keying gaps are closed end to end: `GroupSession::save`/`restore` (Core §3.3.1) mean a
 founder survives a restart and can still key people in, and `kols revoke` now drives a real
@@ -45,7 +47,7 @@ readers are unavoidable rather than optional:
 2. **A channel entry is invalid in a `conversation`-profile network.** The protocol carries
    `chat` payloads without decoding them, so it cannot reach this verdict.
 
-**To pick up:** `cargo test` in this repo should show 83 passing and clippy silent. If it
+**To pick up:** `cargo test` in this repo should show 90 passing and clippy silent. If it
 does not, fix that before anything else — the tree was left green.
 
 ---
@@ -54,9 +56,9 @@ does not, fix that before anything else — the tree was left green.
 
 | | |
 |---|---|
-| **Working on** | E4 — gossipsub live delivery |
+| **Working on** | E11, then history backfill |
 | **Blocked on** | Nothing |
-| **Runnable** | **`kols`** — init, attach, admit, revoke, serve, channel create/list, post, read. Two nodes hold a conversation. `cargo test` — 83 tests, clippy clean; `scripts/cross-check.sh` for big-endian |
+| **Runnable** | **`kols`** — init, attach, admit, revoke, serve, channel create/list, post, read. Two nodes hold a conversation. `cargo test` — 90 tests, clippy clean; `scripts/cross-check.sh` for big-endian |
 | **Next decision needed from the user** | Nothing blocking |
 
 ---
@@ -88,7 +90,7 @@ both green.
 | E1 | Extension capability registry | **Withdrawn** — already implemented upstream, needs configuration only |
 | E2 | Channel governance entries | **Landed, generalised** — one `AppEntry` variant (Core §2.7.2) rather than four chat-shaped ones; chat records become payloads |
 | E3 | Derived pointer ids | **Withdrawn** — `PointerId::from_bytes` is already public; derivation lives in `kols-core::ids` |
-| E4 | Gossipsub live delivery | Not started (P1) |
+| E4 | Gossipsub live delivery | **Landed** — Core §5.1 carries gossipsub; sealed payloads per spec 07 §5.2/§6.1 |
 | E5 | Media fan-out at the relay | **Landed early** — Real-Time §2.2.1; `Recipient::{One, Participants}`, envelope domain tag now `v2`. Relay resource ceilings landed with it (§2.2.2, `media_limits`) |
 | E6 | QUIC datagram media path | Not started (P3) |
 | E7 | Channel-scoped MLS groups | Not started (P2) |
@@ -103,7 +105,7 @@ both green.
 |---|---|
 | `kols-core` | **Encoding, author logs, merge, collision recovery, chat policy, channel structure** — records/segments/ids, `AuthorLog` incl. `rebase`, `ChannelView`, permissions, capability vocabulary, `ChatPolicy`, `ChannelEntry`. 60 tests |
 | `kols-net` | **Publish and fetch** — stores/announces chunks, accepts pointers, reassembles segments. Two live two-node tests |
-| `kols-cli` | **`kols`, and its node daemon** — creates a network, admits and keys in joiners, serves and fetches content, renders a merged view across authors. 117 tests that drive the real binaries, six of them over a live wire between two processes |
+| `kols-cli` | **`kols`, and its node daemon** — creates a network, admits and keys in joiners, serves and fetches content, renders a merged view across authors. 119 tests that drive the real binaries, eight of them over a live wire between two processes |
 | `kols-store` | Not created |
 | `kols-media` | Not created |
 | `kols-api` | Not created |
@@ -144,6 +146,56 @@ design changes before anything else is built.
 
 Newest first. One line per change that moved the state above.
 
+- **2026-08-19** — **E4 landed: records arrive live as well as durably.** Gossipsub joins
+  `MemberBehaviour` (Core §5.1) as the one broadcast primitive in a stack that is otherwise
+  pull-based — and the exception proves the rule, since everything else carries state a
+  partitioned node must be able to obtain *late*, which a broadcast cannot provide. A live
+  payload is the opposite case: one nobody needs to receive at all.
+
+  Three configuration choices are load-bearing rather than incidental. **Signing is off** —
+  a record already carries its own signature over its own canonical bytes, so signing them
+  again with the transport keypair would leave a receiver with two authorities for "who
+  wrote this" and no rule for choosing; `gossip_behaviour` takes no keypair, so the absence
+  is visible in the signature. **Message ids are content hashes**, not the default sender
+  and sequence, because the same record legitimately arrives twice — once live, once in a
+  segment — and deduplication has to agree with the consumer's own content addressing.
+  **The transport validates nothing**: it does not know what a payload means, and half a
+  check would be worse than none, since a caller would read it as done.
+
+  The payload is sealed under spec 07 §5.2's channel content key, derived from the epoch
+  and bound to both channel and rotation — so it cannot be read by a non-member sharing the
+  mesh, cannot be relayed into another channel, and survives publication either side of a
+  rotation because it carries the `rotation_ref` its sender used.
+
+  **Three things this shook out, and the third was my own test being wrong.** A record was
+  marked broadcast even when the publish failed for want of a subscriber, so a message
+  posted moments before a peer subscribed never went live at all — the one case the path
+  exists for. Landing it then broke two passing tests, which was the useful finding: they
+  waited on the durable path's "learned 1 record", and a record arriving live is *already
+  stored* by the time the durable absorb runs, so that line correctly never printed. Both
+  paths now report in the same words with the path named, because two vocabularies for one
+  event make "did this arrive" depend on which way it came.
+
+  The third: the new test waited for the record to reach the peer *live* and kept failing —
+  and the path was fine. On loopback the durable path is milliseconds too, so which arrives
+  first is a race, and §6.1 promises only that the record arrives. The test was demanding
+  something the design explicitly declines to offer. It now asserts what is actually
+  promised: the record demonstrably goes out live (a publish only succeeds once somebody is
+  subscribed, so the daemon reports that separately), it arrives, and it lands **exactly
+  once** however many paths carried it.
+
+  The gossip-disabled case §6.1 requires be testable is covered by never overlapping the
+  two nodes: Alice writes and stops before Bob runs, so nothing can reach him live and
+  everything he ends up with came through the durable path alone.
+
+  **A third finding, and the worst of the three: the daemon was starving its own CLI.**
+  `exclude_removed_members` took the append lock on *every tick* — thirty acquisitions a
+  minute, each held across a full log read — while one-shot commands need the same lock to
+  append at all. `kols admit` timed out waiting for it. The check now runs *before* locking
+  and only locks when there is genuinely a member to exclude, which is almost never. The
+  lock guards appends; reading never needed permission, and treating it as though it did
+  made the daemon and its own commands compete for a resource neither of them was really
+  using.
 - **2026-08-19** — **Retention landed as two windows, and a catch-up bug was found asking
   what the default should be.** The question was what to set for retiring superseded epoch
   keys, with the worry that somebody absent for thirty days would come back locked out.

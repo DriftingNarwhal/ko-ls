@@ -46,7 +46,7 @@ directory — the protocol crates are path dependencies while the extensions it 
 still landing.
 
 ```bash
-cargo test                                   # 83 tests; the two-node ones spawn real nodes on loopback
+cargo test                                   # 90 tests; the two-node ones spawn real nodes on loopback
 cargo clippy --workspace --all-targets       # must stay clean
 ./scripts/cross-check.sh                     # big-endian verification, see below
 ```
@@ -103,10 +103,15 @@ Keying is whole: group state survives a restart, so a founder can still admit an
 new members after one, and the epoch rotates on both add and remove.
 
 `kols revoke` drives a real removal: the membership entry from the command, the epoch
-rotation from the daemon, in that order because the protocol requires it.
+rotation from the daemon, in that order because the protocol requires it. Records also
+travel **live** over gossipsub as they are written — sealed under the channel's content key
+— while remaining fully carried by the durable path, so a node with the live path silent is
+slower and completely correct.
 
 What does not exist yet: no user interface, no private-channel keying, no voice, no search,
-no live gossip path. [`STATUS.md`](STATUS.md) is the honest inventory.
+and no history backfill — nothing walks `previous_segment` chains, so a reader sees only
+what a peer's current head segment holds. [`STATUS.md`](STATUS.md) is the honest
+inventory.
 
 ## The one number worth knowing
 

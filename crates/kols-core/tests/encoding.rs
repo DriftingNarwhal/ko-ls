@@ -493,3 +493,121 @@ fn a_configured_window_survives_encoding_like_any_other_policy_value() {
         Retention::Days(365)
     );
 }
+
+// ── live delivery (spec 07 §5.2, §6.1) ─────────────────────────────────
+
+fn epoch(byte: u8) -> intranet_storage::EpochKey {
+    intranet_storage::EpochKey::from_bytes([byte; 32])
+}
+
+fn rotation(byte: u8) -> intranet_crypto::Hash {
+    intranet_crypto::Hash::from_bytes([byte; 32])
+}
+
+#[test]
+fn a_live_payload_round_trips_and_yields_the_identical_record() {
+    // The property the whole live path rests on: what travels live and what a
+    // segment carries months later are the same bytes. That is what makes a
+    // record delivered either way independently verifiable and identically
+    // addressed, so a duplicate is genuinely idempotent rather than merely
+    // similar.
+    let author = identity(1);
+    let record = Record::create(&author, channel(), Hlc::new(1_700_000_000_000, 0), message("live"));
+
+    let sealed = LivePayload::seal(&record, &epoch(7), rotation(3));
+    let decoded = LivePayload::decode(&sealed.encode()).expect("round trips");
+    assert_eq!(decoded, sealed);
+
+    let opened = decoded.open(&epoch(7)).expect("opens under the sealing key");
+    assert_eq!(opened, record);
+    assert_eq!(
+        opened.canonical_bytes(),
+        record.canonical_bytes(),
+        "byte-identical, so the same record from either path has one id"
+    );
+    assert_eq!(opened.id(), record.id());
+}
+
+#[test]
+fn a_payload_does_not_open_under_the_wrong_epoch_or_the_wrong_rotation() {
+    // The content key binds both, so a payload cannot be opened by somebody
+    // holding a different epoch, and cannot be replayed across a rotation into a
+    // window it was not published in.
+    let author = identity(1);
+    let record = Record::create(&author, channel(), Hlc::new(1, 0), message("bound"));
+    let sealed = LivePayload::seal(&record, &epoch(7), rotation(3));
+
+    assert!(
+        sealed.open(&epoch(8)).is_err(),
+        "another epoch's holder must not be able to read this"
+    );
+
+    let mistagged = LivePayload {
+        rotation: rotation(4),
+        ..sealed.clone()
+    };
+    assert!(
+        mistagged.open(&epoch(7)).is_err(),
+        "the rotation is bound into the key, not merely carried beside it"
+    );
+}
+
+#[test]
+fn a_record_cannot_be_relayed_into_another_channel() {
+    // The same lift spec 07 §3.5 guards against inside a segment, on the live
+    // path: a validly-signed record moved into another channel's payload. Its
+    // signature stays genuine throughout, so checking signatures alone does not
+    // catch it.
+    let author = identity(1);
+    let record = Record::create(&author, channel(), Hlc::new(1, 0), message("mine"));
+    let sealed = LivePayload::seal(&record, &epoch(7), rotation(3));
+
+    let elsewhere = server_channel_id(&network(), &[77u8; 32]);
+    let relayed = LivePayload {
+        channel: elsewhere,
+        ..sealed
+    };
+    assert!(
+        relayed.open(&epoch(7)).is_err(),
+        "a record must belong to the channel whose key opened it"
+    );
+}
+
+#[test]
+fn a_tampered_payload_is_refused_rather_than_rendered() {
+    let author = identity(1);
+    let record = Record::create(&author, channel(), Hlc::new(1, 0), message("intact"));
+    let mut sealed = LivePayload::seal(&record, &epoch(7), rotation(3));
+    sealed.sealed[0] ^= 0x01;
+
+    assert!(
+        sealed.open(&epoch(7)).is_err(),
+        "the AEAD is what detects this, and it must fail closed"
+    );
+}
+
+#[test]
+fn the_content_key_is_derived_and_stable_but_not_the_epoch_key() {
+    // Derived from a key the member already holds, so it adds no trust
+    // assumption — and distinct from it, so a live payload's key never *is* the
+    // network's epoch key travelling under another name.
+    let a = channel_content_key(&epoch(7), &channel(), &rotation(3));
+    let again = channel_content_key(&epoch(7), &channel(), &rotation(3));
+    assert_eq!(a.commitment(), again.commitment(), "derivation is stable");
+
+    let other_channel =
+        channel_content_key(&epoch(7), &server_channel_id(&network(), &[5u8; 32]), &rotation(3));
+    let other_rotation = channel_content_key(&epoch(7), &channel(), &rotation(4));
+    assert_ne!(a.commitment(), other_channel.commitment());
+    assert_ne!(a.commitment(), other_rotation.commitment());
+
+    // Compared by commitment, since a DEK does not expose its bytes — which is
+    // the point of the type. A content key equal to the epoch key would make
+    // these commitments equal too.
+    let epoch_as_dek = intranet_storage::Dek::from_bytes(*epoch(7).expose_for_delivery());
+    assert_ne!(
+        a.commitment(),
+        epoch_as_dek.commitment(),
+        "the content key must be derived from the epoch key, not be it"
+    );
+}

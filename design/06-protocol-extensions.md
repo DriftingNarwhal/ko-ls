@@ -1,6 +1,6 @@
 # Required Protocol Extensions
 
-**Document status:** v1.3 — E1 and E3 withdrawn, E11 added, **E9, E2 and E5 landed**
+**Document status:** v1.4 — E1 and E3 withdrawn, E11 added, **E9, E2, E5 and E4 landed**
 **Depends on:** all preceding documents
 **Consumed by:** work in `distributed-intranet`
 
@@ -29,7 +29,7 @@ Two rules govern this list:
 | ~~E1~~ | ~~Extension-capability tier registry~~ — **already implemented**, needs configuration only | — | None |
 | ~~E2~~ | Channel governance entries — **landed generically**, Core §2.7.2; chat payloads in spec 07 §3.8 | — | Done |
 | ~~E3~~ | ~~Derived pointer ids~~ — **already possible**, no change needed | — | None |
-| E4 | Gossipsub behaviour for live delivery | P1 | Medium |
+| ~~E4~~ | Gossipsub behaviour for live delivery — **landed**, Core §5.1 | — | Done |
 | ~~E5~~ | Media fan-out at the relay — **landed**, Real-Time §2.2.1 | — | Done |
 | E6 | QUIC datagram media path | P3 (quality) | Large, partly upstream |
 | E7 | Channel-scoped MLS groups | P2 | Large |
@@ -126,7 +126,7 @@ on a version resolve by lower record hash with the loser retrying (Storage §2.2
 
 ---
 
-## 4. E4 — Gossipsub Behaviour for Live Delivery
+## 4. E4 — Gossipsub Behaviour for Live Delivery ✅ **landed**
 
 `MemberBehaviour` carries a fixed set of request/response protocols and no
 publish/subscribe. Chat's live path (`01` §7) needs one topic per channel, subscribed on
@@ -140,9 +140,34 @@ demand.
   permission against replayed state — the same three-part discipline Storage §2.5 requires
   for append-set entries, applied here because the reasoning is identical.
 
-**Acceptance:** a client with gossip disabled converges on identical history through the
-durable path alone; duplicate and out-of-order delivery are idempotent; unsubscribing a
-channel stops its mesh maintenance.
+**Acceptance — all met.** In `intranet-transport/tests/live_delivery.rs`: a payload reaches
+a subscriber byte-identical on the topic it was published to, a node that never subscribed
+hears nothing, unsubscribing stops delivery, and publishing to an empty topic is not a
+failure worth reporting. In `kols-core`: a payload round-trips to the identical record with
+the same id, refuses to open under the wrong epoch or a swapped rotation, refuses a record
+relayed into another channel, and fails closed on tampering. Over two live `kols` nodes: a
+message posted while a peer is watching arrives live and **exactly once**, since the durable
+copy that follows is the same content-addressed record; and history still converges with
+nothing arriving live at all.
+
+**Three things landed differently from the proposal, each for a reason.**
+
+- **Message signing is off, not "left to the payload" as an aside.** A chat record already
+  carries its own signature over its own canonical bytes, so gossipsub signing them again
+  with the transport keypair would give a receiver two authorities for "who wrote this" and
+  no rule for choosing. `gossip_behaviour` takes no keypair at all, so the absence is
+  visible in the signature rather than implied.
+- **Message ids are content hashes.** The default is derived from sender and sequence
+  number, which would make the same record arriving live and again in a segment two
+  different messages — and idempotent duplicate delivery is a requirement, not a nicety.
+- **The transport validates nothing.** It cannot: it does not know what a payload means.
+  Signature, membership and `chat:post` are all checked in the client, and doing half of it
+  in the transport would be worse than none, because a caller would read it as done.
+
+**The live payload is sealed** under spec 07 §5.2's channel content key, derived from the
+epoch and bound to both channel and rotation — so a payload cannot be opened by a
+non-member on the mesh, cannot be replayed into another channel, and survives being
+published either side of a rotation because it carries the `rotation_ref` its sender used.
 
 *Alternative if per-channel mesh overhead proves heavy at scale: an HRW-selected fanout
 tier, which `intranet_realtime::assign_tier` already computes. Measure first.*
@@ -440,7 +465,7 @@ which is the friction E11 removes.
 
 ```
 P0   — nothing; E3 turned out to need no protocol change
-P1   E2 → E4 ; E9, E11 (independent, small).  E5 landed here, ahead of its phase
+P1   E2 → E4 ✅ ; E9 ✅, E11 (independent, small).  E5 landed here, ahead of its phase
 P2   E7   (depends on E2's ChannelRotation) ; E10 (independent, small)
 P3   E6   — lands when it lands
 P4   E8

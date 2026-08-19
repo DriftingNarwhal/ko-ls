@@ -451,3 +451,108 @@ fn a_node_offline_across_a_rotation_catches_up_and_can_still_read() {
         "bob must derive the epoch he missed and read what was written then:\n{read}"
     );
 }
+
+#[test]
+fn a_record_goes_out_live_and_arrives_exactly_once() {
+    // Spec 07 §6.1's two halves, and precisely not more than it promises.
+    //
+    // An earlier version of this test waited for the record to reach Bob *live*
+    // and failed, which was the test being wrong rather than the path: on
+    // loopback the durable path is milliseconds too, so whichever arrives first
+    // is a race, and §6.1 guarantees only that the record arrives. Demanding
+    // live win it would have been asserting something the design explicitly
+    // declines to offer.
+    //
+    // So what is asserted is what is actually promised: the record genuinely
+    // goes out over the live path, it arrives, and — because both paths carry
+    // the identical canonical bytes — it lands exactly once however many ways it
+    // came.
+    let alice = Home::new("live-alice");
+    let bob = Home::new("live-bob");
+
+    let created = ok(&alice, &["init", "lively"]);
+    let network = field(&created, "network   ");
+    let attached = ok(&bob, &["attach", &network]);
+    ok(&alice, &["admit", &field(&attached, "kols admit ")]);
+
+    let alice_node = serve(&alice, 45141, None);
+    let address = field(
+        &alice_node.wait_for("listening", Duration::from_secs(20)),
+        "listening ",
+    );
+    ok(&alice, &["channel", "create", "general"]);
+
+    let bob_node = serve(&bob, 45142, Some(&address));
+    bob_node.wait_for("keyed into this network", Duration::from_secs(45));
+
+    ok(&alice, &["post", "general", "sent while you were watching"]);
+
+    // A publish only succeeds once somebody is subscribed to the topic, so this
+    // line is the live path demonstrably working rather than merely attempted.
+    alice_node.wait_for("broadcast 1 record(s) live", Duration::from_secs(45));
+
+    // Bob ends up with it, whichever path won.
+    let deadline = Instant::now() + Duration::from_secs(45);
+    loop {
+        let read = ok(&bob, &["read", "general"]);
+        if read.contains("sent while you were watching") {
+            break;
+        }
+        assert!(Instant::now() < deadline, "the record must arrive:\n{read}");
+        std::thread::sleep(Duration::from_millis(300));
+    }
+
+    // Exactly once. Records are content-addressed, so a copy from each path is
+    // one record rather than two — §6.1's idempotence requirement, and the
+    // reason gossipsub is configured to identify messages by content hash
+    // instead of by sender and sequence.
+    std::thread::sleep(Duration::from_secs(6));
+    let again = ok(&bob, &["read", "general"]);
+    assert_eq!(
+        again.matches("sent while you were watching").count(),
+        1,
+        "arriving by both paths must yield one record:\n{again}"
+    );
+}
+
+#[test]
+fn history_still_converges_with_the_live_path_carrying_nothing() {
+    // §6.1 requires conformance be testable with gossip disabled: "a client with
+    // gossip disabled is slower and completely correct". There is no flag to
+    // turn it off, so this achieves the same thing by never overlapping the two
+    // nodes — Alice writes and stops before Bob ever runs, so no payload can
+    // reach him live and everything he ends up with came through the durable
+    // path alone.
+    let alice = Home::new("nolive-alice");
+    let bob = Home::new("nolive-bob");
+
+    let created = ok(&alice, &["init", "quiet"]);
+    let network = field(&created, "network   ");
+    let attached = ok(&bob, &["attach", &network]);
+    ok(&alice, &["admit", &field(&attached, "kols admit ")]);
+
+    let alice_node = serve(&alice, 45143, None);
+    let address = field(
+        &alice_node.wait_for("listening", Duration::from_secs(20)),
+        "listening ",
+    );
+    ok(&alice, &["channel", "create", "general"]);
+    ok(&alice, &["post", "general", "written with nobody listening"]);
+    alice_node.wait_for("picked up", Duration::from_secs(20));
+
+    let bob_node = serve(&bob, 45144, Some(&address));
+    bob_node.wait_for("keyed into this network", Duration::from_secs(45));
+    bob_node.wait_for("learned 1 record", Duration::from_secs(45));
+
+    let output = bob_node.output();
+    assert!(
+        !output.contains("learned 1 record(s) live"),
+        "nothing could have arrived live here, so the durable path is what is under test:\n{output}"
+    );
+
+    let read = ok(&bob, &["read", "general"]);
+    assert!(
+        read.contains("written with nobody listening"),
+        "the durable path alone must carry it:\n{read}"
+    );
+}

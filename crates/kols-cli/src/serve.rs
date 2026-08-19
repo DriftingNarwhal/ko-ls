@@ -29,7 +29,7 @@ use intranet_crypto::Timestamp;
 use intranet_ledger::{BandwidthCap, CapabilityAdvertisement, ComputeClass};
 use intranet_storage::ChunkSpec;
 use intranet_transport::{MemberNode, NodeEvent};
-use kols_core::{AuthorLog, ChannelId, Segment};
+use kols_core::{AuthorLog, Authority, ChannelId, Placement, Segment, StateAuthority};
 use kols_net::{fetch_segment, known_pointer, plan_fetch, publish_segment};
 use libp2p::multiaddr::Protocol;
 use libp2p::{Multiaddr, PeerId};
@@ -152,6 +152,9 @@ async fn serve(root: std::path::PathBuf, listen: &str, peers: &[String]) -> Resu
     }
 
     let mut connected: BTreeSet<PeerId> = BTreeSet::new();
+    // Records already broadcast, so republishing does not rebroadcast history
+    // every couple of seconds.
+    let mut broadcast: BTreeSet<kols_core::MessageId> = BTreeSet::new();
     let mut announced = BTreeSet::new();
     let mut fetched = BTreeSet::new();
     let mut listening = Vec::new();
@@ -169,6 +172,8 @@ async fn serve(root: std::path::PathBuf, listen: &str, peers: &[String]) -> Resu
             event = node.next_event() => event,
             _ = refresh.tick() => {
                 adopt_local_changes(&store, &mut node, &identity)?;
+                subscribe_channels(&store, &mut node)?;
+                publish_unsent_live(&store, &mut node, &identity, &mut broadcast)?;
                 if holds_group {
                     catch_up_epochs(&store, &mut node)?;
                     let excluded = exclude_removed_members(&store, &mut node, &identity)?;
@@ -335,6 +340,23 @@ async fn serve(root: std::path::PathBuf, listen: &str, peers: &[String]) -> Resu
             NodeEvent::EpochKeyUnavailable { reason, .. } => {
                 println!("not keyed in: {reason}");
             }
+
+            // A live payload — spec 07 §6.1. Nothing depends on this arriving:
+            // the same record reaches every member through the durable path, so
+            // anything refused here costs latency and nothing else.
+            // Reported in the same words the durable path uses, with the path
+            // named. Two vocabularies for one event would make "did this
+            // record arrive" depend on which way it happened to come — and a
+            // record that arrived live is *already stored*, so the durable
+            // absorb that follows correctly reports nothing.
+            NodeEvent::LiveReceived { payload, .. } => match admit_live(&store, &payload) {
+                Ok(true) => println!("learned 1 record(s) live"),
+                Ok(false) => {}
+                // Printed rather than swallowed: a refusal is either a peer
+                // sending what it should not, or this node missing a key it
+                // should have. Both are worth seeing; neither is worth stopping.
+                Err(why) => println!("refused a live payload: {why}"),
+            },
 
             // A chunk this node fetched makes it a source for that chunk
             // (Storage §4.2), so it is announced rather than held quietly.
@@ -681,12 +703,11 @@ fn exclude_removed_members(
     node: &mut MemberNode,
     identity: &intranet_identity::PerNetworkIdentity,
 ) -> Result<usize, String> {
-    // Same discipline as answering a key request: this appends a rotation
-    // parented on the node's head, so the store's head has to be the node's head
-    // and nothing else may append in between.
-    let _lock = store.lock().map_err(|e| e.to_string())?;
-    adopt_local_changes(store, node, identity)?;
-
+    // **Checked before locking, and that order matters.** This runs on every
+    // tick, while one-shot commands need the same lock to append at all — so
+    // taking it unconditionally meant a `kols admit` could wait behind thirty
+    // acquisitions a minute and time out, which is exactly what happened. The
+    // lock guards *appends*; reading needs no permission.
     let Some(state) = replayable(store) else {
         return Ok(0);
     };
@@ -702,11 +723,25 @@ fn exclude_removed_members(
         }
     }
 
+    // Nobody to exclude is the overwhelmingly common case, and it costs nothing
+    // beyond the read above.
+    let departed: Vec<_> = named
+        .into_iter()
+        .filter(|who| !state.is_member(who))
+        .filter(|who| node.is_keyed_member(who))
+        .collect();
+    if departed.is_empty() {
+        return Ok(0);
+    }
+
+    // Only now, and for the same reason as answering a key request: this appends
+    // a rotation parented on the node's head, so the store's head has to *be*
+    // the node's head and nothing else may append in between.
+    let _lock = store.lock().map_err(|e| e.to_string())?;
+    adopt_local_changes(store, node, identity)?;
+
     let mut excluded = 0;
-    for who in named {
-        if state.is_member(&who) {
-            continue;
-        }
+    for who in departed {
         match node.revoke_epoch_member(
             &who,
             identity,
@@ -729,6 +764,132 @@ fn exclude_removed_members(
         }
     }
     Ok(excluded)
+}
+
+/// Subscribes to the live topic of every channel this node knows.
+///
+/// On demand in the sense §6.1 means it — a topic per channel this member
+/// actually has, rather than one per channel in existence — though a real client
+/// would narrow further to channels currently open or flagged, since each topic
+/// carries its own mesh maintenance. Subscribing twice is a no-op, so this is
+/// safe to call on every tick as the channel set changes.
+fn subscribe_channels(store: &Store, node: &mut MemberNode) -> Result<(), String> {
+    let Some(state) = replayable(store) else {
+        return Ok(());
+    };
+    let (channels, _) = network::channels(store, &state).map_err(|e| e.to_string())?;
+    for channel in channels.keys() {
+        node.subscribe_live(&kols_core::gossip_topic(channel))
+            .map_err(|err| format!("could not subscribe: {err}"))?;
+    }
+    Ok(())
+}
+
+/// Broadcasts this node's own records that have not gone out live yet.
+///
+/// **Failures are ignored on purpose.** The commonest one is having no peer
+/// subscribed to the topic, which is the ordinary state of a quiet channel, and
+/// §6.1 is explicit that nothing may depend on this path — the record reaches
+/// everybody through the durable one regardless. Treating it as an error would
+/// report a problem that does not exist.
+///
+/// Records are remembered as sent so that republishing a segment does not
+/// rebroadcast its whole history every couple of seconds.
+fn publish_unsent_live(
+    store: &Store,
+    node: &mut MemberNode,
+    identity: &intranet_identity::PerNetworkIdentity,
+    sent: &mut BTreeSet<kols_core::MessageId>,
+) -> Result<(), String> {
+    let mut broadcast = 0usize;
+    let Some(state) = replayable(store) else {
+        return Ok(());
+    };
+    let (Ok(epoch), Ok(rotation)) = (store.epoch_key(), store.rotation_ref()) else {
+        return Ok(());
+    };
+    let (channels, _) = network::channels(store, &state).map_err(|e| e.to_string())?;
+
+    for channel in channels.keys() {
+        let topic = kols_core::gossip_topic(channel);
+        for record in store
+            .own_records(channel, &identity.id())
+            .map_err(|e| e.to_string())?
+        {
+            if sent.contains(&record.id()) {
+                continue;
+            }
+            let payload = kols_core::LivePayload::seal(&record, &epoch, rotation);
+            // Marked as sent only when it actually went out. Publishing fails
+            // while no peer is subscribed to the topic, which is the ordinary
+            // state of a channel nobody is watching *and* the state a moment
+            // before somebody starts — so recording the attempt rather than the
+            // send would mean a message posted just before a peer subscribed
+            // never went live at all, which is the one case the path exists for.
+            if node.publish_live(&topic, payload.encode()).is_ok() {
+                sent.insert(record.id());
+                broadcast += 1;
+            }
+        }
+    }
+
+    // Reported because a publish only succeeds once somebody is actually
+    // subscribed, so this is the moment the live path became useful rather than
+    // the moment a record was written. Without it there is no way to tell a
+    // channel nobody is watching from one where delivery is broken.
+    if broadcast > 0 {
+        println!("broadcast {broadcast} record(s) live");
+    }
+    Ok(())
+}
+
+/// Opens a live payload and stores the record it carries, if it is admissible.
+///
+/// Returns whether anything new was learned. Everything here is a refusal the
+/// transport could not make for us: it carries opaque bytes and validates
+/// nothing (Core §5.1), so signature, membership and the author's right to post
+/// are all checked here — the same three-part discipline an append-set entry
+/// gets, and for the same reason.
+///
+/// A payload this node cannot open is not necessarily hostile: a member mid-
+/// rotation may hold a key this one does not yet. It is refused either way,
+/// because guessing is not available, and the record will arrive on the durable
+/// path regardless.
+fn admit_live(store: &Store, payload: &[u8]) -> Result<bool, String> {
+    let live = kols_core::LivePayload::decode(payload)
+        .map_err(|err| format!("not a live payload: {err}"))?;
+
+    // Every key, because a sender mid-rotation may have sealed under an epoch
+    // this node no longer treats as current.
+    let keys = store.epoch_keys().map_err(|e| e.to_string())?;
+    let record = keys
+        .iter()
+        .find_map(|(_, key)| live.open(key).ok())
+        .ok_or("no held epoch key opens it")?;
+
+    let Some(state) = replayable(store) else {
+        return Ok(false);
+    };
+    let (channels, _) = network::channels(store, &state).map_err(|e| e.to_string())?;
+    let Some(channel) = channels.get(&record.channel) else {
+        return Err("a channel this node does not know".to_owned());
+    };
+
+    // The same gate a stored record passes. A live payload arrives with no
+    // pointer vouching for it, so skipping this would mean admitting whatever a
+    // peer chose to broadcast.
+    let placement = Placement {
+        channel: channel.id,
+        category: channel.category,
+    };
+    let authority = StateAuthority { state: &state };
+    if !authority.may_post(&record.author, &placement) {
+        return Err(format!("{} may not post there", record.author.short()));
+    }
+
+    store
+        .put_record(&record.channel, &record)
+        .map_err(|e| e.to_string())
 }
 
 /// Derives any epoch keys this node was absent for.

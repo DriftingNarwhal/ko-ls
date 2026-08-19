@@ -25,6 +25,7 @@ mod log;
 mod permissions;
 mod policy;
 mod ids;
+mod live;
 mod record;
 mod segment;
 mod view;
@@ -35,6 +36,7 @@ pub use channel::{
     Privacy, admit,
 };
 pub use hlc::Hlc;
+pub use live::{LivePayload, channel_content_key};
 pub use log::{AuthorLog, CHAT_LOG_CONTENT_TYPE, Published};
 pub use ids::{
     ChannelId, MessageId, author_log_pointer, channel_browse_collection,
