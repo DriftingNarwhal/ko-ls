@@ -205,6 +205,19 @@ a media relay for a 3,000-member server has misrepresented what the user agreed 
 settings UI should show what the contribution is currently costing, which the capability
 ledger and local counters already make available.
 
+**The declared cap is now binding on the node that declared it** (Real-Time §2.2.2). It
+used to be read by every node *except* the one that made it — it steered other members'
+relay and source selection while the volunteer enforced nothing — which meant a user could
+set a limit, watch the client ignore it, and have no way to tell. A media relay now bounds
+concurrent calls, participants per call, and sustained bytes forwarded, and refuses when it
+would exceed them. Two client consequences:
+
+- **A refusal is not an error to surface.** A call whose relay declines renegotiates onto
+  another, the same as if that relay had gone offline (`04` §7). The UI should say nothing.
+- **The node's own refusals are worth showing in settings**, in the one place a user is
+  already looking at what they volunteered. A steady stream of them is what "I offered more
+  upload than I have" looks like from the inside, and there is no other signal for it.
+
 ---
 
 ## 7. Profiles

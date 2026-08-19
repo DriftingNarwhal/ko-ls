@@ -1,6 +1,6 @@
 # ko-ls — Implementation Status
 
-**Updated:** 2026-08-19 (E5 landed in the protocol repo; **not yet committed or pushed**)
+**Updated:** 2026-08-19 (E5 pushed; media relay ceilings **in the working tree, uncommitted**)
 **Phase:** P1 — E9, E2 and E5 landed; chat entry payloads next
 **Design:** [`design/`](design/) — `00`–`08`, all v1.0. **`distributed-intranet/specs/07` is normative** where it and the design set overlap.
 
@@ -19,7 +19,7 @@ Two repositories on this machine, **both pushed and current**:
 | Repo | Remote |
 |---|---|
 | `ko-ls` (this one) | `DriftingNarwhal/ko-ls` (private), branch `main` |
-| `../distributed-intranet` | `DriftingNarwhal/distributed-intranet`, branch `main` — carries spec 07, E9 (Core §2.6.2), E2 (Core §2.7.2) and E5 (Real-Time §2.2.1). **E5 is in the working tree, uncommitted** |
+| `../distributed-intranet` | `DriftingNarwhal/distributed-intranet`, branch `main` — carries spec 07, E9 (Core §2.6.2), E2 (Core §2.7.2) and E5 (Real-Time §2.2.1). **Media relay ceilings (§2.2.2) are in the working tree, uncommitted** |
 
 The client builds against the sibling checkout by **path dependency**, not a published
 version, and deliberately so while the extensions are still moving. A fresh machine needs
@@ -82,7 +82,7 @@ both green.
 | E2 | Channel governance entries | **Landed, generalised** — one `AppEntry` variant (Core §2.7.2) rather than four chat-shaped ones; chat records become payloads |
 | E3 | Derived pointer ids | **Withdrawn** — `PointerId::from_bytes` is already public; derivation lives in `kols-core::ids` |
 | E4 | Gossipsub live delivery | Not started (P1) |
-| E5 | Media fan-out at the relay | **Landed early** — Real-Time §2.2.1; `Recipient::{One, Participants}`, envelope domain tag now `v2` |
+| E5 | Media fan-out at the relay | **Landed early** — Real-Time §2.2.1; `Recipient::{One, Participants}`, envelope domain tag now `v2`. Relay resource ceilings landed with it (§2.2.2, `media_limits`) |
 | E6 | QUIC datagram media path | Not started (P3) |
 | E7 | Channel-scoped MLS groups | Not started (P2) |
 | E8 | Track metadata in media payloads | Not started (P4) |
@@ -136,6 +136,41 @@ design changes before anything else is built.
 
 Newest first. One line per change that moved the state above.
 
+- **2026-08-19** — **A relay can now refuse, and its advertisement binds.** Found by asking
+  what actually stops a volunteer being asked for more than it offered: nothing did. A
+  node's `bandwidth_cap` was read by every node *except* the one that declared it — it
+  steered other members' relay and source selection while the volunteer enforced nothing,
+  so a user could set a limit, watch the client ignore it, and have no way to tell. That was
+  survivable while a relay forwarded one envelope per envelope received. Fan-out made it a
+  multiplier, which is why this follows E5 rather than standing alone.
+
+  Specified in Real-Time §2.2.2 as a requirement to *have* ceilings without prescribing
+  values, and implemented as `intranet-transport::media_limits`: concurrent calls,
+  participants per call, and sustained bytes forwarded — charged for what **leaves** the
+  node, since charging the inbound size under-meters by exactly the fan-out factor the
+  ceiling exists to bound. Kept out of network policy deliberately: a ceiling describes one
+  node's hardware, so a network able to set it could compel a member to spend bandwidth it
+  never offered, which inverts Core §4.3's opt-in.
+
+  Two things the shape had to get right. `MediaRelayGuard` owns the participant sets, so
+  `authorize` is the only way to learn a frame's recipients and it charges in the same call
+  — the same structural answer `relay_limits` uses against a limiter that computes a verdict
+  and never enforces it. And a fan-out that does not fit is refused **whole**, because
+  serving some participants and not others turns a bandwidth ceiling into silent one-sided
+  call degradation, which is worse to experience and harder to diagnose than a refusal.
+
+  Thirteen tests: eleven unit over the charging arithmetic, refill curve, a backwards clock
+  and a carrier that is also a participant, plus two over live nodes. `relay_call` now
+  returns `Result`, and refusing is ordinary — the call renegotiates onto another relay
+  exactly as it would if this one went offline, so the client shows nothing.
+
+  One bug caught in this change's own code, by writing the test to exercise the real path
+  rather than the convenient one: changing a node's limits replaced the guard wholesale and
+  silently dropped every call it was carrying, which would have hung up on everyone with no
+  explanation at the far end. Limits now change in place — a lowered ceiling stops this node
+  taking new work without retracting agreement already given, and a raised one grants no
+  allowance, since allowance is earned from elapsed time and a config change that minted it
+  would be a rate limit anyone could step around by toggling a setting.
 - **2026-08-19** — **E5 landed, pulled forward from P3.** The relay reduced nobody's upload:
   `MediaEnvelope` carried one `to`, so a sender in an n-party relayed call emitted n−1
   envelopes and the relay added a hop to each. It now carries `Recipient::{One,

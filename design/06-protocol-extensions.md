@@ -199,9 +199,29 @@ it rather than by review:
 **Amplification is bounded by the relay's own agreement, not by the protocol.** One
 envelope in becomes N−1 out, which is both the point and the shape of an amplifier. The
 bound is that a relay chose the call and the participant set it accepted; a node unwilling
-to carry a large call declines at that point. No participant ceiling is specified, and a
-relay wanting one enforces it locally — a per-node resource decision with no cross-node
-consistency requirement, exactly like relay selection (§2.3).
+to carry a large call declines at that point.
+
+**That bound is now enforced rather than assumed** — Real-Time §2.2.2, landed immediately
+after this and prompted by it. The gap was that a node's advertised `bandwidth_cap` was
+read by every node *except* the one that declared it: it steered other members' relay and
+source selection while the volunteer itself enforced nothing. Survivable when a relay
+forwarded one envelope per envelope received; a multiplier once fan-out landed. A media
+relay now bounds concurrent calls, participants per call, and sustained bytes forwarded —
+charged for what *leaves* the node, since charging the inbound size would under-meter by
+exactly the fan-out factor the ceiling exists to bound.
+
+Two consequences the client owns:
+
+- **Refusing is ordinary.** A relay at its ceiling declines, and the call renegotiates onto
+  another through the mechanism it already uses when a relay drops (`04` §7). The client
+  must treat a decline as a topology event, not a call failure, and show the user nothing.
+- **The node's own refusals belong in the contribution UI** (`02` §6.4). A run of them is
+  what "I volunteered more upload than I have" looks like from inside the node, and no
+  other signal says it.
+
+The values stay unspecified and stay local, for the reason §2.3 gives about relay
+selection: a ceiling describes one node's hardware, so a network able to set it could
+compel a member to spend bandwidth it never offered — the inversion of Core §4.3's opt-in.
 
 Constraints that survived the change, as required:
 
@@ -219,7 +239,11 @@ and for a sender whose claim does not match its connection; each forwarded copy 
 readdressed to its recipient; a relay that is also a participant hears the frame without
 sending it to itself, including when it is the only other participant and has nothing to
 forward; the per-recipient form still works unchanged for mesh; and the two forms cannot
-decode as each other, nor a v1 envelope as a v2 one.
+decode as each other, nor a v1 envelope as a v2 one. For §2.2.2's ceilings: a relay at its
+call ceiling declines and then carries nothing for that call even if frames arrive anyway;
+a byte allowance runs out mid-call, refuses whole rather than partially, says why, and
+resumes when refilled; and ten unit tests cover the charging arithmetic, the refill curve,
+a backwards clock, and a carrier that is also a participant.
 
 **The client may now switch to a relay at the threshold** (`04` §3.1). The advice to stay
 in mesh existed only because a relay that did not fan out made calls worse than mesh, and

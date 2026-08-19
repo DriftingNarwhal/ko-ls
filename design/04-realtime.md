@@ -98,6 +98,12 @@ it to the participant set minus the sender. Three properties the client can now 
 - The relay checks the claimed sender against the connection it arrived on. A media frame
   carries no signature by design, so this is what stops a spoofed `from` buying an attacker
   N−1 sends at the relay's expense.
+- **The relay enforces its own advertised ceilings** (Real-Time §2.2.2) — concurrent calls,
+  participants per call, and sustained bytes forwarded, charged for what leaves the node
+  rather than what arrived at it. Refusing is ordinary: the call renegotiates onto another
+  relay through §1.4's mechanism, exactly as it would for a relay that went offline, so the
+  client must treat a decline as a topology event and not as a call failure. What a user
+  volunteers in `02` §6.4 is what the node will actually spend.
 
 **The switch at the threshold is therefore worth making.** The earlier advice to stay in
 mesh existed only because a relay that did not fan out made calls worse than mesh; §3's
