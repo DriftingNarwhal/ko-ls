@@ -1,0 +1,13 @@
+[package]
+name = "kols-core"
+description = "Domain model for ko-ls: records, canonical encoding, merge ordering, permissions"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+intranet-crypto.workspace = true
+intranet-identity.workspace = true
+intranet-governance.workspace = true
+intranet-storage.workspace = true

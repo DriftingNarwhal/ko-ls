@@ -1,0 +1,15 @@
+[workspace]
+resolver = "3"
+members = ["crates/kols-core"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.85"
+license = "MIT OR Apache-2.0"
+
+[workspace.dependencies]
+intranet-crypto = { path = "../distributed-intranet/crates/intranet-crypto" }
+intranet-identity = { path = "../distributed-intranet/crates/intranet-identity" }
+intranet-governance = { path = "../distributed-intranet/crates/intranet-governance" }
+intranet-storage = { path = "../distributed-intranet/crates/intranet-storage" }
