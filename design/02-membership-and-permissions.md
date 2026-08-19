@@ -1,6 +1,6 @@
 # Membership and Permissions
 
-**Document status:** v1.0 — permission resolution implemented; E11 outstanding, see `06` §11
+**Document status:** v1.0 — permission resolution implemented and reached through `kols-api`'s gate; E11 landed, so §2.2's per-scope registration problem is gone
 **Depends on:** Core Protocol Spec §1 (identity), §2 (governance), §5.6 (invites)
 **Consumed by:** `01-messaging-model`, `03-confidentiality`, `04-realtime`
 
@@ -62,10 +62,17 @@ slip it onto `everyone`.
 ### 2.2 Extension capabilities this app defines
 
 Each is registered with its tier at genesis, per Core §2.2's requirement that consuming
-specs tier-tag anything they define. **Registration is mandatory and currently exact**: an
-unregistered extension name is refused outright rather than assumed ordinary, and the
-registry matches whole names, so a parametrized capability needs an entry per scope until
-E11 lands (`06` §11). `kols-core::capabilities` builds the entries.
+specs tier-tag anything they define. **Registration is mandatory**: an unregistered
+extension name is refused outright rather than assumed ordinary, which is the fail-closed
+behaviour that keeps a governance-tier capability from being slipped onto `everyone`.
+
+**One entry per verb covers every scope of it**, since E11 landed (Core §2.2.1, `06` §11): a
+registration ending in `:` covers the namespace beneath it, longest match winning. Before
+that the registry matched whole names, so every scope needed its own entry added by a policy
+change — which meant creating a channel with a permission override required amending network
+policy, and the registry grew with the channel count forever. `kols-core::capabilities`
+builds the entries, and its `VERBS` table is where the tiers below actually live — `kols-api`
+resolves each command's class against it rather than against a second copy.
 
 | Capability | Effect | Tier |
 |---|---|---|
@@ -102,6 +109,13 @@ Resolution order, checked in sequence, first match wins:
 There is exactly one level of inheritance and no recursion. This is app-layer *name*
 resolution over flat capabilities — it does not nest groups and does not reintroduce the
 graph traversal Core §2.1 rejects.
+
+**One question resolves at scope only, and it is not an exception.** Creating a channel
+cannot be authorized by a channel-scoped grant, because the channel's id is minted by the
+entry that creates it — nobody could hold, or have registered, a grant naming it beforehand.
+So a definition resolves against the category and the network and stops. `kols-core` exposes
+that as its own function rather than as the ordinary path called with a placeholder id: a
+caller that could invent an id to ask about would get an answer that quietly depended on it.
 
 **Denials are absent grants, not negative grants.** There is no "deny" capability, because
 a negative grant would need precedence rules over the union-of-groups model the protocol

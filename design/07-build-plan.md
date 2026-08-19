@@ -1,6 +1,6 @@
 # Finalization and P0 Build Plan
 
-**Document status:** v1.0 — F1, F2, F3, S1, S3 and P0 complete; P1 not started
+**Document status:** v1.0 — **complete.** Every item in it is done; P1 is under way and tracked in `STATUS.md`, not here
 **Depends on:** `00`–`06`
 **Consumed by:** whoever starts building
 
@@ -222,3 +222,9 @@ S3  environment for Tauri  →  E2, E4  →  P1
 With F1 done, nothing blocks P0 but the repository itself. F2 should land before or
 alongside P0 rather than after: writing the spec is what catches an encoding decision that
 reads fine in isolation and wrong next to the protocol's own.
+
+**All of it is now done, and this document's job is finished.** It existed to get from a
+complete design to a first line of code, and the last thing in its way — S3's environment —
+is built. P1's progress and what it still owes live in `STATUS.md`, which is updated in the
+same change that moves work; a build plan kept as a running status would be a second one to
+disagree with it.

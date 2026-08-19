@@ -244,8 +244,11 @@ announces having posted here. Stale or missing entries cost a slower first load,
 lost message — which is precisely the durability property Storage §2.5 says an append-set
 must not be relied on for, and precisely why it is not relied on here.
 
-*Flagged: `intranet-storage` currently mints pointer ids randomly (`new_pointer_id`).
-Derived construction is an additive change — `06` §3.*
+*Resolved: no protocol change was needed. `intranet-storage` mints pointer ids randomly with
+`new_pointer_id`, but `PointerId::from_bytes` is a public `const fn`, so a client derives one
+by hashing whatever it likes — and the derivation inputs and their domain separation are the
+client's business rather than the storage layer's. `kols-core::ids` implements it, with the
+derivations pinned by test vectors, and `06` §3 records why E3 was withdrawn.*
 
 ### 3.3 Records
 
@@ -420,11 +423,18 @@ duplicates are idempotent because records are content-addressed by id; out-of-or
 arrival is irrelevant because order is computed, not received. A client with gossip
 entirely disabled is slower and completely correct.
 
-*Flagged: gossipsub is the recommendation because it is a mature libp2p behaviour that
-already solves per-topic mesh maintenance. If per-channel mesh overhead proves
-significant at high channel counts, the fallback is an HRW-selected fanout tier —
-`intranet_realtime::assign_tier` already computes exactly this shape, weighted by
-gossiped `bandwidth_cap` (Real-Time §3.3). Measure before switching.*
+**Landed as E4** (Core §5.1), gossipsub being a mature libp2p behaviour that already solves
+per-topic mesh maintenance. Three configuration choices turned out to be load-bearing and are
+recorded in `06` §4: transport-level message signing is off, because a record already carries
+its own signature and two authorities for "who wrote this" is worse than one; message ids are
+content hashes, because the same record legitimately arrives twice and deduplication has to
+agree with the consumer's own content addressing; and the transport validates nothing,
+because it cannot know what a payload means and half a check reads as a whole one.
+
+*Flagged: if per-channel mesh overhead proves significant at high channel counts, the
+fallback is an HRW-selected fanout tier — `intranet_realtime::assign_tier` already computes
+exactly this shape, weighted by gossiped `bandwidth_cap` (Real-Time §3.3). Measure before
+switching.*
 
 ---
 

@@ -30,8 +30,10 @@ The design set (`design/00`–`09`) owns client design, rationale and sequencing
 crates/kols-core   records, canonical encoding, merge ordering, permissions, chat policy,
                    channel structure as chat-namespace governance payloads
 crates/kols-net    publishing a channel over the transport, and reading one back
+crates/kols-api    the command surface, and the gate every command crosses
 crates/kols-cli    `kols` — the terminal client and its node daemon
 design/            00-08 at v1.0, 09 the interface
+.devcontainer/     the environment for this repo and the protocol beside it
 scripts/           cross-check.sh — runs the encoding on a big-endian target
 ```
 
@@ -39,17 +41,28 @@ scripts/           cross-check.sh — runs the encoding on a big-endian target
 permission resolution must produce identical answers on every node, and pure functions over
 explicit inputs are how that stays testable.
 
+`kols-api` is the only way into any of it. Every command names its target, the gate resolves
+permission by replaying the governance log, and what it hands back — an `Authorized` — has no
+public constructor, so an executor cannot be handed a command nobody checked. The terminal
+client crosses that boundary exactly as a UI would, which is the only reason to believe it
+works.
+
 ## Building
 
 Requires Rust 1.85+ (edition 2024) and a checkout of `distributed-intranet` as a sibling
 directory — the protocol crates are path dependencies while the extensions it needs are
-still landing.
+still landing. The dev container in `.devcontainer/` has the whole toolchain if you would
+rather not assemble one.
 
 ```bash
-cargo test                                   # 98 tests; the two-node ones spawn real nodes on loopback
+cargo test                                   # 117 tests; the two-node ones spawn real nodes on loopback
 cargo clippy --workspace --all-targets       # must stay clean
 ./scripts/cross-check.sh                     # big-endian verification, see below
 ```
+
+`.devcontainer/` builds all of it, plus the protocol workspace beside it and the Tauri
+toolchain the desktop client will need. Open **this repo's folder** in it — the container
+mounts the parent so both repos are visible, which is what the path dependency needs.
 
 `cross-check.sh` is not part of the default gate. It needs `qemu-user-static`,
 `gcc-s390x-linux-gnu` and the `s390x-unknown-linux-gnu` Rust target, and takes about a
@@ -116,8 +129,15 @@ own key, which is what lets a network's retention window drop *old* history and 
 rest: an author stops re-wrapping what has aged out, and Storage's rule that content with
 no live wrapping goes dark does the rest.
 
+Every command the client runs crosses `kols-api`, the boundary `design/05` §3 specifies —
+permission resolved by replaying the log, never by trusting that the interface only offered
+buttons you were allowed to press, and a consent class on each command derived from the tier
+its capability carries rather than from how consequential it looks.
+
 What does not exist yet: no user interface, no private-channel keying, no voice, and no
-search. [`STATUS.md`](STATUS.md) is the honest inventory.
+search. The boundary has a command half and no event half, and a gate with no dispatcher
+behind it yet. [`STATUS.md`](STATUS.md) is the honest inventory, and its §6 is the list of
+what this client owes and why.
 
 ## The one number worth knowing
 

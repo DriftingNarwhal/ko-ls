@@ -136,6 +136,8 @@ the document named.
 | D22 | The segment record list carries **no count prefix** — the one departure from the project's framing rule, because a count at the head re-chunks the whole object on every append. *Found by measurement in P0* | spec 07 §3.5 |
 | D23 | HLC strictness is per **(author, device)**, not per author — two devices cannot share a counter without a lock across machines, and a merged segment interleaves them | spec 07 §2.6 |
 | D24 | A **losing pointer version republishes the union** of both record sets, discarding nothing — the content-merge semantics Storage §2.2 defers to the application layer | `01` §3.1.1 |
+| D25 | Authorization at the API boundary is a **type, not a call**: what the gate returns has no public constructor, so an executor cannot be handed a command nobody checked. A check a caller can route around eventually is | `05` §3 |
+| D26 | A command's **consent class follows the tier of the capability it needs**, not how consequential the action looks — so pinning prompts harder than posting, because `chat:moderate` is governance-tier and `chat:post` is not | `05` §3 |
 
 ---
 
@@ -172,9 +174,15 @@ next. Estimates are deliberately absent — sequence is the useful part.
   and across two live nodes: delta-fetch, merge convergence under permutation and
   partition, reader-side refusal, and pointer-collision recovery. It also falsified two
   things the design had wrong (D22, D23), which is what it was for.
-- **P1 — Text chat MVP.** Channels and categories, roles and permissions, live gossip
-  path, history backfill, edits/deletes/reactions/threads, invites and onboarding, the
+- **P1 — Text chat MVP. In progress.** Channels and categories, roles and permissions, live
+  gossip path, history backfill, edits/deletes/reactions/threads, invites and onboarding, the
   Tauri desktop client. Public channels only.
+
+  Done: channel structure as governance payloads, permission resolution, the live gossip
+  path, segment sealing and backfill, admission and revocation with the epoch rotation each
+  implies, and the `05` §3 API boundary's command half. Not yet: an executor behind that
+  boundary, its event half, edits and reactions as commands anything can run, threads,
+  invites, and every part of the Tauri client. `STATUS.md` §6 is the current debt list.
 - **P2 — Private channels and direct messages.** Per-channel MLS subgroups and channel
   membership entries; the DM flow (network creation, direct invite delivery, voluntary
   identity link) and a DM inbox spanning networks; moderation redactions; search — network

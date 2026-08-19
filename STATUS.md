@@ -26,12 +26,15 @@ The client builds against the sibling checkout by **path dependency**, not a pub
 version, and deliberately so while the extensions are still moving. A fresh machine needs
 both repos cloned side by side.
 
-**Next task:** **the executor, and then the event half of `kols-api`.** The boundary now
-exists and refuses, but each caller still takes its `Authorized` apart and does the work
-inline — so there is a gate and no dispatcher behind it. `Event` is deliberately absent until
-there is something emitting events: the sync engine (`design/05` §4) is `kols serve`, whose
-records do not yet cross this boundary, and an event vocabulary written before anything
-emits one is a contract with no implementation to keep it honest.
+**Next task:** **the executor, and then the event half of `kols-api`** — O1 and O2 in §6,
+which is the register of everything this client owes and why. The boundary now exists and
+refuses, but each caller still takes its `Authorized` apart and does the work inline, so
+there is a gate and no dispatcher behind it. `Event` waits on the same thing: the engine that
+would emit events is `kols serve`, whose records do not cross the boundary yet.
+
+**§6 is new and worth reading once.** Seven debts, each with the reason it is outstanding and
+where it was incurred. None of them blocks anything else, which is exactly why they need
+writing down — an owed item nobody records is one somebody rediscovers as a surprise.
 
 **`kols-api` is the boundary `design/05` §3 describes, and two of its three properties are
 now held rather than intended.** *No ambient authority*: every command names its target, the
@@ -59,12 +62,9 @@ host, and what arrives is VS Code's forwarding of both an X server and a Wayland
 prefers Wayland when `WAYLAND_DISPLAY` is set, which leaves `xwininfo` nothing to observe, so
 `GDK_BACKEND=x11` is what a *script* checks a window with.
 
-**One small client item is owed and is not blocking:** `kols` still builds every node with
-`MemberNode::new`, so nothing yet asks for `Discovery::Off` on a conversation-profile network.
-That is the client half of E12 (`design/06` §12) and wants a profile to read: `kols init`
-writes no `chat:network-profile` key, so every network the CLI creates is a `server` by
-default and there is not yet a conversation network to build the leaner node for.
-`kols_core::policy::conversation_genesis_values` already exists for one; only a test calls it.
+**What is owed is in §6 now**, rather than scattered through this section — seven items with
+the reason each is outstanding, including the client half of E12 that used to be described
+here.
 
 **`design/09` is the interface design**, written before any interface code. It settles the
 navigation model, the hot/warm/cold liveness tiers, presence honesty, permission-gated
@@ -122,7 +122,7 @@ left green.
 
 | | |
 |---|---|
-| **Working on** | P1 — `kols-api` landed; the executor and the event half are next |
+| **Working on** | P1 — `kols-api` landed; the executor behind it (§6, O1) is next |
 | **Blocked on** | Nothing |
 | **Runnable** | **`kols`** — init, attach, admit, revoke, serve, channel create/list, post, read. Two nodes hold a conversation. `cargo test` — 117 tests here and 644 in `../distributed-intranet`, clippy clean in both; `scripts/cross-check.sh` for big-endian |
 | **Next decision needed from the user** | Nothing blocking |
@@ -183,7 +183,29 @@ both green.
 Crates are created when there is code for them, not in advance — an empty crate is a
 claim that something exists.
 
-## 6. P0 Definition of Done
+## 6. What Is Owed
+
+Work that is known, named and not yet done. Distinct from §4's protocol extensions, which
+are scoped and sequenced; these are debts the client took on deliberately, each recorded
+where it was incurred so it is not rediscovered as a surprise.
+
+**Nothing here blocks anything else.** Where an item exists because something it depends on
+does not, the dependency is named — an owed item with no stated reason is just a thing
+somebody forgot.
+
+| # | Owed | Why it is not done | Where it is recorded |
+|---|---|---|---|
+| O1 | **An executor behind the gate.** `authorize` returns an `Authorized` and each caller then takes it apart and does the work inline, so there is a gate with no dispatcher behind it | The gate was worth landing before the thing it guards; a dispatcher that consumed an `Authorized` and was the only thing that could is the natural next piece | `design/05` §3 |
+| O2 | **The event half of `kols-api`, and property 3 with it.** No `Event` type exists, so "events are idempotent and re-deliverable" is designed and unheld | The engine that would emit events is `kols serve`, whose records do not cross the boundary yet. An event vocabulary written before anything emits one is a contract with no implementation to keep it honest | `kols-api`'s own crate docs; `design/05` §3 |
+| O3 | **Two checks `authorize` does not make**: that an edit or withdrawal targets a message the actor wrote, and the message rate ceiling | Both are facts about the record set rather than about replayed state, so both need the store the boundary deliberately cannot reach. Enforced meanwhile where the design puts them — authorship on read by `ChannelView`, the ceiling by readers | `authorize`'s own documentation |
+| O4 | **Commands for direct messages, search, voice and stage** | Each has a line in `design/05` §3 and no code behind it. P2 for the first two, P3 and P4 for the rest | `kols-api::Command`'s own documentation |
+| O5 | **`Discovery::Off` for conversation-profile networks** — the client half of E12 | `kols init` writes no `chat:network-profile` key, so every network the CLI creates is a `server` and there is no conversation network to build the leaner node for. `kols_core::policy::conversation_genesis_values` exists for one; only a test calls it | `design/06` §12 |
+| O6 | **`may_moderate_at` answers from current state, ignoring the head it is given** | Checking authority *as of* a governance head needs the log rather than one replayed snapshot. The difference shows only when a moderator is demoted after acting: this retroactively invalidates their past redactions, where `design/01` §6 says they should stand | `kols-core::permissions`, flagged in the type's own docs |
+| O7 | **`kols-store` does not exist.** `kols-cli` carries its own file-backed store instead of the SQLite projection `design/05` §5 describes | Nothing has needed a projection yet — the CLI replays the log on every invocation, which is slow and correct. The projection is worth building when something renders fast enough to notice | `design/05` §5 |
+
+---
+
+## 7. P0 Definition of Done
 
 From `design/07-build-plan.md` §3. **All five are met** — see the per-row detail below.
 
@@ -200,7 +222,7 @@ design changes before anything else is built.
 
 ---
 
-## 7. Where the Code Lives
+## 8. Where the Code Lives
 
 - `ko-ls` — `origin` is `github.com/DriftingNarwhal/ko-ls` (private).
 - `distributed-intranet` — `origin` is `github.com/DriftingNarwhal/distributed-intranet`,
@@ -210,9 +232,41 @@ design changes before anything else is built.
 
 ---
 
-## 8. Log
+## 9. Log
 
 Newest first. One line per change that moved the state above.
+
+- **2026-08-19** — **A documentation pass, and it found three stale claims rather than
+  none.** The point of reading all of it after a landing is that some of it is wrong, and it
+  was: `design/02` announced E11 as outstanding and told a reader the capability registry
+  matches names exactly, so a parametrized capability needs an entry per scope — the exact
+  problem E11 landed to remove, described in the present tense two rounds after it was gone.
+  `design/01` §3.2 still flagged derived pointer ids as a protocol change to make, when E3
+  was withdrawn because `PointerId::from_bytes` was already public. And §7 still called
+  gossipsub "the recommendation" after E4 shipped it. A design document that describes a
+  solved problem as open is worse than one that says nothing, because somebody will plan
+  around it.
+
+  **§6 is new: what this client owes, and why each thing is outstanding.** Seven items — the
+  executor behind `kols-api`'s gate, the event half and the idempotence property with it, the
+  two checks `authorize` deliberately does not make, the commands with no code behind them,
+  E12's client half, `may_moderate_at` ignoring the head it is given, and `kols-store` not
+  existing. None blocks anything else, which is exactly why they need writing down: a debt
+  nobody records is one somebody rediscovers as a surprise. Every entry names where it was
+  incurred, so the reason survives without the person who had it.
+
+  Two decisions from the boundary work joined the register in `design/00` §3, since both are
+  architectural rather than incidental: **D25**, that authorization is a type rather than a
+  call, so an executor cannot receive a command nobody checked; and **D26**, that a command's
+  consent class follows the tier of the capability it needs rather than how consequential the
+  action looks.
+
+  Also refreshed: `design/00`'s roadmap, which listed P1 as future work while it was under
+  way; `design/07`'s status, which said P1 had not started and is now marked complete in its
+  own terms, with a line saying its job is finished and `STATUS.md` carries P1 — a build plan
+  kept as a running status is a second one to disagree with this file; `design/05` §3 and its
+  test table; `design/09` §5, which claimed the enforcement half as future when it is built;
+  and the README, which described three crates and 98 tests.
 
 - **2026-08-19** — **`kols-api`: the boundary exists, and the CLI is the first thing to
   cross it.** `design/05` §3 fixes three properties and says retrofitting any of them is

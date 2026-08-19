@@ -1,7 +1,8 @@
 # Interface
 
-**Document status:** v0.2 — design only; no interface code exists. §2 revised for the
-protocol half of the liveness work landing (Core §5.1.1), which leaves the tiering here
+**Document status:** v0.2 — no interface code exists, and one half of §5 now does: the
+boundary an interface's controls will be checked against is built (`05` §3). §2 was revised
+for the protocol half of the liveness work landing (Core §5.1.1), which leaves the tiering here
 **Depends on:** `05` for the crate layout and API boundary; `01` §9 for presence; `03` §4 for
 direct messages; App Hosting Spec §1.2 and §3.3 for the sandbox path
 **Consumed by:** implementation
@@ -194,6 +195,12 @@ receipt, rather than trusting that the interface only offered buttons the user w
 to press. The hidden button and the refused command are independent, and the second is the
 one that matters. This is written down because a hidden control looks like a check and is
 not one.
+
+**That half is built, and it refuses in the type system rather than at review time.** The
+gate hands back a value with no public constructor, so an executor cannot receive a command
+that skipped it (D25). What this section still owes is the *presentation* half — deciding
+which controls a given member sees — and that is a question about rendering, answered by
+asking the same resolution the gate uses rather than by a second, drifting copy of it.
 
 ---
 
