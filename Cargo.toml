@@ -15,6 +15,7 @@ intranet-governance = { path = "../distributed-intranet/crates/intranet-governan
 intranet-storage = { path = "../distributed-intranet/crates/intranet-storage" }
 intranet-transport = { path = "../distributed-intranet/crates/intranet-transport" }
 intranet-ledger = { path = "../distributed-intranet/crates/intranet-ledger" }
+intranet-epoch = { path = "../distributed-intranet/crates/intranet-epoch" }
 libp2p = "0.56"
 kols-core = { path = "crates/kols-core" }
 kols-net = { path = "crates/kols-net" }

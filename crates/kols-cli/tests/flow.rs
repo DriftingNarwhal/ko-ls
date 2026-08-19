@@ -186,3 +186,100 @@ fn an_empty_message_is_refused() {
     let out = run(&home, &["post", "general", "   "]);
     assert!(!out.status.success());
 }
+
+// ── what protects content at rest ──────────────────────────────────────
+
+#[test]
+fn the_key_that_protects_content_is_not_derivable_from_public_information() {
+    // The property this replaced. An earlier version derived the DEK from the
+    // network id — which travels in every invite, address and log entry — so
+    // anyone who ever saw the network id could decrypt any segment they got hold
+    // of. What protects content now is a random DEK wrapped under an epoch key
+    // exported from a real MLS group, so two networks, and two members of one
+    // network, share nothing an outsider can compute.
+    let a = Home::new("keys-a");
+    let b = Home::new("keys-b");
+    ok(&a, &["init", "one"]);
+    ok(&b, &["init", "two"]);
+    ok(&a, &["channel", "create", "general"]);
+    ok(&b, &["channel", "create", "general"]);
+    ok(&a, &["post", "general", "in a"]);
+    ok(&b, &["post", "general", "in b"]);
+
+    let epoch_a = std::fs::read(a.path().join("epoch")).expect("a stored epoch key");
+    let epoch_b = std::fs::read(b.path().join("epoch")).expect("a stored epoch key");
+    assert_ne!(epoch_a, epoch_b, "two networks must not share key material");
+
+    let wrapping = |home: &Home| {
+        let dir = home.path().join("deks");
+        let entry = std::fs::read_dir(&dir)
+            .expect("a wrapping directory")
+            .next()
+            .expect("one wrapping")
+            .unwrap();
+        std::fs::read(entry.path()).unwrap()
+    };
+    assert_ne!(
+        wrapping(&a),
+        wrapping(&b),
+        "DEKs are random per object, so two must never coincide"
+    );
+
+    // And nothing on disk is the raw key: the epoch file is sealed, so it is
+    // longer than the 32 bytes it protects.
+    assert!(
+        epoch_a.len() > 32,
+        "the epoch key must be sealed at rest, not written bare"
+    );
+}
+
+#[test]
+fn secrets_are_written_unreadable_to_other_users() {
+    // The seed and everything derived from it. A world-readable seed would make
+    // the file permissions the only thing standing between another account on
+    // this machine and every identity it holds.
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let home = Home::new("perms");
+        ok(&home, &["init", "private"]);
+        ok(&home, &["channel", "create", "general"]);
+        ok(&home, &["post", "general", "secret"]);
+
+        let mut checked = 0;
+        for path in [home.path().join("seed"), home.path().join("epoch")] {
+            let mode = std::fs::metadata(&path).unwrap().permissions().mode();
+            assert_eq!(
+                mode & 0o077,
+                0,
+                "{} is readable beyond its owner",
+                path.display()
+            );
+            checked += 1;
+        }
+        for entry in std::fs::read_dir(home.path().join("deks")).unwrap() {
+            let path = entry.unwrap().path();
+            let mode = std::fs::metadata(&path).unwrap().permissions().mode();
+            assert_eq!(mode & 0o077, 0, "a DEK wrapping is readable beyond its owner");
+            checked += 1;
+        }
+        assert!(checked >= 3, "expected seed, epoch and at least one wrapping");
+    }
+}
+
+#[test]
+fn a_store_whose_epoch_key_is_gone_refuses_rather_than_inventing_one() {
+    // Fail closed. Silently minting a fresh key would produce a node that writes
+    // content no other member can read, and reads nothing it wrote before —
+    // divergence that looks like working software.
+    let home = Home::new("no-epoch");
+    ok(&home, &["init", "losing"]);
+    ok(&home, &["channel", "create", "general"]);
+    ok(&home, &["post", "general", "before"]);
+    std::fs::remove_file(home.path().join("epoch")).unwrap();
+
+    let out = run(&home, &["post", "general", "after"]);
+    assert!(!out.status.success(), "posting without an epoch key must fail");
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(stderr.contains("epoch key"), "{stderr}");
+}

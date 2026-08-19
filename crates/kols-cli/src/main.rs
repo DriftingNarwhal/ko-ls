@@ -122,10 +122,29 @@ fn init(root: std::path::PathBuf, name: &str) -> Result<(), String> {
 
     let store = Store::create(root, network, entropy).map_err(|e| e.to_string())?;
     let founder = store.identity().map_err(|e| e.to_string())?;
-    store
-        .append_entry(&network::genesis(&founder, network))
-        .map_err(|e| e.to_string())?;
+    let genesis = network::genesis(&founder, network);
+    store.append_entry(&genesis).map_err(|e| e.to_string())?;
     store.set_label(name).map_err(|e| e.to_string())?;
+
+    // A real MLS group of one, whose exported secret is this network's first
+    // epoch key (Core §3.3). Every DEK is wrapped under it, so what protects
+    // content is key material only members hold rather than anything derivable
+    // from the network's public identifiers.
+    let group = intranet_epoch::GroupSession::create(&intranet_epoch::identity_label(&founder.id()))
+        .map_err(|err| format!("could not create the network's key group: {err}"))?;
+    let epoch = group
+        .epoch_key()
+        .map_err(|err| format!("could not derive the first epoch key: {err}"))?;
+    // Genesis is the rotation this first epoch belongs to. A rotation reference
+    // is an entry hash rather than an epoch ordinal, because two branches can
+    // each produce "the next epoch" with the same number (Storage §5.3).
+    let rotation = store
+        .head()
+        .map_err(|e| e.to_string())?
+        .ok_or("genesis was written but the log has no head")?;
+    store
+        .set_epoch_key(&epoch, rotation)
+        .map_err(|e| e.to_string())?;
 
     // Replay immediately rather than trusting the entry we just wrote. A genesis
     // this node cannot replay is a network nobody can join, and finding that out
@@ -155,6 +174,18 @@ fn whoami(root: std::path::PathBuf) -> Result<(), String> {
     println!("you      {}", identity.id().short());
     println!("  member {}", state.is_member(&identity.id()));
 
+    // Which epoch this node is on. A fingerprint rather than the key: epoch keys
+    // implement no Debug precisely so a network's content confidentiality cannot
+    // reach a log line by accident, and "which epoch am I on" is still a real
+    // question when two nodes disagree about what they can read.
+    match (store.epoch_key(), store.rotation_ref()) {
+        (Ok(key), Ok(rotation)) => {
+            println!("epoch    {}", &to_hex(key.fingerprint().as_bytes())[..16]);
+            println!("  from   {}", &to_hex(rotation.as_bytes())[..16]);
+        }
+        _ => println!("epoch    none stored — this node cannot read or write content"),
+    }
+
     // What this member may actually do, resolved rather than assumed — the same
     // question a reader asks before admitting one of their records.
     let verbs = [
@@ -174,22 +205,10 @@ fn whoami(root: std::path::PathBuf) -> Result<(), String> {
     Ok(())
 }
 
-/// 32 bytes from the OS, which is the only randomness this program needs.
+/// 32 bytes from the OS.
 fn random_32() -> Result<[u8; 32], String> {
     let mut bytes = [0u8; 32];
-    getrandom(&mut bytes)?;
+    intranet_crypto::random_bytes(&mut bytes)
+        .map_err(|err| format!("could not read entropy: {err}"))?;
     Ok(bytes)
-}
-
-#[cfg(unix)]
-fn getrandom(out: &mut [u8]) -> Result<(), String> {
-    use std::io::Read;
-    std::fs::File::open("/dev/urandom")
-        .and_then(|mut f| f.read_exact(out))
-        .map_err(|err| format!("could not read entropy: {err}"))
-}
-
-#[cfg(not(unix))]
-fn getrandom(_out: &mut [u8]) -> Result<(), String> {
-    Err("this build reads entropy from /dev/urandom and needs a unix host".to_owned())
 }

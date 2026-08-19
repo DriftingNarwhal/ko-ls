@@ -46,7 +46,7 @@ directory — the protocol crates are path dependencies while the extensions it 
 still landing.
 
 ```bash
-cargo test                                   # 69 tests, no network or services needed
+cargo test                                   # 72 tests, no network or services needed
 cargo clippy --workspace --all-targets       # must stay clean
 ./scripts/cross-check.sh                     # big-endian verification, see below
 ```

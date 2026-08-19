@@ -18,6 +18,7 @@ intranet-identity.workspace = true
 intranet-governance.workspace = true
 intranet-ledger.workspace = true
 intranet-storage.workspace = true
+intranet-epoch.workspace = true
 intranet-transport.workspace = true
 
 clap.workspace = true

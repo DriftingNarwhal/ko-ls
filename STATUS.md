@@ -42,7 +42,7 @@ readers are unavoidable rather than optional:
 2. **A channel entry is invalid in a `conversation`-profile network.** The protocol carries
    `chat` payloads without decoding them, so it cannot reach this verdict.
 
-**To pick up:** `cargo test` in this repo should show 69 passing and clippy silent. If it
+**To pick up:** `cargo test` in this repo should show 72 passing and clippy silent. If it
 does not, fix that before anything else — the tree was left green.
 
 ---
@@ -53,7 +53,7 @@ does not, fix that before anything else — the tree was left green.
 |---|---|
 | **Working on** | The CLI's wire half — two `kols` installs reaching each other |
 | **Blocked on** | Nothing |
-| **Runnable** | **`kols`** — init, whoami, channel create/list, post, read, on one node. `cargo test` — 69 tests, clippy clean; `scripts/cross-check.sh` for big-endian. No binary yet |
+| **Runnable** | **`kols`** — init, whoami, channel create/list, post, read, on one node. `cargo test` — 72 tests, clippy clean; `scripts/cross-check.sh` for big-endian. No binary yet |
 | **Next decision needed from the user** | Nothing blocking |
 
 ---
@@ -141,6 +141,32 @@ design changes before anything else is built.
 
 Newest first. One line per change that moved the state above.
 
+- **2026-08-19** — **Content keying moved onto the real path.** Raised as a concern, and it
+  was a fair one: the CLI's first cut derived its DEK from the network id, which is public
+  in every meaningful sense — it is in every invite, every address and every log entry — so
+  the only thing keeping a non-member from reading a segment they had obtained was honest
+  nodes declining to serve them. A serving policy standing in for cryptography.
+
+  It now does what Storage §5 specifies. Every author log gets a **random** DEK; what
+  persists is the DEK **wrapped under the network's epoch key**, which is exported from a
+  real `GroupSession` created at `init` rather than derived from anything public. The epoch
+  key is sealed at rest under a key derived from the master seed, because
+  `EpochKey::expose_for_delivery` states outright that storing it unsealed defeats the
+  guarantee the module exists to provide. Secrets are written `0600` and a test asserts it.
+
+  **What is still missing is rotation, and it is a real gap rather than a rounding error.**
+  Core §3.3 advances the epoch on every membership change, and that is what stops a removed
+  member reading anything published afterwards. Advancing it needs live MLS state, and
+  `GroupSession` holds an in-memory openmls provider with no persistence — so a process that
+  exits cannot rotate. A removed member keeps the key, which is precisely the naive scheme
+  Core §3.2 rejects. Two ways out, both real: `intranet-epoch` growing a persistent storage
+  provider, or a long-running node here holding the group in memory. The second is the same
+  daemon the wire half needs, so they likely land together.
+
+  Three tests pin what changed: two networks share no key material and no DEK; secrets are
+  unreadable to other users; and a store whose epoch key has gone refuses rather than
+  minting a fresh one, since silently re-keying would produce a node writing content nobody
+  else can read while looking like it works. 69 → 72.
 - **2026-08-19** — **`kols` exists, and the project is runnable for the first time.**
   Chosen over E4 deliberately: gossip is an optimization of a path that already works
   (`design/01` §7 — "a client with gossip entirely disabled is slower and completely
@@ -161,13 +187,13 @@ Newest first. One line per change that moved the state above.
     needs `publish:chat-log` alongside `chat:post`. Miss any one and the network looks fine
     until the first post is refused by the author's own node. `kols-cli::network::genesis`
     is now the one place that gets it right.
-  - **The CLI's DEK is a stand-in and says so where it lives.** Storage §5 wraps a
-    per-object DEK under the epoch key; none of that is wired up (E7/P2), and the existing
-    two-node test papers over it with a hardcoded key on both sides. The CLI derives one
-    from the network id instead, so **anyone who learns the network id can decrypt any
-    segment they obtain** — what keeps a non-member out is honest nodes refusing to serve
-    them, a serving policy rather than cryptography. Named in `Store::channel_dek` rather
-    than buried.
+  - **The CLI's DEK started as a stand-in and was replaced the same day.** The first cut
+    derived it from the network id — which travels in every invite, address and log entry —
+    so anyone who ever saw the id could decrypt any segment they obtained. It now does what
+    Storage §5 actually specifies: a random DEK per author log, **wrapped under an epoch key
+    exported from a real MLS group**, with only the wrapping persisted and the epoch key
+    itself sealed at rest under a seed-derived key. `EpochKey::expose_for_delivery` says
+    plainly that storing it unsealed defeats the guarantee, so it is not stored unsealed.
   - **A network name is not a policy value.** Spec 07 defines no key for one, so the CLI
     keeps a local label rather than inventing vocabulary the normative document lacks —
     which is how two clients end up disagreeing about what a network is called.

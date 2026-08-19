@@ -270,12 +270,12 @@ fn rebuild_log(
     channel: ChannelId,
     state: &GovernanceState,
 ) -> Result<AuthorLog, String> {
-    let mut log = AuthorLog::open(
-        author,
-        channel,
-        store.channel_dek(&channel),
-        ChunkSpec::from_target(64 * 1024),
-    );
+    // The DEK is per author log, not per channel: each author's log is its own
+    // content object, and the pointer it publishes under is what the wrapping
+    // binds to (Storage §5.3).
+    let pointer = kols_core::author_log_pointer(&channel, &author.id());
+    let dek = store.channel_dek(&pointer).map_err(|e| e.to_string())?;
+    let mut log = AuthorLog::open(author, channel, dek, ChunkSpec::from_target(64 * 1024));
     for bytes in store.own_records(&channel).map_err(|e| e.to_string())? {
         let record = Record::decode(&bytes)
             .map_err(|err| format!("a stored record did not decode: {err}"))?;

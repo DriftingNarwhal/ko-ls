@@ -19,9 +19,9 @@
 //! material never crosses a `Debug` or a serializer.
 
 use intranet_crypto::{Hash, to_hex};
-use intranet_governance::{GovernanceLog, GovernanceState, LogEntry, wire};
+use intranet_governance::{GovernanceLog, GovernanceState, LogEntry, PointerId, wire};
 use intranet_identity::{MasterSeed, NetworkId, PerNetworkIdentity};
-use intranet_storage::Dek;
+use intranet_storage::{Dek, EpochKey};
 use kols_core::ChannelId;
 use std::fs;
 use std::io;
@@ -232,27 +232,94 @@ impl Store {
         self.root.join("channels").join(to_hex(channel.as_bytes()))
     }
 
-    /// The data-encryption key for one channel's segments.
+    /// A key derived from the seed, for sealing this store's own secrets at rest.
     ///
-    /// **This is a stand-in, and the shortcut is worth stating plainly.** Storage
-    /// §5 gives every object a per-object DEK wrapped under the network epoch key,
-    /// re-wrappable by any current member on rotation — which is what makes a
-    /// removed member lose access to content published afterwards. None of that
-    /// wrapping is wired up yet (it is E7/P2 work), and the existing two-node test
-    /// papers over it with a hardcoded key on both sides.
+    /// Not a protocol key and never leaves this machine. It exists so nothing
+    /// confidential sits on disk in the clear next to the seed that protects it.
+    fn at_rest_key(&self) -> Dek {
+        Dek::from_bytes(*intranet_crypto::keyed_hash(&self.entropy, b"kols.cli.at-rest.v1").as_bytes())
+    }
+
+    /// Records this network's epoch key.
     ///
-    /// So this derives a key every member can recompute from the network id. The
-    /// honest consequence: **anyone who learns the network id can decrypt any
-    /// segment they can obtain.** What actually keeps a non-member out is that
-    /// honest nodes refuse to serve them at all (Storage §5.4) — a serving policy
-    /// rather than cryptography, which is weaker than the design promises. It is
-    /// enough to carry a conversation between two members of one network and is
-    /// not enough for anything else.
-    pub fn channel_dek(&self, channel: &ChannelId) -> Dek {
-        let mut enc = intranet_crypto::Enc::domain("kols.cli.placeholder-channel-dek.v1");
-        enc.fixed(self.network.as_bytes());
-        enc.fixed(channel.as_bytes());
-        Dek::from_bytes(*intranet_crypto::hash_bytes(&enc.finish()).as_bytes())
+    /// # Storing an epoch key at all is a decision, not an oversight
+    ///
+    /// `EpochKey::expose_for_delivery` says plainly that the only correct use is
+    /// sealing to an identity already entitled to the key, and that storing it
+    /// unsealed defeats the guarantee. So it is sealed — under a key derived from
+    /// the master seed, which is the same thing that protects the identity the
+    /// key belongs to, and written `0600`.
+    ///
+    /// A client has to recover epoch keys across restarts somehow. The protocol's
+    /// own answer is re-delivery from a peer over `/intranet/epoch-key/1.0.0`
+    /// (Core §3.5), which is the right mechanism and needs a peer — something
+    /// this build does not have yet. Sealing to ourselves is the same operation
+    /// aimed at the only member currently present.
+    pub fn set_epoch_key(&self, key: &EpochKey, rotation_ref: Hash) -> Result<(), StoreError> {
+        let sealed = self.at_rest_key().seal_chunk(key.expose_for_delivery());
+        write_private(&self.root.join("epoch"), &sealed)?;
+        fs::write(self.root.join("rotation"), rotation_ref.as_bytes())?;
+        Ok(())
+    }
+
+    /// This network's current epoch key.
+    pub fn epoch_key(&self) -> Result<EpochKey, StoreError> {
+        let sealed = fs::read(self.root.join("epoch"))
+            .map_err(|_| StoreError::Corrupt("no epoch key stored for this network".to_owned()))?;
+        let bytes = self
+            .at_rest_key()
+            .open_chunk(&sealed)
+            .map_err(|err| StoreError::Corrupt(format!("epoch key will not open: {err}")))?;
+        Ok(EpochKey::from_bytes(fixed(&bytes, "epoch key")?))
+    }
+
+    /// The rotation this store's epoch key belongs to.
+    pub fn rotation_ref(&self) -> Result<Hash, StoreError> {
+        Ok(Hash::from_bytes(fixed(
+            &fs::read(self.root.join("rotation"))?,
+            "rotation reference",
+        )?))
+    }
+
+    /// The data-encryption key for one author log, wrapped under the epoch key.
+    ///
+    /// Storage §5's actual shape rather than a stand-in for it: the DEK is
+    /// random per object, and what persists is the DEK **wrapped under the
+    /// network's epoch key** — so recovering it requires key material only
+    /// members hold, and a non-member who obtains the ciphertext has nothing to
+    /// open it with.
+    ///
+    /// # What is still missing, stated rather than implied
+    ///
+    /// **Rotation.** Core §3.3 advances the epoch on every membership change,
+    /// which is what stops a removed member reading anything published
+    /// afterwards. Advancing it needs live MLS group state, and `GroupSession`
+    /// holds an in-memory openmls provider with no persistence — so a process
+    /// that exits cannot rotate, and this build does not. A removed member keeps
+    /// the key, which is the naive scheme Core §3.2 rejects for exactly that
+    /// reason. It is held deliberately and only until one of two things exists:
+    /// an `intranet-epoch` that can persist a group, or a long-running node here
+    /// that keeps one in memory.
+    pub fn channel_dek(&self, pointer: &PointerId) -> Result<Dek, StoreError> {
+        let epoch = self.epoch_key()?;
+        let path = self.root.join("deks").join(to_hex(pointer.as_bytes()));
+        if let Ok(wrapped) = fs::read(&path) {
+            return epoch
+                .unwrap_dek(pointer, &wrapped)
+                .map_err(|err| StoreError::Corrupt(format!("a stored DEK will not unwrap: {err}")));
+        }
+
+        let mut raw = [0u8; 32];
+        intranet_crypto::random_bytes(&mut raw)
+            .map_err(|err| StoreError::Corrupt(format!("no entropy: {err}")))?;
+        let dek = Dek::from_bytes(raw);
+        fs::create_dir_all(self.root.join("deks"))?;
+        // The wrapping is what persists, never the DEK. Wrapping is
+        // deterministic per (pointer, epoch key) by requirement (§5.3), so a
+        // re-wrap by another member produces identical bytes and creates no
+        // conflict to resolve.
+        write_private(&path, &epoch.wrap(pointer, &dek))?;
+        Ok(dek)
     }
 }
 
