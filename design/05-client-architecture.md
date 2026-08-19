@@ -126,7 +126,10 @@ Loop responsibilities, in priority order:
    segments.
 3. **Backfill** — walk `previous_segment` chains on demand, bounded concurrency. Landed
    in `kols serve`, which walks to the start of history because it has no scroll
-   position to bound it; a UI bounds this by pages instead (`01` §5).
+   position to bound it; a UI bounds this by pages instead (`01` §5). Each hop resolves
+   its own key, since each segment lives under its own pointer (`01` §3.1.0) — a hop whose
+   wrapping this node cannot open is where the walk ends, and is also what reading past a
+   retention boundary looks like.
 4. **Publish** — seal open segments on the size/age thresholds (`01` §3.1); publish
    immediately when the user goes idle, so a message is never stuck unpublished behind a
    half-full segment.

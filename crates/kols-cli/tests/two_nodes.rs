@@ -97,7 +97,17 @@ fn ok(home: &Home, args: &[&str]) -> String {
 }
 
 fn serve(home: &Home, port: u16, peer: Option<&str>) -> Daemon {
-    serve_sealing(home, port, peer, None, true)
+    serve_tuned(home, port, peer, None, true, None)
+}
+
+fn serve_sealing(
+    home: &Home,
+    port: u16,
+    peer: Option<&str>,
+    seal_bytes: Option<usize>,
+    live: bool,
+) -> Daemon {
+    serve_tuned(home, port, peer, seal_bytes, live, None)
 }
 
 /// `serve`, with an optional segment-seal threshold.
@@ -107,12 +117,13 @@ fn serve(home: &Home, port: u16, peer: Option<&str>) -> Daemon {
 /// publishing tuning rather than a validity rule — a reader accepts whatever
 /// boundaries an author chose — so a small one here produces history that is
 /// ordinary in every respect except how quickly it reaches the second segment.
-fn serve_sealing(
+fn serve_tuned(
     home: &Home,
     port: u16,
     peer: Option<&str>,
     seal_bytes: Option<usize>,
     live: bool,
+    live_window_millis: Option<i64>,
 ) -> Daemon {
     let log = std::env::temp_dir().join(format!("kols-2n-{port}-{}.log", std::process::id()));
     let file = std::fs::File::create(&log).expect("a log file");
@@ -130,6 +141,9 @@ fn serve_sealing(
     }
     if !live {
         command.arg("--no-live");
+    }
+    if let Some(window) = live_window_millis {
+        command.args(["--live-window-millis", &window.to_string()]);
     }
     let child = command
         .stdout(Stdio::from(file))
@@ -339,7 +353,29 @@ fn a_revocation_rotates_the_epoch_and_leaves_the_network_working() {
     bob_node.wait_for("learned 1 record", Duration::from_secs(45));
     drop(bob_node);
 
+    //
+    // Every wrapping is compared, not one of them. A channel holds several DEKs
+    // now — one per segment plus the head index (`design/01` §3.1.0) — and
+    // reading whichever the directory happened to list first asserted on an
+    // arbitrary one of them.
+    let wrappings = |home: &Home| {
+        let mut all: Vec<Vec<u8>> = std::fs::read_dir(home.path().join("deks"))
+            .expect("a wrapping directory")
+            .map(|entry| std::fs::read(entry.unwrap().path()).unwrap())
+            .collect();
+        all.sort();
+        assert!(!all.is_empty(), "alice must hold at least one wrapping");
+        all
+    };
+
     let before = field(&ok(&alice, &["whoami"]), "epoch    ");
+
+    // Captured *before* the rotation, which is what makes this deterministic.
+    // A read refreshes a wrapping to the current epoch on the way through, so
+    // sampling after the rotation races the daemon's next tick: if it has
+    // already refreshed, nothing changes afterwards and the assertion is simply
+    // wrong rather than failing honestly.
+    let stale = wrappings(&alice);
 
     let removed = ok(&alice, &["revoke", &bob_identity]);
     assert!(removed.contains("removed"), "{removed}");
@@ -368,22 +404,11 @@ fn a_revocation_rotates_the_epoch_and_leaves_the_network_working() {
     // through. Without that, every future read falls back through every key the
     // network has ever rotated through — measured at ~0.72ms per thousand keys,
     // paid per unwrap, on a list that grows with every membership change.
-    let wrapping = |home: &Home| {
-        let dir = home.path().join("deks");
-        let path = std::fs::read_dir(&dir)
-            .expect("a wrapping directory")
-            .next()
-            .expect("one wrapping")
-            .unwrap()
-            .path();
-        std::fs::read(path).unwrap()
-    };
-    let stale = wrapping(&alice);
-
     ok(&alice, &["post", "general", "after the revocation"]);
+    alice_node.wait_for("picked up", Duration::from_secs(30));
 
     assert_ne!(
-        wrapping(&alice),
+        wrappings(&alice),
         stale,
         "a wrapping opened under a superseded key must be re-wrapped under the current one"
     );
@@ -650,4 +675,50 @@ fn a_joiner_walks_back_through_sealed_segments_to_read_the_start() {
     // Named explicitly because it is the one the head segment cannot carry: it
     // is several seals back, so it can only have come from a chain walk.
     assert!(read.contains("message 0"), "{read}");
+}
+
+#[test]
+fn history_is_not_re_broadcast_live_to_a_peer_that_arrives_later() {
+    // The live path is a latency optimisation over records being written now
+    // (spec 07 §6.1). A failed publish is retried, because a record written a
+    // moment before a peer subscribed should still go out — but unbounded, that
+    // retry set is *everything the node ever wrote*, so an author's whole
+    // history goes over gossipsub the instant anybody subscribes. §6.1 says
+    // nothing may depend on the live path; a backlog delivered over it is the
+    // opposite failure, the durable path being the one nothing depends on.
+    let alice = Home::new("stale-alice");
+    let bob = Home::new("stale-bob");
+
+    let created = ok(&alice, &["init", "yesterday"]);
+    let network = field(&created, "network   ");
+    let attached = ok(&bob, &["attach", &network]);
+    ok(&alice, &["admit", &field(&attached, "kols admit ")]);
+
+    // A window a test can get to the far side of. The bound is local tuning, so
+    // a small one exercises the same rule the default does.
+    let alice_node = serve_tuned(&alice, 45151, None, None, true, Some(1_000));
+    let address = field(
+        &alice_node.wait_for("listening", Duration::from_secs(20)),
+        "listening ",
+    );
+    ok(&alice, &["channel", "create", "general"]);
+    ok(&alice, &["post", "general", "written well before bob showed up"]);
+    alice_node.wait_for("picked up", Duration::from_secs(20));
+
+    // Past the window, so this record is now history by the node's own reckoning
+    // — and history is the durable path's job.
+    std::thread::sleep(Duration::from_secs(3));
+
+    let bob_node = serve(&bob, 45152, Some(&address));
+    bob_node.wait_for("learned 1 record", Duration::from_secs(60));
+
+    let output = bob_node.output();
+    assert!(
+        !output.contains("learned 1 record(s) live"),
+        "a record older than the live window must not be broadcast to a peer \
+         that subscribes afterwards:\n{output}"
+    );
+
+    let read = ok(&bob, &["read", "general"]);
+    assert!(read.contains("written well before bob showed up"), "{read}");
 }

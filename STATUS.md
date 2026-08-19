@@ -1,6 +1,6 @@
 # ko-ls — Implementation Status
 
-**Updated:** 2026-08-19 (segment sealing and history backfill)
+**Updated:** 2026-08-19 (per-segment keys, and a freshness bound on the live path)
 **Phase:** P1 — two nodes talk live and durably, and a joiner reads back through sealed
 history; E11 remains
 **Design:** [`design/`](design/) — `00`–`08`, all v1.0. **`distributed-intranet/specs/07` is normative** where it and the design set overlap.
@@ -30,20 +30,20 @@ both repos cloned side by side.
 removes the per-scope policy churn `kols-core::capabilities` currently works around). The
 Tauri shell stays blocked on S3.
 
-**History backfill is done, and it came with its other half.** The daemon never sealed, so
-every author log was one ever-growing segment — which meant a reader already saw all of an
-author's history and there were no `previous_segment` chains to walk. So this landed
-sealing too (`design/01` §3.1's size and age thresholds, `--seal-bytes` to tune), and then
-the walk. Two things it did *not* fix, both now written down rather than assumed:
+**Sealing, backfill, per-segment keys and the live-path bound are all in.** Both gaps the
+backfill work left open are now closed:
 
-- **Retention is still per log, not per segment.** One DEK covers a whole chain, so the
-  wrapping that opens the head opens everything behind it. Per-segment DEKs are what
-  §3.1's "separate objects with separate DEKs" actually asks for, and wrappings are
-  carried per pointer while a chain has one pointer — so it is a real change, not a knob.
-- **The live path carries backlog.** A record that fails to publish is retried forever, so
-  an author's entire history goes out over gossipsub the moment any peer subscribes. Spec
-  07 §6.1 says nothing may depend on that path; it does not say the path may substitute
-  for the durable one. A freshness bound on the retry is the likely fix.
+- **Retention is per segment** (`design/01` §3.1.0). Each segment lives under its own
+  derived pointer and therefore its own DEK, so an author stops republishing and
+  re-wrapping what has aged out and keeps the rest — Storage §5.2 does the rest. This was
+  forced rather than chosen: a pointer commits to one DEK for its whole life, and a
+  wrapping only travels alongside a pointer that exists, so a separately-forgettable key
+  needs a pointer of its own. The cost is one indirection — `author_log_pointer` now names
+  a *head index* saying which segment is current, and everything else is derivable again.
+- **The live path no longer carries backlog.** A failed publish is retried only while the
+  record is inside a freshness window (`--live-window-millis`, default one minute), so a
+  record written a moment before a peer subscribed still goes out and last week's history
+  does not.
 
 The keying gaps are closed end to end: `GroupSession::save`/`restore` (Core §3.3.1) mean a
 founder survives a restart and can still key people in, and `kols revoke` now drives a real
@@ -73,7 +73,7 @@ does not, fix that before anything else — the tree was left green.
 |---|---|
 | **Working on** | E11 |
 | **Blocked on** | Nothing |
-| **Runnable** | **`kols`** — init, attach, admit, revoke, serve, channel create/list, post, read. Two nodes hold a conversation. `cargo test` — 91 tests, clippy clean; `scripts/cross-check.sh` for big-endian |
+| **Runnable** | **`kols`** — init, attach, admit, revoke, serve, channel create/list, post, read. Two nodes hold a conversation. `cargo test` — 97 tests, clippy clean; `scripts/cross-check.sh` for big-endian |
 | **Next decision needed from the user** | Nothing blocking |
 
 ---
@@ -160,6 +160,52 @@ design changes before anything else is built.
 ## 8. Log
 
 Newest first. One line per change that moved the state above.
+
+- **2026-08-19** — **A key per segment, and a freshness bound on the live path.** The two
+  gaps the sealing work left open, closed.
+
+  **Per-segment keys were forced, not chosen.** `MutablePointer::update` carries
+  `dek_commitment` forward unchanged — deliberately, since Storage §1.2 fixes a DEK for its
+  object's lifetime — so a pointer commits to one key for its entire life, and every
+  segment sharing a pointer shares a key. A key that opens the newest message then opens
+  the oldest, and retention can only ever forget a whole log. There is also no way to smuggle
+  a key in beside it: `PointerRequest::Fetch` returns wrappings only alongside a pointer
+  record that exists, so a wrapping for a pointer nobody published never syncs. A
+  separately-forgettable key therefore needs a pointer of its own, and that settles the
+  design: `author_segment_pointer(channel, author, sequence)`, one per segment.
+
+  Sealing now starts a new segment **and** a new key, and the sealed segment keeps the key
+  it was written under — nothing is re-encrypted. Re-keying it would move every CID in it,
+  forcing every reader holding it to refetch the whole object, and would leave the
+  superseded ciphertext readable under a key nothing retires, which is the exact thing this
+  makes possible to avoid.
+
+  The cost is one indirection on the read side. `author_log_pointer` — the derivation a
+  reader computes from public information alone — no longer names the messages; it names a
+  head index, an otherwise empty segment whose `sequence` says which segment is current.
+  Reusing `Segment` for it meant no new type, encoding or content type. Its pointer version
+  **is** the sequence, and that is not cosmetic: same-version pointer records are settled by
+  lower record hash, so an index republished at version zero would lose that coin-flip
+  against the copy peers hold about half the time, and newer history would never be found.
+
+  Two things fell out of building it. Reading past a retention boundary is deliberately
+  indistinguishable from history that has not arrived — a missing wrapping, a wrapping under
+  an epoch this node has not caught up to, and a segment retired last year all look the
+  same, and a client claiming "this was deleted" would assert what it cannot know. And
+  because a retired boundary never becomes readable, a walk would have re-fetched,
+  re-decrypted and re-verified every signature behind it on every tick forever; the store
+  now keeps each segment's chain link, so a re-walk costs file reads and no crypto.
+
+  **The live path's retry is now bounded.** It exists to shave latency off records being
+  written now, but an unbounded retry made its retry set everything the node ever wrote, so
+  an author's whole history went out over gossipsub the instant anybody subscribed. §6.1
+  says nothing may *depend* on that path; it does not license the path to substitute for the
+  durable one. Records outside the window are retired from the set rather than skipped, so a
+  tick stops rescanning history to decide against it again.
+
+  One test bug worth recording: the new live-path test reused ports another test already
+  had, so two daemons shared a log file and one could not bind — which surfaced as a daemon
+  whose log went *empty* after previously containing output, not as a bind error.
 
 - **2026-08-19** — **Segments seal, and readers walk back through them.** Backfill was
   supposed to be the reader half of a model already in place. It was not: `AuthorLog::seal`

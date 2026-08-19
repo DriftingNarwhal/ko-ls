@@ -91,6 +91,13 @@ enum Command {
         /// that conformance be testable this way.
         #[arg(long)]
         no_live: bool,
+        /// How recent a record must be for the live path to still carry it.
+        ///
+        /// A failed publish is retried, which is right for a record written just
+        /// before a peer arrived and wrong for one written last week. Without
+        /// this the retry set is everything the node ever wrote.
+        #[arg(long, default_value_t = serve::LIVE_WINDOW_MILLIS)]
+        live_window_millis: i64,
     },
     /// Admit an identity to this network.
     Admit {
@@ -149,7 +156,15 @@ fn main() -> std::process::ExitCode {
             peers,
             seal_bytes,
             no_live,
-        } => serve::run(root, &listen, &peers, seal_bytes, !no_live),
+            live_window_millis,
+        } => serve::run(
+            root,
+            &listen,
+            &peers,
+            seal_bytes,
+            !no_live,
+            live_window_millis,
+        ),
         Command::Admit { identity } => admit(root, &identity),
         Command::Revoke { identity } => revoke(root, &identity),
         Command::Attach { network, name } => attach(root, &network, &name),

@@ -37,9 +37,9 @@ pub use channel::{
 };
 pub use hlc::Hlc;
 pub use live::{LivePayload, channel_content_key};
-pub use log::{AuthorLog, CHAT_LOG_CONTENT_TYPE, Published};
+pub use log::{AuthorLog, CHAT_LOG_CONTENT_TYPE, Published, publish_head_index};
 pub use ids::{
-    ChannelId, MessageId, author_log_pointer, channel_browse_collection,
+    ChannelId, MessageId, author_log_pointer, author_segment_pointer, channel_browse_collection,
     conversation_channel_id, gossip_topic, moderation_log_pointer, participant_index_collection,
     server_channel_id, thread_channel_id,
 };

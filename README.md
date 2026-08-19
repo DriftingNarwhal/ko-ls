@@ -110,12 +110,14 @@ slower and completely correct. `kols serve --no-live` turns gossip off outright,
 how that claim is actually tested rather than asserted.
 
 Author logs **seal** into chained segments once they cross a size or age threshold, and a
-joiner walks the chain backwards to read history older than the segment a pointer names —
-so opening a channel stays a bounded fetch however long the conversation gets.
+joiner walks the chain backwards to read history older than the current head — so opening a
+channel stays a bounded fetch however long the conversation gets. Each segment carries its
+own key, which is what lets a network's retention window drop *old* history and keep the
+rest: an author stops re-wrapping what has aged out, and Storage's rule that content with
+no live wrapping goes dark does the rest.
 
 What does not exist yet: no user interface, no private-channel keying, no voice, and no
-search. Retention is also still per log rather than per segment, because one key covers a
-whole chain. [`STATUS.md`](STATUS.md) is the honest inventory.
+search. [`STATUS.md`](STATUS.md) is the honest inventory.
 
 ## The one number worth knowing
 

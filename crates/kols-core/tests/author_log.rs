@@ -214,7 +214,7 @@ fn a_sealed_segment_chains_to_its_successor() {
         .expect("appends");
     let sealed_cid = first.object.manifest_cid();
 
-    log.seal(sealed_cid);
+    log.seal(sealed_cid, Dek::from_bytes([6u8; 32]));
     assert_eq!(log.segment().sequence, 1);
     assert_eq!(log.segment().previous, Some(sealed_cid));
 
@@ -225,11 +225,76 @@ fn a_sealed_segment_chains_to_its_successor() {
             &state,
         )
         .expect("appends");
-
-    // Pointer versions advance monotonically across the seal, since the pointer
-    // addresses the log rather than any one segment.
-    assert!(second.pointer.version > first.pointer.version);
     second.pointer.verify().expect("pointer verifies");
+
+    // **A segment addresses itself, not the log.** Each one lives under its own
+    // pointer, so the second starts a fresh version line rather than continuing
+    // the first's — and that is the point rather than an accident. A pointer
+    // commits to one DEK for its whole life (Storage §1.2), so a log that kept
+    // one pointer across every segment it ever wrote would have one key for its
+    // whole history, and `design/01` §8 could only ever forget all of it at once.
+    assert_ne!(second.pointer.pointer_id, first.pointer.pointer_id);
+    assert_eq!(
+        second.pointer.pointer_id,
+        author_segment_pointer(&channel, &author.id(), 1)
+    );
+    assert_ne!(second.pointer.dek_commitment, first.pointer.dek_commitment);
+}
+
+#[test]
+fn one_segments_key_does_not_open_another() {
+    // The property per-segment keys exist for. Without it `design/01` §8 can
+    // only forget a whole log: a key that opens the newest message opens the
+    // oldest, so there is no "old history" to drop separately from the rest.
+    let author = identity(1);
+    let state = state(&author);
+    let channel = server_channel_id(&network(), &[9u8; 32]);
+    let written = Dek::from_bytes([5u8; 32]);
+    let next = Dek::from_bytes([6u8; 32]);
+    let mut log = AuthorLog::open(&author, channel, written, ChunkSpec::default());
+
+    let first = log
+        .append(
+            &author,
+            Record::create(&author, channel, Hlc::new(1, 0), message("in segment 0")),
+            &state,
+        )
+        .expect("appends");
+    let sealed = first.object.clone();
+
+    log.seal(first.object.manifest_cid(), next.clone());
+    let second = log
+        .append(
+            &author,
+            Record::create(&author, channel, Hlc::new(2, 0), message("in segment 1")),
+            &state,
+        )
+        .expect("appends");
+
+    // Each opens its own.
+    let sealed_blobs: std::collections::BTreeMap<_, _> = sealed.chunks.iter().cloned().collect();
+    let open_blobs: std::collections::BTreeMap<_, _> =
+        second.object.chunks.iter().cloned().collect();
+    intranet_storage::decode(&sealed.manifest, &sealed_blobs, &Dek::from_bytes([5u8; 32]))
+        .expect("the sealed segment opens under the key it was written with");
+    intranet_storage::decode(&second.object.manifest, &open_blobs, &next)
+        .expect("the open segment opens under its own key");
+
+    // And neither opens the other. This is what makes forgetting one segment
+    // leave the rest readable, rather than being all-or-nothing.
+    assert!(
+        intranet_storage::decode(&sealed.manifest, &sealed_blobs, &next).is_err(),
+        "the new segment's key must not open history sealed before it"
+    );
+    assert!(
+        intranet_storage::decode(
+            &second.object.manifest,
+            &open_blobs,
+            &Dek::from_bytes([5u8; 32])
+        )
+        .is_err(),
+        "a retired segment's key must not open what came after it"
+    );
 }
 
 #[test]

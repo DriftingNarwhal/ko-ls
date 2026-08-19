@@ -163,12 +163,36 @@ size, manifests grow without bound, and — decisively — retention (§8) needs
 history, which means old history must be *separate objects with separate DEKs*. A single
 object cannot be partially forgotten.
 
-**Sealing is necessary for that and not yet sufficient.** The client seals and readers
-walk the chain (§5), but one DEK still covers the whole chain: sealing starts a new
-segment, not a new key, so the wrapping that opens the head opens everything behind it.
-Retention therefore still operates per *log* rather than per segment. Giving each sealed
-segment its own DEK is what would close it, and it is a larger change than it looks —
-wrappings are carried per pointer, and a chain of segments has one pointer.
+### 3.1.0 A Pointer Per Segment
+
+Each segment lives under its own derived pointer, `author_segment_pointer(channel, author,
+sequence)`, and therefore under its own DEK.
+
+This is forced rather than chosen. A pointer commits to one DEK **for its entire life** —
+`MutablePointer::update` carries `dek_commitment` forward deliberately, because Storage
+§1.2 fixes a DEK for its object's lifetime — so every segment sharing a pointer shares a
+key, and a key that opens the newest message also opens the oldest. Retention could then
+only ever forget a whole log. A DEK that can be forgotten separately needs a pointer of
+its own, and there is no way around that: wrappings travel only alongside the pointer
+record they belong to, so a wrapping for a pointer nobody published never syncs at all.
+
+Sealing therefore starts a new segment **and** a new key. The sealed segment keeps the key
+it was written under, so nothing is ever re-encrypted — re-keying it would move every CID
+in it, forcing every reader holding it to refetch the whole object, and would leave the
+superseded ciphertext readable under a key nothing retires, which is exactly the forgetting
+this exists to make possible.
+
+**The cost is one indirection on the read side.** `author_log_pointer` — the derivation a
+reader can compute from public information alone (§3.2) — no longer names the messages. It
+names a *head index*: an otherwise empty segment whose `sequence` says which segment is
+currently the head. From there every other address is derivable again, including each hop's
+key as the backfill walk of §5 goes back. The index changes only when a segment is sealed,
+not on every append, so an ongoing conversation refetches nothing.
+
+The index pointer's version **is** the head sequence. Two pointer records at the same
+version are settled by lower record hash (Storage §2.2), so an index republished at version
+zero with a newer sequence would lose that coin-flip against the copy peers already hold,
+about half the time, and the author's newer history would simply never be found.
 
 ### 3.1.1 Two Writers, One Log
 
@@ -435,9 +459,19 @@ about the setting quietly loses history it assumed it had. A zero, a negative or
 value all read as `Forever` for the same reason — a policy value that arrived corrupted
 must not start discarding history.
 
-**Judged on a log's newest record, not its oldest.** A log somebody is still writing to is
-live however far back it reaches, and retiring it because its first message is old would
-drop an active conversation.
+**Judged on a segment's newest record, not its oldest.** A segment somebody is still
+writing to is live however far back it reaches, and retiring it because its first message
+is old would drop an active conversation.
+
+**Per segment, not per log** — which is what §3.1.0's pointer-per-segment buys. Each segment
+holds its own key, so an author stops republishing and stops re-wrapping the segments that
+have aged out and keeps maintaining the rest. A reader walking back through history reaches
+a segment whose wrapping it can no longer open, and stops there.
+
+That boundary is deliberately **indistinguishable from history that has not arrived yet**,
+and a reader should not try to tell the two apart: a missing wrapping, a wrapping under an
+epoch this node has not caught up to, and a segment retired last year all look identical,
+and a client that reported "this was deleted" would be asserting something it cannot know.
 
 **Axis 2 — joiner access (protocol policy, Core §3.4).** Which epoch keys a new member
 receives: `CurrentEpochForward` (the protocol's conservative default) or `Full`

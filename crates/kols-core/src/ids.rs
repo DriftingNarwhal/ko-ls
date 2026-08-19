@@ -14,6 +14,7 @@ const CONVERSATION_DOMAIN: &str = "intranet.chat-conversation-id.v1";
 const THREAD_DOMAIN: &str = "intranet.chat-thread-id.v1";
 const LOG_POINTER_DOMAIN: &str = "intranet.chat-log-pointer.v1";
 const MODERATION_POINTER_DOMAIN: &str = "intranet.chat-moderation-pointer.v1";
+const SEGMENT_POINTER_DOMAIN: &str = "intranet.chat-segment-pointer.v1";
 const TOPIC_DOMAIN: &str = "intranet.chat-topic.v1";
 
 /// A channel's stable identifier.
@@ -102,15 +103,47 @@ pub fn thread_channel_id(parent: &ChannelId, root: &MessageId) -> ChannelId {
     }))
 }
 
-/// Where one author's log for one channel lives.
+/// Where one author's **head index** for one channel lives.
 ///
 /// This is the derivation that removes the need for a directory: any member can
 /// compute where any other member's messages would be, then simply ask for that
 /// pointer (`design/01` §3.2).
+///
+/// What it names is one step of indirection rather than the messages themselves:
+/// a tiny object saying which segment is currently the head, from which
+/// [`author_segment_pointer`] gives the segment. The indirection buys the thing
+/// §8 needs — a pointer commits to a single DEK for its whole life (Storage
+/// §1.2, and `MutablePointer::update` carries the commitment forward), so as
+/// long as every segment an author ever writes lives under *this* pointer, every
+/// segment shares one key and no part of the history can be forgotten without
+/// forgetting all of it.
 pub fn author_log_pointer(channel: &ChannelId, author: &PerNetworkIdentityId) -> PointerId {
     PointerId::from_bytes(derive(LOG_POINTER_DOMAIN, |e| {
         channel.encode(e);
         author.encode(e);
+    }))
+}
+
+/// Where one sealed or open segment of one author's log lives.
+///
+/// A pointer per segment, so a DEK per segment: this is what makes retention
+/// (`design/01` §8) able to drop *old* history rather than only a whole log.
+/// Each segment is encrypted once, under its own key, and an author who stops
+/// re-wrapping a segment makes exactly that segment dark — Storage §5.2 —
+/// leaving everything newer readable.
+///
+/// Derived, like every other pointer here, so a reader that holds segment `n`
+/// can compute where `n - 1` lives without a directory and without having been
+/// told. That is what lets the backfill walk of §5 find each hop's key.
+pub fn author_segment_pointer(
+    channel: &ChannelId,
+    author: &PerNetworkIdentityId,
+    sequence: u64,
+) -> PointerId {
+    PointerId::from_bytes(derive(SEGMENT_POINTER_DOMAIN, |e| {
+        channel.encode(e);
+        author.encode(e);
+        e.u64(sequence);
     }))
 }
 

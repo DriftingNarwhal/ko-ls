@@ -67,6 +67,23 @@ pub const SEAL_TARGET_BYTES: usize = 4 * 1024 * 1024;
 /// the segment that needs splitting is the sparse one.
 const SEAL_TARGET_SPAN_MILLIS: i64 = 24 * 60 * 60 * 1000;
 
+/// How recent a record has to be for the live path to still carry it.
+///
+/// Publishing fails while nobody is subscribed to a topic, and a failed publish
+/// is retried — which is right for a record written a moment before a peer
+/// arrives, and wrong for one written last week. Without a bound the retry set
+/// is *every record the node has ever written*, so an author's entire history
+/// goes out over gossipsub the instant any peer subscribes. Spec 07 §6.1 says
+/// nothing may **depend** on the live path; it does not license the live path to
+/// stand in for the durable one, and a backlog delivered over a best-effort
+/// broadcast is exactly that substitution.
+///
+/// A minute is far longer than the latency this path exists to save and far
+/// shorter than any gap that counts as history, so nothing sits near the edge.
+/// Like the seal thresholds it is local tuning — `serve` exposes it so a test can
+/// reach the far side of the window without waiting out a minute of wall clock.
+pub const LIVE_WINDOW_MILLIS: i64 = 60 * 1000;
+
 /// Runs the node until interrupted.
 pub fn run(
     root: std::path::PathBuf,
@@ -74,12 +91,13 @@ pub fn run(
     peers: &[String],
     seal_bytes: usize,
     live: bool,
+    live_window: i64,
 ) -> Result<(), String> {
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()
         .map_err(|err| format!("could not start a runtime: {err}"))?;
-    runtime.block_on(serve(root, listen, peers, seal_bytes, live))
+    runtime.block_on(serve(root, listen, peers, seal_bytes, live, live_window))
 }
 
 async fn serve(
@@ -88,6 +106,7 @@ async fn serve(
     peers: &[String],
     seal_bytes: usize,
     live: bool,
+    live_window: i64,
 ) -> Result<(), String> {
     let store = Store::open(root).map_err(|e| e.to_string())?;
     let identity = store.identity().map_err(|e| e.to_string())?;
@@ -218,7 +237,13 @@ async fn serve(
                 // neither on nor off.
                 if live {
                     subscribe_channels(&store, &mut node)?;
-                    publish_unsent_live(&store, &mut node, &identity, &mut broadcast)?;
+                    publish_unsent_live(
+                        &store,
+                        &mut node,
+                        &identity,
+                        &mut broadcast,
+                        live_window,
+                    )?;
                 }
                 if holds_group {
                     catch_up_epochs(&store, &mut node)?;
@@ -447,6 +472,12 @@ fn ready(
 }
 
 /// Publishes every author log this node owns into the node's chunk store.
+///
+/// One pass rebuilds a channel's whole chain from the stored records, sealing at
+/// the thresholds as it goes, and publishes each segment under its own pointer
+/// and its own key. Retention is applied per segment here rather than per log —
+/// which is the point of the per-segment keys, and is what `design/01` §8 means
+/// by dropping *old* history rather than a whole conversation.
 fn publish_own_logs(
     store: &Store,
     node: &mut MemberNode,
@@ -460,6 +491,7 @@ fn publish_own_logs(
 
     let retention = kols_core::ChatPolicy::of(&state.policy).retain_messages();
     let now = crate::chat::now_millis();
+    let spec = ChunkSpec::from_target(64 * 1024);
 
     for channel in store.channels_with_records().map_err(|e| e.to_string())? {
         let own = store
@@ -469,82 +501,157 @@ fn publish_own_logs(
             continue;
         }
 
-        // Retention, applied where `design/01` §8 says it lives: a log past the
-        // window stops being republished and stops being re-wrapped, and content
-        // with no live wrapping goes dark on its own (Storage §5.2). No new
-        // mechanism, only the decision to stop maintaining it.
-        //
-        // Judged on the *newest* record, not the oldest: a log somebody is still
-        // writing to is live, however far back it reaches. Dropping it because
-        // its first message is old would retire an active conversation.
-        if let Some(newest) = own.iter().map(|record| record.hlc.wall_millis).max() {
-            let age_days = u32::try_from((now - newest).max(0) / 86_400_000).unwrap_or(u32::MAX);
-            if !retention.covers(age_days) {
-                continue;
-            }
-        }
-        let pointer = kols_core::author_log_pointer(&channel, &identity.id());
-        let dek = store.channel_dek(&pointer).map_err(|e| e.to_string())?;
-        let mut log = AuthorLog::open(
-            &identity,
-            channel,
-            dek.clone(),
-            ChunkSpec::from_target(64 * 1024),
-        );
-        // The last append's outcome is the whole current segment: appending
-        // republishes the same object, so what it returns is the object as it
-        // now stands rather than a delta to be assembled.
-        //
-        // Sealing happens inline, on a threshold read off the segment as it
-        // stands. That keeps the whole chain a pure function of the record
-        // sequence: replaying the same records at the same threshold reproduces
-        // the same boundaries and therefore the same CIDs, so a node that
-        // restarts and rebuilds from its store republishes the identical chain
-        // rather than a second, competing one. Nothing about the split needs
-        // persisting — which is why this stays a rebuild-from-records loop.
-        let mut latest = None;
-        for record in own {
-            let published = log
-                .append(&identity, record, &state)
-                .map_err(|err| format!("a stored record no longer appends: {err}"))?;
-            let span = match (log.segment().records.first(), log.segment().records.last()) {
-                (Some(oldest), Some(newest)) => newest.hlc.wall_millis - oldest.hlc.wall_millis,
-                _ => 0,
-            };
-            if log.segment().canonical_bytes().len() >= seal_bytes
-                || span >= SEAL_TARGET_SPAN_MILLIS
-            {
-                // Published before sealing, because once sealed this object is
-                // no longer what the pointer names and nothing else will offer
-                // it. A reader walking back to it fetches it from the swarm like
-                // any other object, so it has to be there to serve.
-                let _ = publish_segment(node, &published);
-                log.seal(published.object.manifest_cid());
-            }
-            latest = Some(published);
-        }
-        if let Some(segment) = latest {
-            let outcome = publish_segment(node, &segment);
-            let _ = outcome;
+        let author = identity.id();
+        let mut sequence = 0u64;
+        let mut pointer = kols_core::author_segment_pointer(&channel, &author, sequence);
+        let mut dek = store.channel_dek(&pointer).map_err(|e| e.to_string())?;
+        let mut log = AuthorLog::open(&identity, channel, dek.clone(), spec);
 
-            // The wrapping is what lets anybody else read this. A pointer
-            // carries a commitment to its DEK, never the DEK itself, so a peer
-            // that fetches every chunk still needs a wrapping under an epoch key
-            // it holds — and pointer sync carries wrappings alongside pointers
-            // precisely because the two are useless apart (Storage §5.3).
-            if let (Ok(epoch), Ok(rotation)) = (store.epoch_key(), store.rotation_ref()) {
-                node.accept_wrapping(intranet_storage::DekWrapping::create(
-                    &identity,
-                    pointer,
-                    &dek,
-                    &epoch,
-                    rotation,
-                ));
+        // The open segment's newest record and the last thing publishing it
+        // produced. Held together because retention is judged on the newest
+        // record a segment carries, and that is only known once the segment is
+        // complete.
+        let mut newest = 0i64;
+        let mut latest: Option<kols_core::Published> = None;
+
+        for record in own {
+            // **Checked before the append, not after.** Sealing after the record
+            // that crosses the threshold leaves the pass ending on an empty new
+            // segment — nothing to publish, and a head index naming a segment
+            // that does not exist. Sealing lazily, when the next record needs
+            // somewhere to go, means the head always has content.
+            if let Some(complete) = latest.take_if(|_| should_seal(&log, seal_bytes)) {
+                if publish_retained(
+                    store, node, &identity, &pointer, &dek, &complete, newest, &retention, now,
+                )? {
+                    published += 1;
+                }
+                sequence += 1;
+                pointer = kols_core::author_segment_pointer(&channel, &author, sequence);
+                dek = store.channel_dek(&pointer).map_err(|e| e.to_string())?;
+                log.seal(complete.object.manifest_cid(), dek.clone());
             }
+            newest = record.hlc.wall_millis;
+            latest = Some(
+                log.append(&identity, record, &state)
+                    .map_err(|err| format!("a stored record no longer appends: {err}"))?,
+            );
+        }
+
+        let Some(head) = latest else {
+            continue;
+        };
+        if publish_retained(
+            store, node, &identity, &pointer, &dek, &head, newest, &retention, now,
+        )? {
             published += 1;
         }
+
+        // The index last, so it never names a segment this pass has not put in
+        // the chunk store. A reader that found it pointing at a missing segment
+        // would have no way to tell that from history it is not allowed to read.
+        let index_pointer = kols_core::author_log_pointer(&channel, &author);
+        let index_dek = store
+            .channel_dek(&index_pointer)
+            .map_err(|e| e.to_string())?;
+        let index =
+            kols_core::publish_head_index(&identity, channel, sequence, &index_dek, spec, &state)
+                .map_err(|err| format!("could not publish a head index: {err}"))?;
+        let _ = publish_segment(node, &index);
+        wrap_for(store, node, &identity, &index_pointer, &index_dek);
     }
     Ok(published)
+}
+
+/// Whether the open segment has reached a threshold and should be sealed.
+///
+/// `design/01` §3.1's two, and both are **local publishing tuning** rather than
+/// validity rules — a reader accepts whatever boundaries an author chose.
+///
+/// Age is measured across the segment's own records, newest minus oldest, and
+/// not against the clock. That is what keeps the chain a pure function of the
+/// record sequence: a rebuild months later re-derives the same boundaries and
+/// republishes the identical chain, where "older than a day *now*" would seal
+/// somewhere new on every restart. It is also why sealing needs no persisted
+/// state of its own — the record sequence is the state.
+fn should_seal(log: &AuthorLog, seal_bytes: usize) -> bool {
+    let segment = log.segment();
+    if segment.records.is_empty() {
+        return false;
+    }
+    if segment.canonical_bytes().len() >= seal_bytes {
+        return true;
+    }
+    match (segment.records.first(), segment.records.last()) {
+        (Some(oldest), Some(newest)) => {
+            newest.hlc.wall_millis - oldest.hlc.wall_millis >= SEAL_TARGET_SPAN_MILLIS
+        }
+        _ => false,
+    }
+}
+
+/// Publishes one segment, unless retention says this node should stop carrying it.
+///
+/// Retention is the *absence* of maintenance rather than a deletion (`design/01`
+/// §8): a segment past the window stops being republished and stops being
+/// re-wrapped, and content with no live wrapping goes dark on its own (Storage
+/// §5.2). No new mechanism — only the decision to stop.
+///
+/// Judged on the **newest** record the segment carries, not the oldest, for the
+/// same reason the per-log version was: a segment is retired when everything in
+/// it has aged out, not when it started long ago.
+///
+/// Returns whether anything was published, so a caller can report how much of a
+/// log it is still carrying rather than how much exists.
+#[allow(clippy::too_many_arguments)]
+fn publish_retained(
+    store: &Store,
+    node: &mut MemberNode,
+    identity: &intranet_identity::PerNetworkIdentity,
+    pointer: &intranet_governance::PointerId,
+    dek: &intranet_storage::Dek,
+    segment: &kols_core::Published,
+    newest: i64,
+    retention: &kols_core::Retention,
+    now: i64,
+) -> Result<bool, String> {
+    if retires(retention, newest, now) {
+        return Ok(false);
+    }
+    let _ = publish_segment(node, segment);
+    wrap_for(store, node, identity, pointer, dek);
+    Ok(true)
+}
+
+/// Whether a segment whose newest record is at `newest` has aged out.
+///
+/// Judged on the **newest** record it carries rather than the oldest. A segment
+/// is retired once everything in it has aged out, not because it started long
+/// ago — the alternative retires the beginning of a conversation somebody is
+/// still having.
+fn retires(retention: &kols_core::Retention, newest: i64, now: i64) -> bool {
+    let age_days = u32::try_from((now - newest).max(0) / 86_400_000).unwrap_or(u32::MAX);
+    !retention.covers(age_days)
+}
+
+/// Wraps a DEK under the current epoch so anybody else can open the object.
+///
+/// A pointer carries a commitment to its DEK, never the DEK itself, so a peer
+/// that fetches every chunk still needs a wrapping under an epoch key it holds —
+/// and pointer sync carries wrappings alongside pointers precisely because the
+/// two are useless apart (Storage §5.3).
+fn wrap_for(
+    store: &Store,
+    node: &mut MemberNode,
+    identity: &intranet_identity::PerNetworkIdentity,
+    pointer: &intranet_governance::PointerId,
+    dek: &intranet_storage::Dek,
+) {
+    if let (Ok(epoch), Ok(rotation)) = (store.epoch_key(), store.rotation_ref()) {
+        node.accept_wrapping(intranet_storage::DekWrapping::create(
+            identity, *pointer, dek, &epoch, rotation,
+        ));
+    }
 }
 
 /// Writes any governance entries the node learned into the store.
@@ -645,61 +752,94 @@ fn absorb_segments(
             if member == identity.id() {
                 continue;
             }
-            let pointer_id = kols_core::author_log_pointer(channel, &member);
-            let Some(pointer) = known_pointer(node, &pointer_id) else {
+            // The index first, and only then the segment it names. This is the
+            // indirection per-segment keys cost: `author_log_pointer` is what a
+            // reader can derive from public information alone, and it now names
+            // which segment is the head rather than the head itself.
+            let index_id = kols_core::author_log_pointer(channel, &member);
+            let Some((index_cid, index_dek)) = resolve(store, node, &mut keys, &index_id)? else {
                 continue;
             };
-            let cid = pointer.current_cid;
-            let commitment = pointer.dek_commitment;
+            let Ok(index) = fetch_segment(node, index_cid, &index_dek) else {
+                backfill.insert(index_cid);
+                continue;
+            };
 
-            // The cached DEK first, checked against the pointer's own commitment
-            // so a stale one — the author sealed that object and started another
-            // — is discarded rather than used to fail at decryption. In the
-            // steady state this is one unwrap under the current key and no scan.
-            let dek = match store
-                .known_dek(&pointer_id, Some(&commitment))
-                .map_err(|e| e.to_string())?
-            {
-                Some(dek) => dek,
-                None => {
-                    // Never `channel_dek` here: that mints a key for an object
-                    // this node owns, which for somebody else's log would open
-                    // nothing. A foreign DEK can only come from their wrapping,
-                    // validated against the owner's commitment rather than
-                    // against who signed it — which is what makes "any current
-                    // member may re-wrap" safe.
-                    let held = match &keys {
-                        Some(keys) => keys,
-                        None => keys.insert(store.epoch_keys().map_err(|e| e.to_string())?),
-                    };
-                    let Some(dek) =
-                        node.wrappings_for(&pointer_id).into_iter().find_map(|wrapping| {
-                            held.iter()
-                                .find_map(|(_, key)| wrapping.unwrap(key, &commitment).ok())
-                        })
-                    else {
-                        continue;
-                    };
-                    // Remembered under the current epoch, so this scan happens
-                    // once per object rather than on every tick forever.
-                    store
-                        .remember_dek(&pointer_id, &dek)
-                        .map_err(|e| e.to_string())?;
-                    dek
-                }
+            let head_id = kols_core::author_segment_pointer(channel, &member, index.sequence);
+            let Some((cid, dek)) = resolve(store, node, &mut keys, &head_id)? else {
+                continue;
             };
             // A segment we cannot assemble yet is not an error: the fetch runs
             // in rounds, and the manifest arrives before the chunks it names.
             let Ok(segment) = fetch_segment(node, cid, &dek) else {
+                // Queued the same way a backfill hop is. Only the index CID is
+                // derivable from public information; everything past it — the
+                // head included — is learned by reading, so this is how a head
+                // segment gets asked for at all.
+                backfill.insert(cid);
                 continue;
             };
-            let one = absorb_chain(store, node, channel, segment, cid, &dek, backfill)?;
+            let one =
+                absorb_chain(store, node, channel, &member, (cid, segment), &mut keys, backfill)?;
             took.learned += one.learned;
             took.backfilled += one.backfilled;
             took.segments += one.segments;
         }
     }
     Ok(took)
+}
+
+/// Finds the CID and DEK of an object this node does not own.
+///
+/// Returns `None` while either half is missing, which is an ordinary state
+/// rather than a failure: a pointer arrives before its wrapping sometimes, a
+/// wrapping under an epoch this node has not caught up to is unusable until it
+/// does, and a segment past its author's retention window will never have a live
+/// wrapping again. All three look the same from here, and should — a reader has
+/// no business distinguishing history it may not read from history that has not
+/// arrived yet.
+fn resolve(
+    store: &Store,
+    node: &MemberNode,
+    keys: &mut Option<Vec<(intranet_crypto::Hash, intranet_storage::EpochKey)>>,
+    pointer_id: &intranet_governance::PointerId,
+) -> Result<Option<(intranet_storage::Cid, intranet_storage::Dek)>, String> {
+    let Some(pointer) = known_pointer(node, pointer_id) else {
+        return Ok(None);
+    };
+    let commitment = pointer.dek_commitment;
+
+    // The cached DEK first, checked against the pointer's own commitment so a
+    // stale one is discarded rather than used to fail at decryption. In the
+    // steady state this is one unwrap under the current key and no scan.
+    if let Some(dek) = store
+        .known_dek(pointer_id, Some(&commitment))
+        .map_err(|e| e.to_string())?
+    {
+        return Ok(Some((pointer.current_cid, dek)));
+    }
+
+    // Never `channel_dek` here: that mints a key for an object this node owns,
+    // which for somebody else's log would open nothing. A foreign DEK can only
+    // come from their wrapping, validated against the owner's commitment rather
+    // than against who signed it — which is what makes "any current member may
+    // re-wrap" safe.
+    let held = match keys {
+        Some(keys) => keys,
+        None => keys.insert(store.epoch_keys().map_err(|e| e.to_string())?),
+    };
+    let Some(dek) = node.wrappings_for(pointer_id).into_iter().find_map(|wrapping| {
+        held.iter()
+            .find_map(|(_, key)| wrapping.unwrap(key, &commitment).ok())
+    }) else {
+        return Ok(None);
+    };
+    // Remembered under the current epoch, so this scan happens once per object
+    // rather than on every tick forever.
+    store
+        .remember_dek(pointer_id, &dek)
+        .map_err(|e| e.to_string())?;
+    Ok(Some((pointer.current_cid, dek)))
 }
 
 /// Says what an absorb pass took in, and stays quiet when it took in nothing.
@@ -736,34 +876,36 @@ struct Absorbed {
 ///
 /// This is history backfill (`design/01` §5). An author seals a segment once it
 /// crosses a size threshold and starts a fresh one, so a reader that only ever
-/// read the segment a pointer names would see the tail of a conversation and
-/// nothing before it. The seal leaves a hash chain (`design/01` §3.1: "so
+/// read the segment the head index names would see the tail of a conversation
+/// and nothing before it. The seal leaves a hash chain (`design/01` §3.1: "so
 /// history is walkable and gap-detectable without consulting the pointer's
 /// version history"), and this walks it.
 ///
 /// The walk runs as far as the local chunk store can carry it and stops at the
 /// first hop it does not hold, queueing that one instead of blocking on it. So a
-/// node absorbs a chain it already has in a single pass, and pays a tick per hop
-/// only for the parts it still has to fetch — which is what keeps this off the
-/// critical path of a tick that has live records to deliver.
+/// node absorbs a chain it already has in a single pass, and pays a round per
+/// hop only for the parts it still has to fetch — which is what keeps this off
+/// the critical path of a tick that has live records to deliver.
 ///
-/// One DEK covers the whole chain: sealing starts a new segment, not a new key,
-/// so the wrapping that opened the head opens everything behind it. That is also
-/// the limit of what this buys — see `design/01` §8 on why per-segment keys are
-/// what granular retention would need.
+/// **Each hop needs its own key**, since each segment lives under its own
+/// pointer (`author_segment_pointer`) — the arrangement that lets an author
+/// forget old history without forgetting all of it. A hop whose wrapping this
+/// node cannot open is where the walk ends, and that is exactly what reading
+/// past a retention boundary looks like from the outside: indistinguishable from
+/// history that has not arrived, and rightly so.
 fn absorb_chain(
     store: &Store,
     node: &MemberNode,
     channel: &ChannelId,
-    head: Segment,
-    head_cid: intranet_storage::Cid,
-    dek: &intranet_storage::Dek,
+    author: &intranet_identity::PerNetworkIdentityId,
+    head: (intranet_storage::Cid, Segment),
+    keys: &mut Option<Vec<(intranet_crypto::Hash, intranet_storage::EpochKey)>>,
     backfill: &mut BTreeSet<intranet_storage::Cid>,
 ) -> Result<Absorbed, String> {
     let mut took = Absorbed::default();
     let mut walked = Vec::new();
     let mut whole = false;
-    let mut current = Some((head_cid, head));
+    let mut current = Some(head);
     let mut head_segment = true;
 
     while let Some((cid, segment)) = current.take() {
@@ -777,23 +919,44 @@ fn absorb_chain(
         }
         walked.push(cid);
         backfill.remove(&cid);
+        store
+            .mark_segment_link(&cid, segment.sequence, segment.previous)
+            .map_err(|e| e.to_string())?;
 
-        match segment.previous {
+        let (Some(previous), Some(earlier)) = (segment.previous, segment.sequence.checked_sub(1))
+        else {
             // The start of this author's history in this channel.
-            None => whole = true,
-            // Everything behind a marked segment is already held, by the
-            // invariant the marking below maintains.
-            Some(previous) if store.segment_absorbed(&previous) => whole = true,
-            Some(previous) => match fetch_segment(node, previous, dek) {
-                // Already in the chunk store, so the walk continues for free.
-                Ok(older) => current = Some((previous, older)),
-                // Not held yet. Queued rather than waited on, and the walk stops
-                // here: this is the deepest point reached, so nothing below it
-                // exists to keep walking towards.
-                Err(_) => {
-                    backfill.insert(previous);
-                }
-            },
+            whole = true;
+            continue;
+        };
+        // Everything behind a marked segment is already held, by the invariant
+        // the marking below maintains.
+        if store.chain_whole(&previous) {
+            whole = true;
+            continue;
+        }
+        // A hop already read: taken from the stored link rather than fetched
+        // again. This is the path a re-walk takes, and it is why a chain that
+        // ends at a segment this node may never open — the steady state once
+        // retention is active — costs file reads per tick instead of decrypting
+        // and re-verifying every signature behind it.
+        if let Some((sequence, before)) = store.segment_link(&previous) {
+            current = Some((previous, Segment::new(*channel, *author, sequence, before)));
+            continue;
+        }
+        let previous_id = kols_core::author_segment_pointer(channel, author, earlier);
+        let Some((_, dek)) = resolve(store, node, keys, &previous_id)? else {
+            continue;
+        };
+        match fetch_segment(node, previous, &dek) {
+            // Already in the chunk store, so the walk continues for free.
+            Ok(older) => current = Some((previous, older)),
+            // Not held yet. Queued rather than waited on, and the walk stops
+            // here: this is the deepest point reached, so nothing below it
+            // exists to keep walking towards.
+            Err(_) => {
+                backfill.insert(previous);
+            }
         }
     }
 
@@ -810,7 +973,7 @@ fn absorb_chain(
     // already present) and ends the moment the last hop lands.
     if whole {
         for cid in walked {
-            store.mark_segment_absorbed(&cid).map_err(|e| e.to_string())?;
+            store.mark_chain_whole(&cid).map_err(|e| e.to_string())?;
         }
     }
     Ok(took)
@@ -1006,6 +1169,7 @@ fn publish_unsent_live(
     node: &mut MemberNode,
     identity: &intranet_identity::PerNetworkIdentity,
     sent: &mut BTreeSet<kols_core::MessageId>,
+    window_millis: i64,
 ) -> Result<(), String> {
     let mut broadcast = 0usize;
     let Some(state) = replayable(store) else {
@@ -1015,6 +1179,7 @@ fn publish_unsent_live(
         return Ok(());
     };
     let (channels, _) = network::channels(store, &state).map_err(|e| e.to_string())?;
+    let now = crate::chat::now_millis();
 
     for channel in channels.keys() {
         let topic = kols_core::gossip_topic(channel);
@@ -1023,6 +1188,14 @@ fn publish_unsent_live(
             .map_err(|e| e.to_string())?
         {
             if sent.contains(&record.id()) {
+                continue;
+            }
+            // Retired rather than skipped: a record too old to broadcast is one
+            // this node should stop reconsidering, so it goes into the same set
+            // as one that went out. Otherwise every tick rescans the whole of
+            // history to decide against it again.
+            if now - record.hlc.wall_millis > window_millis {
+                sent.insert(record.id());
                 continue;
             }
             let payload = kols_core::LivePayload::seal(&record, &epoch, rotation);
@@ -1201,4 +1374,45 @@ fn start_sync(node: &mut MemberNode, peer: PeerId) {
     node.sync_with(peer);
     node.sync_ledger_with(peer);
     node.sync_pointers_with(peer);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::retires;
+    use kols_core::Retention;
+
+    const DAY: i64 = 86_400_000;
+
+    #[test]
+    fn nothing_ages_out_of_the_default_window() {
+        // `design/01` §8's default. Text is cheap enough that keeping it is the
+        // honest default, so a network that has chosen nothing forgets nothing.
+        assert!(!retires(&Retention::Forever, 0, 10_000 * DAY));
+    }
+
+    #[test]
+    fn a_segment_is_retired_once_its_newest_record_has_aged_out() {
+        let now = 100 * DAY;
+        assert!(!retires(&Retention::Days(30), now - 29 * DAY, now));
+        assert!(!retires(&Retention::Days(30), now - 30 * DAY, now));
+        assert!(retires(&Retention::Days(30), now - 31 * DAY, now));
+    }
+
+    #[test]
+    fn a_segment_still_being_written_to_is_not_retired_for_starting_long_ago() {
+        // The rule that keeps retention from eating the start of an active
+        // conversation: what matters is the newest record, so a segment whose
+        // first message is ancient stays while its last one is recent.
+        let now = 1_000 * DAY;
+        assert!(!retires(&Retention::Days(7), now - DAY, now));
+    }
+
+    #[test]
+    fn a_clock_that_runs_backwards_does_not_retire_anything() {
+        // A record dated in the future gives a negative age. Saturating at zero
+        // keeps it maintained rather than wrapping into a huge age and retiring
+        // content the moment somebody's clock is fast.
+        let now = 10 * DAY;
+        assert!(!retires(&Retention::Days(1), now + 5 * DAY, now));
+    }
 }

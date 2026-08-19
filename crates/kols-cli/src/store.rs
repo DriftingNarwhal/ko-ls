@@ -532,26 +532,68 @@ impl Store {
         Ok(dek)
     }
 
-    /// Whether this node has already absorbed the segment named by `cid`.
+    /// Whether the chain *behind* the segment named by `cid` is entirely held.
     ///
     /// Backfill walks a `previous` chain backwards, and the walk has to be able
     /// to stop. Stopping on "this segment taught us nothing new" would be wrong:
     /// a walk interrupted midway leaves older segments unread, and a later tick
     /// that halts at the first already-known segment would never reach them
-    /// again. A mark set only once a segment is fully stored makes the walk
-    /// resumable, so an interrupted backfill costs a retry rather than a gap.
-    pub fn segment_absorbed(&self, cid: &Cid) -> bool {
-        self.root
-            .join("segments")
-            .join(to_hex(cid.hash().as_bytes()))
-            .exists()
+    /// again. This mark means the stronger thing — everything behind here is in
+    /// — so a walk that reaches it can stop knowing nothing is missed.
+    pub fn chain_whole(&self, cid: &Cid) -> bool {
+        self.segment_path(cid, "whole").exists()
     }
 
-    /// Records that `cid`'s records are all stored.
-    pub fn mark_segment_absorbed(&self, cid: &Cid) -> Result<(), StoreError> {
-        let dir = self.root.join("segments");
-        fs::create_dir_all(&dir)?;
-        fs::write(dir.join(to_hex(cid.hash().as_bytes())), [])?;
+    /// Records that everything behind `cid` is held.
+    pub fn mark_chain_whole(&self, cid: &Cid) -> Result<(), StoreError> {
+        self.write_segment_mark(cid, "whole", &[])
+    }
+
+    /// Where a held segment sits in its chain: its sequence and its predecessor.
+    ///
+    /// Present exactly when the segment's records are stored, which makes it
+    /// two things at once — the link a walk needs to take its next hop, and the
+    /// answer to "have I already read this one?".
+    ///
+    /// Keeping it is what makes a re-walk cheap. Without it, a walk that ends at
+    /// a segment it cannot open — the ordinary steady state once retention is
+    /// active, since a retired segment never becomes readable — would re-fetch,
+    /// re-decrypt and re-verify every signature in the whole held chain on every
+    /// tick, forever, to rediscover links it already knew.
+    pub fn segment_link(&self, cid: &Cid) -> Option<(u64, Option<Cid>)> {
+        let raw = fs::read(self.segment_path(cid, "link")).ok()?;
+        let (sequence, previous) = raw.split_at_checked(8)?;
+        let sequence = u64::from_be_bytes(sequence.try_into().ok()?);
+        let previous = match previous.len() {
+            0 => None,
+            _ => Some(Cid::from_hash(Hash::from_bytes(previous.try_into().ok()?))),
+        };
+        Some((sequence, previous))
+    }
+
+    /// Records where a segment sits in its chain, once its records are stored.
+    pub fn mark_segment_link(
+        &self,
+        cid: &Cid,
+        sequence: u64,
+        previous: Option<Cid>,
+    ) -> Result<(), StoreError> {
+        let mut raw = sequence.to_be_bytes().to_vec();
+        if let Some(previous) = previous {
+            raw.extend_from_slice(previous.hash().as_bytes());
+        }
+        self.write_segment_mark(cid, "link", &raw)
+    }
+
+    fn segment_path(&self, cid: &Cid, kind: &str) -> PathBuf {
+        self.root
+            .join("segments")
+            .join(format!("{}.{kind}", to_hex(cid.hash().as_bytes())))
+    }
+
+    fn write_segment_mark(&self, cid: &Cid, kind: &str, raw: &[u8]) -> Result<(), StoreError> {
+        fs::create_dir_all(self.root.join("segments"))?;
+        fs::write(self.segment_path(cid, kind), raw)?;
         Ok(())
     }
 
