@@ -1,7 +1,7 @@
 # ko-ls — Implementation Status
 
 **Updated:** 2026-08-19
-**Phase:** P0 — complete. All five criteria met, including over the wire
+**Phase:** P0 complete; F2 done. P1 not started
 **Design:** [`design/`](design/) — `00`–`08`. `08-record-encoding.md` is normative.
 
 This file is the answer to "where are we?". It is updated in the same change that moves
@@ -14,10 +14,10 @@ it is believed.
 
 | | |
 |---|---|
-| **Working on** | Nothing in flight — P0 closed, P1 not started |
+| **Working on** | Nothing in flight — P0 closed, spec 07 landed upstream |
 | **Blocked on** | Nothing |
 | **Runnable** | `cargo test` — 32 tests incl. two live-node tests, clippy clean. No binary yet |
-| **Next decision needed from the user** | Whether to start P1 (text chat MVP) or close out P0 with F2/F3 first |
+| **Next decision needed from the user** | Whether to start P1 with E9/E2 in the protocol repo, or build a runnable CLI first |
 
 ---
 
@@ -26,8 +26,8 @@ it is believed.
 | Item | State | Notes |
 |---|---|---|
 | F1 record encoding | **Done** | `design/08-record-encoding.md`, normative |
-| F2 spec 07 in protocol repo | Not started | Write alongside P0, not after |
-| F3 design set → v1.0 | Not started | After P0 teaches us something |
+| F2 spec 07 in protocol repo | **Done** | `distributed-intranet/specs/07-chat-application-spec.md`, committed there. README and CLAUDE.md updated — the repo no longer claims six specs |
+| F3 design set → v1.0 | Not started | P0 taught us two things, both folded into `08` and `01`. Worth doing before P1 grows the set further |
 
 ## 3. Setup
 
@@ -94,6 +94,12 @@ design changes before anything else is built.
 
 Newest first. One line per change that moved the state above.
 
+- **2026-08-19** — **F2 done: spec 07 written and committed upstream.** The first
+  application-layer spec, carrying the channel and record model, the normative encoding,
+  the capability vocabulary, the keying tiers, and §7's five platform amendments. Written
+  from a working implementation rather than ahead of one, so its two most consequential
+  rules — the count-free record list and per-device HLC strictness — arrive with the
+  measurements that produced them. Protocol repo stays green: 591 tests, clippy clean.
 - **2026-08-19** — **P0 closed: the wire half works.** `kols-net` publishes a segment
   (store, announce per chunk, accept pointer) and reassembles one from fetched chunks. Two
   live `MemberNode`s: 120 messages cross the wire and render identically on both sides, and
