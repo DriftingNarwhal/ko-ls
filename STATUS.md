@@ -1,7 +1,7 @@
 # ko-ls — Implementation Status
 
 **Updated:** 2026-08-19
-**Phase:** P0 (spike) — encoding landed, storage round-trip next
+**Phase:** P0 (spike) — criterion 2 met; multi-node criteria remain
 **Design:** [`design/`](design/) — `00`–`08`. `08-record-encoding.md` is normative.
 
 This file is the answer to "where are we?". It is updated in the same change that moves
@@ -14,9 +14,9 @@ it is believed.
 
 | | |
 |---|---|
-| **Working on** | `kols-core` — encoding done; next is the storage round-trip P0 needs |
+| **Working on** | P0 criteria 1, 3–5, which all need two nodes and therefore `kols-net` |
 | **Blocked on** | Nothing |
-| **Runnable** | `cargo test` in this repo — 13 tests, clippy clean. No binary yet |
+| **Runnable** | `cargo test` — 18 tests, clippy clean. No binary yet |
 | **Next decision needed from the user** | None outstanding |
 
 ---
@@ -60,7 +60,7 @@ both green.
 
 | Crate | State |
 |---|---|
-| `kols-core` | **Encoding complete** — `Hlc`, `ChannelId`/`MessageId`, all six record kinds, `Segment`, every derived id from `design/08` §7. 13 conformance tests incl. frozen vectors |
+| `kols-core` | **Encoding + author logs** — `Hlc`, ids, six record kinds, `Segment`, `AuthorLog` (publish/append/seal against `intranet-storage`). 18 tests incl. frozen vectors and the delta-fetch measurement |
 | `kols-store` | Not created |
 | `kols-net` | Not created |
 | `kols-media` | Not created |
@@ -77,8 +77,8 @@ From `design/07-build-plan.md` §3. None of these pass yet.
 
 | # | Criterion | State |
 |---|---|---|
-| 1 | 100 messages across sealed segments render in identical order on both nodes | Not started |
-| 2 | Appending one message transfers **only new tail chunks**, asserted on bytes moved | Not started |
+| 1 | 100 messages across sealed segments render in identical order on both nodes | Not started — needs two nodes |
+| 2 | Appending one message transfers **only new tail chunks**, asserted on bytes moved | **Met (single-node half)** — 1,556 of 176,115 bytes, 1 new chunk of 8. The wire half still needs two nodes |
 | 3 | Partition, both post, heal, converge byte-identically | Not started |
 | 4 | Records from an identity without `publish:chat-log` are refused by the *reader* | Not started |
 | 5 | Pointer version collision resolves by lower record hash, loser re-publishes | Not started |
@@ -91,6 +91,13 @@ design changes before anything else is built.
 ## 7. Log
 
 Newest first. One line per change that moved the state above.
+
+- **2026-08-19** — **P0 criterion 2 met, and it failed first.** `AuthorLog` publishes
+  segments through `intranet-storage`; the byte-level assertion showed 51,405 of 176,123
+  bytes moving per appended message. Cause: `Enc::seq`'s count prefix sits at the head of
+  the encoding, so every append changed the first chunk. Removing the count — the record
+  list runs to end of input, each record already length-prefixed — brings it to **1,556 of
+  176,115, one new chunk of eight**. `design/08` §6 and `design/01` §3.1 updated.
 
 - **2026-08-19** — `kols-core` encoding implemented against `design/08`: records, segments,
   HLC, derived identifiers. 13 tests green (round-trip, injectivity, domain separation, id

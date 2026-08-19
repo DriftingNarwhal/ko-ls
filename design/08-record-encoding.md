@@ -219,12 +219,31 @@ signed twice by the same key produces the same id.
 ```
 segment_bytes(s) -> Enc:
     e = Enc::domain("intranet.chat-segment.v1")
-    e.fixed(s.channel_id)
-    s.author.encode(e)
-    e.u64(s.sequence)                              // monotonic per (channel, author)
-    e.option(s.previous_segment, |e, cid| e.fixed(cid))
-    e.seq(s.records, |e, r| e.bytes(r.canonical_bytes()))
+    e.fixed(s.channel_id)                          // ─┐
+    s.author.encode(e)                             //  │ fixed width: never changes
+    e.u64(s.sequence)                              //  │ across an append
+    e.option(s.previous_segment, |e,cid| e.fixed(cid)) // ─┘
+    for r in s.records:                            // NO count prefix — see below
+        e.bytes(r.canonical_bytes())
 ```
+
+**The record list is deliberately not count-prefixed, and this is the one place this
+project departs from its own framing rule.** Every other sequence in the protocol carries
+a `u64` count. Here that count would sit at the *head* of the encoding and change on every
+append, which gives the first chunk a new CID every time anybody sends a message — one
+whole chunk (16–64 KB) re-fetched by every reader, per message, forever. That defeats
+precisely the delta-fetch property the segment model exists to provide.
+
+Dropping it costs nothing in framing: every record is individually length-prefixed and the
+list runs to end of input, so the encoding stays injective and unambiguous — nothing
+follows the list that it could absorb. Everything before the list is fixed-width, so an
+append changes only the tail.
+
+**This was found by measurement, not by review.** The P0 spike asserted on bytes actually
+moved and reported 51,405 of 176,123 — roughly three chunks per appended message. With the
+count removed the same append moves **1,556 bytes of 176,115, one new chunk of eight**.
+The design was wrong in a way that reads perfectly fine on paper, which is the entire
+reason `design/07` §3 puts a byte-level assertion at the front of the plan.
 
 Each record is embedded as its **complete canonical bytes including its signature**,
 length-prefixed. Three properties follow, and all three matter:

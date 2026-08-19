@@ -19,11 +19,13 @@
 #![deny(missing_docs)]
 
 mod hlc;
+mod log;
 mod ids;
 mod record;
 mod segment;
 
 pub use hlc::Hlc;
+pub use log::{AuthorLog, CHAT_LOG_CONTENT_TYPE, Published};
 pub use ids::{
     ChannelId, MessageId, author_log_pointer, channel_browse_collection,
     conversation_channel_id, gossip_topic, moderation_log_pointer, participant_index_collection,
@@ -36,7 +38,11 @@ pub use record::{
 pub use segment::{MAX_RECORDS_PER_SEGMENT, Segment};
 
 /// What can go wrong building or reading a record.
-#[derive(Debug, Clone, PartialEq, Eq)]
+///
+/// Not `Clone`, because `StorageError` is not — and wrapping it in something
+/// cloneable (a `String`, an `Arc`) to win a derive would throw away the
+/// structured refusal the storage layer took care to produce.
+#[derive(Debug, PartialEq, Eq)]
 pub enum CoreError {
     /// The bytes were not a valid encoding of the expected type.
     Decode(intranet_crypto::DecodeError),
@@ -48,6 +54,15 @@ pub enum CoreError {
     /// be retained and counted rather than rejected — but the decoder still has
     /// to say so, since it cannot produce a typed body it does not know.
     UnknownKind(u8),
+    /// A record's clock did not strictly increase within its author's log.
+    NonMonotonicClock {
+        /// The previous record's reading.
+        previous: crate::Hlc,
+        /// The reading offered.
+        offered: crate::Hlc,
+    },
+    /// The storage layer refused the publish.
+    Storage(intranet_storage::StorageError),
     /// A field exceeded the bound that applies to it.
     TooLarge {
         /// Which field.
@@ -71,6 +86,11 @@ impl std::fmt::Display for CoreError {
             Self::Decode(err) => write!(f, "decode failed: {err}"),
             Self::BadSignature => write!(f, "signature did not verify"),
             Self::UnknownKind(tag) => write!(f, "unknown record kind {tag:#04x}"),
+            Self::NonMonotonicClock { previous, offered } => write!(
+                f,
+                "clock did not advance: previous {previous:?}, offered {offered:?}"
+            ),
+            Self::Storage(err) => write!(f, "storage refused the publish: {err}"),
             Self::TooLarge {
                 field,
                 actual,

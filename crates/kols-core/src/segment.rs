@@ -59,6 +59,23 @@ impl Segment {
     /// Each record is embedded as its own complete canonical bytes, signature
     /// included, so a reader verifies from the segment alone and re-emits any
     /// record byte-identically.
+    ///
+    /// # Why the record list carries no count prefix
+    ///
+    /// Every other sequence in this project is count-prefixed, and this one
+    /// deliberately is not. A count sits at the *head* of the encoding and
+    /// changes on every append, so the first chunk gets a new CID every time a
+    /// message is sent — one whole chunk re-fetched by every reader, per
+    /// message, forever. That defeats the delta-fetch property the entire
+    /// segment model exists to provide.
+    ///
+    /// Dropping it costs nothing in framing: every record is individually
+    /// length-prefixed and the list runs to end of input, so the encoding stays
+    /// injective and unambiguous. Everything before the list is fixed-width, so
+    /// an append changes only the tail — which is the property this type is for.
+    ///
+    /// *Found by the P0 spike measuring bytes actually moved, not by reading the
+    /// design. `design/08` §6 records it.*
     pub fn canonical_bytes(&self) -> Vec<u8> {
         let mut e = Enc::domain(SEGMENT_DOMAIN);
         self.channel.encode(&mut e);
@@ -67,9 +84,9 @@ impl Segment {
         e.option(self.previous.as_ref(), |e, cid| {
             e.fixed(cid.hash().as_bytes());
         });
-        e.seq(self.records.iter(), |e, r| {
-            e.bytes(&r.canonical_bytes());
-        });
+        for record in &self.records {
+            e.bytes(&record.canonical_bytes());
+        }
         e.finish()
     }
 
@@ -88,13 +105,17 @@ impl Segment {
         let previous = dec.option(|d| {
             Ok::<_, CoreError>(Cid::from_hash(Hash::from_bytes(d.fixed::<32>()?)))
         })?;
-        let records = dec.seq(|d| Record::decode(d.bytes()?))?;
-        if records.len() > MAX_RECORDS_PER_SEGMENT {
-            return Err(CoreError::TooLarge {
-                field: "records per segment",
-                actual: records.len(),
-                limit: MAX_RECORDS_PER_SEGMENT,
-            });
+        // Runs to end of input rather than to a count — see `canonical_bytes`.
+        let mut records = Vec::new();
+        while dec.remaining() > 0 {
+            if records.len() == MAX_RECORDS_PER_SEGMENT {
+                return Err(CoreError::TooLarge {
+                    field: "records per segment",
+                    actual: records.len() + 1,
+                    limit: MAX_RECORDS_PER_SEGMENT,
+                });
+            }
+            records.push(Record::decode(dec.bytes()?)?);
         }
         dec.finish()?;
         Ok(Self {
