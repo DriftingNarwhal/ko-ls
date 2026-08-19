@@ -27,7 +27,7 @@ Two rules govern this list:
 | # | Extension | Blocks | Size |
 |---|---|---|---|
 | ~~E1~~ | ~~Extension-capability tier registry~~ — **already implemented**, needs configuration only | — | None |
-| ~~E2~~ | Channel governance entries — **landed generically**, Core §2.7.2 | — | Done |
+| ~~E2~~ | Channel governance entries — **landed generically**, Core §2.7.2; chat payloads in spec 07 §3.8 | — | Done |
 | ~~E3~~ | ~~Derived pointer ids~~ — **already possible**, no change needed | — | None |
 | E4 | Gossipsub behaviour for live delivery | P1 | Medium |
 | ~~E5~~ | Media fan-out at the relay — **landed**, Real-Time §2.2.1 | — | Done |

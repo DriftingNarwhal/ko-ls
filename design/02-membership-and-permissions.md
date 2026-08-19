@@ -69,8 +69,8 @@ E11 lands (`06` §11). `kols-core::capabilities` builds the entries.
 
 | Capability | Effect | Tier |
 |---|---|---|
-| `chat:create-channel:<scope>` | Create a new channel, in a category or network-wide | Ordinary |
-| `chat:manage-channel:<scope>` | Rename, re-categorise, archive, delete; bind permissions; set slowmode (`01` §10.3); **change a private channel's roster** | Governance-tier |
+| `chat:create-channel:<scope>` | Create a new channel, in a category or network-wide. **Authorizes a `channel-definition` entry and nothing else** (spec 07 §3.8) — a definition grants nobody access to anything, since a new private channel's roster is empty until a governance-tier membership entry fills it | Ordinary |
+| `chat:manage-channel:<scope>` | Rename, re-categorise, archive, delete; bind permissions; set slowmode (`01` §10.3); **change a private channel's roster**. Authorizes `channel-update`, `channel-membership` and `channel-rotation` entries | Governance-tier |
 | `chat:post:<scope>` | Write messages in scope | Ordinary |
 | `chat:read:<scope>` | Read scope. For private channels this is the record of intent; the *enforcement* is key possession (`03`) | Ordinary |
 | `chat:moderate:<scope>` | Redact others' messages, pin, manage threads | Governance-tier |

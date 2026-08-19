@@ -70,8 +70,15 @@ ChannelDefinition {
 ```
 
 Renames, re-categorisation, archival and deletion are further governance entries against
-the same `channel_id`; current state is whatever replay produces. Gated on
-`chat:manage-channel` (`02` §3).
+the same `channel_id`; current state is whatever replay produces.
+
+**Creating and changing are gated differently, and deliberately** (spec 07 §3.8): the
+definition itself needs `chat:create-channel`, which is ordinary, while every later change —
+and every roster or rotation entry — needs `chat:manage-channel`, which is governance-tier.
+A definition grants nobody access to anything, because a new private channel's roster is
+empty until a membership entry fills it; the tier follows what an action can widen rather
+than how consequential it feels. `kols-core::channel` implements the mapping and refuses an
+entry declaring the wrong one.
 
 **All of this applies to `server`-profile networks only.** A `conversation`-profile
 network (`03` §4.1) has exactly one channel, its id derived as

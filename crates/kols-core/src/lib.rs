@@ -19,6 +19,7 @@
 #![deny(missing_docs)]
 
 pub mod capabilities;
+mod channel;
 mod hlc;
 mod log;
 mod permissions;
@@ -28,6 +29,11 @@ mod record;
 mod segment;
 mod view;
 
+pub use channel::{
+    CHAT_NAMESPACE, ChannelChange, ChannelEntry, ChannelEntryBody, ChannelKind, ChannelRefusal,
+    MAX_CHANNEL_NAME_BYTES, MAX_CHANNEL_TOPIC_BYTES, MAX_ROTATION_REASON_BYTES, MembershipAction,
+    Privacy, admit,
+};
 pub use hlc::Hlc;
 pub use log::{AuthorLog, CHAT_LOG_CONTENT_TYPE, Published};
 pub use ids::{
@@ -55,6 +61,24 @@ pub enum CoreError {
     Decode(intranet_crypto::DecodeError),
     /// A record's signature did not verify against its author's device key.
     BadSignature,
+    /// A channel entry's payload discriminant disagreed with its declared kind.
+    ///
+    /// The two come from different places — the `kind` string from the entry
+    /// envelope the protocol reads, the discriminant from bytes it never decodes
+    /// — so a disagreement means one was changed by something that could not
+    /// change both.
+    ChannelKindMismatch {
+        /// The `kind` the entry travelled under.
+        declared: String,
+        /// The kind its payload actually encodes.
+        encoded: &'static str,
+    },
+    /// A channel entry carried a discriminant this build does not recognise.
+    ///
+    /// Refused rather than skipped, unlike an unknown *record* kind: a channel
+    /// entry carries structure, and applying part of it would leave two nodes
+    /// with different channel state.
+    UnknownChannelField(&'static str, u8),
     /// A record carried a discriminant this build does not recognise.
     ///
     /// Not an error at the reader level — `design/08` §9 requires unknown kinds
@@ -93,6 +117,13 @@ impl std::fmt::Display for CoreError {
             Self::Decode(err) => write!(f, "decode failed: {err}"),
             Self::BadSignature => write!(f, "signature did not verify"),
             Self::UnknownKind(tag) => write!(f, "unknown record kind {tag:#04x}"),
+            Self::ChannelKindMismatch { declared, encoded } => write!(
+                f,
+                "entry declared kind {declared} but its payload encodes {encoded}"
+            ),
+            Self::UnknownChannelField(field, tag) => {
+                write!(f, "unknown {field} discriminant {tag:#04x}")
+            }
             Self::NonMonotonicClock { previous, offered } => write!(
                 f,
                 "clock did not advance: previous {previous:?}, offered {offered:?}"

@@ -1,7 +1,7 @@
 # ko-ls — Implementation Status
 
-**Updated:** 2026-08-19 (E5 pushed; media relay ceilings **in the working tree, uncommitted**)
-**Phase:** P1 — E9, E2 and E5 landed; chat entry payloads next
+**Updated:** 2026-08-19 (chat channel entries **in the working tree, uncommitted**)
+**Phase:** P1 — E9, E2 and E5 landed; chat channel entries done, live gossip (E4) next
 **Design:** [`design/`](design/) — `00`–`08`, all v1.0. **`distributed-intranet/specs/07` is normative** where it and the design set overlap.
 
 This file is the answer to "where are we?". It is updated in the same change that moves
@@ -25,20 +25,23 @@ The client builds against the sibling checkout by **path dependency**, not a pub
 version, and deliberately so while the extensions are still moving. A fresh machine needs
 both repos cloned side by side.
 
-**Next task:** the chat side of E2 — define `ChannelDefinition`, `ChannelUpdate`,
-`ChannelMembership` and `ChannelRotation` as payloads in the `chat` namespace of the new
-generic `EntryBody::AppEntry` (Core §2.7.2), in `kols-core`. Two checks belong to the
-client and did not exist before E2 landed generically:
+**Next task:** E4 — the live gossip path. `kols-core::channel` now carries channel
+structure, so the remaining P1 gaps are gossipsub in `MemberBehaviour`, history backfill,
+and the Tauri shell (blocked on S3).
 
-1. **Verify the declared capability is the one this design requires** for that kind — a
-   `chat:channel-definition` must demand `chat:manage-channel`, not merely *some*
-   capability the author happens to hold. The protocol enforces what was declared and
-   cannot know what should have been.
-2. **Reject channel entries in a `conversation`-profile network.** `ChatPolicy::profile()`
-   reads the profile; the protocol carries `chat` payloads without decoding them, so this
-   rejection is every conformant reader's job now.
+**Just done:** the chat side of E2. `ChannelEntry` encodes all four kinds as `chat`-namespace
+payloads (spec 07 §3.8, written for this and normative), and `ChannelEntry::read` is the
+only way to get one out of a log entry — so both checks E2's generalisation moved onto
+readers are unavoidable rather than optional:
 
-**To pick up:** `cargo test` in this repo should show 37 passing and clippy silent. If it
+1. **The declared capability must be the one the kind requires.** The protocol verified the
+   author holds what the entry *declared*; only a reader that understands `chat` knows what
+   it *should* have declared. Without this, an author holding `chat:post:*` — the most
+   ordinary grant a network issues — could mint channel structure.
+2. **A channel entry is invalid in a `conversation`-profile network.** The protocol carries
+   `chat` payloads without decoding them, so it cannot reach this verdict.
+
+**To pick up:** `cargo test` in this repo should show 56 passing and clippy silent. If it
 does not, fix that before anything else — the tree was left green.
 
 ---
@@ -47,10 +50,10 @@ does not, fix that before anything else — the tree was left green.
 
 | | |
 |---|---|
-| **Working on** | Chat channel records as `chat`-namespace payloads in `kols-core` |
+| **Working on** | E4 — gossipsub live delivery |
 | **Blocked on** | Nothing |
-| **Runnable** | `cargo test` — 37 tests, clippy clean; `scripts/cross-check.sh` for big-endian. No binary yet |
-| **Next decision needed from the user** | Whether to start P1 with E9/E2 in the protocol repo, or build a runnable CLI first |
+| **Runnable** | `cargo test` — 56 tests, clippy clean; `scripts/cross-check.sh` for big-endian. No binary yet |
+| **Next decision needed from the user** | Whether to do E4 next, or build a runnable CLI first so P1 has something to drive |
 
 ---
 
@@ -94,7 +97,7 @@ both green.
 
 | Crate | State |
 |---|---|
-| `kols-core` | **Encoding, author logs, merge, collision recovery, chat policy** — records/segments/ids, `AuthorLog` incl. `rebase`, `ChannelView`, permissions, capability vocabulary, `ChatPolicy`. 35 tests |
+| `kols-core` | **Encoding, author logs, merge, collision recovery, chat policy, channel structure** — records/segments/ids, `AuthorLog` incl. `rebase`, `ChannelView`, permissions, capability vocabulary, `ChatPolicy`, `ChannelEntry`. 54 tests |
 | `kols-net` | **Publish and fetch** — stores/announces chunks, accepts pointers, reassembles segments. Two live two-node tests |
 | `kols-store` | Not created |
 | `kols-media` | Not created |
@@ -136,6 +139,37 @@ design changes before anything else is built.
 
 Newest first. One line per change that moved the state above.
 
+- **2026-08-19** — **Chat channel entries landed, and spec 07 gained the bytes they
+  needed.** E2 put channel structure in one generic application entry rather than four
+  chat-shaped variants; `kols-core::channel` is the chat side of that. All four kinds —
+  definition, update, membership, rotation — encode as `chat`-namespace payloads under a
+  new `intranet.chat-channel-entry.v1` tag, with the header mirroring a record's so the
+  reasoning transfers: no `network_id`, because the channel id already derives from it.
+
+  **A contradiction in the normative spec had to be settled first, and the user chose.**
+  §1.3 said a channel definition must declare `chat:manage-channel`, while §4.1 listed
+  `chat:create-channel` as Ordinary and then never used it anywhere. Resolved the way
+  `design/02` §2.2 always had it: **creating is ordinary, changing is governance**, because
+  a definition grants nobody access to anything — a new private channel has an empty roster
+  until a membership entry adds someone, and that entry is the governance-tier one. The tier
+  follows what an action can widen, not how consequential it sounds. Spec 07 §1.3 corrected,
+  §3.8 written to carry the mapping normatively.
+
+  **Both obligations E2 moved onto readers are now unavoidable rather than optional.**
+  `ChannelEntry::read` is the only way to get an entry out of a log body, and it runs the
+  capability check and the profile check on the way through; decoding bytes directly is
+  still possible but is named `decode_payload` and yields only a value. The writing side
+  declares its capability *from the entry's own kind*, so a client cannot publish one
+  declaring something else — the same structural move as `authorize` in the protocol's
+  media limiter, and for the same reason: a check a caller can route around eventually is.
+
+  One decision worth keeping: an unallocated discriminant in a channel entry is **refused**,
+  the opposite of the rule for record kinds. An unknown record is retained, counted and not
+  rendered (`design/08` §9); an unknown channel entry carries structure, and a reader that
+  skipped it would hold different channel state from one that understood it.
+
+  Nineteen tests, including frozen vectors — spec 07 §3.8 is normative now, so a change to
+  one is a wire break rather than a value to re-bless. 37 → 56 in this repo.
 - **2026-08-19** — **A relay can now refuse, and its advertisement binds.** Found by asking
   what actually stops a volunteer being asked for more than it offered: nothing did. A
   node's `bandwidth_cap` was read by every node *except* the one that declared it — it
