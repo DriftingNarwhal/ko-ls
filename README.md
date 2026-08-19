@@ -30,7 +30,7 @@ The design set (`design/00`–`08`) owns client design, rationale and sequencing
 crates/kols-core   records, canonical encoding, merge ordering, permissions, chat policy,
                    channel structure as chat-namespace governance payloads
 crates/kols-net    publishing a channel over the transport, and reading one back
-crates/kols-cli    `kols` — the terminal client, and the first runnable thing here
+crates/kols-cli    `kols` — the terminal client and its node daemon
 design/            00-08, all v1.0
 scripts/           cross-check.sh — runs the encoding on a big-endian target
 ```
@@ -46,7 +46,7 @@ directory — the protocol crates are path dependencies while the extensions it 
 still landing.
 
 ```bash
-cargo test                                   # 72 tests, no network or services needed
+cargo test                                   # 74 tests; the two-node ones spawn real nodes on loopback
 cargo clippy --workspace --all-targets       # must stay clean
 ./scripts/cross-check.sh                     # big-endian verification, see below
 ```
@@ -60,11 +60,28 @@ only there proves they are self-consistent rather than host-independent.
 ## Trying it
 
 ```bash
-cargo run -p kols-cli -- init "the workshop"
-cargo run -p kols-cli -- channel create general --topic "anything at all"
-cargo run -p kols-cli -- post general "first message"
-cargo run -p kols-cli -- read general
+cargo build -p kols-cli
+alias kols="$PWD/target/debug/kols"
+
+KOLS_HOME=/tmp/alice kols init "the workshop"     # prints the network id
+KOLS_HOME=/tmp/alice kols serve &                 # keys the network, prints an address
+KOLS_HOME=/tmp/alice kols channel create general
+KOLS_HOME=/tmp/alice kols post general "hello"
 ```
+
+`serve` must run before posting: it holds the network's MLS group, which is live state no
+one-shot command can keep. Then, in another terminal, somebody joins:
+
+```bash
+KOLS_HOME=/tmp/bob kols attach <network-id>       # prints their identity
+KOLS_HOME=/tmp/alice kols admit <their-identity>  # from the founder
+KOLS_HOME=/tmp/bob kols serve --peer <alice's address>
+KOLS_HOME=/tmp/bob kols read general
+```
+
+The joiner syncs the governance log, asks to be keyed in, receives the epoch keys
+including the historical ones, fetches the other author's segments and renders a merged
+view — everything over the real transport, nothing shared out of band but the network id.
 
 State lands in `$KOLS_HOME`, else `~/.kols`. The seed written there is the only copy of
 your identity and there is no recovery service, so point `--home` somewhere disposable
@@ -78,9 +95,12 @@ render, permission resolution, channel structure as governance-log payloads, and
 publish/fetch over the real transport. `kols` drives all of that from a terminal on one
 node — create a network, define a channel, post, read.
 
-What does not exist yet: the CLI's **wire half**, so two `kols` installs cannot yet reach
-each other (`kols-net` does this in tests; the CLI does not drive it). No user interface,
-no private-channel keying, no voice, no search, no live gossip path.
+Two `kols` installs now reach each other end to end: admission, epoch-key delivery,
+pointer sync, segment fetch and a merged view across authors.
+
+What does not exist yet: **epoch rotation**, so a removed member keeps their key — the one
+gap that matters for confidentiality, and it needs MLS state that survives a restart. No
+user interface, no private-channel keying, no voice, no search, no live gossip path.
 [`STATUS.md`](STATUS.md) is the honest inventory.
 
 ## The one number worth knowing

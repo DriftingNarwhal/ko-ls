@@ -26,6 +26,7 @@
 
 mod chat;
 mod network;
+mod serve;
 mod store;
 
 use clap::{Parser, Subcommand};
@@ -67,6 +68,28 @@ enum Command {
         /// The channel, by name or by the start of its id.
         channel: String,
     },
+    /// Run this node so peers can reach it, and pull in what they hold.
+    Serve {
+        /// What to listen on.
+        #[arg(long, default_value = "/ip4/0.0.0.0/tcp/0")]
+        listen: String,
+        /// Peers to dial on startup, as multiaddrs including `/p2p/<peer-id>`.
+        #[arg(long = "peer")]
+        peers: Vec<String>,
+    },
+    /// Admit an identity to this network.
+    Admit {
+        /// The joiner's identity in this network, as hex.
+        identity: String,
+    },
+    /// Prepare a store for a network created elsewhere, before syncing it.
+    Attach {
+        /// The network id, as hex.
+        network: String,
+        /// What to call it locally.
+        #[arg(long, default_value = "attached")]
+        name: String,
+    },
 }
 
 #[derive(Subcommand)]
@@ -101,6 +124,9 @@ fn main() -> std::process::ExitCode {
         Command::Channel(ChannelCommand::List) => chat::list_channels(root),
         Command::Post { channel, message } => chat::post(root, &channel, &message.join(" ")),
         Command::Read { channel } => chat::read(root, &channel),
+        Command::Serve { listen, peers } => serve::run(root, &listen, &peers),
+        Command::Admit { identity } => admit(root, &identity),
+        Command::Attach { network, name } => attach(root, &network, &name),
     };
 
     match result {
@@ -126,25 +152,12 @@ fn init(root: std::path::PathBuf, name: &str) -> Result<(), String> {
     store.append_entry(&genesis).map_err(|e| e.to_string())?;
     store.set_label(name).map_err(|e| e.to_string())?;
 
-    // A real MLS group of one, whose exported secret is this network's first
-    // epoch key (Core §3.3). Every DEK is wrapped under it, so what protects
-    // content is key material only members hold rather than anything derivable
-    // from the network's public identifiers.
-    let group = intranet_epoch::GroupSession::create(&intranet_epoch::identity_label(&founder.id()))
-        .map_err(|err| format!("could not create the network's key group: {err}"))?;
-    let epoch = group
-        .epoch_key()
-        .map_err(|err| format!("could not derive the first epoch key: {err}"))?;
-    // Genesis is the rotation this first epoch belongs to. A rotation reference
-    // is an entry hash rather than an epoch ordinal, because two branches can
-    // each produce "the next epoch" with the same number (Storage §5.3).
-    let rotation = store
-        .head()
-        .map_err(|e| e.to_string())?
-        .ok_or("genesis was written but the log has no head")?;
-    store
-        .set_epoch_key(&epoch, rotation)
-        .map_err(|e| e.to_string())?;
+    // The network's key group is deliberately *not* created here. An MLS group
+    // is live cryptographic state that `GroupSession` keeps in an in-memory
+    // provider, so it exists only for as long as the process that made it — and
+    // keying a new member in requires that live group. A one-shot command cannot
+    // hold one, so `kols serve` creates it and this leaves the network unkeyed
+    // until it runs.
 
     // Replay immediately rather than trusting the entry we just wrote. A genesis
     // this node cannot replay is a network nobody can join, and finding that out
@@ -161,6 +174,8 @@ fn init(root: std::path::PathBuf, name: &str) -> Result<(), String> {
     println!();
     println!("The seed in {}/seed is the only copy.", store.root().display());
     println!("Losing it loses this identity, and there is no recovery service.");
+    println!();
+    println!("Next: `kols serve` keys this network, and must run before posting.");
     Ok(())
 }
 
@@ -203,6 +218,83 @@ fn whoami(root: std::path::PathBuf) -> Result<(), String> {
         println!("  {:<16} {}", label, if holds { "yes" } else { "no" });
     }
     Ok(())
+}
+
+/// Admits an identity to this network.
+///
+/// The explicit-intake half of `design/02` §6.2: a joiner reaching this network
+/// holds connectivity and an identity, and nothing else, until somebody with the
+/// authority puts them in a group. Adding them to `everyone` is what grants the
+/// capabilities genesis handed that group.
+fn admit(root: std::path::PathBuf, identity_hex: &str) -> Result<(), String> {
+    let store = Store::open(root).map_err(|e| e.to_string())?;
+    let admitter = store.identity().map_err(|e| e.to_string())?;
+    let joiner = parse_identity(identity_hex)?;
+
+    let head = store
+        .head()
+        .map_err(|e| e.to_string())?
+        .ok_or("this network has no genesis to build on")?;
+    let entry = intranet_governance::LogEntry::create(
+        &admitter,
+        Some(head),
+        intranet_crypto::Timestamp::from_millis(chat::now_millis()),
+        intranet_governance::EntryBody::MembershipChange {
+            group: intranet_governance::GroupId::everyone(),
+            identity: joiner,
+            action: intranet_governance::MembershipAction::Add { via_invite: None },
+        },
+    );
+    store.append_entry(&entry).map_err(|e| e.to_string())?;
+
+    // Replay rather than trust: admission is gated on `approve-node`, and an
+    // entry the log accepts structurally is still refused by replay if the
+    // admitter did not hold it. Reporting success without checking would tell
+    // somebody they had let a person in when they had not.
+    let state = store.state().map_err(|err| {
+        format!("{err}\n\nAdmission needs approve-node, which the founder holds by default.")
+    })?;
+    if !state.is_member(&joiner) {
+        return Err("the entry was written but replay did not admit them".to_owned());
+    }
+
+    println!("admitted {}", joiner.short());
+    println!("They can read and post once they have synced this log.");
+    Ok(())
+}
+
+/// Prepares a store for a network created elsewhere.
+///
+/// A joiner needs an identity in the network *before* anybody can admit them,
+/// and that identity is derived from the network id (Core §1.2) — so this comes
+/// first, prints who they will be, and leaves the log empty for a sync to fill.
+fn attach(root: std::path::PathBuf, network_hex: &str, name: &str) -> Result<(), String> {
+    let bytes = intranet_crypto::from_hex(network_hex.trim())
+        .and_then(|b| <[u8; 32]>::try_from(b.as_slice()).ok())
+        .ok_or("a network id is 64 hex characters")?;
+    let network = intranet_identity::NetworkId::from_bytes(bytes);
+    let entropy = random_32()?;
+
+    let store = Store::create(root, network, entropy).map_err(|e| e.to_string())?;
+    let identity = store.identity().map_err(|e| e.to_string())?;
+    store.set_label(name).map_err(|e| e.to_string())?;
+
+    println!("attached to {}", to_hex(network.as_bytes()));
+    println!("  you       {}", identity.id().short());
+    println!();
+    println!("Ask a member to run:");
+    println!("  kols admit {}", to_hex(identity.id().verifying_key().as_bytes()));
+    println!("then `kols serve --peer <their address>` to sync.");
+    Ok(())
+}
+
+fn parse_identity(hex: &str) -> Result<intranet_identity::PerNetworkIdentityId, String> {
+    let bytes = intranet_crypto::from_hex(hex.trim())
+        .and_then(|b| <[u8; 32]>::try_from(b.as_slice()).ok())
+        .ok_or("an identity is 64 hex characters")?;
+    let key = intranet_crypto::VerifyingKey::from_bytes(bytes)
+        .map_err(|_| "those bytes are not a valid identity key".to_owned())?;
+    Ok(intranet_identity::PerNetworkIdentityId::from_verifying_key(key))
 }
 
 /// 32 bytes from the OS.

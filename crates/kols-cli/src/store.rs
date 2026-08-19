@@ -20,9 +20,9 @@
 
 use intranet_crypto::{Hash, to_hex};
 use intranet_governance::{GovernanceLog, GovernanceState, LogEntry, PointerId, wire};
-use intranet_identity::{MasterSeed, NetworkId, PerNetworkIdentity};
+use intranet_identity::{MasterSeed, NetworkId, PerNetworkIdentity, PerNetworkIdentityId};
 use intranet_storage::{Dek, EpochKey};
-use kols_core::ChannelId;
+use kols_core::{ChannelId, Record};
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
@@ -185,32 +185,84 @@ impl Store {
         Ok(self.log()?.canonical_chain().last().copied())
     }
 
-    /// The records this member has written in one channel, as canonical bytes.
+    /// Every record this node holds for a channel, in merge order.
     ///
-    /// Kept so the author log can be rebuilt on the next invocation: an author
-    /// log is single-writer and append-only, so replaying our own records in
-    /// order reproduces the same segment, the same chunks and the same CIDs —
-    /// chunk encryption being deterministic per (chunk, DEK).
-    pub fn own_records(&self, channel: &ChannelId) -> Result<Vec<Vec<u8>>, StoreError> {
-        let path = self.channel_dir(channel);
-        if !path.exists() {
+    /// Keyed by record id, so the same record learned twice — once live, once
+    /// out of a fetched segment — is stored once. That is not a deduplication
+    /// convenience: `design/01` §7 requires duplicate delivery to be idempotent,
+    /// and content-addressing the file name is the cheapest way to mean it.
+    ///
+    /// Sorted by HLC and then by id, which is the merge order every node
+    /// computes (`design/01` §4). Insertion order is deliberately not preserved,
+    /// because it differs per node and ordering must not.
+    pub fn records(&self, channel: &ChannelId) -> Result<Vec<Record>, StoreError> {
+        let dir = self.channel_dir(channel).join("records");
+        if !dir.exists() {
             return Ok(Vec::new());
         }
-        let mut files: Vec<_> = fs::read_dir(&path)?
-            .filter_map(Result::ok)
-            .map(|e| e.path())
-            .collect();
-        files.sort();
-        files.into_iter().map(|p| Ok(fs::read(p)?)).collect()
+        let mut records = Vec::new();
+        for entry in fs::read_dir(&dir)? {
+            let path = entry?.path();
+            let bytes = fs::read(&path)?;
+            records.push(
+                Record::decode(&bytes)
+                    .map_err(|err| StoreError::Corrupt(format!("{}: {err}", path.display())))?,
+            );
+        }
+        records.sort_by(|a, b| {
+            a.hlc
+                .cmp(&b.hlc)
+                .then_with(|| a.id().as_bytes().cmp(b.id().as_bytes()))
+        });
+        Ok(records)
     }
 
-    /// Records one of this member's own records in a channel.
-    pub fn push_own_record(&self, channel: &ChannelId, bytes: &[u8]) -> Result<(), StoreError> {
-        let dir = self.channel_dir(channel);
+    /// This member's own records in a channel, in the order their log holds them.
+    pub fn own_records(
+        &self,
+        channel: &ChannelId,
+        author: &PerNetworkIdentityId,
+    ) -> Result<Vec<Record>, StoreError> {
+        Ok(self
+            .records(channel)?
+            .into_iter()
+            .filter(|record| &record.author == author)
+            .collect())
+    }
+
+    /// Stores a record, whoever wrote it.
+    ///
+    /// Returns whether it was new, so a caller can report what a sync actually
+    /// brought in rather than how many records it looked at.
+    pub fn put_record(&self, channel: &ChannelId, record: &Record) -> Result<bool, StoreError> {
+        let dir = self.channel_dir(channel).join("records");
         fs::create_dir_all(&dir)?;
-        let next = fs::read_dir(&dir)?.count();
-        fs::write(dir.join(format!("{next:08}")), bytes)?;
-        Ok(())
+        let path = dir.join(to_hex(record.id().as_bytes()));
+        if path.exists() {
+            return Ok(false);
+        }
+        fs::write(path, record.canonical_bytes())?;
+        Ok(true)
+    }
+
+    /// The channels this node holds any records for.
+    pub fn channels_with_records(&self) -> Result<Vec<ChannelId>, StoreError> {
+        let dir = self.root.join("channels");
+        if !dir.exists() {
+            return Ok(Vec::new());
+        }
+        let mut out = Vec::new();
+        for entry in fs::read_dir(&dir)? {
+            let name = entry?.file_name();
+            let Some(hex) = name.to_str() else { continue };
+            let Some(bytes) = intranet_crypto::from_hex(hex) else {
+                continue;
+            };
+            if let Ok(bytes) = <[u8; 32]>::try_from(bytes.as_slice()) {
+                out.push(ChannelId::from_bytes(bytes));
+            }
+        }
+        Ok(out)
     }
 
     /// A local label for this network.
@@ -240,45 +292,84 @@ impl Store {
         Dek::from_bytes(*intranet_crypto::keyed_hash(&self.entropy, b"kols.cli.at-rest.v1").as_bytes())
     }
 
-    /// Records this network's epoch key.
+    /// Records epoch keys this node holds.
     ///
-    /// # Storing an epoch key at all is a decision, not an oversight
+    /// A **set**, not one key, and that is the whole point. Every membership
+    /// change rotates the epoch (Core §3.3), so a network accumulates a chain of
+    /// keys and a `DekWrapping` names which one it is under (Storage §5.3). A
+    /// node that kept only the newest could not open anything wrapped before the
+    /// last person joined — which is exactly the bug this replaced, and it
+    /// presented as "the fetch works and the content will not decrypt".
     ///
-    /// `EpochKey::expose_for_delivery` says plainly that the only correct use is
-    /// sealing to an identity already entitled to the key, and that storing it
-    /// unsealed defeats the guarantee. So it is sealed — under a key derived from
-    /// the master seed, which is the same thing that protects the identity the
-    /// key belongs to, and written `0600`.
+    /// # Storing epoch keys at all is a decision
     ///
-    /// A client has to recover epoch keys across restarts somehow. The protocol's
-    /// own answer is re-delivery from a peer over `/intranet/epoch-key/1.0.0`
-    /// (Core §3.5), which is the right mechanism and needs a peer — something
-    /// this build does not have yet. Sealing to ourselves is the same operation
-    /// aimed at the only member currently present.
-    pub fn set_epoch_key(&self, key: &EpochKey, rotation_ref: Hash) -> Result<(), StoreError> {
-        let sealed = self.at_rest_key().seal_chunk(key.expose_for_delivery());
-        write_private(&self.root.join("epoch"), &sealed)?;
-        fs::write(self.root.join("rotation"), rotation_ref.as_bytes())?;
+    /// `EpochKey::expose_for_delivery` says the only correct use is sealing to
+    /// an identity already entitled to the key, and that storing it unsealed
+    /// defeats the guarantee. So each is sealed under a key derived from the
+    /// master seed — the same thing already protecting the identity they belong
+    /// to — and written `0600`. The protocol's own answer for recovering keys is
+    /// re-delivery from a peer (Core §3.5); sealing to ourselves is that
+    /// operation aimed at the only member certain to be present.
+    pub fn set_epoch_keys(
+        &self,
+        keys: &[(Hash, EpochKey)],
+        current: Hash,
+    ) -> Result<(), StoreError> {
+        let dir = self.root.join("epochs");
+        fs::create_dir_all(&dir)?;
+        for (rotation, key) in keys {
+            let sealed = self.at_rest_key().seal_chunk(key.expose_for_delivery());
+            write_private(&dir.join(to_hex(rotation.as_bytes())), &sealed)?;
+        }
+        fs::write(self.root.join("rotation"), current.as_bytes())?;
         Ok(())
     }
 
-    /// This network's current epoch key.
-    pub fn epoch_key(&self) -> Result<EpochKey, StoreError> {
-        let sealed = fs::read(self.root.join("epoch"))
-            .map_err(|_| StoreError::Corrupt("no epoch key stored for this network".to_owned()))?;
-        let bytes = self
-            .at_rest_key()
-            .open_chunk(&sealed)
-            .map_err(|err| StoreError::Corrupt(format!("epoch key will not open: {err}")))?;
-        Ok(EpochKey::from_bytes(fixed(&bytes, "epoch key")?))
+    /// Every epoch key this node holds, by the rotation it belongs to.
+    pub fn epoch_keys(&self) -> Result<Vec<(Hash, EpochKey)>, StoreError> {
+        let dir = self.root.join("epochs");
+        if !dir.exists() {
+            return Ok(Vec::new());
+        }
+        let mut out = Vec::new();
+        for entry in fs::read_dir(&dir)? {
+            let path = entry?.path();
+            let Some(rotation) = path
+                .file_name()
+                .and_then(|n| n.to_str())
+                .and_then(intranet_crypto::from_hex)
+                .and_then(|b| <[u8; 32]>::try_from(b.as_slice()).ok())
+            else {
+                continue;
+            };
+            let sealed = fs::read(&path)?;
+            let bytes = self
+                .at_rest_key()
+                .open_chunk(&sealed)
+                .map_err(|err| StoreError::Corrupt(format!("an epoch key will not open: {err}")))?;
+            out.push((
+                Hash::from_bytes(rotation),
+                EpochKey::from_bytes(fixed(&bytes, "epoch key")?),
+            ));
+        }
+        Ok(out)
     }
 
-    /// The rotation this store's epoch key belongs to.
+    /// The epoch key new content should be wrapped under.
+    pub fn epoch_key(&self) -> Result<EpochKey, StoreError> {
+        let current = self.rotation_ref()?;
+        self.epoch_keys()?
+            .into_iter()
+            .find(|(rotation, _)| rotation == &current)
+            .map(|(_, key)| key)
+            .ok_or_else(|| StoreError::Corrupt("no epoch key stored for this network".to_owned()))
+    }
+
+    /// The rotation this store's current epoch key belongs to.
     pub fn rotation_ref(&self) -> Result<Hash, StoreError> {
-        Ok(Hash::from_bytes(fixed(
-            &fs::read(self.root.join("rotation"))?,
-            "rotation reference",
-        )?))
+        let bytes = fs::read(self.root.join("rotation"))
+            .map_err(|_| StoreError::Corrupt("no epoch key stored for this network".to_owned()))?;
+        Ok(Hash::from_bytes(fixed(&bytes, "rotation reference")?))
     }
 
     /// The data-encryption key for one author log, wrapped under the epoch key.

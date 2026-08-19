@@ -38,6 +38,12 @@ pub fn genesis(founder: &PerNetworkIdentity, network: NetworkId) -> LogEntry {
     policy
         .extension_capabilities
         .extend(kols_core::capabilities::network_scoped());
+    // `design/01` §8's "open archive" preset. A joiner receives the historical
+    // epoch keys as well as the current one, so scrollback that predates them is
+    // readable — which is what people expect of a chat server and is a genuine
+    // choice rather than a default: the conservative reading (Core §3.4) gives a
+    // joiner the current epoch forward and nothing before it.
+    policy.history_access = intranet_governance::HistoryAccess::FullHistory;
     LogEntry::create(
         founder,
         None,

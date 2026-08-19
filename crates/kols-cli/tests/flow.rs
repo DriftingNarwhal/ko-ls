@@ -11,7 +11,8 @@
 //! does not, and would prove less than it appeared to.
 
 use std::path::{Path, PathBuf};
-use std::process::{Command, Output};
+use std::process::{Child, Command, Output, Stdio};
+use std::time::{Duration, Instant};
 
 /// A scratch home, removed when the test ends.
 struct Home(PathBuf);
@@ -32,6 +33,42 @@ impl Drop for Home {
     fn drop(&mut self) {
         let _ = std::fs::remove_dir_all(&self.0);
     }
+}
+
+/// A `kols serve` held only long enough to key the network.
+///
+/// Posting needs an epoch key and only the daemon mints one, because the MLS
+/// group it comes from is live state no one-shot command can hold. That is the
+/// real shape of the thing rather than an inconvenience to design around, so
+/// these tests do what a user does: run the node once, then use it.
+struct Daemon(Child);
+
+impl Drop for Daemon {
+    fn drop(&mut self) {
+        let _ = self.0.kill();
+        let _ = self.0.wait();
+    }
+}
+
+fn keyed(home: &Home, port: u16) -> Daemon {
+    let child = Command::new(env!("CARGO_BIN_EXE_kols"))
+        .arg("--home")
+        .arg(home.path())
+        .args(["serve", "--listen"])
+        .arg(format!("/ip4/127.0.0.1/tcp/{port}"))
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .expect("serve starts");
+
+    // Wait for the key to land rather than for a log line: the store is the
+    // contract between these processes, so that is the thing to observe.
+    let deadline = Instant::now() + Duration::from_secs(20);
+    while !home.path().join("rotation").exists() {
+        assert!(Instant::now() < deadline, "the network was never keyed");
+        std::thread::sleep(Duration::from_millis(100));
+    }
+    Daemon(child)
 }
 
 fn run(home: &Home, args: &[&str]) -> Output {
@@ -60,6 +97,7 @@ fn a_network_carries_a_conversation_from_creation_to_render() {
 
     let created = ok(&home, &["init", "the workshop"]);
     assert!(created.contains("created the workshop"));
+    let _node = keyed(&home, 45201);
 
     // The founder must actually be able to do things. A genesis that replays but
     // grants nothing is the failure mode worth catching here: it looks like
@@ -93,6 +131,7 @@ fn state_survives_between_invocations() {
     // of truth rather than a cache.
     let home = Home::new("persist");
     ok(&home, &["init", "persistent"]);
+    let _node = keyed(&home, 45202);
     ok(&home, &["channel", "create", "notes"]);
     ok(&home, &["post", "notes", "written earlier"]);
 
@@ -159,6 +198,7 @@ fn posting_to_a_channel_that_does_not_exist_says_so() {
 fn a_channel_is_addressable_by_name_or_by_the_start_of_its_id() {
     let home = Home::new("addressing");
     ok(&home, &["init", "addressing"]);
+    let _node = keyed(&home, 45203);
     let created = ok(&home, &["channel", "create", "general"]);
     let id = created
         .lines()
@@ -182,6 +222,7 @@ fn a_channel_is_addressable_by_name_or_by_the_start_of_its_id() {
 fn an_empty_message_is_refused() {
     let home = Home::new("empty-message");
     ok(&home, &["init", "quiet"]);
+    let _node = keyed(&home, 45204);
     ok(&home, &["channel", "create", "general"]);
     let out = run(&home, &["post", "general", "   "]);
     assert!(!out.status.success());
@@ -201,13 +242,24 @@ fn the_key_that_protects_content_is_not_derivable_from_public_information() {
     let b = Home::new("keys-b");
     ok(&a, &["init", "one"]);
     ok(&b, &["init", "two"]);
+    let _a_node = keyed(&a, 45205);
+    let _b_node = keyed(&b, 45206);
     ok(&a, &["channel", "create", "general"]);
     ok(&b, &["channel", "create", "general"]);
     ok(&a, &["post", "general", "in a"]);
     ok(&b, &["post", "general", "in b"]);
 
-    let epoch_a = std::fs::read(a.path().join("epoch")).expect("a stored epoch key");
-    let epoch_b = std::fs::read(b.path().join("epoch")).expect("a stored epoch key");
+    let sealed = |home: &Home| {
+        let dir = home.path().join("epochs");
+        let entry = std::fs::read_dir(&dir)
+            .expect("a stored epoch key")
+            .next()
+            .expect("at least one")
+            .unwrap();
+        std::fs::read(entry.path()).unwrap()
+    };
+    let epoch_a = sealed(&a);
+    let epoch_b = sealed(&b);
     assert_ne!(epoch_a, epoch_b, "two networks must not share key material");
 
     let wrapping = |home: &Home| {
@@ -243,11 +295,16 @@ fn secrets_are_written_unreadable_to_other_users() {
         use std::os::unix::fs::PermissionsExt;
         let home = Home::new("perms");
         ok(&home, &["init", "private"]);
+        let _node = keyed(&home, 45207);
         ok(&home, &["channel", "create", "general"]);
         ok(&home, &["post", "general", "secret"]);
 
         let mut checked = 0;
-        for path in [home.path().join("seed"), home.path().join("epoch")] {
+        let mut secrets = vec![home.path().join("seed")];
+        for entry in std::fs::read_dir(home.path().join("epochs")).unwrap() {
+            secrets.push(entry.unwrap().path());
+        }
+        for path in secrets {
             let mode = std::fs::metadata(&path).unwrap().permissions().mode();
             assert_eq!(
                 mode & 0o077,
@@ -274,9 +331,12 @@ fn a_store_whose_epoch_key_is_gone_refuses_rather_than_inventing_one() {
     // divergence that looks like working software.
     let home = Home::new("no-epoch");
     ok(&home, &["init", "losing"]);
+    let node = keyed(&home, 45208);
     ok(&home, &["channel", "create", "general"]);
     ok(&home, &["post", "general", "before"]);
-    std::fs::remove_file(home.path().join("epoch")).unwrap();
+    drop(node);
+    std::fs::remove_dir_all(home.path().join("epochs")).unwrap();
+    std::fs::remove_file(home.path().join("rotation")).unwrap();
 
     let out = run(&home, &["post", "general", "after"]);
     assert!(!out.status.success(), "posting without an epoch key must fail");

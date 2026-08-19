@@ -1,7 +1,7 @@
 # ko-ls — Implementation Status
 
-**Updated:** 2026-08-19 (`kols` CLI landed; **in the working tree, uncommitted**)
-**Phase:** P1 — E9, E2, E5 and chat channel entries landed; `kols` runs on one node, wire half next
+**Updated:** 2026-08-19 (two `kols` nodes talk; **in the working tree, uncommitted**)
+**Phase:** P1 — two nodes hold a conversation end to end; epoch rotation is the next real gap
 **Design:** [`design/`](design/) — `00`–`08`, all v1.0. **`distributed-intranet/specs/07` is normative** where it and the design set overlap.
 
 This file is the answer to "where are we?". It is updated in the same change that moves
@@ -25,10 +25,16 @@ The client builds against the sibling checkout by **path dependency**, not a pub
 version, and deliberately so while the extensions are still moving. A fresh machine needs
 both repos cloned side by side.
 
-**Next task:** the CLI's wire half — `serve`, `attach`, `admit`, `sync` — so two `kols`
-installs can reach each other. `kols-net` already does publish/fetch between two live nodes
-in tests; nothing drives it from the binary. After that, E4 (gossipsub) and history
-backfill; the Tauri shell stays blocked on S3.
+**Next task:** **epoch rotation**, which is the one gap that matters for confidentiality.
+Core §3.3 advances the epoch on every membership change, and that is what stops a removed
+member reading anything published afterwards. `kols serve` now holds a live `GroupSession`,
+so rotation on *add* already happens — what is missing is rotation on **remove**, and
+surviving a restart at all: `GroupSession` keeps an in-memory openmls provider, so a
+founder who restarts can no longer key anybody in. The fix is upstream — `intranet-epoch`
+accepting a persistent storage provider — and it unblocks both.
+
+After that: E4 (gossipsub live delivery) and history backfill. The Tauri shell stays
+blocked on S3.
 
 **Just done:** the chat side of E2. `ChannelEntry` encodes all four kinds as `chat`-namespace
 payloads (spec 07 §3.8, written for this and normative), and `ChannelEntry::read` is the
@@ -42,7 +48,7 @@ readers are unavoidable rather than optional:
 2. **A channel entry is invalid in a `conversation`-profile network.** The protocol carries
    `chat` payloads without decoding them, so it cannot reach this verdict.
 
-**To pick up:** `cargo test` in this repo should show 72 passing and clippy silent. If it
+**To pick up:** `cargo test` in this repo should show 74 passing and clippy silent. If it
 does not, fix that before anything else — the tree was left green.
 
 ---
@@ -51,9 +57,9 @@ does not, fix that before anything else — the tree was left green.
 
 | | |
 |---|---|
-| **Working on** | The CLI's wire half — two `kols` installs reaching each other |
+| **Working on** | Epoch rotation, and the MLS persistence it needs |
 | **Blocked on** | Nothing |
-| **Runnable** | **`kols`** — init, whoami, channel create/list, post, read, on one node. `cargo test` — 72 tests, clippy clean; `scripts/cross-check.sh` for big-endian. No binary yet |
+| **Runnable** | **`kols`** — init, attach, admit, serve, channel create/list, post, read. Two nodes hold a conversation. `cargo test` — 74 tests, clippy clean; `scripts/cross-check.sh` for big-endian |
 | **Next decision needed from the user** | Nothing blocking |
 
 ---
@@ -100,7 +106,7 @@ both green.
 |---|---|
 | `kols-core` | **Encoding, author logs, merge, collision recovery, chat policy, channel structure** — records/segments/ids, `AuthorLog` incl. `rebase`, `ChannelView`, permissions, capability vocabulary, `ChatPolicy`, `ChannelEntry`. 60 tests |
 | `kols-net` | **Publish and fetch** — stores/announces chunks, accepts pointers, reassembles segments. Two live two-node tests |
-| `kols-cli` | **`kols`, the first runnable thing here** — creates a network, defines channels, posts and renders, persisted between invocations. 7 tests that drive the real binary |
+| `kols-cli` | **`kols`, and its node daemon** — creates a network, admits and keys in joiners, serves and fetches content, renders a merged view across authors. 112 tests that drive the real binaries, two of them over a live wire between two processes |
 | `kols-store` | Not created |
 | `kols-media` | Not created |
 | `kols-api` | Not created |
@@ -141,6 +147,43 @@ design changes before anything else is built.
 
 Newest first. One line per change that moved the state above.
 
+- **2026-08-19** — **Two nodes hold a conversation.** `kols serve` is a real node: it
+  listens, syncs the governance log, advertises capacity, publishes this member's segments,
+  pulls other members' pointers, fetches their segments and stores the records. `attach`
+  bootstraps a store from nothing but a network id, and `admit` is the explicit-intake half
+  of `design/02` §6.2. A joiner now goes from knowing one hex string to reading messages
+  written before they existed, with nothing shared out of band.
+
+  **The daemon owns the MLS group, and that is why it exists.** `GroupSession` keeps live
+  state in an in-memory provider, so keying somebody in needs a process that has not exited
+  since the group was made — which a one-shot command can never be. `init` therefore no
+  longer creates the group; the founder's first `serve` does. The cost is stated in `init`'s
+  own output: serve before posting.
+
+  **Four bugs, each invisible to every existing test**, which is the argument for testing
+  the binaries rather than the libraries:
+
+  - A joiner could not advertise capacity before syncing, and could not sync without
+    advertising. Startup work is best-effort now and retried after every governance sync,
+    because "not a member yet" is a state to sync out of rather than fail on.
+  - A fetch was requested once. It needs **two rounds** — the manifest, then the chunks it
+    names — so remembering "already asked" left every segment permanently half-fetched.
+  - Only the newest epoch key was kept. Adding a member *rotates* the epoch, so content
+    written before a joiner arrived is wrapped under an earlier key: it fetched perfectly
+    and decrypted never. The store now holds the whole keyring, and unwrapping tries each.
+  - `read` on a fetched segment must take the DEK from the pointer's **wrapping**, not from
+    the local store — the local path mints a DEK for objects this node owns and would have
+    produced a key that opens nothing.
+
+  **One design consequence worth knowing before it surprises somebody:** `post` now requires
+  `serve` to have run, because only the daemon can mint the first epoch key. Every test that
+  posts starts a node first, which is what a user does anyway.
+
+  **Known gap, recorded rather than papered over:** a running node does not notice a peer's
+  *new* pointer. Both sides tick and re-sync, but a peer that publishes after the last
+  pointer exchange stays invisible until the connection is re-established. The second
+  two-node test restarts one daemon and says so at the point it does it. The fix belongs in
+  the pull loop, not in the test. 72 → 74 tests.
 - **2026-08-19** — **Content keying moved onto the real path.** Raised as a concern, and it
   was a fair one: the CLI's first cut derived its DEK from the network id, which is public
   in every meaningful sense — it is in every invite, every address and every log entry — so

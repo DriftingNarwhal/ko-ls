@@ -17,7 +17,7 @@ use std::path::PathBuf;
 /// The one place this program reads a clock. Everything downstream takes a
 /// timestamp as an argument, deliberately, so ordering stays a function of
 /// explicit inputs rather than of when code happened to run.
-fn now_millis() -> i64 {
+pub(crate) fn now_millis() -> i64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_millis() as i64)
@@ -187,13 +187,13 @@ pub fn post(root: PathBuf, needle: &str, text: &str) -> Result<(), String> {
             attachments: Vec::new(),
         },
     );
-    let bytes = record.canonical_bytes();
+    let stored = record.clone();
     let published = log
         .append(&author, record, &state)
         .map_err(|err| format!("the record was refused: {err}"))?;
 
     store
-        .push_own_record(&channel.id, &bytes)
+        .put_record(&channel.id, &stored)
         .map_err(|e| e.to_string())?;
 
     println!("posted to #{}", channel.name);
@@ -224,13 +224,9 @@ pub fn read(root: PathBuf, needle: &str) -> Result<(), String> {
     // second author's log arrives over the wire, which `kols serve` is for and
     // this build does not have yet. The merge is the same either way — a view is
     // a function of the admitted record set, not of where it came from.
-    let mut records = Vec::new();
-    for bytes in store.own_records(&channel.id).map_err(|e| e.to_string())? {
-        records.push(
-            Record::decode(&bytes)
-                .map_err(|err| format!("a stored record did not decode: {err}"))?,
-        );
-    }
+    let records = store.records(&channel.id).map_err(|e| e.to_string())?;
+    let authors: std::collections::BTreeSet<_> =
+        records.iter().map(|record| record.author).collect();
     view.admit(records, &authority);
 
     let rendered = view.render();
@@ -251,9 +247,9 @@ pub fn read(root: PathBuf, needle: &str) -> Result<(), String> {
     }
     println!();
     println!(
-        "{} message(s) from this node. Other members' logs arrive over the wire, \
-         which this build does not carry yet.",
-        rendered.len()
+        "{} message(s) from {} author(s). `kols serve` brings in what other members wrote.",
+        rendered.len(),
+        authors.len()
     );
     Ok(())
 }
@@ -276,9 +272,10 @@ fn rebuild_log(
     let pointer = kols_core::author_log_pointer(&channel, &author.id());
     let dek = store.channel_dek(&pointer).map_err(|e| e.to_string())?;
     let mut log = AuthorLog::open(author, channel, dek, ChunkSpec::from_target(64 * 1024));
-    for bytes in store.own_records(&channel).map_err(|e| e.to_string())? {
-        let record = Record::decode(&bytes)
-            .map_err(|err| format!("a stored record did not decode: {err}"))?;
+    for record in store
+        .own_records(&channel, &author.id())
+        .map_err(|e| e.to_string())?
+    {
         log.append(author, record, state)
             .map_err(|err| format!("a stored record no longer appends: {err}"))?;
     }
