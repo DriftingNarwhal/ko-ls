@@ -265,6 +265,28 @@ impl Store {
         Ok(out)
     }
 
+    /// Saves this node's MLS group state, sealed at rest.
+    ///
+    /// Core §3.3.1 requires this to survive a restart, and says plainly that the
+    /// bytes are secret: they hold the group's secret tree and this member's
+    /// signature private key, which together are enough to impersonate them and
+    /// read the network. Sealed under the same seed-derived key as the epoch
+    /// keys, and written `0600`.
+    pub fn set_group_state(&self, state: &[u8]) -> Result<(), StoreError> {
+        write_private(&self.root.join("group"), &self.at_rest_key().seal_chunk(state))
+    }
+
+    /// This node's saved MLS group state, if it has one.
+    pub fn group_state(&self) -> Result<Option<Vec<u8>>, StoreError> {
+        let Ok(sealed) = fs::read(self.root.join("group")) else {
+            return Ok(None);
+        };
+        self.at_rest_key()
+            .open_chunk(&sealed)
+            .map(Some)
+            .map_err(|err| StoreError::Corrupt(format!("group state will not open: {err}")))
+    }
+
     /// A local label for this network.
     ///
     /// Local because spec 07 defines no policy key for a network name, and

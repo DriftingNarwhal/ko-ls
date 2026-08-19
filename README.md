@@ -46,7 +46,7 @@ directory — the protocol crates are path dependencies while the extensions it 
 still landing.
 
 ```bash
-cargo test                                   # 74 tests; the two-node ones spawn real nodes on loopback
+cargo test                                   # 75 tests; the two-node ones spawn real nodes on loopback
 cargo clippy --workspace --all-targets       # must stay clean
 ./scripts/cross-check.sh                     # big-endian verification, see below
 ```
@@ -99,10 +99,12 @@ Two `kols` installs now reach each other end to end: admission, epoch-key delive
 pointer sync, segment fetch and a merged view across authors, with messages travelling both
 ways between live nodes.
 
-What does not exist yet: **epoch rotation**, so a removed member keeps their key — the one
-gap that matters for confidentiality, and it needs MLS state that survives a restart. No
-user interface, no private-channel keying, no voice, no search, no live gossip path.
-[`STATUS.md`](STATUS.md) is the honest inventory.
+Keying is whole: group state survives a restart, so a founder can still admit and key in
+new members after one, and the epoch rotates on both add and remove.
+
+What does not exist yet: no user interface, no private-channel keying, no voice, no search,
+no live gossip path — and nothing in the CLI yet drives a *removal*, so the revocation path
+is exercised upstream but not end to end. [`STATUS.md`](STATUS.md) is the honest inventory.
 
 ## The one number worth knowing
 

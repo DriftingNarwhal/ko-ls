@@ -96,22 +96,45 @@ async fn serve(root: std::path::PathBuf, listen: &str, peers: &[String]) -> Resu
     // a second group would produce a different epoch key and orphan every DEK
     // wrapped under the first.
     let mut keyed = store.epoch_key().is_ok();
-    if !keyed && store.head().map_err(|e| e.to_string())?.is_some() {
+
+    // A group saved by a previous run comes back first. Core §3.3.1: holding the
+    // epoch key is not the same as holding the group — a node with only the key
+    // reads fine and can never rotate, welcome or revoke, so a founder that
+    // restarted could never key anybody in again. Before this existed, every
+    // restart was that.
+    let mut holds_group = false;
+    if let Some(saved) = store.group_state().map_err(|e| e.to_string())? {
+        let rotation = store.rotation_ref().map_err(|e| e.to_string())?;
+        match node.restore_epoch_group(&saved, rotation) {
+            Ok(_) => {
+                holds_group = true;
+                println!("  group     restored from the last run");
+            }
+            // Not fatal: this node can still read with the keys it holds, and
+            // saying so beats refusing to start over state it can re-fetch.
+            Err(err) => println!("  group     could not be restored ({err})"),
+        }
+    }
+
+    if !holds_group && !keyed && store.head().map_err(|e| e.to_string())?.is_some() {
         let state = store.state().map_err(|e| e.to_string())?;
         if founder_of(&state, &identity.id()) {
             node.create_epoch_group(&identity)
                 .map_err(|err| format!("could not key this network: {err}"))?;
             if node.epoch_keyring().current().is_some() {
                 persist_keyring(&store, &node)?;
+                persist_group(&store, &node)?;
+                holds_group = true;
                 keyed = true;
                 println!("  keyed     this network for the first time");
             }
         }
     }
-    if keyed {
-        println!("  epoch     held");
-    } else {
-        println!("  epoch     none — this node can fetch content and open none of it");
+
+    match (keyed, holds_group) {
+        (true, true) => println!("  epoch     held, and this node can key others in"),
+        (true, false) => println!("  epoch     held, but no group — this node cannot key others in"),
+        _ => println!("  epoch     none — this node can fetch content and open none of it"),
     }
 
     match ready(&store, &mut node, &identity) {
@@ -260,6 +283,10 @@ async fn serve(root: std::path::PathBuf, listen: &str, peers: &[String]) -> Resu
                         // still wrapped under it.
                         persist_governance(&store, &node)?;
                         persist_keyring(&store, &node)?;
+                        // The add advanced the group, so what was saved is now
+                        // a state behind. Saving here rather than on exit means
+                        // a crash costs nothing that was already agreed.
+                        persist_group(&store, &node)?;
                     }
                     Err(err) => println!("could not key in {}: {err}", requester.short()),
                 }
@@ -277,6 +304,7 @@ async fn serve(root: std::path::PathBuf, listen: &str, peers: &[String]) -> Resu
                     // keeping only the current key would leave it permanently
                     // unreadable while every byte of it fetched successfully.
                     persist_keyring(&store, &node)?;
+                    persist_group(&store, &node)?;
                     keyed = true;
                     println!(
                         "keyed into this network ({historical_keys} historical key(s) came with it)"
@@ -569,6 +597,15 @@ fn adopt_local_changes(
         Ok(Some(()))
     } else {
         Ok(None)
+    }
+}
+
+/// Saves the node's MLS group, if it has one.
+fn persist_group(store: &Store, node: &MemberNode) -> Result<(), String> {
+    match node.save_epoch_group() {
+        Ok(Some(state)) => store.set_group_state(&state).map_err(|e| e.to_string()),
+        Ok(None) => Ok(()),
+        Err(err) => Err(format!("could not save the group: {err}")),
     }
 }
 

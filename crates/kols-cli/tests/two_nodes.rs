@@ -223,3 +223,58 @@ fn a_reply_travels_back_and_both_sides_agree_on_the_order() {
         "the view should span both logs:\n{read}"
     );
 }
+
+#[test]
+fn a_founder_can_still_key_somebody_in_after_restarting() {
+    // Core §3.3.1. An MLS group is live state, and openmls keeps it in memory by
+    // default — so before it was persisted, a founder who restarted kept their
+    // epoch keys, could still read, and could never welcome anybody again. The
+    // network was one process exit away from admitting nobody, forever, with no
+    // symptom until the next person tried to join.
+    let alice = Home::new("restart-alice");
+    let bob = Home::new("restart-bob");
+
+    let created = ok(&alice, &["init", "durable"]);
+    let network = field(&created, "network   ");
+
+    // First run: creates the group and the network's first epoch key.
+    let first = serve(&alice, 45111, None);
+    let opened = first.wait_for("keyed     this network", Duration::from_secs(20));
+    assert!(
+        opened.contains("epoch     held, and this node can key others in"),
+        "{opened}"
+    );
+    ok(&alice, &["channel", "create", "general"]);
+    ok(&alice, &["post", "general", "written before the restart"]);
+    first.wait_for("picked up", Duration::from_secs(20));
+    drop(first);
+
+    // Second run: a different process, which must come back holding the group
+    // rather than only the key it can read with.
+    let second = serve(&alice, 45112, None);
+    let restarted = second.wait_for("listening", Duration::from_secs(20));
+    assert!(
+        restarted.contains("group     restored from the last run"),
+        "the group must survive a restart:\n{restarted}"
+    );
+    assert!(
+        restarted.contains("epoch     held, and this node can key others in"),
+        "and the restarted node must still be able to key somebody in:\n{restarted}"
+    );
+    let address = field(&restarted, "listening ");
+
+    // The proof: somebody who has never been seen before is admitted and keyed
+    // in by the *restarted* founder, and reads what predates them.
+    let attached = ok(&bob, &["attach", &network]);
+    ok(&alice, &["admit", &field(&attached, "kols admit ")]);
+
+    let bob_node = serve(&bob, 45113, Some(&address));
+    bob_node.wait_for("keyed into this network", Duration::from_secs(45));
+    bob_node.wait_for("learned 1 record", Duration::from_secs(45));
+
+    let read = ok(&bob, &["read", "general"]);
+    assert!(
+        read.contains("written before the restart"),
+        "bob should read what was written before the founder restarted:\n{read}"
+    );
+}

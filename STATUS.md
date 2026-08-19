@@ -1,7 +1,7 @@
 # ko-ls — Implementation Status
 
-**Updated:** 2026-08-19 (two `kols` nodes talk; **in the working tree, uncommitted**)
-**Phase:** P1 — two nodes hold a conversation end to end; epoch rotation is the next real gap
+**Updated:** 2026-08-19 (MLS group state persists; **in the working tree, uncommitted**)
+**Phase:** P1 — two nodes talk, a founder survives a restart; E4 next
 **Design:** [`design/`](design/) — `00`–`08`, all v1.0. **`distributed-intranet/specs/07` is normative** where it and the design set overlap.
 
 This file is the answer to "where are we?". It is updated in the same change that moves
@@ -25,16 +25,14 @@ The client builds against the sibling checkout by **path dependency**, not a pub
 version, and deliberately so while the extensions are still moving. A fresh machine needs
 both repos cloned side by side.
 
-**Next task:** **epoch rotation**, which is the one gap that matters for confidentiality.
-Core §3.3 advances the epoch on every membership change, and that is what stops a removed
-member reading anything published afterwards. `kols serve` now holds a live `GroupSession`,
-so rotation on *add* already happens — what is missing is rotation on **remove**, and
-surviving a restart at all: `GroupSession` keeps an in-memory openmls provider, so a
-founder who restarts can no longer key anybody in. The fix is upstream — `intranet-epoch`
-accepting a persistent storage provider — and it unblocks both.
+**Next task:** **E4 — gossipsub live delivery**, and history backfill behind it. The Tauri
+shell stays blocked on S3.
 
-After that: E4 (gossipsub live delivery) and history backfill. The Tauri shell stays
-blocked on S3.
+The keying gaps are closed: `GroupSession::save`/`restore` (Core §3.3.1) mean a founder
+survives a restart and can still key people in, and rotation on both add and remove works
+from a restored session. What remains unexercised is `kols` driving a **removal** — the
+protocol and the client both have the pieces, and nothing has yet made a `revoke-node`
+entry from the CLI.
 
 **Just done:** the chat side of E2. `ChannelEntry` encodes all four kinds as `chat`-namespace
 payloads (spec 07 §3.8, written for this and normative), and `ChannelEntry::read` is the
@@ -48,7 +46,7 @@ readers are unavoidable rather than optional:
 2. **A channel entry is invalid in a `conversation`-profile network.** The protocol carries
    `chat` payloads without decoding them, so it cannot reach this verdict.
 
-**To pick up:** `cargo test` in this repo should show 74 passing and clippy silent. If it
+**To pick up:** `cargo test` in this repo should show 75 passing and clippy silent. If it
 does not, fix that before anything else — the tree was left green.
 
 ---
@@ -57,9 +55,9 @@ does not, fix that before anything else — the tree was left green.
 
 | | |
 |---|---|
-| **Working on** | Epoch rotation, and the MLS persistence it needs |
+| **Working on** | E4 — gossipsub live delivery |
 | **Blocked on** | Nothing |
-| **Runnable** | **`kols`** — init, attach, admit, serve, channel create/list, post, read. Two nodes hold a conversation. `cargo test` — 74 tests, clippy clean; `scripts/cross-check.sh` for big-endian |
+| **Runnable** | **`kols`** — init, attach, admit, serve, channel create/list, post, read. Two nodes hold a conversation. `cargo test` — 75 tests, clippy clean; `scripts/cross-check.sh` for big-endian |
 | **Next decision needed from the user** | Nothing blocking |
 
 ---
@@ -106,7 +104,7 @@ both green.
 |---|---|
 | `kols-core` | **Encoding, author logs, merge, collision recovery, chat policy, channel structure** — records/segments/ids, `AuthorLog` incl. `rebase`, `ChannelView`, permissions, capability vocabulary, `ChatPolicy`, `ChannelEntry`. 60 tests |
 | `kols-net` | **Publish and fetch** — stores/announces chunks, accepts pointers, reassembles segments. Two live two-node tests |
-| `kols-cli` | **`kols`, and its node daemon** — creates a network, admits and keys in joiners, serves and fetches content, renders a merged view across authors. 112 tests that drive the real binaries, two of them over a live wire between two processes |
+| `kols-cli` | **`kols`, and its node daemon** — creates a network, admits and keys in joiners, serves and fetches content, renders a merged view across authors. 113 tests that drive the real binaries, three of them over a live wire between two processes |
 | `kols-store` | Not created |
 | `kols-media` | Not created |
 | `kols-api` | Not created |
@@ -147,6 +145,34 @@ design changes before anything else is built.
 
 Newest first. One line per change that moved the state above.
 
+- **2026-08-19** — **MLS group state survives a restart, and the spec says it must.** The
+  last confidentiality gap, and it was a gap in the *specification* as much as in the code:
+  §3 asked members to rotate, welcome and revoke without ever saying that the state those
+  need has to outlive the process holding it. An implementation reading §3 alone keeps it in
+  memory, which is what every MLS library makes easy, and the result is survivable in a test
+  and not in a deployment. **Core §3.3.1** now states the obligation and its three
+  properties: a restored member derives the same key, can still advance the epoch, and fails
+  rather than half-loading.
+
+  `GroupSession::save`/`restore` in `intranet-epoch`, `save_epoch_group`/`restore_epoch_group`
+  on `MemberNode`, and `kols serve` restoring its group on startup and re-saving whenever the
+  group advances. A founder who restarts can now key somebody in — before this, they kept
+  their epoch keys, could still read, and could never welcome anybody again, with no symptom
+  until the next person tried to join.
+
+  Two implementation notes worth keeping. openmls gates `MemoryStorage::serialize` behind its
+  `test-utils` feature and says so in a comment, so the save path reads the storage's public
+  `values` map directly rather than turning a test-only feature on in a shipping build. And
+  the signature key pair goes *into* that storage via `SignatureKeyPair::store` rather than
+  travelling as its own field, because openmls's accessor for the private half is likewise
+  test-only — `restore` reads it back out with `read`.
+
+  **The blob is secret** — the group's secret tree and the member's signature private key,
+  jointly enough to impersonate them and read the network — so it is sealed at rest under the
+  same seed-derived key as the epoch keys, and the spec section says plainly that a client
+  writing it in the clear has given away the network. Six conformance tests upstream, and one
+  in the client that restarts a founder and has them key in somebody new who then reads
+  pre-restart content. Protocol 626 → 632.
 - **2026-08-19** — **Two nodes hold a conversation.** `kols serve` is a real node: it
   listens, syncs the governance log, advertises capacity, publishes this member's segments,
   pulls other members' pointers, fetches their segments and stores the records. `attach`
