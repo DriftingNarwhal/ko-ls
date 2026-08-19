@@ -37,7 +37,7 @@ pub fn genesis(founder: &PerNetworkIdentity, network: NetworkId) -> LogEntry {
         .insert(ContentType::new(CHAT_LOG_CONTENT_TYPE));
     policy
         .extension_capabilities
-        .extend(kols_core::capabilities::network_scoped());
+        .extend(kols_core::capabilities::namespaces());
     // `design/01` §8's "open archive" preset. A joiner receives the historical
     // epoch keys as well as the current one, so scrollback that predates them is
     // readable — which is what people expect of a chat server and is a genuine

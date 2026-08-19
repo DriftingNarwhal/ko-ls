@@ -48,7 +48,7 @@ fn state(members: &[&PerNetworkIdentity], moderators: &[&PerNetworkIdentity]) ->
     // unregistered extension name is refused, not assumed ordinary.
     policy
         .extension_capabilities
-        .extend(kols_core::capabilities::network_scoped());
+        .extend(kols_core::capabilities::namespaces());
 
     let mut chain = vec![LogEntry::create(
         &founder,

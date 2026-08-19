@@ -1,8 +1,8 @@
 # ko-ls — Implementation Status
 
-**Updated:** 2026-08-19 (per-segment keys, and a freshness bound on the live path)
+**Updated:** 2026-08-19 (E11 — namespace registration for extension capabilities)
 **Phase:** P1 — two nodes talk live and durably, and a joiner reads back through sealed
-history; E11 remains
+history. Every protocol extension P1 needs has landed
 **Design:** [`design/`](design/) — `00`–`08`, all v1.0. **`distributed-intranet/specs/07` is normative** where it and the design set overlap.
 
 This file is the answer to "where are we?". It is updated in the same change that moves
@@ -26,9 +26,10 @@ The client builds against the sibling checkout by **path dependency**, not a pub
 version, and deliberately so while the extensions are still moving. A fresh machine needs
 both repos cloned side by side.
 
-**Next task:** **E11** (namespace registration for extension capabilities — small, and it
-removes the per-scope policy churn `kols-core::capabilities` currently works around). The
-Tauri shell stays blocked on S3.
+**Next task:** open. Every protocol extension P1 called for has landed, so what remains is
+client work: the Tauri shell (blocked on S3), private-channel keying (E7/P2), voice (P3),
+and search. **`design/07` §3's measurement criteria are the honest candidate** — several
+numbers that document calls guesses are now measurable.
 
 **Sealing, backfill, per-segment keys and the live-path bound are all in.** Both gaps the
 backfill work left open are now closed:
@@ -71,9 +72,9 @@ does not, fix that before anything else — the tree was left green.
 
 | | |
 |---|---|
-| **Working on** | E11 |
+| **Working on** | Nothing — E11 was the last P1 protocol extension |
 | **Blocked on** | Nothing |
-| **Runnable** | **`kols`** — init, attach, admit, revoke, serve, channel create/list, post, read. Two nodes hold a conversation. `cargo test` — 97 tests, clippy clean; `scripts/cross-check.sh` for big-endian |
+| **Runnable** | **`kols`** — init, attach, admit, revoke, serve, channel create/list, post, read. Two nodes hold a conversation. `cargo test` — 98 tests, clippy clean; `scripts/cross-check.sh` for big-endian |
 | **Next decision needed from the user** | Nothing blocking |
 
 ---
@@ -91,7 +92,7 @@ does not, fix that before anything else — the tree was left green.
 | Item | State | Notes |
 |---|---|---|
 | S1 client repo | **Done** | `/workspaces/ko-ls/ko-ls`, git initialised, design moved in, `kols-core` scaffolded. **Nothing committed yet** — no commit has been made in either repo |
-| S2 protocol changes on `main` | In progress | E9 (Core §2.6.2) and E2 (Core §2.7.2) landed, each with spec text, implementation and tests together. E11 remains for P1 |
+| S2 protocol changes on `main` | Done for P1 | E9 (Core §2.6.2), E2 (Core §2.7.2), E5, E4 and E11 (Core §2.2.1) landed, each with spec text, implementation and tests together |
 | S3 Tauri environment | Not started | Node and webkit2gtk absent. Blocks P1, not P0 |
 
 ## 4. Protocol Extensions
@@ -112,7 +113,7 @@ both green.
 | E8 | Track metadata in media payloads | Not started (P4) |
 | E9 | App-layer policy map | **Landed** — `PolicyValue`, namespaced keys, Core §2.6.2; client accessors in `kols-core::policy` |
 | E10 | Direct DM invite delivery | Not started (P2) |
-| E11 | Namespace registration for extension capabilities | **New** — found implementing permissions; workaround in `kols-core::capabilities` (P1) |
+| E11 | Namespace registration for extension capabilities | **Landed** — Core §2.2.1; one registry entry per verb covers every scope of it |
 
 ## 5. Client Crates
 
@@ -160,6 +161,32 @@ design changes before anything else is built.
 ## 8. Log
 
 Newest first. One line per change that moved the state above.
+
+- **2026-08-19** — **E11 landed: a registry entry can cover a namespace.** An extension
+  capability's tier came from a registry matching names *exactly*, and chat capabilities are
+  parametrized by scope — so `chat:post:<channel>` needed an entry per channel, added by a
+  policy change. Creating a channel with a permission override meant amending network
+  policy, and the registry grew with the channel count forever. A registration ending in
+  `:` now covers the namespace beneath it, longest match winning (Core §2.2.1).
+
+  **The separator requirement is the part `design/06` §11 left open, and it mattered.**
+  Plain prefix matching would let a registration for `chat:post` also cover
+  `chat:postmortem` — a different capability that merely starts with the same letters,
+  silently inheriting a tier nobody chose for it. Requiring a namespace to end at a
+  separator means it can only cover names genuinely within it, and it is also what keeps
+  every existing exact registration exact.
+
+  **Removing the workaround showed it had never actually worked.** `design/06` §11 described
+  it as registering "a scope's names when that scope is created", and nothing in the client
+  ever did that: `for_category` and `for_channel` existed and were called only by tests. So
+  `chat:<verb>:<channel>` was in no registry anybody wrote, a per-channel grant was refused
+  at replay, and the per-channel override `design/02` §4 describes could not be used at all.
+  That is now a test rather than a discovery waiting to happen.
+
+  The drift test between what the client registers and what it declares got stronger on the
+  way through. It could previously only check the network-wide `:*` name, because scoped
+  names were supposedly registered elsewhere; it now resolves *every* form a declaration can
+  take against the real registry, including a scope invented after genesis.
 
 - **2026-08-19** — **A key per segment, and a freshness bound on the live path.** The two
   gaps the sealing work left open, closed.

@@ -53,7 +53,7 @@ fn genesis(founder: &PerNetworkIdentity) -> LogEntry {
         .insert(ContentType::new(CHAT_LOG_CONTENT_TYPE));
     policy
         .extension_capabilities
-        .extend(kols_core::capabilities::network_scoped());
+        .extend(kols_core::capabilities::namespaces());
 
     LogEntry::create(
         founder,

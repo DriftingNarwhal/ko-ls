@@ -1,6 +1,6 @@
 # Required Protocol Extensions
 
-**Document status:** v1.4 — E1 and E3 withdrawn, E11 added, **E9, E2, E5 and E4 landed**
+**Document status:** v1.5 — E1 and E3 withdrawn, **E9, E2, E5, E4 and E11 landed**
 **Depends on:** all preceding documents
 **Consumed by:** work in `distributed-intranet`
 
@@ -36,7 +36,7 @@ Two rules govern this list:
 | E8 | Track metadata in sealed media payloads | P4 | Small |
 | ~~E9~~ | App-layer policy map in `NetworkPolicy` — **landed**, Core §2.6.2 | — | Done |
 | E10 | Direct member-to-member delivery for DM invitations | P2 | Small |
-| E11 | Namespace registration for extension capabilities | P1 | Small |
+| ~~E11~~ | Namespace registration for extension capabilities — **landed**, Core §2.2.1 | — | Done |
 
 ---
 
@@ -425,7 +425,7 @@ and no reason to want one. A blocked sender's requests are refused before displa
 
 ---
 
-## 11. E11 — Namespace Registration for Extension Capabilities
+## 11. E11 — Namespace Registration for Extension Capabilities ✅ **landed**
 
 **Found while implementing permission resolution, not by review.** The tier registry
 (`NetworkPolicy::extension_capabilities`) matches capability names **exactly**. Every chat
@@ -454,10 +454,18 @@ entry per verb then covers every scope of that verb, forever.
 namespace still cannot be granted to `everyone` at any scope within it; longest-prefix
 resolution is deterministic across nodes; existing exact-match registrations keep working.
 
-**Workaround until then**, implemented in `kols-core::capabilities`: register the
-network-wide form of each verb (`chat:post:*`) at genesis, and a scope's names when that
-scope is created. Workable, and it makes per-channel overrides cost a policy change —
-which is the friction E11 removes.
+**Landed** as Core §2.2.1. A registration ending in `:` covers the namespace beneath it and
+any other registration matches exactly, with the longest match winning. The separator
+requirement was the one thing this section left open and it turned out to matter: plain
+prefix matching would let a registration for `chat:post` also cover `chat:postmortem`, a
+different capability silently inheriting a tier nobody chose for it.
+
+`kols-core::capabilities::namespaces` replaces the workaround — one entry per verb, at
+genesis, once. Removing it also showed the workaround was **not** actually workable as
+described: it said a scope's names are registered when that scope is created, and nothing in
+the client ever did that, so `chat:<verb>:<channel>` was in no registry anybody wrote and a
+per-channel grant was refused at replay. The override mechanism `design/02` §4 describes
+could not be used at all.
 
 ---
 
@@ -465,7 +473,7 @@ which is the friction E11 removes.
 
 ```
 P0   — nothing; E3 turned out to need no protocol change
-P1   E2 → E4 ✅ ; E9 ✅, E11 (independent, small).  E5 landed here, ahead of its phase
+P1   E2 → E4 ✅ ; E9 ✅, E11 ✅ (independent, small).  E5 landed here, ahead of its phase
 P2   E7   (depends on E2's ChannelRotation) ; E10 (independent, small)
 P3   E6   — lands when it lands
 P4   E8

@@ -44,10 +44,7 @@ fn category() -> CategoryId {
 /// from being slipped onto `everyone`.
 fn genesis(founder: &PerNetworkIdentity) -> LogEntry {
     let mut policy = NetworkPolicy::conservative_default();
-    for (name, tier) in kols_core::capabilities::network_scoped() {
-        policy.extension_capabilities.insert(name, tier);
-    }
-    for (name, tier) in kols_core::capabilities::for_category(&category()) {
+    for (name, tier) in kols_core::capabilities::namespaces() {
         policy.extension_capabilities.insert(name, tier);
     }
     LogEntry::create(
@@ -191,10 +188,7 @@ fn a_category_grant_lets_a_member_create_a_channel_in_that_category() {
     let member = person(3);
     let (mut log, head) = network_granting(
         &member,
-        kols_core::capabilities::for_category(&category())
-            .into_keys()
-            .filter(|name| name.starts_with("chat:create-channel:"))
-            .map(Capability::extension),
+        [Capability::extension(category_capability("create-channel"))],
     );
     let state = replay(&log).expect("replays");
 
@@ -330,7 +324,10 @@ fn the_capability_names_this_client_registers_are_the_names_it_declares() {
     // same convention, and an extension capability resolves by exact name — so a
     // one-character drift between them would make every chat grant unresolvable,
     // with a `UnregisteredExtensionCapability` at replay and no earlier signal.
-    let registered = kols_core::capabilities::network_scoped();
+    let mut policy = NetworkPolicy::conservative_default();
+    for (name, tier) in kols_core::capabilities::namespaces() {
+        policy.extension_capabilities.insert(name, tier);
+    }
     let channel = server_channel_id(&NET, &[15u8; 32]);
 
     for entry in [
@@ -342,27 +339,76 @@ fn the_capability_names_this_client_registers_are_the_names_it_declares() {
             },
         ),
     ] {
-        let network_wide = entry
-            .acceptable(None)
-            .into_iter()
-            .find(|capability| match capability {
-                Capability::Extension(name) => name.ends_with(":*"),
-                _ => false,
-            })
-            .expect("every kind has a network-wide form");
-        let Capability::Extension(name) = &network_wide else {
-            unreachable!("filtered above")
-        };
+        // **Every** form a declaration can take, not just the network-wide one.
+        // Under exact matching only the `:*` name could be checked here, because
+        // the scoped names were registered per scope somewhere else entirely;
+        // one registration per namespace (Core §2.2.1) means the same check now
+        // covers a category's and a channel's names too.
+        let acceptable = entry.acceptable(None);
         assert!(
-            registered.contains_key(name),
-            "{name} is declared but never registered"
+            acceptable.iter().any(|capability| matches!(
+                capability,
+                Capability::Extension(name) if name.ends_with(":*")
+            )),
+            "every kind must have a network-wide form"
         );
+        for capability in &acceptable {
+            let Capability::Extension(name) = capability else {
+                continue;
+            };
+            assert!(
+                policy.extension_tier(name).is_some(),
+                "{name} is declared but does not resolve against what this client registers"
+            );
+        }
     }
 
-    for name in kols_core::capabilities::for_category(&category()).keys() {
-        assert!(
-            name.starts_with("chat:") && name.contains(":cat:"),
-            "category registration shape changed: {name}"
-        );
-    }
+    // And a scope invented long after genesis still resolves, which is the whole
+    // point: a channel created tomorrow needs no policy change to be grantable.
+    assert!(
+        policy
+            .extension_tier(&category_capability("manage-channel"))
+            .is_some()
+    );
+}
+
+#[test]
+fn a_channel_scoped_grant_needs_no_policy_change_to_be_usable() {
+    // What E11 actually unblocks, and it was not a hypothetical: the client
+    // builds `chat:<verb>:<channel>` for a per-channel grant, and under exact
+    // matching that name was in no registry anybody wrote — `network_scoped()`
+    // registered only the `:*` form, and nothing in the client ever called the
+    // per-scope registration helper. So a per-channel grant was refused at
+    // replay, and the override mechanism `design/02` §4 describes could not be
+    // used at all without amending network policy first.
+    let member = person(7);
+    let channel = server_channel_id(&NET, &[21u8; 32]);
+    let scoped = format!(
+        "chat:create-channel:{}",
+        intranet_crypto::to_hex(channel.as_bytes())
+    );
+
+    let (mut log, head) = network_granting(&member, [Capability::extension(scoped.clone())]);
+    let state = replay(&log).expect("a per-channel grant replays");
+
+    let body = definition(channel, None)
+        .to_app_entry(&state, &member.id(), None)
+        .expect("a member holding the channel-scoped grant can declare it");
+    assert_eq!(
+        match &body {
+            EntryBody::AppEntry { required, .. } => required.clone(),
+            _ => panic!("expected an application entry"),
+        },
+        Capability::extension(scoped),
+        "the declaration must name the scoped capability this author holds"
+    );
+    publish(&mut log, head, &member, body).expect("and the network accepts it");
+}
+
+/// The category-scoped name for a verb, built the way the client builds it.
+fn category_capability(verb: &str) -> String {
+    format!(
+        "chat:{verb}:cat:{}",
+        intranet_crypto::to_hex(category().as_bytes())
+    )
 }
