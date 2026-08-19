@@ -1,7 +1,7 @@
 # ko-ls — Implementation Status
 
 **Updated:** 2026-08-19
-**Phase:** P0, F1, F2, F3 complete. P1 not started
+**Phase:** P1 — E9 landed; E2 next
 **Design:** [`design/`](design/) — `00`–`08`, all v1.0. **`distributed-intranet/specs/07` is normative** where it and the design set overlap.
 
 This file is the answer to "where are we?". It is updated in the same change that moves
@@ -14,9 +14,9 @@ it is believed.
 
 | | |
 |---|---|
-| **Working on** | Nothing in flight — ready to start P1 (E9 first) |
+| **Working on** | E2 — channel governance entry variants |
 | **Blocked on** | Nothing |
-| **Runnable** | `cargo test` — 32 tests incl. two live-node tests, clippy clean. No binary yet |
+| **Runnable** | `cargo test` — 37 tests, clippy clean; `scripts/cross-check.sh` for big-endian. No binary yet |
 | **Next decision needed from the user** | Whether to start P1 with E9/E2 in the protocol repo, or build a runnable CLI first |
 
 ---
@@ -34,7 +34,7 @@ it is believed.
 | Item | State | Notes |
 |---|---|---|
 | S1 client repo | **Done** | `/workspaces/ko-ls/ko-ls`, git initialised, design moved in, `kols-core` scaffolded. **Nothing committed yet** — no commit has been made in either repo |
-| S2 protocol changes on `main` | **Not needed for P0** | E3 turned out to need no change; the protocol repo is still untouched. E9 is the first real one, and it blocks P1 rather than P0 |
+| S2 protocol changes on `main` | In progress | E9 landed with spec text (Core §2.6.2), implementation and tests together, both gates green. E2 next |
 | S3 Tauri environment | Not started | Node and webkit2gtk absent. Blocks P1, not P0 |
 
 ## 4. Protocol Extensions
@@ -53,7 +53,7 @@ both green.
 | E6 | QUIC datagram media path | Not started (P3) |
 | E7 | Channel-scoped MLS groups | Not started (P2) |
 | E8 | Track metadata in media payloads | Not started (P4) |
-| E9 | App-layer policy map | Not started (P1) |
+| E9 | App-layer policy map | **Landed** — `PolicyValue`, namespaced keys, Core §2.6.2; client accessors in `kols-core::policy` |
 | E10 | Direct DM invite delivery | Not started (P2) |
 | E11 | Namespace registration for extension capabilities | **New** — found implementing permissions; workaround in `kols-core::capabilities` (P1) |
 
@@ -61,7 +61,7 @@ both green.
 
 | Crate | State |
 |---|---|
-| `kols-core` | **Encoding, author logs, merge, collision recovery** — records/segments/ids, `AuthorLog` incl. `rebase`, `ChannelView`, permissions, capability vocabulary. 30 tests |
+| `kols-core` | **Encoding, author logs, merge, collision recovery, chat policy** — records/segments/ids, `AuthorLog` incl. `rebase`, `ChannelView`, permissions, capability vocabulary, `ChatPolicy`. 35 tests |
 | `kols-net` | **Publish and fetch** — stores/announces chunks, accepts pointers, reassembles segments. Two live two-node tests |
 | `kols-store` | Not created |
 | `kols-net` | Not created |
@@ -94,6 +94,11 @@ design changes before anything else is built.
 
 Newest first. One line per change that moved the state above.
 
+- **2026-08-19** — **E9 landed in the protocol repo.** `NetworkPolicy` now carries namespaced
+  application-layer values it stores, orders, encodes and hash-covers without interpreting —
+  the same division `extension_capabilities` already used. Specified in Core §2.6.2, six
+  conformance tests, both repos' gates green. `kols-core::policy` reads the chat settings
+  out of it, including the network profile, with defaults applying when a key is absent.
 - **2026-08-19** — **Conformance obligation 6 met.** The encoding now runs on a big-endian
   target: `scripts/cross-check.sh` cross-compiles `kols-core` to s390x and runs the suite
   under qemu, where all 30 tests pass including the frozen vectors. Byte order was correct

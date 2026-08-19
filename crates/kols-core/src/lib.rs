@@ -22,6 +22,7 @@ pub mod capabilities;
 mod hlc;
 mod log;
 mod permissions;
+mod policy;
 mod ids;
 mod record;
 mod segment;
@@ -39,6 +40,7 @@ pub use record::{
     Record, RecordBody, RecordClass,
 };
 pub use permissions::{Authority, CategoryId, Placement, StateAuthority, holds};
+pub use policy::{ChatPolicy, NetworkProfile, conversation_genesis_values, defaults, keys};
 pub use segment::{MAX_RECORDS_PER_SEGMENT, Segment};
 pub use view::{ChannelView, Rejection, RenderedMessage};
 

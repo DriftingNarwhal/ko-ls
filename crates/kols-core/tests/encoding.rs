@@ -335,3 +335,72 @@ fn hlc_advances_the_counter_when_the_clock_does_not() {
     // Clock moved on: counter resets.
     assert_eq!(Hlc::next(2_000, Some(third)), Hlc::new(2_000, 0));
 }
+
+// ── chat policy (spec 07 §4.3, Core §2.6.2) ────────────────────────────
+
+#[test]
+fn an_undeclared_policy_reads_as_defaults_and_a_server() {
+    let policy = intranet_governance::NetworkPolicy::conservative_default();
+    let chat = ChatPolicy::of(&policy);
+
+    // Absent means default, never refused — the asymmetry Core §2.6.2 draws
+    // against the capability registry.
+    assert_eq!(chat.message_rate_per_minute(), defaults::MESSAGE_RATE);
+    assert_eq!(chat.segment_max_bytes(), defaults::SEGMENT_MAX_BYTES as usize);
+
+    // And a network that never declared a profile is a server, so its existing
+    // channel history stays valid.
+    assert_eq!(chat.profile(), NetworkProfile::Server);
+    assert!(chat.allows_channel_definitions());
+}
+
+#[test]
+fn a_conversation_declares_itself_and_forbids_channels() {
+    let mut policy = intranet_governance::NetworkPolicy::conservative_default();
+    policy.app_policy.extend(conversation_genesis_values());
+    let chat = ChatPolicy::of(&policy);
+
+    assert_eq!(chat.profile(), NetworkProfile::Conversation);
+    assert!(!chat.allows_channel_definitions());
+}
+
+#[test]
+fn an_unrecognised_profile_reads_as_a_server() {
+    let mut policy = intranet_governance::NetworkPolicy::conservative_default();
+    policy.app_policy.insert(
+        keys::PROFILE.to_owned(),
+        intranet_governance::PolicyValue::Text("something-later".to_owned()),
+    );
+    // Same reasoning as an absent profile: refuse nothing a node may already
+    // hold. A future profile this build cannot enforce must not silently
+    // invalidate that network's history here.
+    assert_eq!(ChatPolicy::of(&policy).profile(), NetworkProfile::Server);
+}
+
+#[test]
+fn a_negative_size_falls_back_rather_than_wrapping() {
+    let mut policy = intranet_governance::NetworkPolicy::conservative_default();
+    policy.app_policy.insert(
+        keys::SEGMENT_MAX_BYTES.to_owned(),
+        intranet_governance::PolicyValue::Int(-1),
+    );
+    // -1 as usize is a limit nothing could exceed, so a nonsensical setting
+    // would silently disable the bound instead of tightening it.
+    assert_eq!(
+        ChatPolicy::of(&policy).segment_max_bytes(),
+        defaults::SEGMENT_MAX_BYTES as usize
+    );
+}
+
+#[test]
+fn a_wrongly_typed_value_falls_back_to_the_default() {
+    let mut policy = intranet_governance::NetworkPolicy::conservative_default();
+    policy.app_policy.insert(
+        keys::MESSAGE_RATE.to_owned(),
+        intranet_governance::PolicyValue::Text("thirty".to_owned()),
+    );
+    assert_eq!(
+        ChatPolicy::of(&policy).message_rate_per_minute(),
+        defaults::MESSAGE_RATE
+    );
+}

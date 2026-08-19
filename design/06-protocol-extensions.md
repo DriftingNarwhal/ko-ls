@@ -1,6 +1,6 @@
 # Required Protocol Extensions
 
-**Document status:** v1.0 — E1 and E3 withdrawn, E11 added; none implemented yet
+**Document status:** v1.1 — E1 and E3 withdrawn, E11 added, **E9 landed**
 **Depends on:** all preceding documents
 **Consumed by:** work in `distributed-intranet`
 
@@ -34,7 +34,7 @@ Two rules govern this list:
 | E6 | QUIC datagram media path | P3 (quality) | Large, partly upstream |
 | E7 | Channel-scoped MLS groups | P2 | Large |
 | E8 | Track metadata in sealed media payloads | P4 | Small |
-| E9 | App-layer policy map in `NetworkPolicy` | P1 | Small |
+| ~~E9~~ | App-layer policy map in `NetworkPolicy` — **landed**, Core §2.6.2 | — | Done |
 | E10 | Direct member-to-member delivery for DM invitations | P2 | Small |
 | E11 | Namespace registration for extension capabilities | P1 | Small |
 
@@ -233,7 +233,7 @@ call and sequence.
 
 ---
 
-## 9. E9 — App-Layer Policy Map
+## 9. E9 — App-Layer Policy Map ✅ **landed**
 
 Chat's abuse limits (`01` §10) must be network policy: they are validity rules, so every
 node has to reach the same verdict, and they spend other members' storage and bandwidth.
@@ -269,10 +269,19 @@ on a key. An unrecognised key is preserved on replay and ignored by clients that
 know it, which is what lets a network run a newer client alongside an older one without a
 policy migration.
 
-**Acceptance:** values survive replay identically on every node; a change is an ordinary
-`PolicyChange` entry authorized by `define-policy`; canonical encoding covers the map in
-a defined order, so two nodes encoding the same policy produce identical bytes; an
-unknown key round-trips unchanged.
+**Acceptance — all met**, tested in `intranet-governance/tests/conformance.rs`: values
+survive replay identically; a change is an ordinary `PolicyChange` gated on
+`define-policy`, and an ordinary member's attempt is refused; encoding is order-independent
+so two nodes building the same logical policy produce identical bytes; an unknown key
+round-trips unchanged; an unnamespaced key is refused at the decoder.
+
+Specified in **Core §2.6.2**, which also records the one asymmetry worth knowing: an absent
+policy value means the consuming spec's default, while an absent *capability* tier is
+refused. A missing tier would let a governance-tier grant pass as ordinary; a missing
+setting just means nobody changed it.
+
+Client-side accessors are in `kols-core::policy` — `ChatPolicy`, the key names, the
+defaults from spec 07 §4.3, and the profile reading.
 
 *Flagged: a later refinement could allow delegated, namespace-scoped policy edits — so a
 moderators group could tune chat limits without holding `define-policy` over admission
