@@ -1,7 +1,8 @@
 # ko-ls — Implementation Status
 
-**Updated:** 2026-08-19 (E4 live delivery; **in the working tree, uncommitted**)
-**Phase:** P1 — two nodes talk live and durably; E11 and history backfill remain
+**Updated:** 2026-08-19 (segment sealing and history backfill)
+**Phase:** P1 — two nodes talk live and durably, and a joiner reads back through sealed
+history; E11 remains
 **Design:** [`design/`](design/) — `00`–`08`, all v1.0. **`distributed-intranet/specs/07` is normative** where it and the design set overlap.
 
 This file is the answer to "where are we?". It is updated in the same change that moves
@@ -19,16 +20,30 @@ Two repositories on this machine, **both pushed and current**:
 | Repo | Remote |
 |---|---|
 | `ko-ls` (this one) | `DriftingNarwhal/ko-ls` (private), branch `main` |
-| `../distributed-intranet` | `DriftingNarwhal/distributed-intranet`, branch `main` — carries spec 07, E9 (Core §2.6.2), E2 (Core §2.7.2), E5 (Real-Time §2.2.1), MLS persistence (Core §3.3.1) and E4 (gossipsub, Core §5.1). **E4 is in the working tree, uncommitted** |
+| `../distributed-intranet` | `DriftingNarwhal/distributed-intranet`, branch `main` — carries spec 07, E9 (Core §2.6.2), E2 (Core §2.7.2), E5 (Real-Time §2.2.1), MLS persistence (Core §3.3.1) and E4 (gossipsub, Core §5.1). This round of work is client-side only, so it carries none of it |
 
 The client builds against the sibling checkout by **path dependency**, not a published
 version, and deliberately so while the extensions are still moving. A fresh machine needs
 both repos cloned side by side.
 
 **Next task:** **E11** (namespace registration for extension capabilities — small, and it
-removes the per-scope policy churn `kols-core::capabilities` currently works around), then
-**history backfill**: nothing yet walks `previous_segment` chains, so a reader sees only
-what a peer's current head segment holds. The Tauri shell stays blocked on S3.
+removes the per-scope policy churn `kols-core::capabilities` currently works around). The
+Tauri shell stays blocked on S3.
+
+**History backfill is done, and it came with its other half.** The daemon never sealed, so
+every author log was one ever-growing segment — which meant a reader already saw all of an
+author's history and there were no `previous_segment` chains to walk. So this landed
+sealing too (`design/01` §3.1's size and age thresholds, `--seal-bytes` to tune), and then
+the walk. Two things it did *not* fix, both now written down rather than assumed:
+
+- **Retention is still per log, not per segment.** One DEK covers a whole chain, so the
+  wrapping that opens the head opens everything behind it. Per-segment DEKs are what
+  §3.1's "separate objects with separate DEKs" actually asks for, and wrappings are
+  carried per pointer while a chain has one pointer — so it is a real change, not a knob.
+- **The live path carries backlog.** A record that fails to publish is retried forever, so
+  an author's entire history goes out over gossipsub the moment any peer subscribes. Spec
+  07 §6.1 says nothing may depend on that path; it does not say the path may substitute
+  for the durable one. A freshness bound on the retry is the likely fix.
 
 The keying gaps are closed end to end: `GroupSession::save`/`restore` (Core §3.3.1) mean a
 founder survives a restart and can still key people in, and `kols revoke` now drives a real
@@ -56,9 +71,9 @@ does not, fix that before anything else — the tree was left green.
 
 | | |
 |---|---|
-| **Working on** | E11, then history backfill |
+| **Working on** | E11 |
 | **Blocked on** | Nothing |
-| **Runnable** | **`kols`** — init, attach, admit, revoke, serve, channel create/list, post, read. Two nodes hold a conversation. `cargo test` — 90 tests, clippy clean; `scripts/cross-check.sh` for big-endian |
+| **Runnable** | **`kols`** — init, attach, admit, revoke, serve, channel create/list, post, read. Two nodes hold a conversation. `cargo test` — 91 tests, clippy clean; `scripts/cross-check.sh` for big-endian |
 | **Next decision needed from the user** | Nothing blocking |
 
 ---
@@ -145,6 +160,38 @@ design changes before anything else is built.
 ## 8. Log
 
 Newest first. One line per change that moved the state above.
+
+- **2026-08-19** — **Segments seal, and readers walk back through them.** Backfill was
+  supposed to be the reader half of a model already in place. It was not: `AuthorLog::seal`
+  existed and the daemon never called it, so every author log was a single ever-growing
+  segment. That has a consequence worth stating plainly, because it inverts the reason for
+  doing the work — **a reader already saw all of an author's history**, since the one
+  segment held it. The gap was not scrollback. It was that opening a channel cost the whole
+  conversation rather than a screenful, which is exactly what `design/01` §5's
+  "head segment only" exists to prevent.
+
+  So sealing landed first, on §3.1's two thresholds, and the walk after it. Sealing needs
+  **no persisted state**, which is the part worth keeping: boundaries are a pure function
+  of the record sequence, so a node that restarts and replays its store re-derives the same
+  seals and republishes the identical chain. That only holds because age is measured across
+  a segment's own records rather than against the clock — "older than a day *now*" would
+  seal somewhere new on every restart and publish a chain competing with the one readers
+  already hold.
+
+  Two bugs, both found by the test rather than by reading. The walk marked a segment
+  absorbed as soon as its records were stored, and stopped at the first marked segment — so
+  a reader took exactly one hop of history and then stopped, permanently, while *reporting
+  a successful backfill*. A mark now means "this and everything behind it", which can only
+  be set once the chain bottoms out. And the test itself was passing for the wrong reason
+  until `--no-live` existed: an author retries a record that failed to publish, so its
+  entire backlog goes out over gossipsub the moment a peer subscribes, and Bob was learning
+  all thirty messages live. That retry is still unbounded — spec 07 §6.1 says nothing may
+  *depend* on the live path, not that it may substitute for the durable one — and it is
+  logged in §1 rather than fixed here.
+
+  `kols serve --no-live` also closes a MUST: §6.1 requires conformance be testable with
+  gossip disabled, and the test that claimed to do that had been arranging for the two
+  daemons never to overlap, which held only while there was a single record to race on.
 
 - **2026-08-19** — **E4 landed: records arrive live as well as durably.** Gossipsub joins
   `MemberBehaviour` (Core §5.1) as the one broadcast primitive in a stack that is otherwise

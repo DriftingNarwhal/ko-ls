@@ -124,7 +124,9 @@ Loop responsibilities, in priority order:
 1. **Live** — gossip subscriptions for open and notified channels (`01` §7).
 2. **Head sync** — resolve author-log pointers for visible channels; delta-fetch head
    segments.
-3. **Backfill** — walk `previous_segment` chains on demand, bounded concurrency.
+3. **Backfill** — walk `previous_segment` chains on demand, bounded concurrency. Landed
+   in `kols serve`, which walks to the start of history because it has no scroll
+   position to bound it; a UI bounds this by pages instead (`01` §5).
 4. **Publish** — seal open segments on the size/age thresholds (`01` §3.1); publish
    immediately when the user goes idle, so a message is never stuck unpublished behind a
    half-full segment.

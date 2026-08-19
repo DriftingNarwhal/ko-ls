@@ -21,7 +21,7 @@
 use intranet_crypto::{Hash, to_hex};
 use intranet_governance::{GovernanceLog, GovernanceState, LogEntry, PointerId, wire};
 use intranet_identity::{MasterSeed, NetworkId, PerNetworkIdentity, PerNetworkIdentityId};
-use intranet_storage::{Dek, EpochKey};
+use intranet_storage::{Cid, Dek, EpochKey};
 use kols_core::{ChannelId, Record};
 use std::fs;
 use std::io;
@@ -530,6 +530,29 @@ impl Store {
         fs::create_dir_all(self.root.join("deks"))?;
         write_private(&self.dek_path(pointer), &epoch.wrap(pointer, &dek))?;
         Ok(dek)
+    }
+
+    /// Whether this node has already absorbed the segment named by `cid`.
+    ///
+    /// Backfill walks a `previous` chain backwards, and the walk has to be able
+    /// to stop. Stopping on "this segment taught us nothing new" would be wrong:
+    /// a walk interrupted midway leaves older segments unread, and a later tick
+    /// that halts at the first already-known segment would never reach them
+    /// again. A mark set only once a segment is fully stored makes the walk
+    /// resumable, so an interrupted backfill costs a retry rather than a gap.
+    pub fn segment_absorbed(&self, cid: &Cid) -> bool {
+        self.root
+            .join("segments")
+            .join(to_hex(cid.hash().as_bytes()))
+            .exists()
+    }
+
+    /// Records that `cid`'s records are all stored.
+    pub fn mark_segment_absorbed(&self, cid: &Cid) -> Result<(), StoreError> {
+        let dir = self.root.join("segments");
+        fs::create_dir_all(&dir)?;
+        fs::write(dir.join(to_hex(cid.hash().as_bytes())), [])?;
+        Ok(())
     }
 
     fn dek_path(&self, pointer: &PointerId) -> PathBuf {

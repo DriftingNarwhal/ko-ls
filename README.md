@@ -106,12 +106,16 @@ new members after one, and the epoch rotates on both add and remove.
 rotation from the daemon, in that order because the protocol requires it. Records also
 travel **live** over gossipsub as they are written — sealed under the channel's content key
 — while remaining fully carried by the durable path, so a node with the live path silent is
-slower and completely correct.
+slower and completely correct. `kols serve --no-live` turns gossip off outright, which is
+how that claim is actually tested rather than asserted.
 
-What does not exist yet: no user interface, no private-channel keying, no voice, no search,
-and no history backfill — nothing walks `previous_segment` chains, so a reader sees only
-what a peer's current head segment holds. [`STATUS.md`](STATUS.md) is the honest
-inventory.
+Author logs **seal** into chained segments once they cross a size or age threshold, and a
+joiner walks the chain backwards to read history older than the segment a pointer names —
+so opening a channel stays a bounded fetch however long the conversation gets.
+
+What does not exist yet: no user interface, no private-channel keying, no voice, and no
+search. Retention is also still per log rather than per segment, because one key covers a
+whole chain. [`STATUS.md`](STATUS.md) is the honest inventory.
 
 ## The one number worth knowing
 

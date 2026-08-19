@@ -97,6 +97,23 @@ fn ok(home: &Home, args: &[&str]) -> String {
 }
 
 fn serve(home: &Home, port: u16, peer: Option<&str>) -> Daemon {
+    serve_sealing(home, port, peer, None, true)
+}
+
+/// `serve`, with an optional segment-seal threshold.
+///
+/// Sealing at `design/01` §3.1's real 4 MiB target would need a test to write
+/// four megabytes of chat to produce a single boundary. The threshold is local
+/// publishing tuning rather than a validity rule — a reader accepts whatever
+/// boundaries an author chose — so a small one here produces history that is
+/// ordinary in every respect except how quickly it reaches the second segment.
+fn serve_sealing(
+    home: &Home,
+    port: u16,
+    peer: Option<&str>,
+    seal_bytes: Option<usize>,
+    live: bool,
+) -> Daemon {
     let log = std::env::temp_dir().join(format!("kols-2n-{port}-{}.log", std::process::id()));
     let file = std::fs::File::create(&log).expect("a log file");
     let mut command = Command::new(env!("CARGO_BIN_EXE_kols"));
@@ -107,6 +124,12 @@ fn serve(home: &Home, port: u16, peer: Option<&str>) -> Daemon {
         .arg(format!("/ip4/127.0.0.1/tcp/{port}"));
     if let Some(peer) = peer {
         command.args(["--peer", peer]);
+    }
+    if let Some(bytes) = seal_bytes {
+        command.args(["--seal-bytes", &bytes.to_string()]);
+    }
+    if !live {
+        command.arg("--no-live");
     }
     let child = command
         .stdout(Stdio::from(file))
@@ -518,11 +541,17 @@ fn a_record_goes_out_live_and_arrives_exactly_once() {
 #[test]
 fn history_still_converges_with_the_live_path_carrying_nothing() {
     // §6.1 requires conformance be testable with gossip disabled: "a client with
-    // gossip disabled is slower and completely correct". There is no flag to
-    // turn it off, so this achieves the same thing by never overlapping the two
-    // nodes — Alice writes and stops before Bob ever runs, so no payload can
-    // reach him live and everything he ends up with came through the durable
-    // path alone.
+    // gossip disabled is slower and completely correct". `--no-live` is that
+    // switch, and it turns off both halves — a node that published but never
+    // subscribed would be neither on nor off. Both sides run without it here, so
+    // no payload can reach Bob live and everything he ends up with came through
+    // the durable path alone.
+    //
+    // This used to rely on never overlapping the two daemons instead. That was
+    // weaker than it looked: an author retries a record that failed to publish,
+    // so a backlog goes out the moment a peer subscribes, and the arrangement
+    // held only while there was a single record for the durable path to win the
+    // race on.
     let alice = Home::new("nolive-alice");
     let bob = Home::new("nolive-bob");
 
@@ -531,7 +560,7 @@ fn history_still_converges_with_the_live_path_carrying_nothing() {
     let attached = ok(&bob, &["attach", &network]);
     ok(&alice, &["admit", &field(&attached, "kols admit ")]);
 
-    let alice_node = serve(&alice, 45143, None);
+    let alice_node = serve_sealing(&alice, 45143, None, None, false);
     let address = field(
         &alice_node.wait_for("listening", Duration::from_secs(20)),
         "listening ",
@@ -540,7 +569,7 @@ fn history_still_converges_with_the_live_path_carrying_nothing() {
     ok(&alice, &["post", "general", "written with nobody listening"]);
     alice_node.wait_for("picked up", Duration::from_secs(20));
 
-    let bob_node = serve(&bob, 45144, Some(&address));
+    let bob_node = serve_sealing(&bob, 45144, Some(&address), None, false);
     bob_node.wait_for("keyed into this network", Duration::from_secs(45));
     bob_node.wait_for("learned 1 record", Duration::from_secs(45));
 
@@ -555,4 +584,70 @@ fn history_still_converges_with_the_live_path_carrying_nothing() {
         read.contains("written with nobody listening"),
         "the durable path alone must carry it:\n{read}"
     );
+}
+
+#[test]
+fn a_joiner_walks_back_through_sealed_segments_to_read_the_start() {
+    let alice = Home::new("alice-backfill");
+    let bob = Home::new("bob-backfill");
+
+    let created = ok(&alice, &["init", "long history"]);
+    let network = field(&created, "network   ");
+    let attached = ok(&bob, &["attach", &network]);
+    ok(&alice, &["admit", &field(&attached, "kols admit ")]);
+
+    // A threshold small enough that ordinary chat crosses it repeatedly, so this
+    // writes a chain rather than the single ever-growing segment the daemon
+    // produced before sealing existed.
+    let alice_node = serve_sealing(&alice, 45109, None, Some(1024), true);
+    let address = field(
+        &alice_node.wait_for("listening", Duration::from_secs(20)),
+        "listening ",
+    );
+    ok(&alice, &["channel", "create", "general"]);
+
+    // Written with Bob's daemon down, so none of it can reach him live and the
+    // durable path is the only way any of it arrives.
+    const MESSAGES: usize = 30;
+    for n in 0..MESSAGES {
+        ok(&alice, &["post", "general", &format!("message {n}")]);
+    }
+    alice_node.wait_for("picked up", Duration::from_secs(30));
+
+    // Bob runs with the live path off (spec 07 §6.1), so every record he ends
+    // up with came through the durable path. Without this Alice re-broadcasts
+    // her whole backlog the moment he subscribes and he learns all thirty
+    // records live, which reads like a pass and tests nothing.
+    let bob_node = serve_sealing(&bob, 45110, Some(&address), None, false);
+
+    // The property. Without the walk Bob absorbs the segment the pointer names
+    // and stops, which is the tail of the conversation — he would still read
+    // *something*, which is exactly why this asserts on the earliest message
+    // rather than on any message at all.
+    bob_node.wait_for("backfilled", Duration::from_secs(90));
+
+    // Polled rather than read once. A hop the local store cannot already answer
+    // costs a tick, so a chain several seals long converges over several ticks —
+    // reading at the first "backfilled" catches the walk partway and reports a
+    // missing history that is merely a slow one.
+    let deadline = Instant::now() + Duration::from_secs(120);
+    let read = loop {
+        let read = ok(&bob, &["read", "general"]);
+        let missing: Vec<_> = (0..MESSAGES)
+            .filter(|n| !read.contains(&format!("message {n}")))
+            .collect();
+        if missing.is_empty() {
+            break read;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "bob never reached {missing:?}:\n{read}\n\nhis daemon said:\n{}",
+            bob_node.output()
+        );
+        std::thread::sleep(Duration::from_millis(500));
+    };
+
+    // Named explicitly because it is the one the head segment cannot carry: it
+    // is several seals back, so it can only have come from a chain walk.
+    assert!(read.contains("message 0"), "{read}");
 }

@@ -134,7 +134,17 @@ Two thresholds close a segment and start the next one, whichever comes first:
   retention purposes (§8).
 
 Both are **local publishing tuning**, not validity rules — a node that seals early or
-late is not producing invalid history. The one network-wide bound is
+late is not producing invalid history. `kols serve --seal-bytes` is exactly that knob;
+tests set it low so a chain forms in a few messages rather than four megabytes.
+
+**Age is measured across the segment's own records — newest minus oldest — not against
+the clock.** The distinction is load-bearing. A publisher rebuilds its log by replaying
+its stored records, so the boundaries have to be a pure function of that sequence: replay
+them a month later and the same seals fall in the same places, producing the identical
+chain. "Older than a day *right now*" would seal somewhere new on every restart, and a
+node would publish a second chain competing with the one its readers already hold. This
+is also why sealing needs no persisted state of its own — the record sequence *is* the
+state. The one network-wide bound is
 `chat:segment-max-bytes` (§10.1), which readers enforce: a segment above it is refused,
 so no author can compel every reader to fetch an arbitrarily large object. The local
 target sits well below the network bound on purpose.
@@ -152,6 +162,13 @@ construction (Storage §1.2).
 size, manifests grow without bound, and — decisively — retention (§8) needs to drop old
 history, which means old history must be *separate objects with separate DEKs*. A single
 object cannot be partially forgotten.
+
+**Sealing is necessary for that and not yet sufficient.** The client seals and readers
+walk the chain (§5), but one DEK still covers the whole chain: sealing starts a new
+segment, not a new key, so the wrapping that opens the head opens everything behind it.
+Retention therefore still operates per *log* rather than per segment. Giving each sealed
+segment its own DEK is what would close it, and it is a larger change than it looks —
+wrappings are carried per pointer, and a chain of segments has one pointer.
 
 ### 3.1.1 Two Writers, One Log
 
@@ -303,6 +320,19 @@ Opening a channel is a bounded operation, not a full history replay.
 4. Backfill on demand: scrolling up walks `previous_segment` CIDs, fetching in parallel
    across authors, bounded by a local concurrency setting (Storage §4.4 makes this a
    per-node choice, not network policy).
+
+The client walks the chain as far as its local chunk store can carry it and stops at the
+first hop it does not hold, queueing that one for the ordinary fetch path rather than
+blocking on it. So a node absorbs a chain it already has in a single pass, and pays a
+round per hop only for what it still has to fetch. It has no scroll position to drive
+"on demand" from yet, so it walks to the start; a UI would bound this by pages.
+
+**A segment is marked absorbed only once the chain behind it is whole.** A mark meaning
+"this segment is stored" reads correctly and behaves wrongly: the walk stops at the first
+marked segment, so marking one whose own ancestors were still missing walls off
+everything behind it permanently — a reader takes one hop of history and then stops, for
+good. The cost of deferring is a re-walk of the held part each round, which stores
+nothing, because records are content-addressed and already present.
 
 **Backfill is bounded by pages, not by authors.** A channel with 2,000 historical posters
 but 30 active ones costs 30 head-segment fetches to open, and reaches the older 1,970

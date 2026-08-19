@@ -45,16 +45,50 @@ const OFFERED_STORAGE_BYTES: u64 = 256 * 1024 * 1024;
 const OFFERED_UPLOAD_BYTES_PER_SEC: u64 = 1_000_000;
 const OFFERED_DOWNLOAD_BYTES_PER_SEC: u64 = 8_000_000;
 
+/// When an open segment gets sealed and a fresh one starts.
+///
+/// `design/01` §3.1's size target. It is local publishing tuning and not a
+/// validity rule — a reader accepts whatever boundaries an author chose — which
+/// is exactly why `serve` lets it be overridden: a test needs boundaries it can
+/// reach, and picking a smaller one produces history no less valid than this.
+pub const SEAL_TARGET_BYTES: usize = 4 * 1024 * 1024;
+
+/// The other seal threshold from `design/01` §3.1: how much time one segment may
+/// span.
+///
+/// Measured across the segment's own records — newest minus oldest — rather than
+/// against the clock. That distinction is what keeps the whole chain a pure
+/// function of the record sequence: a rebuild months later re-derives the same
+/// boundaries, where "older than a day *now*" would seal somewhere new every
+/// time and publish a second, competing chain.
+///
+/// §3.1's reason for having it at all is fan-in: "a stale author's head segment
+/// must not be a year of scrollback". Size alone does not cover that, because
+/// the segment that needs splitting is the sparse one.
+const SEAL_TARGET_SPAN_MILLIS: i64 = 24 * 60 * 60 * 1000;
+
 /// Runs the node until interrupted.
-pub fn run(root: std::path::PathBuf, listen: &str, peers: &[String]) -> Result<(), String> {
+pub fn run(
+    root: std::path::PathBuf,
+    listen: &str,
+    peers: &[String],
+    seal_bytes: usize,
+    live: bool,
+) -> Result<(), String> {
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()
         .map_err(|err| format!("could not start a runtime: {err}"))?;
-    runtime.block_on(serve(root, listen, peers))
+    runtime.block_on(serve(root, listen, peers, seal_bytes, live))
 }
 
-async fn serve(root: std::path::PathBuf, listen: &str, peers: &[String]) -> Result<(), String> {
+async fn serve(
+    root: std::path::PathBuf,
+    listen: &str,
+    peers: &[String],
+    seal_bytes: usize,
+    live: bool,
+) -> Result<(), String> {
     let store = Store::open(root).map_err(|e| e.to_string())?;
     let identity = store.identity().map_err(|e| e.to_string())?;
 
@@ -137,7 +171,7 @@ async fn serve(root: std::path::PathBuf, listen: &str, peers: &[String]) -> Resu
         _ => println!("  epoch     none — this node can fetch content and open none of it"),
     }
 
-    match ready(&store, &mut node, &identity) {
+    match ready(&store, &mut node, &identity, seal_bytes) {
         Ok(published) => println!("  published {published} segment(s) from this node"),
         Err(_) => println!("  not a member of this network yet — syncing will settle it"),
     }
@@ -157,6 +191,11 @@ async fn serve(root: std::path::PathBuf, listen: &str, peers: &[String]) -> Resu
     let mut broadcast: BTreeSet<kols_core::MessageId> = BTreeSet::new();
     let mut announced = BTreeSet::new();
     let mut fetched = BTreeSet::new();
+    // Older segments discovered by walking a `previous` chain and not held yet.
+    // Kept beside `fetched` rather than inside it because these are *wanted*
+    // rather than *asked for*: `request_foreign_segments` reads this to widen
+    // what it asks for, and `absorb_chain` clears an entry once it lands.
+    let mut backfill: BTreeSet<intranet_storage::Cid> = BTreeSet::new();
     let mut listening = Vec::new();
 
     // One-shot commands write to the same store this node reads, so a `post`
@@ -171,12 +210,19 @@ async fn serve(root: std::path::PathBuf, listen: &str, peers: &[String]) -> Resu
         let event = tokio::select! {
             event = node.next_event() => event,
             _ = refresh.tick() => {
-                adopt_local_changes(&store, &mut node, &identity)?;
-                subscribe_channels(&store, &mut node)?;
-                publish_unsent_live(&store, &mut node, &identity, &mut broadcast)?;
+                adopt_local_changes(&store, &mut node, &identity, seal_bytes)?;
+                // Both halves of the live path, together. Spec 07 §6.1 requires
+                // conformance be testable with gossip disabled — "a client with
+                // gossip disabled is slower and completely correct" — and a node
+                // that published but never subscribed, or the reverse, would be
+                // neither on nor off.
+                if live {
+                    subscribe_channels(&store, &mut node)?;
+                    publish_unsent_live(&store, &mut node, &identity, &mut broadcast)?;
+                }
                 if holds_group {
                     catch_up_epochs(&store, &mut node)?;
-                    let excluded = exclude_removed_members(&store, &mut node, &identity)?;
+                    let excluded = exclude_removed_members(&store, &mut node, &identity, seal_bytes)?;
                     if excluded > 0 {
                         println!("rotated the epoch to exclude {excluded} removed member(s)");
                     }
@@ -201,11 +247,13 @@ async fn serve(root: std::path::PathBuf, listen: &str, peers: &[String]) -> Resu
                     node.sync_ledger_with(peer);
                     node.sync_pointers_with(peer);
                 }
-                request_foreign_segments(&store, &mut node, &identity, &mut fetched)?;
-                let learned = absorb_segments(&store, &mut node, &identity)?;
-                if learned > 0 {
-                    println!("learned {learned} record(s)");
-                }
+                request_foreign_segments(&store, &mut node, &identity, &mut fetched, &backfill)?;
+                report(&absorb_segments(
+                    &store,
+                    &mut node,
+                    &identity,
+                    &mut backfill,
+                )?);
                 continue;
             }
         };
@@ -245,7 +293,7 @@ async fn serve(root: std::path::PathBuf, listen: &str, peers: &[String]) -> Resu
                     // than only at startup for exactly that reason, and the
                     // ledger is re-synced because a peer that refused this
                     // node's advertisement a moment ago will accept it now.
-                    if ready(&store, &mut node, &identity).is_ok() {
+                    if ready(&store, &mut node, &identity, seal_bytes).is_ok() {
                         node.sync_ledger_with(peer);
                         node.sync_pointers_with(peer);
                         // A member with no key can fetch every byte of this
@@ -265,19 +313,21 @@ async fn serve(root: std::path::PathBuf, listen: &str, peers: &[String]) -> Resu
             // rankable that was not before, so this is where a stalled fetch
             // gets its second chance.
             NodeEvent::LedgerSynced { accepted, .. } if accepted > 0 => {
-                request_foreign_segments(&store, &mut node, &identity, &mut fetched)?;
+                request_foreign_segments(&store, &mut node, &identity, &mut fetched, &backfill)?;
             }
 
             NodeEvent::PointersReceived { .. } => {
-                request_foreign_segments(&store, &mut node, &identity, &mut fetched)?;
+                request_foreign_segments(&store, &mut node, &identity, &mut fetched, &backfill)?;
             }
 
             NodeEvent::FetchComplete { .. } => {
-                let learned = absorb_segments(&store, &mut node, &identity)?;
-                if learned > 0 {
-                    println!("learned {learned} record(s)");
-                }
-                request_foreign_segments(&store, &mut node, &identity, &mut fetched)?;
+                report(&absorb_segments(
+                    &store,
+                    &mut node,
+                    &identity,
+                    &mut backfill,
+                )?);
+                request_foreign_segments(&store, &mut node, &identity, &mut fetched, &backfill)?;
             }
 
             // Somebody asked to be keyed in. Every gate — the request signature,
@@ -290,7 +340,7 @@ async fn serve(root: std::path::PathBuf, listen: &str, peers: &[String]) -> Resu
                 // nothing else may append in between. Adopt under the lock, then
                 // rotate, then write back.
                 let lock = store.lock().map_err(|e| e.to_string())?;
-                adopt_local_changes(&store, &mut node, &identity)?;
+                adopt_local_changes(&store, &mut node, &identity, seal_bytes)?;
                 let answered = node.answer_epoch_key(
                     request,
                     &identity,
@@ -333,7 +383,7 @@ async fn serve(root: std::path::PathBuf, listen: &str, peers: &[String]) -> Resu
                     println!(
                         "keyed into this network ({historical_keys} historical key(s) came with it)"
                     );
-                    request_foreign_segments(&store, &mut node, &identity, &mut fetched)?;
+                    request_foreign_segments(&store, &mut node, &identity, &mut fetched, &backfill)?;
                 }
             }
 
@@ -377,6 +427,7 @@ fn ready(
     store: &Store,
     node: &mut MemberNode,
     identity: &intranet_identity::PerNetworkIdentity,
+    seal_bytes: usize,
 ) -> Result<usize, String> {
     node.advertise(CapabilityAdvertisement::create(
         identity,
@@ -392,11 +443,15 @@ fn ready(
         Timestamp::from_millis(crate::chat::now_millis()),
     ))
     .map_err(|err| format!("could not advertise: {err}"))?;
-    publish_own_logs(store, node)
+    publish_own_logs(store, node, seal_bytes)
 }
 
 /// Publishes every author log this node owns into the node's chunk store.
-fn publish_own_logs(store: &Store, node: &mut MemberNode) -> Result<usize, String> {
+fn publish_own_logs(
+    store: &Store,
+    node: &mut MemberNode,
+    seal_bytes: usize,
+) -> Result<usize, String> {
     let identity = store.identity().map_err(|e| e.to_string())?;
     let Some(state) = replayable(store) else {
         return Ok(0);
@@ -439,12 +494,34 @@ fn publish_own_logs(store: &Store, node: &mut MemberNode) -> Result<usize, Strin
         // The last append's outcome is the whole current segment: appending
         // republishes the same object, so what it returns is the object as it
         // now stands rather than a delta to be assembled.
+        //
+        // Sealing happens inline, on a threshold read off the segment as it
+        // stands. That keeps the whole chain a pure function of the record
+        // sequence: replaying the same records at the same threshold reproduces
+        // the same boundaries and therefore the same CIDs, so a node that
+        // restarts and rebuilds from its store republishes the identical chain
+        // rather than a second, competing one. Nothing about the split needs
+        // persisting — which is why this stays a rebuild-from-records loop.
         let mut latest = None;
         for record in own {
-            latest = Some(
-                log.append(&identity, record, &state)
-                    .map_err(|err| format!("a stored record no longer appends: {err}"))?,
-            );
+            let published = log
+                .append(&identity, record, &state)
+                .map_err(|err| format!("a stored record no longer appends: {err}"))?;
+            let span = match (log.segment().records.first(), log.segment().records.last()) {
+                (Some(oldest), Some(newest)) => newest.hlc.wall_millis - oldest.hlc.wall_millis,
+                _ => 0,
+            };
+            if log.segment().canonical_bytes().len() >= seal_bytes
+                || span >= SEAL_TARGET_SPAN_MILLIS
+            {
+                // Published before sealing, because once sealed this object is
+                // no longer what the pointer names and nothing else will offer
+                // it. A reader walking back to it fetches it from the swarm like
+                // any other object, so it has to be there to serve.
+                let _ = publish_segment(node, &published);
+                log.seal(published.object.manifest_cid());
+            }
+            latest = Some(published);
         }
         if let Some(segment) = latest {
             let outcome = publish_segment(node, &segment);
@@ -493,6 +570,7 @@ fn request_foreign_segments(
     node: &mut MemberNode,
     identity: &intranet_identity::PerNetworkIdentity,
     fetched: &mut BTreeSet<intranet_storage::Cid>,
+    backfill: &BTreeSet<intranet_storage::Cid>,
 ) -> Result<(), String> {
     let Some(state) = replayable(store) else {
         return Ok(());
@@ -516,6 +594,11 @@ fn request_foreign_segments(
         }
     }
 
+    // Older segments a chain walk reached and could not read. They go in the
+    // same queue as the heads: a sealed segment is an ordinary object, fetched
+    // the ordinary way, and nothing about backfill needs a second path.
+    wanted.extend(backfill.iter().copied());
+
     // Asked for repeatedly on purpose. A fetch is **two rounds** — the manifest,
     // then the chunks it names — because the chunk list lives inside the
     // manifest. Remembering "this object was already requested" and skipping it
@@ -535,16 +618,20 @@ fn request_foreign_segments(
 }
 
 /// Decodes whatever complete segments the node now holds, and stores the records.
+///
+/// `backfill` collects the older segments this pass wanted and could not read
+/// yet; `request_foreign_segments` asks for them on the next tick.
 fn absorb_segments(
     store: &Store,
     node: &mut MemberNode,
     identity: &intranet_identity::PerNetworkIdentity,
-) -> Result<usize, String> {
+    backfill: &mut BTreeSet<intranet_storage::Cid>,
+) -> Result<Absorbed, String> {
     let Some(state) = replayable(store) else {
-        return Ok(0);
+        return Ok(Absorbed::default());
     };
     let (channels, _) = network::channels(store, &state).map_err(|e| e.to_string())?;
-    let mut learned = 0;
+    let mut took = Absorbed::default();
 
     // Loaded once. This reads and opens every stored epoch key, so calling it
     // per (channel, member) meant a long-lived network paid a full directory
@@ -606,10 +693,127 @@ fn absorb_segments(
             let Ok(segment) = fetch_segment(node, cid, &dek) else {
                 continue;
             };
-            learned += store_segment(store, channel, &segment)?;
+            let one = absorb_chain(store, node, channel, segment, cid, &dek, backfill)?;
+            took.learned += one.learned;
+            took.backfilled += one.backfilled;
+            took.segments += one.segments;
         }
     }
-    Ok(learned)
+    Ok(took)
+}
+
+/// Says what an absorb pass took in, and stays quiet when it took in nothing.
+///
+/// The head-segment wording is load-bearing: the live path reports arrivals in
+/// these same words on purpose, so that "a record landed" reads the same however
+/// it got here and only the named path differs.
+fn report(took: &Absorbed) {
+    if took.learned > 0 {
+        println!("learned {} record(s)", took.learned);
+    }
+    if took.backfilled > 0 {
+        println!(
+            "backfilled {} record(s) from {} older segment(s)",
+            took.backfilled, took.segments
+        );
+    }
+}
+
+/// What one absorb pass took in.
+///
+/// `backfilled` is counted apart from `learned` because the two mean different
+/// things to somebody watching a node: records off the head segment are the
+/// conversation arriving, records off an older one are history being recovered.
+/// A node that has caught up reports the first and never the second.
+#[derive(Default)]
+struct Absorbed {
+    learned: usize,
+    backfilled: usize,
+    segments: usize,
+}
+
+/// Stores a segment, then walks its `previous` chain backwards.
+///
+/// This is history backfill (`design/01` §5). An author seals a segment once it
+/// crosses a size threshold and starts a fresh one, so a reader that only ever
+/// read the segment a pointer names would see the tail of a conversation and
+/// nothing before it. The seal leaves a hash chain (`design/01` §3.1: "so
+/// history is walkable and gap-detectable without consulting the pointer's
+/// version history"), and this walks it.
+///
+/// The walk runs as far as the local chunk store can carry it and stops at the
+/// first hop it does not hold, queueing that one instead of blocking on it. So a
+/// node absorbs a chain it already has in a single pass, and pays a tick per hop
+/// only for the parts it still has to fetch — which is what keeps this off the
+/// critical path of a tick that has live records to deliver.
+///
+/// One DEK covers the whole chain: sealing starts a new segment, not a new key,
+/// so the wrapping that opened the head opens everything behind it. That is also
+/// the limit of what this buys — see `design/01` §8 on why per-segment keys are
+/// what granular retention would need.
+fn absorb_chain(
+    store: &Store,
+    node: &MemberNode,
+    channel: &ChannelId,
+    head: Segment,
+    head_cid: intranet_storage::Cid,
+    dek: &intranet_storage::Dek,
+    backfill: &mut BTreeSet<intranet_storage::Cid>,
+) -> Result<Absorbed, String> {
+    let mut took = Absorbed::default();
+    let mut walked = Vec::new();
+    let mut whole = false;
+    let mut current = Some((head_cid, head));
+    let mut head_segment = true;
+
+    while let Some((cid, segment)) = current.take() {
+        let stored = store_segment(store, channel, &segment)?;
+        if head_segment {
+            took.learned += stored;
+            head_segment = false;
+        } else {
+            took.backfilled += stored;
+            took.segments += 1;
+        }
+        walked.push(cid);
+        backfill.remove(&cid);
+
+        match segment.previous {
+            // The start of this author's history in this channel.
+            None => whole = true,
+            // Everything behind a marked segment is already held, by the
+            // invariant the marking below maintains.
+            Some(previous) if store.segment_absorbed(&previous) => whole = true,
+            Some(previous) => match fetch_segment(node, previous, dek) {
+                // Already in the chunk store, so the walk continues for free.
+                Ok(older) => current = Some((previous, older)),
+                // Not held yet. Queued rather than waited on, and the walk stops
+                // here: this is the deepest point reached, so nothing below it
+                // exists to keep walking towards.
+                Err(_) => {
+                    backfill.insert(previous);
+                }
+            },
+        }
+    }
+
+    // **Marked only once the chain behind it is whole, and that is the whole
+    // subtlety here.** A mark that meant merely "this segment is stored" read
+    // correctly and behaved wrongly: the walk stops at the first marked segment,
+    // so marking one whose own ancestors were still missing walled off
+    // everything behind it permanently. A reader would take exactly one hop of
+    // history and then quietly stop, for good — which is what this did before,
+    // and it looked like success because a hop's worth of backfill was reported.
+    //
+    // Deferring costs a re-walk of the held part of the chain each tick until it
+    // completes. That re-walk stores nothing (records are content-addressed and
+    // already present) and ends the moment the last hop lands.
+    if whole {
+        for cid in walked {
+            store.mark_segment_absorbed(&cid).map_err(|e| e.to_string())?;
+        }
+    }
+    Ok(took)
 }
 
 fn store_segment(store: &Store, channel: &ChannelId, segment: &Segment) -> Result<usize, String> {
@@ -654,6 +858,7 @@ fn adopt_local_changes(
     store: &Store,
     node: &mut MemberNode,
     identity: &intranet_identity::PerNetworkIdentity,
+    seal_bytes: usize,
 ) -> Result<Option<()>, String> {
     let held: BTreeSet<_> = node.governance_log().canonical_chain().into_iter().collect();
     let stored = store.log().map_err(|e| e.to_string())?;
@@ -677,7 +882,7 @@ fn adopt_local_changes(
     // re-derives to the same CID, so this costs a re-announcement rather than a
     // re-upload. Kademlia provider records expire, so the re-announcement is
     // work worth doing anyway.
-    if ready(store, node, identity).is_ok() {
+    if ready(store, node, identity, seal_bytes).is_ok() {
         Ok(Some(()))
     } else {
         Ok(None)
@@ -702,6 +907,7 @@ fn exclude_removed_members(
     store: &Store,
     node: &mut MemberNode,
     identity: &intranet_identity::PerNetworkIdentity,
+    seal_bytes: usize,
 ) -> Result<usize, String> {
     // **Checked before locking, and that order matters.** This runs on every
     // tick, while one-shot commands need the same lock to append at all — so
@@ -738,7 +944,7 @@ fn exclude_removed_members(
     // a rotation parented on the node's head, so the store's head has to *be*
     // the node's head and nothing else may append in between.
     let _lock = store.lock().map_err(|e| e.to_string())?;
-    adopt_local_changes(store, node, identity)?;
+    adopt_local_changes(store, node, identity, seal_bytes)?;
 
     let mut excluded = 0;
     for who in departed {

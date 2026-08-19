@@ -79,6 +79,18 @@ enum Command {
         /// Peers to dial on startup, as multiaddrs including `/p2p/<peer-id>`.
         #[arg(long = "peer")]
         peers: Vec<String>,
+        /// Seal a segment and start a new one once it reaches this many bytes.
+        ///
+        /// Local publishing tuning (`design/01` §3.1), not a validity rule:
+        /// readers accept whatever boundaries an author chose.
+        #[arg(long, default_value_t = serve::SEAL_TARGET_BYTES)]
+        seal_bytes: usize,
+        /// Turn off live gossip delivery, leaving only the durable path.
+        ///
+        /// Slower and completely correct (spec 07 §6.1), which also requires
+        /// that conformance be testable this way.
+        #[arg(long)]
+        no_live: bool,
     },
     /// Admit an identity to this network.
     Admit {
@@ -132,7 +144,12 @@ fn main() -> std::process::ExitCode {
         Command::Channel(ChannelCommand::List) => chat::list_channels(root),
         Command::Post { channel, message } => chat::post(root, &channel, &message.join(" ")),
         Command::Read { channel } => chat::read(root, &channel),
-        Command::Serve { listen, peers } => serve::run(root, &listen, &peers),
+        Command::Serve {
+            listen,
+            peers,
+            seal_bytes,
+            no_live,
+        } => serve::run(root, &listen, &peers, seal_bytes, !no_live),
         Command::Admit { identity } => admit(root, &identity),
         Command::Revoke { identity } => revoke(root, &identity),
         Command::Attach { network, name } => attach(root, &network, &name),
