@@ -1,12 +1,41 @@
 # ko-ls — Implementation Status
 
-**Updated:** 2026-08-19
+**Updated:** 2026-08-19 (end of session)
 **Phase:** P1 — E9 and E2 landed; chat entry payloads next
 **Design:** [`design/`](design/) — `00`–`08`, all v1.0. **`distributed-intranet/specs/07` is normative** where it and the design set overlap.
 
 This file is the answer to "where are we?". It is updated in the same change that moves
 work, never afterwards from memory — a status file that lags is worse than none, because
 it is believed.
+
+---
+
+## 0. Resuming After a Break
+
+**Read this section, then §1. Everything else is reference.**
+
+Two repositories, both on this machine, both with unpushed work:
+
+| Repo | State |
+|---|---|
+| `ko-ls` (this one) | 12 commits. Pushed to GitHub — see §8 |
+| `../distributed-intranet` | **3 commits ahead of `origin/main` and not pushed**: spec 07, E9, E2. They are on `main` locally. Push them, or the client's path dependencies point at code GitHub does not have |
+
+**Next task:** the chat side of E2 — define `ChannelDefinition`, `ChannelUpdate`,
+`ChannelMembership` and `ChannelRotation` as payloads in the `chat` namespace of the new
+generic `EntryBody::AppEntry` (Core §2.7.2), in `kols-core`. Two checks belong to the
+client and did not exist before E2 landed generically:
+
+1. **Verify the declared capability is the one this design requires** for that kind — a
+   `chat:channel-definition` must demand `chat:manage-channel`, not merely *some*
+   capability the author happens to hold. The protocol enforces what was declared and
+   cannot know what should have been.
+2. **Reject channel entries in a `conversation`-profile network.** `ChatPolicy::profile()`
+   reads the profile; the protocol carries `chat` payloads without decoding them, so this
+   rejection is every conformant reader's job now.
+
+**To pick up:** `cargo test` in this repo should show 37 passing and clippy silent. If it
+does not, fix that before anything else — the tree was left green.
 
 ---
 
@@ -90,7 +119,18 @@ design changes before anything else is built.
 
 ---
 
-## 7. Log
+## 7. Where the Code Lives
+
+- `ko-ls` — pushed to a private GitHub repository (see the session's closing notes for the
+  exact remote; `git remote -v` here is authoritative).
+- `distributed-intranet` — `origin` is `github.com/DriftingNarwhal/distributed-intranet`.
+  **Its three newest commits are local only.** Nothing in the client builds against a
+  published version of the protocol yet: the crates are path dependencies on the sibling
+  checkout, deliberately, until the extensions stop moving.
+
+---
+
+## 8. Log
 
 Newest first. One line per change that moved the state above.
 
