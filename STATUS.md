@@ -14,7 +14,7 @@ it is believed.
 
 | | |
 |---|---|
-| **Working on** | Nothing in flight — ready to start P1 |
+| **Working on** | Nothing in flight — ready to start P1 (E9 first) |
 | **Blocked on** | Nothing |
 | **Runnable** | `cargo test` — 32 tests incl. two live-node tests, clippy clean. No binary yet |
 | **Next decision needed from the user** | Whether to start P1 with E9/E2 in the protocol repo, or build a runnable CLI first |
@@ -94,6 +94,11 @@ design changes before anything else is built.
 
 Newest first. One line per change that moved the state above.
 
+- **2026-08-19** — **Conformance obligation 6 met.** The encoding now runs on a big-endian
+  target: `scripts/cross-check.sh` cross-compiles `kols-core` to s390x and runs the suite
+  under qemu, where all 30 tests pass including the frozen vectors. Byte order was correct
+  by construction before this — no native-endian conversion, no transmute, no unsafe
+  anywhere in the path — but that was an argument, and this replaces it with a run.
 - **2026-08-19** — **F3 done: design set reviewed and bumped to v1.0.** The pass earned its
   keep: `08` stopped being normative, since its content moved upstream in F2 and two
   normative descriptions of one wire format is the drift this project criticises elsewhere.

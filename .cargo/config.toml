@@ -1,0 +1,9 @@
+# Cross-testing the canonical encoding on a big-endian target.
+#
+# Conformance obligation 6 (design/08 §3) asks that the vectors be verified
+# somewhere other than the little-endian machine that produced them. `Enc`
+# writes big-endian explicitly, so the encoding *should* be host-independent —
+# but "should" is the word a test exists to remove.
+[target.s390x-unknown-linux-gnu]
+linker = "s390x-linux-gnu-gcc"
+runner = "qemu-s390x-static -L /usr/s390x-linux-gnu"

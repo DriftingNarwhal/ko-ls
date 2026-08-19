@@ -53,13 +53,22 @@ Required of any implementation, and permanent once written:
    entry, or a governance entry under the same key.
 5. **Id stability.** The same record signed twice yields the same id, and re-encoding a
    decoded record reproduces byte-identical output.
-6. **Cross-platform.** Vectors verified on a big-endian target, or the endianness
-   discipline is stated rather than tested.
+6. **Cross-platform.** Vectors verified on a big-endian target, so that "the encoding is
+   host-independent" is demonstrated rather than argued.
 
-Obligations 1–5 are met by `kols-core/tests/encoding.rs`. **Obligation 6 is not met**:
-there is no big-endian target in CI, so byte order is currently correct by construction
-(`Enc` writes big-endian explicitly) rather than by demonstration. Recorded here rather
-than quietly counted as passing.
+**All six are met.** Obligations 1–5 by `kols-core/tests/encoding.rs`; obligation 6 by
+`scripts/cross-check.sh`, which cross-compiles to `s390x-unknown-linux-gnu` and runs the
+suite under emulation. All 30 `kols-core` tests pass there, frozen vectors included.
+
+The argument for host-independence was always decent — `Enc` writes big-endian explicitly,
+and this codebase contains no `to_ne_bytes`, no `transmute` and no `unsafe` — but an
+argument is what a test exists to replace. It is not in the default gate, since it needs an
+emulator and a cross-linker and takes about a minute; run it when the encoding, its
+vectors, or anything in the hashing and signing path changes.
+
+`kols-net` is deliberately not cross-tested: it exercises the network stack rather than the
+encoding, and libp2p's dependency tree does not cross-compile without further work. Every
+byte that must be host-independent is in `kols-core`.
 
 ---
 

@@ -230,7 +230,7 @@ boundary, which is worth having regardless.
 | Layer | Approach | State |
 |---|---|---|
 | `kols-core` | Property tests on merge ordering: any permutation and any partition of a record set must converge to the same rendered history. This is the correctness claim of the whole design | **Done** — 40 permutations, reversal, duplicates, two-sided partition |
-| Encoding | Frozen vectors, round-trip, injectivity, domain separation, id stability (`08` §3) | **Done** except the big-endian target |
+| Encoding | Frozen vectors, round-trip, injectivity, domain separation, id stability (`08` §3) | **Done**, including on big-endian via `scripts/cross-check.sh` |
 | Wire | Two live nodes: publish, pointer sync, fetch, reassemble, render identically | **Done** — plus the delta measurement between fetch rounds |
 | Permissions | Table-driven cases over replayed governance states, including the tricky ones — frozen pointers after a narrowed grant, waiting-room members, voided revocations | Partial — non-member, forged signature and wrong-channel covered; frozen pointers and waiting-room members not |
 | Keying | A removed member must fail to decrypt content wrapped after the rotation, and must still decrypt what they held. Assert the honest guarantee, not a stronger one | Not started (P2) |
