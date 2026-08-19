@@ -14,7 +14,7 @@ it is believed.
 
 **Read this section, then §1. Everything else is reference.**
 
-Two repositories, both on this machine, both with unpushed work:
+Two repositories on this machine:
 
 | Repo | State |
 |---|---|
