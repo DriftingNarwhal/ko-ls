@@ -1,6 +1,6 @@
 # Required Protocol Extensions
 
-**Document status:** v1.5 — E1 and E3 withdrawn, **E9, E2, E5, E4 and E11 landed**
+**Document status:** v1.6 — E1 and E3 withdrawn, **E9, E2, E5, E4 and E11 landed**; E12 and E13 added from `09`
 **Depends on:** all preceding documents
 **Consumed by:** work in `distributed-intranet`
 
@@ -37,6 +37,8 @@ Two rules govern this list:
 | ~~E9~~ | App-layer policy map in `NetworkPolicy` — **landed**, Core §2.6.2 | — | Done |
 | E10 | Direct member-to-member delivery for DM invitations | P2 | Small |
 | ~~E11~~ | Namespace registration for extension capabilities — **landed**, Core §2.2.1 | — | Done |
+| E12 | Tiered node liveness — a node that holds a reservation without a full behaviour set | P1 | Medium |
+| E13 | Cross-network connection bootstrap, for direct messages | P2 | Medium |
 
 ---
 
@@ -469,12 +471,86 @@ could not be used at all.
 
 ---
 
-## 12. Sequencing
+## 12. E12 — Tiered Node Liveness
+
+**Found designing the interface (`09` §2), not by review.** A client runs one node per
+network, and a direct message *is* a network (`03` §4.3), so a user with a handful of servers
+and thirty conversations runs thirty-odd nodes in one process. `MemberBehaviour` is a fixed
+struct — Kademlia, mDNS, identify, ping, relay client, dcutr, and every request-response
+protocol, on every node. That means thirty Kademlia routing tables running periodic bootstrap
+queries and thirty swarms doing mDNS multicast on one LAN, to serve conversations that need
+none of it.
+
+The shape that fixes it comes from what these networks *are*: **a two-member network has
+nobody to discover.** No Kademlia, no mDNS, no provider records — the one peer that matters is
+known by construction. More generally, a node's behaviour set should follow what it is doing
+rather than being fixed at the maximum.
+
+Three tiers, matching `09` §2:
+
+- **Hot** — the full set as today.
+- **Warm** — enough to hold a relay reservation and answer an inbound dial, with routing and
+  discovery quiesced. This is what makes a conversation reachable at rest.
+- **Cold** — nothing held; the node is constructed on demand.
+
+**Why the protocol rather than the client.** The behaviour set is `intranet-transport`'s, and
+a consuming client cannot assemble a partial one. The tiering is also not chat-specific: any
+application holding many small networks — a per-project workspace, a per-device pairing — hits
+the same wall, which is the test `00` §0 sets for whether something belongs in the platform.
+
+**Acceptance:** a warm node holds a reservation and is dialable; an inbound dial wakes it to a
+full node without losing the stream that woke it; a warm node issues no Kademlia queries and no
+mDNS traffic; a two-member network never constructs a routing table.
+
+**Note on the wake path, recorded because it was nearly specified as its own mechanism.** No
+wake-up message is needed. Being dialable is what a reservation provides, and the dial *is* the
+signal — an inbound stream wakes the handler. Core §5.3's separation of reservation limits from
+circuit limits is what makes this work: a circuit is capped at 120 seconds and 8 MB precisely
+because a relay assists connection establishment rather than carrying traffic, so a held
+connection was never the primitive to reach for.
+
+---
+
+## 13. E13 — Cross-Network Connection Bootstrap
+
+**Two people starting a conversation cannot be asked to stand up a relay first** (`09` §3).
+The DM network is fresh, has two members and no infrastructure, and the friction of
+provisioning any would make the feature unusable.
+
+The material already exists. `03` §4.3 delivers the DM invite over a direct peer-to-peer
+stream *inside a shared network*, carrying a voluntary identity link — a signed
+common-ownership proof (Core §1.2). By the time the DM network exists, each party knows
+exactly which shared-network identity the other one is.
+
+So: **exchange the new network's addresses over the connection that already exists**, and
+coordinate a simultaneous open. This is DCUtR's shape with the signalling channel being
+another network's connection rather than a relay circuit. Nothing new is disclosed — each
+party already knows the other's address and identity from the shared network.
+
+**The gate, without which this is a catastrophe.** Address disclosure for network X over
+network Y is permitted **only to a peer who is a member of X**, verified by replaying X's
+governance log. Ungated, this is an oracle for "enumerate your other identities and their
+addresses", and the unlinkability Core §1.2 provides is gone wholesale — not weakened,
+gone. For a direct message the check is tight by construction, since X has two members.
+
+**Rejected alternative:** having a shared-network node relay the DM traffic. It works, needs
+no new mechanism, and is worse — it tells a third party which two identities are conversing,
+where address exchange tells nobody anything they did not know. It remains the *fallback*
+when hole-punching fails, not the mechanism.
+
+**Acceptance:** an address request naming a network the requester is not a member of is
+refused; a bootstrapped connection carries no shared-network identity into the new network;
+hole-punch failure falls back without the disclosure gate being bypassed.
+
+---
+
+## 14. Sequencing
 
 ```
 P0   — nothing; E3 turned out to need no protocol change
 P1   E2 → E4 ✅ ; E9 ✅, E11 ✅ (independent, small).  E5 landed here, ahead of its phase
-P2   E7   (depends on E2's ChannelRotation) ; E10 (independent, small)
+P1   E12  (interface depends on it; independent of everything else)
+P2   E7   (depends on E2's ChannelRotation) ; E10 (independent, small) ; E13 (pairs with E10)
 P3   E6   — lands when it lands
 P4   E8
 ```
@@ -489,7 +565,7 @@ consumer written against the old shape would have been another thing to migrate.
 
 ---
 
-## 13. What This Design Deliberately Does Not Ask For
+## 15. What This Design Deliberately Does Not Ask For
 
 Recorded so the boundary is visible, and so nobody adds them under the impression they
 were oversights:

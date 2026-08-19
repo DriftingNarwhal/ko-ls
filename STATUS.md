@@ -1,8 +1,8 @@
 # ko-ls — Implementation Status
 
-**Updated:** 2026-08-19 (E11 — namespace registration for extension capabilities)
+**Updated:** 2026-08-19 (`design/09` — the interface design)
 **Phase:** P1 — two nodes talk live and durably, and a joiner reads back through sealed
-history. Every protocol extension P1 needs has landed
+history. The interface is designed; the environment for it is not built
 **Design:** [`design/`](design/) — `00`–`08`, all v1.0. **`distributed-intranet/specs/07` is normative** where it and the design set overlap.
 
 This file is the answer to "where are we?". It is updated in the same change that moves
@@ -26,10 +26,16 @@ The client builds against the sibling checkout by **path dependency**, not a pub
 version, and deliberately so while the extensions are still moving. A fresh machine needs
 both repos cloned side by side.
 
-**Next task:** open. Every protocol extension P1 called for has landed, so what remains is
-client work: the Tauri shell (blocked on S3), private-channel keying (E7/P2), voice (P3),
-and search. **`design/07` §3's measurement criteria are the honest candidate** — several
-numbers that document calls guesses are now measurable.
+**Next task:** **S3** — the development environment (Node.js, webkit2gtk 4.1, a WSLg display
+path). Nothing about the Tauri shell can be built until it exists, and `design/09` is now
+written, so the environment is the only thing in the way.
+
+**`design/09` is the interface design**, written before any interface code. It settles the
+navigation model, the hot/warm/cold liveness tiers, presence honesty, permission-gated
+chrome and the theming system with its CSP contract. Two protocol extensions came out of
+writing it — **E12** (tiered node liveness) and **E13** (cross-network connection bootstrap
+for DMs) — so P1's protocol work is no longer finished: E12 is P1 and the interface depends
+on it.
 
 **Sealing, backfill, per-segment keys and the live-path bound are all in.** Both gaps the
 backfill work left open are now closed:
@@ -72,7 +78,7 @@ does not, fix that before anything else — the tree was left green.
 
 | | |
 |---|---|
-| **Working on** | Nothing — E11 was the last P1 protocol extension |
+| **Working on** | S3 — the development environment for Tauri |
 | **Blocked on** | Nothing |
 | **Runnable** | **`kols`** — init, attach, admit, revoke, serve, channel create/list, post, read. Two nodes hold a conversation. `cargo test` — 98 tests, clippy clean; `scripts/cross-check.sh` for big-endian |
 | **Next decision needed from the user** | Nothing blocking |
@@ -92,7 +98,7 @@ does not, fix that before anything else — the tree was left green.
 | Item | State | Notes |
 |---|---|---|
 | S1 client repo | **Done** | `/workspaces/ko-ls/ko-ls`, git initialised, design moved in, `kols-core` scaffolded. **Nothing committed yet** — no commit has been made in either repo |
-| S2 protocol changes on `main` | Done for P1 | E9 (Core §2.6.2), E2 (Core §2.7.2), E5, E4 and E11 (Core §2.2.1) landed, each with spec text, implementation and tests together |
+| S2 protocol changes on `main` | In progress | E9 (Core §2.6.2), E2 (Core §2.7.2), E5, E4 and E11 (Core §2.2.1) landed, each with spec text, implementation and tests together. **E12 is new and P1** |
 | S3 Tauri environment | Not started | Node and webkit2gtk absent. Blocks P1, not P0 |
 
 ## 4. Protocol Extensions
@@ -114,6 +120,8 @@ both green.
 | E9 | App-layer policy map | **Landed** — `PolicyValue`, namespaced keys, Core §2.6.2; client accessors in `kols-core::policy` |
 | E10 | Direct DM invite delivery | Not started (P2) |
 | E11 | Namespace registration for extension capabilities | **Landed** — Core §2.2.1; one registry entry per verb covers every scope of it |
+| E12 | Tiered node liveness | **New** — from `design/09` §2; one node per network means ~30 full behaviour sets for a DM-heavy user (P1) |
+| E13 | Cross-network connection bootstrap | **New** — from `design/09` §3; so two people starting a DM never provision a relay (P2) |
 
 ## 5. Client Crates
 
@@ -161,6 +169,47 @@ design changes before anything else is built.
 ## 8. Log
 
 Newest first. One line per change that moved the state above.
+
+- **2026-08-19** — **`design/09` written: the interface, before any interface code.** `05`
+  fixed the client's architecture and stopped before anything about what the interface looks
+  like; eight design documents held two UX commitments between them, both incidental to
+  sections about something else. That gap is now a document.
+
+  **Three findings came out of writing it, and two became protocol extensions.**
+
+  *One node per network is forced, not chosen.* `keypair_for` derives the libp2p keypair from
+  the per-network identity, so the tempting optimisation — one swarm across several networks —
+  would mean one peer id across them and would correlate identities Core §1.2 keeps
+  unlinkable. The resource-saving version of the switcher is the one that breaks the security
+  model, so it is written down as rejected rather than left to be rediscovered as a
+  performance idea. Since a DM *is* a network (`03` §4.3), the node count is
+  `servers + conversations` — hence **E12**, tiered liveness, which is P1 and blocks nothing
+  else.
+
+  *The wake-up ping does not need to exist.* Keeping a connection open for a quiet DM is
+  impossible anyway — Core §5.3 caps a relayed circuit at 120 seconds deliberately, because a
+  relay assists connection establishment rather than carrying traffic. But a *reservation* is
+  metered separately and is long-lived, so being dialable is the primitive, and **the dial is
+  the wake signal**: an inbound stream wakes the handler, with no extra round trip and no new
+  message type. This was very nearly specified as its own mechanism.
+
+  *Two people starting a DM must never provision a relay.* The shared network is already the
+  rendezvous — `03` §4.3 carries the invite over a stream inside it, with a common-ownership
+  proof — so the DM connection can be bootstrapped over the connection that already exists
+  (**E13**). Relaying DM traffic through a shared-network node also works and is worse: it
+  tells a third party who is talking to whom, where address exchange tells nobody anything
+  they did not know. It stays as the fallback, and Core §5.3's correction says a stateless
+  bootstrap relay "carries bytes and never inspects a join at all", so that fallback needs no
+  protocol change. E13 carries one hard gate: addresses for network X are disclosed only to a
+  member of X, or it becomes an oracle for enumerating a user's other identities.
+
+  On theming, the security question resolved cleanly rather than being traded away. CSS can
+  exfiltrate — attribute selectors plus any URL-loading property — but it has exactly one way
+  to do it, a network request, and `url()`, `@import` and `@font-face src` are the complete
+  set. Under a CSP permitting no remote origins, arbitrary user CSS *cannot* phone home. What
+  CSP does not solve is spoofing, so security-critical surfaces render as native dialogs
+  outside the themeable DOM: a theme may make the client unrecognisable and can never fake a
+  signature prompt.
 
 - **2026-08-19** — **E11 landed: a registry entry can cover a namespace.** An extension
   capability's tier came from a registry matching names *exactly*, and chat capabilities are

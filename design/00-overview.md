@@ -37,6 +37,7 @@ rather than papering over it — the same posture the protocol specs take with r
 | `06-protocol-extensions` | Every change required in `distributed-intranet`, with acceptance criteria |
 | `07-build-plan` | What remains before code: spec text, repo and environment setup, P0 |
 | `08-record-encoding` | Conformance obligations and module map. The encoding itself moved to spec 07 §3 |
+| `09-interface` | Navigation, node liveness tiers, presence honesty, permission-gated chrome, theming |
 
 ---
 

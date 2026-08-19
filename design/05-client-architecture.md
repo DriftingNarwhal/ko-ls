@@ -1,8 +1,12 @@
 # Client Architecture
 
-**Document status:** v1.0 — `kols-core` and `kols-net` exist; the API boundary, store, media and UI do not
+**Document status:** v1.1 — `kols-core` and `kols-net` exist; the API boundary, store, media and UI do not
 **Depends on:** all preceding documents; App Hosting Spec §1–§3 for the sandbox path
-**Consumed by:** implementation
+**Consumed by:** implementation; `09` for the interface built on §3's boundary
+
+This document is the client's *architecture*. What the interface looks like and how it
+behaves is `09` — including the one thing §1's diagram leaves open, that `kols-net` owns one
+`MemberNode` **per network**, and a user belongs to several.
 
 ---
 
