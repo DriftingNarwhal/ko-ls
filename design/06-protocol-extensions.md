@@ -1,6 +1,6 @@
 # Required Protocol Extensions
 
-**Document status:** v1.6 — E1 and E3 withdrawn, **E9, E2, E5, E4 and E11 landed**; E12 and E13 added from `09`
+**Document status:** v1.7 — E1 and E3 withdrawn, **E9, E2, E5, E4, E11 and E12 landed**; E12 narrowed to its protocol half on landing, E13 added from `09`
 **Depends on:** all preceding documents
 **Consumed by:** work in `distributed-intranet`
 
@@ -37,7 +37,7 @@ Two rules govern this list:
 | ~~E9~~ | App-layer policy map in `NetworkPolicy` — **landed**, Core §2.6.2 | — | Done |
 | E10 | Direct member-to-member delivery for DM invitations | P2 | Small |
 | ~~E11~~ | Namespace registration for extension capabilities — **landed**, Core §2.2.1 | — | Done |
-| E12 | Tiered node liveness — a node that holds a reservation without a full behaviour set | P1 | Medium |
+| ~~E12~~ | Optional peer discovery — **landed**, Core §5.1.1. Asked as tiered liveness; only the behaviour set was the protocol's, and the tiering stayed in the client | — | Done |
 | E13 | Cross-network connection bootstrap, for direct messages | P2 | Medium |
 
 ---
@@ -471,11 +471,11 @@ could not be used at all.
 
 ---
 
-## 12. E12 — Tiered Node Liveness
+## 12. E12 — Optional Peer Discovery ✅ **landed, narrowed**
 
 **Found designing the interface (`09` §2), not by review.** A client runs one node per
 network, and a direct message *is* a network (`03` §4.3), so a user with a handful of servers
-and thirty conversations runs thirty-odd nodes in one process. `MemberBehaviour` is a fixed
+and thirty conversations runs thirty-odd nodes in one process. `MemberBehaviour` was a fixed
 struct — Kademlia, mDNS, identify, ping, relay client, dcutr, and every request-response
 protocol, on every node. That means thirty Kademlia routing tables running periodic bootstrap
 queries and thirty swarms doing mDNS multicast on one LAN, to serve conversations that need
@@ -483,24 +483,44 @@ none of it.
 
 The shape that fixes it comes from what these networks *are*: **a two-member network has
 nobody to discover.** No Kademlia, no mDNS, no provider records — the one peer that matters is
-known by construction. More generally, a node's behaviour set should follow what it is doing
-rather than being fixed at the maximum.
+known by construction.
 
-Three tiers, matching `09` §2:
+**What landed is the behaviour set, and not the tiering, and that split is the point.** This
+was written asking for three tiers — hot, warm and cold — as one extension. Only the first
+half of that was ever the protocol's: the behaviour set is `intranet-transport`'s and a
+consuming client cannot assemble a partial one, so **Core §5.1.1** now says a node MAY be
+built without Kademlia and mDNS and keep everything else. `MemberNode::with_discovery(..,
+Discovery::Off)` is that node — still listening, dialable, relaying, hole-punching, gossiping
+and serving every request-response protocol.
 
-- **Hot** — the full set as today.
-- **Warm** — enough to hold a relay reservation and answer an inbound dial, with routing and
-  discovery quiesced. This is what makes a conversation reachable at rest.
-- **Cold** — nothing held; the node is constructed on demand.
+The rest was never a protocol concern, and asking for it here would have put client policy in
+a specification. *Whether a node exists at this moment, and whether it holds a relay
+reservation while nothing is happening, is a decision a client makes over time* — the
+protocol has no view on it and needs none. So hot/warm/cold stays in `09` §2 as client
+behaviour, built on the reservation and dial primitives that already exist. **This is a
+property of the network, fixed when the node is built; liveness is a property of the moment.
+They read as one feature and are two, and conflating them is what would have made a
+specification of something no spec should hold.**
 
-**Why the protocol rather than the client.** The behaviour set is `intranet-transport`'s, and
-a consuming client cannot assemble a partial one. The tiering is also not chat-specific: any
-application holding many small networks — a per-project workspace, a per-device pairing — hits
-the same wall, which is the test `00` §0 sets for whether something belongs in the platform.
+**One consequence surfaced while implementing it.** The routing table is also the address
+book, so a node without discovery dials **by address** and never by peer id alone, and
+caching an address against a peer is a no-op there. A pairwise network pays nothing for that —
+its peers' addresses arrive with their membership — but it is a real constraint on any other
+use, and it is now in Core §5.1.1 rather than left to be discovered.
 
-**Acceptance:** a warm node holds a reservation and is dialable; an inbound dial wakes it to a
-full node without losing the stream that woke it; a warm node issues no Kademlia queries and no
-mDNS traffic; a two-member network never constructs a routing table.
+**How absence is reported, which is the part worth not getting wrong.** Provider queries and
+collection enumeration are discovery operations, so on such a node there is no query to run:
+`find_providers` and `enumerate_collection` return `Option` and `None` says exactly that.
+Returning a query id that never resolves would be indistinguishable from *content that
+genuinely has no holders* — the confusion `set_dht_server_mode` already exists to prevent, and
+the reason that call has its own API surface at all.
+
+**Acceptance, as landed:** two nodes without discovery connect by address and converge their
+governance logs; discovery operations return `None` rather than a query that never resolves;
+storing, serving and announcing content are unaffected. `crates/intranet-transport/tests/discovery_off.rs`.
+
+**What the client still owes** (`09` §2, not this document): choosing `Discovery::Off` for a
+conversation-profile network, and the hot/warm/cold policy over reservations.
 
 **Note on the wake path, recorded because it was nearly specified as its own mechanism.** No
 wake-up message is needed. Being dialable is what a reservation provides, and the dial *is* the
@@ -549,7 +569,7 @@ hole-punch failure falls back without the disclosure gate being bypassed.
 ```
 P0   — nothing; E3 turned out to need no protocol change
 P1   E2 → E4 ✅ ; E9 ✅, E11 ✅ (independent, small).  E5 landed here, ahead of its phase
-P1   E12  (interface depends on it; independent of everything else)
+P1   E12 ✅ (independent of everything else; landed as its protocol half only)
 P2   E7   (depends on E2's ChannelRotation) ; E10 (independent, small) ; E13 (pairs with E10)
 P3   E6   — lands when it lands
 P4   E8

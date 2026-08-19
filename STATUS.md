@@ -1,9 +1,9 @@
 # ko-ls — Implementation Status
 
-**Updated:** 2026-08-19 (`design/09` — the interface design)
+**Updated:** 2026-08-19 (E12 landed, narrowed to optional peer discovery)
 **Phase:** P1 — two nodes talk live and durably, and a joiner reads back through sealed
 history. The interface is designed; the environment for it is not built
-**Design:** [`design/`](design/) — `00`–`08`, all v1.0. **`distributed-intranet/specs/07` is normative** where it and the design set overlap.
+**Design:** [`design/`](design/) — `00`–`08` at v1.0, `09` at v0.2. **`distributed-intranet/specs/07` is normative** where it and the design set overlap.
 
 This file is the answer to "where are we?". It is updated in the same change that moves
 work, never afterwards from memory — a status file that lags is worse than none, because
@@ -15,27 +15,42 @@ it is believed.
 
 **Read this section, then §1. Everything else is reference.**
 
-Two repositories on this machine, **both pushed and current**:
+Two repositories on this machine, **both committed on `main`** — the E12 round is local
+until pushed:
 
 | Repo | Remote |
 |---|---|
 | `ko-ls` (this one) | `DriftingNarwhal/ko-ls` (private), branch `main` |
-| `../distributed-intranet` | `DriftingNarwhal/distributed-intranet`, branch `main` — carries spec 07, E9 (Core §2.6.2), E2 (Core §2.7.2), E5 (Real-Time §2.2.1), MLS persistence (Core §3.3.1) and E4 (gossipsub, Core §5.1). This round of work is client-side only, so it carries none of it |
+| `../distributed-intranet` | `DriftingNarwhal/distributed-intranet`, branch `main` — carries spec 07, E9 (Core §2.6.2), E2 (Core §2.7.2), E5 (Real-Time §2.2.1), MLS persistence (Core §3.3.1), E4 (gossipsub, Core §5.1), E11 (Core §2.2.1) and **E12 (optional peer discovery, Core §5.1.1)** |
 
 The client builds against the sibling checkout by **path dependency**, not a published
 version, and deliberately so while the extensions are still moving. A fresh machine needs
 both repos cloned side by side.
 
 **Next task:** **S3** — the development environment (Node.js, webkit2gtk 4.1, a WSLg display
-path). Nothing about the Tauri shell can be built until it exists, and `design/09` is now
-written, so the environment is the only thing in the way.
+path). Nothing about the Tauri shell can be built until it exists, `design/09` is written and
+E12's protocol half has landed, so the environment is the only thing in the way.
+
+**One small client item is owed and is not blocking:** `kols` still builds every node with
+`MemberNode::new`, so nothing yet asks for `Discovery::Off` on a conversation-profile network.
+That is the client half of E12 (`design/06` §12) and wants a profile to read: `kols init`
+writes no `chat:network-profile` key, so every network the CLI creates is a `server` by
+default and there is not yet a conversation network to build the leaner node for.
+`kols_core::policy::conversation_genesis_values` already exists for one; only a test calls it.
 
 **`design/09` is the interface design**, written before any interface code. It settles the
 navigation model, the hot/warm/cold liveness tiers, presence honesty, permission-gated
 chrome and the theming system with its CSP contract. Two protocol extensions came out of
-writing it — **E12** (tiered node liveness) and **E13** (cross-network connection bootstrap
-for DMs) — so P1's protocol work is no longer finished: E12 is P1 and the interface depends
-on it.
+writing it — **E12** and **E13** (cross-network connection bootstrap for DMs, P2).
+
+**E12 landed narrower than it was asked for, and the narrowing is the finding.** It was
+raised as *tiered node liveness*: hot, warm and cold, a warm node holding a relay reservation
+without a full behaviour set. Only the behaviour set was ever the protocol's — a consuming
+client cannot assemble a partial one — so Core §5.1.1 now makes Kademlia and mDNS optional
+and stops there. Whether a node exists at this moment, and whether it holds a reservation
+while nothing is happening, is policy over time and belongs to whoever holds the nodes; a
+specification has no view on it. The tiers therefore stay in `design/09` §2 as client
+behaviour, built on reservations and dialability, which already existed.
 
 **Sealing, backfill, per-segment keys and the live-path bound are all in.** Both gaps the
 backfill work left open are now closed:
@@ -69,8 +84,9 @@ readers are unavoidable rather than optional:
 2. **A channel entry is invalid in a `conversation`-profile network.** The protocol carries
    `chat` payloads without decoding them, so it cannot reach this verdict.
 
-**To pick up:** `cargo test` in this repo should show 90 passing and clippy silent. If it
-does not, fix that before anything else — the tree was left green.
+**To pick up:** `cargo test` in this repo should show 98 passing and clippy silent, and 644
+in `../distributed-intranet`. If it does not, fix that before anything else — both trees were
+left green.
 
 ---
 
@@ -80,7 +96,7 @@ does not, fix that before anything else — the tree was left green.
 |---|---|
 | **Working on** | S3 — the development environment for Tauri |
 | **Blocked on** | Nothing |
-| **Runnable** | **`kols`** — init, attach, admit, revoke, serve, channel create/list, post, read. Two nodes hold a conversation. `cargo test` — 98 tests, clippy clean; `scripts/cross-check.sh` for big-endian |
+| **Runnable** | **`kols`** — init, attach, admit, revoke, serve, channel create/list, post, read. Two nodes hold a conversation. `cargo test` — 98 tests here and 644 in `../distributed-intranet`, clippy clean in both; `scripts/cross-check.sh` for big-endian |
 | **Next decision needed from the user** | Nothing blocking |
 
 ---
@@ -91,14 +107,14 @@ does not, fix that before anything else — the tree was left green.
 |---|---|---|
 | F1 record encoding | **Done** | `design/08-record-encoding.md`, normative |
 | F2 spec 07 in protocol repo | **Done** | `distributed-intranet/specs/07-chat-application-spec.md`, committed there. README and CLAUDE.md updated — the repo no longer claims six specs |
-| F3 design set → v1.0 | **Done** | All nine documents at v1.0. The review pass demoted `08` from normative (its content is upstream now), refreshed the roadmap and scale claims, and turned `05` §8's test plan into a table with real state per row |
+| F3 design set → v1.0 | **Done** | `00`–`08` at v1.0. The review pass demoted `08` from normative (its content is upstream now), refreshed the roadmap and scale claims, and turned `05` §8's test plan into a table with real state per row. `09` was written after that pass and is at v0.2 — it describes an interface nothing has built yet, so v1.0 would be a claim about settled work |
 
 ## 3. Setup
 
 | Item | State | Notes |
 |---|---|---|
 | S1 client repo | **Done** | `/workspaces/ko-ls/ko-ls`, git initialised, design moved in, `kols-core` scaffolded. **Nothing committed yet** — no commit has been made in either repo |
-| S2 protocol changes on `main` | In progress | E9 (Core §2.6.2), E2 (Core §2.7.2), E5, E4 and E11 (Core §2.2.1) landed, each with spec text, implementation and tests together. **E12 is new and P1** |
+| S2 protocol changes on `main` | In progress | E9 (Core §2.6.2), E2 (Core §2.7.2), E5, E4, E11 (Core §2.2.1) and E12 (Core §5.1.1) landed, each with spec text, implementation and tests together. P1's protocol work is finished again; E7, E10 and E13 are P2 |
 | S3 Tauri environment | Not started | Node and webkit2gtk absent. Blocks P1, not P0 |
 
 ## 4. Protocol Extensions
@@ -120,7 +136,7 @@ both green.
 | E9 | App-layer policy map | **Landed** — `PolicyValue`, namespaced keys, Core §2.6.2; client accessors in `kols-core::policy` |
 | E10 | Direct DM invite delivery | Not started (P2) |
 | E11 | Namespace registration for extension capabilities | **Landed** — Core §2.2.1; one registry entry per verb covers every scope of it |
-| E12 | Tiered node liveness | **New** — from `design/09` §2; one node per network means ~30 full behaviour sets for a DM-heavy user (P1) |
+| E12 | Optional peer discovery | **Landed, narrowed** — Core §5.1.1; a node MAY be built without Kademlia and mDNS. Asked as *tiered liveness*; only the behaviour set was the protocol's, so the hot/warm/cold tiering stayed client-side |
 | E13 | Cross-network connection bootstrap | **New** — from `design/09` §3; so two people starting a DM never provision a relay (P2) |
 
 ## 5. Client Crates
@@ -169,6 +185,36 @@ design changes before anything else is built.
 ## 8. Log
 
 Newest first. One line per change that moved the state above.
+
+- **2026-08-19** — **E12 landed, and landed narrower than it was written.** `design/06` §12
+  asked for tiered node liveness — hot, warm and cold, with a warm node holding a relay
+  reservation without a full behaviour set. What went into the protocol is **Core §5.1.1:
+  peer discovery is optional**, and nothing else. `MemberBehaviour`'s `kad` and `mdns` are
+  `Toggle`d and `MemberNode::with_discovery(.., Discovery::Off)` builds a node without them,
+  keeping everything else — it still listens, dials, is dialable, relays, hole-punches,
+  gossips and serves every request-response protocol.
+
+  **The split is the finding, not an omission.** The behaviour set is the platform's because
+  a consuming client cannot assemble a partial one. The tiering is not: whether a node exists
+  at this moment, and whether it holds a reservation while nothing is happening, is a decision
+  made over time by whoever is holding the nodes, and a specification has no view on it.
+  Asking for it in a spec would have put client policy in the platform. Hot, warm and cold
+  stay in `design/09` §2, built on reservations and dialability, both of which already existed.
+
+  **How absence is reported is the part that needed care.** `find_providers` and
+  `enumerate_collection` return `Option` now, and `None` means *there was no query to run* —
+  returning a query id that never resolves would be indistinguishable from content that
+  genuinely has no holders, which is the confusion `set_dht_server_mode` already exists to
+  prevent. Announcing is a no-op rather than an error.
+
+  **One consequence surfaced in review and is now specified.** The routing table is also the
+  address book, so a node without discovery dials by address and never by peer id alone, and
+  caching an address against a peer is a no-op there. A pairwise network pays nothing for it —
+  addresses arrive with membership — but it constrains any other use.
+
+  Protocol repo: 644 tests, clippy clean, `tests/discovery_off.rs` new. Client: 98 tests,
+  unchanged and still green against it. The client half — asking for `Discovery::Off` on a
+  conversation-profile network — is owed and blocks nothing.
 
 - **2026-08-19** — **`design/09` written: the interface, before any interface code.** `05`
   fixed the client's architecture and stopped before anything about what the interface looks

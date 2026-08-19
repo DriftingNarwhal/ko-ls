@@ -1,6 +1,7 @@
 # Interface
 
-**Document status:** v0.1 — design only; no interface code exists
+**Document status:** v0.2 — design only; no interface code exists. §2 revised for the
+protocol half of the liveness work landing (Core §5.1.1), which leaves the tiering here
 **Depends on:** `05` for the crate layout and API boundary; `01` §9 for presence; `03` §4 for
 direct messages; App Hosting Spec §1.2 and §3.3 for the sandbox path
 **Consumed by:** implementation
@@ -87,13 +88,27 @@ specifically — not a global change.
 **Cold poll interval is a user setting, defaulting to 10 minutes.** It never applies to
 direct messages, which are warm whenever the application is running.
 
-**What this costs today, and it is not nothing.** `MemberBehaviour` is a fixed struct: every
-node runs Kademlia, mDNS, identify, ping, relay client, DCUtR and every request-response
-protocol. Thirty nodes means thirty Kademlia routing tables running periodic bootstrap
-queries and thirty swarms doing mDNS multicast on the LAN. The observation that fixes it is
-that **a direct-message network has exactly two members and needs neither Kademlia nor
-mDNS** — there is nobody to discover. A tiered behaviour set is a protocol-repo change,
-recorded as an extension in `06`.
+**What this cost, and the half of it that is now fixed.** `MemberBehaviour` used to be a
+fixed struct: every node ran Kademlia, mDNS, identify, ping, relay client, DCUtR and every
+request-response protocol. Thirty nodes meant thirty Kademlia routing tables running periodic
+bootstrap queries and thirty swarms doing mDNS multicast on the LAN. The observation that
+fixes it is that **a direct-message network has exactly two members and needs neither Kademlia
+nor mDNS** — there is nobody to discover.
+
+That half is done: **Core §5.1.1** makes discovery optional and `MemberNode::with_discovery`
+builds a node without it (`06` §12), keeping everything else — such a node still listens,
+dials, is dialable, relays, hole-punches, gossips and serves every request-response protocol.
+One constraint comes with it: without a routing table there is no address book either, so a
+discovery-less node dials **by address**. A conversation network has that address already, by
+the same route it has the membership.
+
+**The tiers above are this client's policy and are deliberately not in the protocol.** Whether
+a node exists at this moment, and whether it holds a reservation while nothing is happening,
+is a decision made over time by whoever is holding the nodes — a specification has no view on
+it and needs none. What the protocol owes is the primitives, and reservations, dialability and
+now the leaner behaviour set are all of them. So hot, warm and cold are built here: the client
+chooses `Discovery::Off` for every conversation-profile network, and manages reservations over
+the rest.
 
 ---
 

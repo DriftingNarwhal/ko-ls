@@ -21,7 +21,7 @@ operator above the members.
 | Why anything is the way it is | [`design/00-overview.md`](design/00-overview.md) |
 | The normative wire contract | `../distributed-intranet/specs/07-chat-application-spec.md` |
 
-The design set (`design/00`–`08`) owns client design, rationale and sequencing.
+The design set (`design/00`–`09`) owns client design, rationale and sequencing.
 **Spec 07 in the protocol repo is normative** where the two overlap.
 
 ## Layout
@@ -31,7 +31,7 @@ crates/kols-core   records, canonical encoding, merge ordering, permissions, cha
                    channel structure as chat-namespace governance payloads
 crates/kols-net    publishing a channel over the transport, and reading one back
 crates/kols-cli    `kols` — the terminal client and its node daemon
-design/            00-08, all v1.0
+design/            00-08 at v1.0, 09 the interface
 scripts/           cross-check.sh — runs the encoding on a big-endian target
 ```
 
@@ -46,7 +46,7 @@ directory — the protocol crates are path dependencies while the extensions it 
 still landing.
 
 ```bash
-cargo test                                   # 90 tests; the two-node ones spawn real nodes on loopback
+cargo test                                   # 98 tests; the two-node ones spawn real nodes on loopback
 cargo clippy --workspace --all-targets       # must stay clean
 ./scripts/cross-check.sh                     # big-endian verification, see below
 ```
