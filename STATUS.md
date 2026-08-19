@@ -1,7 +1,7 @@
 # ko-ls — Implementation Status
 
 **Updated:** 2026-08-19
-**Phase:** P0 (spike) — criterion 2 met; multi-node criteria remain
+**Phase:** P0 (spike) — criteria 1–4 met at the domain layer; 5 and the wire remain
 **Design:** [`design/`](design/) — `00`–`08`. `08-record-encoding.md` is normative.
 
 This file is the answer to "where are we?". It is updated in the same change that moves
@@ -14,9 +14,9 @@ it is believed.
 
 | | |
 |---|---|
-| **Working on** | P0 criteria 1, 3–5, which all need two nodes and therefore `kols-net` |
+| **Working on** | P0 criterion 5, then `kols-net` for the wire half of 1–3 |
 | **Blocked on** | Nothing |
-| **Runnable** | `cargo test` — 18 tests, clippy clean. No binary yet |
+| **Runnable** | `cargo test` — 27 tests, clippy clean. No binary yet |
 | **Next decision needed from the user** | None outstanding |
 
 ---
@@ -55,12 +55,13 @@ both green.
 | E8 | Track metadata in media payloads | Not started (P4) |
 | E9 | App-layer policy map | Not started (P1) |
 | E10 | Direct DM invite delivery | Not started (P2) |
+| E11 | Namespace registration for extension capabilities | **New** — found implementing permissions; workaround in `kols-core::capabilities` (P1) |
 
 ## 5. Client Crates
 
 | Crate | State |
 |---|---|
-| `kols-core` | **Encoding + author logs** — `Hlc`, ids, six record kinds, `Segment`, `AuthorLog` (publish/append/seal against `intranet-storage`). 18 tests incl. frozen vectors and the delta-fetch measurement |
+| `kols-core` | **Encoding, author logs, merge** — records/segments/ids, `AuthorLog`, `ChannelView` merge and render, permission resolution, capability vocabulary. 27 tests |
 | `kols-store` | Not created |
 | `kols-net` | Not created |
 | `kols-media` | Not created |
@@ -77,10 +78,10 @@ From `design/07-build-plan.md` §3. None of these pass yet.
 
 | # | Criterion | State |
 |---|---|---|
-| 1 | 100 messages across sealed segments render in identical order on both nodes | Not started — needs two nodes |
+| 1 | 100 messages across sealed segments render in identical order on both nodes | **Met (merge layer)** — 40 permutations plus reversal render identically; duplicates idempotent. Wire half open |
 | 2 | Appending one message transfers **only new tail chunks**, asserted on bytes moved | **Met (single-node half)** — 1,556 of 176,115 bytes, 1 new chunk of 8. The wire half still needs two nodes |
-| 3 | Partition, both post, heal, converge byte-identically | Not started |
-| 4 | Records from an identity without `publish:chat-log` are refused by the *reader* | Not started |
+| 3 | Partition, both post, heal, converge byte-identically | **Met (merge layer)** — both sides write at overlapping clock readings, heal in different orders, converge. Wire half open |
+| 4 | Records from an identity without `publish:chat-log` are refused by the *reader* | **Met** — non-members, forged signatures and wrong-channel records all refused at admission, with the reason surfaced |
 | 5 | Pointer version collision resolves by lower record hash, loser re-publishes | Not started |
 
 Criterion 2 is the one P0 exists for. If it fails, the segment model is wrong and the
@@ -92,7 +93,15 @@ design changes before anything else is built.
 
 Newest first. One line per change that moved the state above.
 
-- **2026-08-19** — **P0 criterion 2 met, and it failed first.** `AuthorLog` publishes
+- **2026-08-19** — **P0 criteria 1, 3 and 4 met at the merge layer.** `ChannelView` renders
+  as a pure function of the admitted record set: 40 permutations, reversal, duplicate
+  delivery and a two-sided partition heal all converge on identical output. Reader-side
+  refusal covers non-members, forged signatures and wrong-channel records. Honest scope:
+  this proves the *merge*, not the wire — `kols-net` still owes the byte-transfer half.
+- **2026-08-19** — **E11 found:** the extension-capability registry matches names exactly,
+  but every chat permission is parametrized by scope, so each scope would need its own
+  policy entry. Namespace registration proposed in `design/06` §11; `kols-core::capabilities`
+  carries the workaround meanwhile. `AuthorLog` publishes
   segments through `intranet-storage`; the byte-level assertion showed 51,405 of 176,123
   bytes moving per appended message. Cause: `Enc::seq`'s count prefix sits at the head of
   the encoding, so every append changed the first chunk. Removing the count — the record

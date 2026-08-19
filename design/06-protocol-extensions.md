@@ -36,6 +36,7 @@ Two rules govern this list:
 | E8 | Track metadata in sealed media payloads | P4 | Small |
 | E9 | App-layer policy map in `NetworkPolicy` | P1 | Small |
 | E10 | Direct member-to-member delivery for DM invitations | P2 | Small |
+| E11 | Namespace registration for extension capabilities | P1 | Small |
 
 ---
 
@@ -313,11 +314,47 @@ and no reason to want one. A blocked sender's requests are refused before displa
 
 ---
 
-## 11. Sequencing
+## 11. E11 — Namespace Registration for Extension Capabilities
+
+**Found while implementing permission resolution, not by review.** The tier registry
+(`NetworkPolicy::extension_capabilities`) matches capability names **exactly**. Every chat
+permission is parametrized by scope — `chat:post:<channel>`, `chat:manage-channel:<cat>` —
+so as it stands each scope needs its own registry entry, added by a `PolicyChange`
+governance entry. Creating a channel with a permission override would mean amending
+network policy, which is a heavyweight action for a routine one, and the registry would
+grow with the channel count.
+
+Note the protocol did not hit this itself because its own parametrized capabilities are
+**built-in variants** with computed tiers — `ManageMembership(GroupId)` derives its tier
+dynamically from the target group. Extensions get only `Extension(String)` plus exact
+match, so a consuming spec with parametrized capabilities has nowhere to put them.
+
+The fix is to let a registry entry cover a namespace rather than one name:
+
+```
+extension_capabilities: BTreeMap<String, Tier>   // "chat:post:" → Ordinary, by prefix
+```
+
+Resolution takes the **longest matching registered prefix**, so a more specific
+registration still wins and an unregistered name is still refused. One network-policy
+entry per verb then covers every scope of that verb, forever.
+
+**Acceptance:** an unregistered name is still refused outright; a governance-tier
+namespace still cannot be granted to `everyone` at any scope within it; longest-prefix
+resolution is deterministic across nodes; existing exact-match registrations keep working.
+
+**Workaround until then**, implemented in `kols-core::capabilities`: register the
+network-wide form of each verb (`chat:post:*`) at genesis, and a scope's names when that
+scope is created. Workable, and it makes per-channel overrides cost a policy change —
+which is the friction E11 removes.
+
+---
+
+## 12. Sequencing
 
 ```
 P0   — nothing; E3 turned out to need no protocol change
-P1   E2 → E4 ; E9 (independent, small)
+P1   E2 → E4 ; E9, E11 (independent, small)
 P2   E7   (depends on E2's ChannelRotation) ; E10 (independent, small)
 P3   E5   (before relayed voice is worth enabling) ; E6 in parallel, lands when it lands
 P4   E8
@@ -328,7 +365,7 @@ chat client — it improves any consumer of the call path.
 
 ---
 
-## 12. What This Design Deliberately Does Not Ask For
+## 13. What This Design Deliberately Does Not Ask For
 
 Recorded so the boundary is visible, and so nobody adds them under the impression they
 were oversights:

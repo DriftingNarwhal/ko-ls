@@ -62,7 +62,10 @@ slip it onto `everyone`.
 ### 2.2 Extension capabilities this app defines
 
 Each is registered with its tier at genesis, per Core §2.2's requirement that consuming
-specs tier-tag anything they define.
+specs tier-tag anything they define. **Registration is mandatory and currently exact**: an
+unregistered extension name is refused outright rather than assumed ordinary, and the
+registry matches whole names, so a parametrized capability needs an entry per scope until
+E11 lands (`06` §11). `kols-core::capabilities` builds the entries.
 
 | Capability | Effect | Tier |
 |---|---|---|
