@@ -146,11 +146,23 @@ async fn serve(root: std::path::PathBuf, listen: &str, peers: &[String]) -> Resu
             event = node.next_event() => event,
             _ = refresh.tick() => {
                 adopt_local_changes(&store, &mut node, &identity)?;
-                // Re-asked rather than assumed settled. A peer that published
-                // after the last exchange is invisible until somebody asks
-                // again, and there is no push for this — pointer sync is
-                // pull-based like the governance log.
+                // Re-asked rather than assumed settled. Everything here is
+                // pull-based — the governance log, the ledger and pointers alike
+                // — so a peer that changed anything after the last exchange is
+                // invisible until somebody asks again.
+                //
+                // **The ledger is not optional here, and leaving it out cost a
+                // day.** Source selection drops a holder that has not advertised
+                // capacity, as not having volunteered. A joiner advertises only
+                // once it is admitted, which is *after* the ledger sync that ran
+                // when it connected — so without re-asking, a peer stays
+                // permanently unrankable and every fetch from it fails with the
+                // chunk simply never arriving. The crate's own guidance says a
+                // fetch that mysteriously finds nothing is usually this, and it
+                // was.
                 for peer in connected.iter().copied() {
+                    node.sync_with(peer);
+                    node.sync_ledger_with(peer);
                     node.sync_pointers_with(peer);
                 }
                 request_foreign_segments(&store, &mut node, &identity, &mut fetched)?;

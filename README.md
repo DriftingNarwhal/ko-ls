@@ -96,7 +96,8 @@ publish/fetch over the real transport. `kols` drives all of that from a terminal
 node — create a network, define a channel, post, read.
 
 Two `kols` installs now reach each other end to end: admission, epoch-key delivery,
-pointer sync, segment fetch and a merged view across authors.
+pointer sync, segment fetch and a merged view across authors, with messages travelling both
+ways between live nodes.
 
 What does not exist yet: **epoch rotation**, so a removed member keeps their key — the one
 gap that matters for confidentiality, and it needs MLS state that survives a restart. No

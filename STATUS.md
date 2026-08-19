@@ -179,11 +179,17 @@ Newest first. One line per change that moved the state above.
   `serve` to have run, because only the daemon can mint the first epoch key. Every test that
   posts starts a node first, which is what a user does anyway.
 
-  **Known gap, recorded rather than papered over:** a running node does not notice a peer's
-  *new* pointer. Both sides tick and re-sync, but a peer that publishes after the last
-  pointer exchange stays invisible until the connection is re-established. The second
-  two-node test restarts one daemon and says so at the point it does it. The fix belongs in
-  the pull loop, not in the test. 72 → 74 tests.
+  **A fifth bug, found by fixing the fourth's leftovers**, and it is the one worth
+  remembering: the daemon re-asked for the governance log and for pointers on every tick,
+  but never for the **capability ledger**. Source selection drops a holder that has not
+  advertised capacity, as not having volunteered — and a joiner advertises only once
+  admitted, which is *after* the ledger exchange that ran when it connected. So a joiner
+  stayed permanently unrankable as a source: its pointer arrived, its DEK wrapping arrived,
+  and the chunk itself never did. The crate's own guidance says a fetch that mysteriously
+  finds nothing is usually exactly this, and it was. The tick now re-asks for all three.
+
+  With that, a reply travels between two live daemons with nothing restarted, which the
+  second two-node test now asserts. 72 → 74 tests.
 - **2026-08-19** — **Content keying moved onto the real path.** Raised as a concern, and it
   was a fair one: the CLI's first cut derived its DEK from the network id, which is public
   in every meaningful sense — it is in every invite, every address and every log entry — so

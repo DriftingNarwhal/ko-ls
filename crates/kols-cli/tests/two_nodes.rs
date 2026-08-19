@@ -9,11 +9,13 @@
 //! the two-round fetch, unwrapping a DEK under the right rotation — has to work
 //! for a single message to arrive.
 //!
-//! Three bugs found by running exactly this, each invisible to every other test:
+//! Four bugs found by running exactly this, each invisible to every other test:
 //! a joiner could not advertise before syncing and so could never sync; a fetch
 //! was requested once when it needs two rounds, so every segment stayed
-//! half-fetched; and only the newest epoch key was kept, so content written
-//! before the joiner arrived fetched perfectly and decrypted never.
+//! half-fetched; only the newest epoch key was kept, so content written before
+//! the joiner arrived fetched perfectly and decrypted never; and the capability
+//! ledger was never re-exchanged, so a joiner who advertised after being
+//! admitted stayed unrankable as a source forever.
 
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
@@ -195,19 +197,19 @@ fn a_reply_travels_back_and_both_sides_agree_on_the_order() {
     let bob_node = serve(&bob, 45104, Some(&address));
     bob_node.wait_for("learned 1 record", Duration::from_secs(45));
 
-    // Bob replies, then his node is restarted.
+    // Bob replies with **both daemons still up and nothing restarted**, which is
+    // the property under test rather than an incidental detail. Everything here
+    // is pull-based — the governance log, the capability ledger and pointers
+    // alike — so each side has to keep asking; nothing is pushed.
     //
-    // **The restart is load-bearing and should not be**, which is why it is
-    // called out rather than quietly relied on. A reconnect makes Alice's node
-    // treat Bob as newly seen and re-run the whole sync against him; without it,
-    // a peer that publishes *after* the last pointer exchange stays invisible
-    // even though both sides keep ticking. Recorded in STATUS as a known gap in
-    // the pull loop rather than papered over — the fix belongs in how a running
-    // node notices a peer's new pointer, not in this test.
+    // This failed for a day, and the reason is worth keeping: source selection
+    // drops a holder that has not advertised capacity, and a joiner advertises
+    // only once admitted, which is *after* the ledger exchange that ran when it
+    // connected. Without re-asking for the ledger, Bob stayed permanently
+    // unrankable and every fetch from him failed with the chunk simply never
+    // arriving — the pointer and its wrapping having arrived perfectly.
     ok(&bob, &["post", "general", "then from bob"]);
-    drop(bob_node);
-    let _bob_again = serve(&bob, 45105, Some(&address));
-    alice_node.wait_for("learned 1 record", Duration::from_secs(45));
+    alice_node.wait_for("learned 1 record", Duration::from_secs(60));
 
     let read = ok(&alice, &["read", "general"]);
     assert!(read.contains("first from alice"), "{read}");
