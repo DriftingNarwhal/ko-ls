@@ -1,7 +1,7 @@
 # ko-ls — Implementation Status
 
-**Updated:** 2026-08-19 (end of session; both repos pushed)
-**Phase:** P1 — E9 and E2 landed; chat entry payloads next
+**Updated:** 2026-08-19 (E5 landed in the protocol repo; **not yet committed or pushed**)
+**Phase:** P1 — E9, E2 and E5 landed; chat entry payloads next
 **Design:** [`design/`](design/) — `00`–`08`, all v1.0. **`distributed-intranet/specs/07` is normative** where it and the design set overlap.
 
 This file is the answer to "where are we?". It is updated in the same change that moves
@@ -19,7 +19,7 @@ Two repositories on this machine, **both pushed and current**:
 | Repo | Remote |
 |---|---|
 | `ko-ls` (this one) | `DriftingNarwhal/ko-ls` (private), branch `main` |
-| `../distributed-intranet` | `DriftingNarwhal/distributed-intranet`, branch `main` — carries spec 07, E9 (Core §2.6.2) and E2 (Core §2.7.2) |
+| `../distributed-intranet` | `DriftingNarwhal/distributed-intranet`, branch `main` — carries spec 07, E9 (Core §2.6.2), E2 (Core §2.7.2) and E5 (Real-Time §2.2.1). **E5 is in the working tree, uncommitted** |
 
 The client builds against the sibling checkout by **path dependency**, not a published
 version, and deliberately so while the extensions are still moving. A fresh machine needs
@@ -82,7 +82,7 @@ both green.
 | E2 | Channel governance entries | **Landed, generalised** — one `AppEntry` variant (Core §2.7.2) rather than four chat-shaped ones; chat records become payloads |
 | E3 | Derived pointer ids | **Withdrawn** — `PointerId::from_bytes` is already public; derivation lives in `kols-core::ids` |
 | E4 | Gossipsub live delivery | Not started (P1) |
-| E5 | Media fan-out at the relay | Not started (P3) |
+| E5 | Media fan-out at the relay | **Landed early** — Real-Time §2.2.1; `Recipient::{One, Participants}`, envelope domain tag now `v2` |
 | E6 | QUIC datagram media path | Not started (P3) |
 | E7 | Channel-scoped MLS groups | Not started (P2) |
 | E8 | Track metadata in media payloads | Not started (P4) |
@@ -97,7 +97,6 @@ both green.
 | `kols-core` | **Encoding, author logs, merge, collision recovery, chat policy** — records/segments/ids, `AuthorLog` incl. `rebase`, `ChannelView`, permissions, capability vocabulary, `ChatPolicy`. 35 tests |
 | `kols-net` | **Publish and fetch** — stores/announces chunks, accepts pointers, reassembles segments. Two live two-node tests |
 | `kols-store` | Not created |
-| `kols-net` | Not created |
 | `kols-media` | Not created |
 | `kols-api` | Not created |
 | `kols-app` | Not created |
@@ -108,7 +107,7 @@ claim that something exists.
 
 ## 6. P0 Definition of Done
 
-From `design/07-build-plan.md` §3. None of these pass yet.
+From `design/07-build-plan.md` §3. **All five are met** — see the per-row detail below.
 
 | # | Criterion | State |
 |---|---|---|
@@ -137,6 +136,38 @@ design changes before anything else is built.
 
 Newest first. One line per change that moved the state above.
 
+- **2026-08-19** — **E5 landed, pulled forward from P3.** The relay reduced nobody's upload:
+  `MediaEnvelope` carried one `to`, so a sender in an n-party relayed call emitted n−1
+  envelopes and the relay added a hop to each. It now carries `Recipient::{One,
+  Participants}` — one envelope in, n−1 out — specified in Real-Time §2.2.1 with the
+  implementation, ten live-node tests and four encoding tests. Three things the proposal
+  had not worked out, each found while building it: the fan-out form deliberately carries
+  **no recipient list**, so it is stricter than the form it replaces rather than looser;
+  the relay must **readdress every forwarded copy**, or a participant that also relays
+  would fan the same envelope out again; and the relay must **bind the claimed sender to
+  the connection**, a check that never existed on this path and that fan-out turns from one
+  stray frame into n−1 sends at the relay's expense. The wire break is versioned rather
+  than smuggled — the envelope's domain tag is now `intranet.wire.call-media.v2`, so a v1
+  envelope fails to decode instead of parsing its recipient out of the wrong bytes.
+
+  The gotcha `design/05` §4 carries about `next_swarm_event` draining its buffer on entry
+  turned out to be live rather than theoretical, and caught this change on the way through:
+  a relay that is itself a participant buffers its own copy of a frame, and in a call whose
+  only other participant is the sender there is nothing to forward alongside it — so the
+  buffered event waited for unrelated traffic that on a quiet call never comes. It is
+  returned directly in that case, with a test whose deadline is deliberately tight, since a
+  generous one passes under both behaviours and pins nothing.
+
+  The client's advice to stay in mesh (`design/04` §3.1) is withdrawn.
+- **2026-08-19** — **Protocol repo test count refreshed.** Its README claimed 591 in two
+  places, which was true when written and went stale when E9 and E2 landed — each added
+  conformance tests and neither updated the figure. Measured rather than inferred this
+  time — **613 passing, clippy clean** — and worth recording how, because the first two
+  attempts disagreed: `cargo test --workspace` piped into `grep` **undercounts**,
+  because cargo interleaves the output of concurrently running suites and a result line
+  that lands mid-line no longer matches `^test result` — two piped runs of identical source
+  reported 571 and 612. Redirect to a file and count there. The tree at `HEAD` was 604, so
+  591 was thirteen tests stale, which is about what E9 and E2 added between them.
 - **2026-08-19** — **E2 landed, but generically.** Four chat-shaped entry variants would have
   repeated the mistake E9 avoided, so the log gained one application entry instead:
   namespace, kind, declared capability, opaque payload. Two claims weakened honestly as a

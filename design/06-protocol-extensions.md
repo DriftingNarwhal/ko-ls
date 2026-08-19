@@ -1,6 +1,6 @@
 # Required Protocol Extensions
 
-**Document status:** v1.2 — E1 and E3 withdrawn, E11 added, **E9 and E2 landed**
+**Document status:** v1.3 — E1 and E3 withdrawn, E11 added, **E9, E2 and E5 landed**
 **Depends on:** all preceding documents
 **Consumed by:** work in `distributed-intranet`
 
@@ -30,7 +30,7 @@ Two rules govern this list:
 | ~~E2~~ | Channel governance entries — **landed generically**, Core §2.7.2 | — | Done |
 | ~~E3~~ | ~~Derived pointer ids~~ — **already possible**, no change needed | — | None |
 | E4 | Gossipsub behaviour for live delivery | P1 | Medium |
-| E5 | Media fan-out at the relay | P3 | Medium |
+| ~~E5~~ | Media fan-out at the relay — **landed**, Real-Time §2.2.1 | — | Done |
 | E6 | QUIC datagram media path | P3 (quality) | Large, partly upstream |
 | E7 | Channel-scoped MLS groups | P2 | Large |
 | E8 | Track metadata in sealed media payloads | P4 | Small |
@@ -149,37 +149,81 @@ tier, which `intranet_realtime::assign_tier` already computes. Measure first.*
 
 ---
 
-## 5. E5 — Media Fan-Out at the Relay
+## 5. E5 — Media Fan-Out at the Relay ✅ **landed**
 
-**This is a correctness gap in the current relay, not merely an optimization.**
-`MediaEnvelope` carries one `to`, and `MemberNode::relay_call` forwards one envelope to
-that one recipient, so a sender in an n-party relayed call emits n−1 envelopes per frame.
-The relay therefore does not reduce sender upload at all — which is the entire stated
-reason Real-Time §1.1 switches to a relay past 4–5 participants.
+**This was a correctness gap in the relay, not merely an optimization.**
+`MediaEnvelope` carried one `to`, and `MemberNode::relay_call` forwarded one envelope to
+that one recipient, so a sender in an n-party relayed call emitted n−1 envelopes per
+frame. The relay therefore did not reduce sender upload at all — which is the entire
+stated reason Real-Time §1.1 switches to a relay past 4–5 participants.
 
-Required change: a fan-out form in which the sender emits **one** envelope per frame and
-the relay replicates it to the participant set minus the sender.
+The change: a fan-out form in which the sender emits **one** envelope per frame and the
+relay replicates it to the participant set minus the sender.
 
 ```
 MediaEnvelope { call, from, to: Recipient, frame }
 Recipient = One(PerNetworkIdentityId) | Participants
 ```
 
-Constraints that must survive the change:
+**Landed as proposed**, specified in Real-Time §2.2.1. Four things are worth recording —
+the first is why the shape above was right, and the other three were found while building
+it rather than by review:
 
-- The relay still forwards **only** for calls it agreed to carry and **only** to
-  participants it was told about — without both checks it is an open reflector
-  (Real-Time §2.2, and the current implementation is careful about this).
+- **`Participants` carries no list, and that is the safety property.** The fan-out set is
+  the participant list the relay was told when it agreed to carry the call — never one
+  travelling in the envelope. This makes fan-out *stricter* than the per-recipient form it
+  replaces: under the named form a sender in a carried call names its own target and the
+  relay checks it, while under fan-out a sender has no field in which to ask for a
+  non-participant at all.
+- **The relay readdresses each forwarded copy to `One(recipient)`.** Without this a
+  participant would receive a `Participants` envelope, and a participant that also relays
+  would fan it out again. Readdressing means a participant never holds a fan-out envelope,
+  so a forwarding loop has nowhere to start, and a receiver's "is this for me" check is
+  the same on both paths. Rewriting is safe for the reason misrouting always was: routing
+  metadata is outside the AEAD, and a misdelivered frame still fails to open.
+- **The claimed sender must be the peer that connected — a check that did not previously
+  exist on this path.** A media envelope carries no signature by design (§2.2 puts
+  authenticity in the AEAD), so `from` is a claim, and the relay is the one node that
+  cannot check a claim against the frame. It was already worth one forwarded frame to an
+  attacker under the named form; under fan-out it is worth N−1 sends at the relay's
+  expense to anyone who knows a carried call's id. The relay now binds `from` to the
+  connection, the same answer `intranet-storage`'s chunk requests and the signalling path
+  already use. **Found while implementing the fan-out, not by review.**
+- **The wire break is versioned rather than smuggled.** The recipient field gains a
+  discriminant, so the media envelope's domain tag advances to
+  `intranet.wire.call-media.v2`. Under the v1 tag an old envelope's first recipient byte
+  would have been read as the discriminant and, twice in every 256 envelopes, parsed into
+  a plausible wrong answer. Domain separation turns that into a decode failure, which is
+  what it is for.
+
+**Amplification is bounded by the relay's own agreement, not by the protocol.** One
+envelope in becomes N−1 out, which is both the point and the shape of an amplifier. The
+bound is that a relay chose the call and the participant set it accepted; a node unwilling
+to carry a large call declines at that point. No participant ceiling is specified, and a
+relay wanting one enforces it locally — a per-node resource decision with no cross-node
+consistency requirement, exactly like relay selection (§2.3).
+
+Constraints that survived the change, as required:
+
+- The relay forwards **only** for calls it agreed to carry and **only** to participants it
+  was told about — without both checks it is an open reflector (Real-Time §2.2).
 - The relay still cannot decrypt: `Participants` is routing metadata outside the AEAD,
   which is exactly what §2.2 already permits it to see.
 - A misrouted frame still fails to open, because the nonce binds the call.
 
-**Acceptance:** in an n-party relayed call, sender upload is one frame per interval
-regardless of n; a relay refuses `Participants` fan-out for a call it never agreed to
-carry; the existing per-recipient form still works for mesh.
+**Acceptance — all met**, in `intranet-transport/tests/call_media.rs` over four live nodes
+and `intranet-realtime/src/wire.rs` for the encoding: a sender in a three-party relayed
+call emits one envelope and the relay emits two, neither of them back to the sender; a
+relay refuses fan-out for a call it never agreed to carry, for a sender outside the call,
+and for a sender whose claim does not match its connection; each forwarded copy arrives
+readdressed to its recipient; a relay that is also a participant hears the frame without
+sending it to itself, including when it is the only other participant and has nothing to
+forward; the per-recipient form still works unchanged for mesh; and the two forms cannot
+decode as each other, nor a v1 envelope as a v2 one.
 
-**Until this lands, the client stays in mesh** (`04` §3.1) — switching to a relay that
-does not reduce upload makes calls worse, not better.
+**The client may now switch to a relay at the threshold** (`04` §3.1). The advice to stay
+in mesh existed only because a relay that did not fan out made calls worse than mesh, and
+it no longer does.
 
 ---
 
@@ -372,14 +416,19 @@ which is the friction E11 removes.
 
 ```
 P0   — nothing; E3 turned out to need no protocol change
-P1   E2 → E4 ; E9, E11 (independent, small)
+P1   E2 → E4 ; E9, E11 (independent, small).  E5 landed here, ahead of its phase
 P2   E7   (depends on E2's ChannelRotation) ; E10 (independent, small)
-P3   E5   (before relayed voice is worth enabling) ; E6 in parallel, lands when it lands
+P3   E6   — lands when it lands
 P4   E8
 ```
 
-E9 is small and unblocks the rest. E2 is the first item requiring real spec work. E5 should be treated as a protocol bug fix and can be done independently of the
-chat client — it improves any consumer of the call path.
+E9 is small and unblocks the rest. E2 is the first item requiring real spec work.
+
+**E5 was pulled forward out of P3 and landed in P1**, which the sequencing above always
+permitted: it was scoped as a protocol bug fix independent of the chat client, and it
+improves any consumer of the call path rather than only this one. Doing it early also cost
+less than doing it late — the media envelope's wire format changed, and every additional
+consumer written against the old shape would have been another thing to migrate.
 
 ---
 

@@ -1,6 +1,6 @@
 # Voice, Video and Stage
 
-**Document status:** v1.0 — design reviewed. Nothing implemented; P3/P4
+**Document status:** v1.1 — design reviewed. Nothing implemented beyond E5's relay fan-out (§3.1); P3/P4
 **Depends on:** Real-Time Transport Spec (all), Core Protocol Spec §4.4 (relay roles), `03-confidentiality`
 **Consumed by:** `05-client-architecture`, `06-protocol-extensions`
 
@@ -65,7 +65,7 @@ Following Real-Time §1.2, with the threshold as network policy:
 | Participants | Topology | Cost to each sender |
 |---|---|---|
 | 2–4 (policy default) | **Mesh** — every participant sends to every other | (n−1) × bitrate upload |
-| 5 – ~50 | **Blind relay** — one selected relay forwards | 1 × bitrate upload, once §3.1 is fixed |
+| 5 – ~50 | **Blind relay** — one selected relay forwards | 1 × bitrate upload (§3.1) |
 | ~50+ or stage | **Broadcast** — live-stream distribution (§4) | 1 × bitrate upload, flat in audience |
 
 Transitions use the protocol's one renegotiation mechanism — trigger, propose,
@@ -78,22 +78,30 @@ Relay selection comes from `intranet_realtime::relay::select` over
 to use local `reliability_signal` — one of only two places in the entire design where
 that signal may be read (Real-Time §2.3).
 
-### 3.1 A relay currently does not reduce sender upload — this must be fixed
+### 3.1 A relay did not reduce sender upload — fixed, Real-Time §2.2.1
 
-**Finding, from reading the implementation rather than the spec.** `MediaEnvelope` carries
-a single `to`, and the relay forwards one envelope to that one recipient
-(`MemberNode::relay_call` checks that both `from` and `to` are participants, then
-forwards). A sender in a five-person relayed call therefore emits four envelopes per
-frame — exactly the upload cost that Real-Time §1.1 says the relay exists to avoid.
+**Finding, from reading the implementation rather than the spec.** `MediaEnvelope` carried
+a single `to`, and the relay forwarded one envelope to that one recipient. A sender in a
+five-person relayed call therefore emitted four envelopes per frame — exactly the upload
+cost Real-Time §1.1 says the relay exists to avoid. The relay was faithfully blind and
+faithfully limited; it just was not saving anybody anything.
 
-The relay is faithfully blind and faithfully limited; it just isn't saving anybody
-anything. **A fan-out form is required**: the sender emits one envelope per frame, and
-the relay replicates it to the participant set minus the sender. Recorded as a required
-protocol change in `06` §5, with the wire detail there.
+**Landed (E5, `06` §5).** The recipient field is now one of two forms: a named participant,
+which is the mesh form and what a relay produces when it forwards, or *the call's
+participants*, on which the sender emits one envelope per frame and the relay replicates
+it to the participant set minus the sender. Three properties the client can now rely on:
 
-Until it lands, relayed calls behave like mesh calls with an extra hop, which is worse
-than mesh. The client should therefore stay in mesh until the fix exists rather than
-switching at the threshold and getting slower.
+- The fan-out set is the list the relay was told, never one in the envelope, so a sender
+  cannot aim a relay at a non-participant even in principle.
+- Each forwarded copy is readdressed to its recipient, so a participant never holds a
+  fan-out envelope and cannot re-fan one out.
+- The relay checks the claimed sender against the connection it arrived on. A media frame
+  carries no signature by design, so this is what stops a spoofed `from` buying an attacker
+  N−1 sends at the relay's expense.
+
+**The switch at the threshold is therefore worth making.** The earlier advice to stay in
+mesh existed only because a relay that did not fan out made calls worse than mesh; §3's
+table now describes what the transport actually does.
 
 ---
 
