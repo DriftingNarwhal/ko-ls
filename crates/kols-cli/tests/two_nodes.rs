@@ -278,3 +278,91 @@ fn a_founder_can_still_key_somebody_in_after_restarting() {
         "bob should read what was written before the founder restarted:\n{read}"
     );
 }
+
+#[test]
+fn a_revocation_rotates_the_epoch_and_leaves_the_network_working() {
+    // Revocation is split across two processes on purpose. `kols revoke` writes
+    // the membership removal; the daemon rotates the epoch to exclude them,
+    // because rotating needs the live MLS group only it holds — and Core §3.3
+    // requires that order anyway, since a rotation minted while somebody is
+    // still a member produces a key they remain entitled to, and §3.1 says a
+    // key cannot be un-known afterwards.
+    //
+    // Most of what this asserts is that nothing *else* broke, because the first
+    // working revocation broke two things at once: the rotation landed as a
+    // sibling of a concurrently-written channel definition, and fork-choice
+    // voided the channel; and the author's own DEK stopped unwrapping, its
+    // wrapping being under the epoch that had just been superseded.
+    let alice = Home::new("revoke-alice");
+    let bob = Home::new("revoke-bob");
+
+    let created = ok(&alice, &["init", "revocable"]);
+    let network = field(&created, "network   ");
+    let attached = ok(&bob, &["attach", &network]);
+    let bob_identity = field(&attached, "kols admit ");
+    ok(&alice, &["admit", &bob_identity]);
+
+    let alice_node = serve(&alice, 45121, None);
+    let address = field(
+        &alice_node.wait_for("listening", Duration::from_secs(20)),
+        "listening ",
+    );
+    ok(&alice, &["channel", "create", "general"]);
+    ok(&alice, &["post", "general", "before the revocation"]);
+    alice_node.wait_for("picked up", Duration::from_secs(20));
+
+    let bob_node = serve(&bob, 45122, Some(&address));
+    bob_node.wait_for("keyed into this network", Duration::from_secs(45));
+    bob_node.wait_for("learned 1 record", Duration::from_secs(45));
+    drop(bob_node);
+
+    let before = field(&ok(&alice, &["whoami"]), "epoch    ");
+
+    let removed = ok(&alice, &["revoke", &bob_identity]);
+    assert!(removed.contains("removed"), "{removed}");
+    // The command says plainly it has done half the job: until the daemon
+    // rotates, the removed member still decrypts newly published content.
+    assert!(removed.contains("rotates the epoch"), "{removed}");
+
+    alice_node.wait_for("rotated the epoch to exclude", Duration::from_secs(40));
+    let after = field(&ok(&alice, &["whoami"]), "epoch    ");
+    assert_ne!(
+        before, after,
+        "a removal must advance the epoch, or the removed member reads on"
+    );
+
+    // The channel survives. A rotation appended as a sibling of the channel
+    // definition forks the log, and fork-choice voids a branch — correct
+    // protocol behaviour which, the first time it happened here, deleted the
+    // channel without a word.
+    let listed = ok(&alice, &["channel", "list"]);
+    assert!(listed.contains("#general"), "the channel must survive:\n{listed}");
+
+    // And the network still works: posting needs the author's own DEK, whose
+    // wrapping is now under a superseded epoch key.
+    ok(&alice, &["post", "general", "after the revocation"]);
+    let read = ok(&alice, &["read", "general"]);
+    assert!(read.contains("before the revocation"), "{read}");
+    assert!(read.contains("after the revocation"), "{read}");
+}
+
+#[test]
+fn revoking_a_non_member_is_refused() {
+    // Removing somebody who is not there would append a governance entry that
+    // changes nothing and rotate the epoch for no reason, which costs every
+    // member a re-wrap.
+    let alice = Home::new("revoke-refuse");
+    let stranger = Home::new("revoke-stranger");
+
+    let created = ok(&alice, &["init", "careful"]);
+    let network = field(&created, "network   ");
+    let stranger_identity = field(&ok(&stranger, &["attach", &network]), "kols admit ");
+
+    let out = run(&alice, &["revoke", &stranger_identity]);
+    assert!(!out.status.success(), "a non-member cannot be removed");
+    assert!(
+        String::from_utf8_lossy(&out.stderr).contains("not a member"),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+}

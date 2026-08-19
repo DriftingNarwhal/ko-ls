@@ -28,11 +28,10 @@ both repos cloned side by side.
 **Next task:** **E4 — gossipsub live delivery**, and history backfill behind it. The Tauri
 shell stays blocked on S3.
 
-The keying gaps are closed: `GroupSession::save`/`restore` (Core §3.3.1) mean a founder
-survives a restart and can still key people in, and rotation on both add and remove works
-from a restored session. What remains unexercised is `kols` driving a **removal** — the
-protocol and the client both have the pieces, and nothing has yet made a `revoke-node`
-entry from the CLI.
+The keying gaps are closed end to end: `GroupSession::save`/`restore` (Core §3.3.1) mean a
+founder survives a restart and can still key people in, and `kols revoke` now drives a real
+removal — membership entry from the command, epoch rotation from the daemon, in that order
+because Core §3.3 requires it.
 
 **Just done:** the chat side of E2. `ChannelEntry` encodes all four kinds as `chat`-namespace
 payloads (spec 07 §3.8, written for this and normative), and `ChannelEntry::read` is the
@@ -46,7 +45,7 @@ readers are unavoidable rather than optional:
 2. **A channel entry is invalid in a `conversation`-profile network.** The protocol carries
    `chat` payloads without decoding them, so it cannot reach this verdict.
 
-**To pick up:** `cargo test` in this repo should show 75 passing and clippy silent. If it
+**To pick up:** `cargo test` in this repo should show 77 passing and clippy silent. If it
 does not, fix that before anything else — the tree was left green.
 
 ---
@@ -57,7 +56,7 @@ does not, fix that before anything else — the tree was left green.
 |---|---|
 | **Working on** | E4 — gossipsub live delivery |
 | **Blocked on** | Nothing |
-| **Runnable** | **`kols`** — init, attach, admit, serve, channel create/list, post, read. Two nodes hold a conversation. `cargo test` — 75 tests, clippy clean; `scripts/cross-check.sh` for big-endian |
+| **Runnable** | **`kols`** — init, attach, admit, revoke, serve, channel create/list, post, read. Two nodes hold a conversation. `cargo test` — 77 tests, clippy clean; `scripts/cross-check.sh` for big-endian |
 | **Next decision needed from the user** | Nothing blocking |
 
 ---
@@ -104,7 +103,7 @@ both green.
 |---|---|
 | `kols-core` | **Encoding, author logs, merge, collision recovery, chat policy, channel structure** — records/segments/ids, `AuthorLog` incl. `rebase`, `ChannelView`, permissions, capability vocabulary, `ChatPolicy`, `ChannelEntry`. 60 tests |
 | `kols-net` | **Publish and fetch** — stores/announces chunks, accepts pointers, reassembles segments. Two live two-node tests |
-| `kols-cli` | **`kols`, and its node daemon** — creates a network, admits and keys in joiners, serves and fetches content, renders a merged view across authors. 113 tests that drive the real binaries, three of them over a live wire between two processes |
+| `kols-cli` | **`kols`, and its node daemon** — creates a network, admits and keys in joiners, serves and fetches content, renders a merged view across authors. 115 tests that drive the real binaries, five of them over a live wire between two processes |
 | `kols-store` | Not created |
 | `kols-media` | Not created |
 | `kols-api` | Not created |
@@ -145,6 +144,32 @@ design changes before anything else is built.
 
 Newest first. One line per change that moved the state above.
 
+- **2026-08-19** — **`kols revoke` closes the revocation path, and found two bugs doing it.**
+  The command writes the membership removal; the daemon rotates the epoch to exclude them.
+  The split is not convenience — rotating needs the live MLS group only the daemon holds, and
+  Core §3.3 requires the removal to be logged *first* anyway, because a rotation minted while
+  somebody is still a member produces a key they remain entitled to and §3.1 says a key
+  cannot be un-known afterwards. `revoke` says so in its own output rather than implying the
+  job is finished when it returns.
+
+  **The first working revocation deleted a channel**, and the cause is worth keeping. The
+  store has two writers — one-shot commands and the daemon — and each parented its entry on
+  the head *it* last saw. `channel create` and the daemon's admission rotation landed on the
+  same parent, forking the log; fork-choice picked the rotation branch and voided the
+  channel. That is the protocol working exactly as specified, and a disaster in a client that
+  never noticed. There is now an append lock (an atomic `create_dir`), held across
+  read-head-then-write by every writer, and the daemon adopts whatever the store gained
+  *inside* the lock before appending so its parent is the real head.
+
+  **The second bug only a rotation could reveal**: reading a DEK unwrapped it with the
+  *current* epoch key, but a wrapping is made under whichever epoch was current when it was
+  written. The moment anything rotated, a node could not open its own content — Alice could
+  not post to her own channel after removing somebody. It now tries every held key and
+  re-wraps under the current one, which is what Storage §5.3 means by any current member
+  re-wrapping on rotation.
+
+  Both were reachable only once rotation existed, which is why they surfaced today rather
+  than when the daemon was written. 75 → 77 tests.
 - **2026-08-19** — **MLS group state survives a restart, and the spec says it must.** The
   last confidentiality gap, and it was a gap in the *specification* as much as in the code:
   §3 asked members to rotate, welcome and revoke without ever saying that the state those

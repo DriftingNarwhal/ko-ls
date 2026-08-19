@@ -46,7 +46,7 @@ directory — the protocol crates are path dependencies while the extensions it 
 still landing.
 
 ```bash
-cargo test                                   # 75 tests; the two-node ones spawn real nodes on loopback
+cargo test                                   # 77 tests; the two-node ones spawn real nodes on loopback
 cargo clippy --workspace --all-targets       # must stay clean
 ./scripts/cross-check.sh                     # big-endian verification, see below
 ```
@@ -102,9 +102,11 @@ ways between live nodes.
 Keying is whole: group state survives a restart, so a founder can still admit and key in
 new members after one, and the epoch rotates on both add and remove.
 
+`kols revoke` drives a real removal: the membership entry from the command, the epoch
+rotation from the daemon, in that order because the protocol requires it.
+
 What does not exist yet: no user interface, no private-channel keying, no voice, no search,
-no live gossip path — and nothing in the CLI yet drives a *removal*, so the revocation path
-is exercised upstream but not end to end. [`STATUS.md`](STATUS.md) is the honest inventory.
+no live gossip path. [`STATUS.md`](STATUS.md) is the honest inventory.
 
 ## The one number worth knowing
 

@@ -136,6 +136,46 @@ impl Store {
             .map_err(|err| StoreError::Corrupt(format!("identity does not derive: {err}")))
     }
 
+    /// Takes the store's append lock, waiting briefly for it.
+    ///
+    /// # Why this exists
+    ///
+    /// The store has two writers: one-shot commands and the daemon. Both append
+    /// governance entries, and each parents its entry on the head *it* last saw.
+    /// Without serialisation they append siblings — a fork, which the protocol
+    /// handles correctly and which is nonetheless a disaster here, because
+    /// fork-choice then voids one side. It cost a channel: `channel create` and
+    /// the daemon's admission rotation landed on the same parent, the rotation
+    /// branch won, and the channel simply stopped existing.
+    ///
+    /// So an append is: take this lock, re-read the head, write, release. The
+    /// daemon additionally adopts whatever the store gained before appending, so
+    /// its parent is the real head rather than the one it held a tick ago.
+    ///
+    /// `create_dir` is the primitive because it is atomic on every filesystem
+    /// this runs on, and a lock that is only *usually* exclusive is worse than
+    /// none — it would fail rarely enough to look like something else.
+    pub fn lock(&self) -> Result<AppendLock, StoreError> {
+        let path = self.root.join("lock");
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        loop {
+            match fs::create_dir(&path) {
+                Ok(()) => return Ok(AppendLock { path }),
+                Err(err) if err.kind() == io::ErrorKind::AlreadyExists => {
+                    if std::time::Instant::now() > deadline {
+                        return Err(StoreError::Corrupt(format!(
+                            "another kols process has held {} for ten seconds. If none is \
+                             running, remove it",
+                            path.display()
+                        )));
+                    }
+                    std::thread::sleep(std::time::Duration::from_millis(20));
+                }
+                Err(err) => return Err(StoreError::Io(err)),
+            }
+        }
+    }
+
     /// Appends an entry to the stored governance log.
     ///
     /// Entries are files named by their position, so replay reads them back in
@@ -417,9 +457,32 @@ impl Store {
         let epoch = self.epoch_key()?;
         let path = self.root.join("deks").join(to_hex(pointer.as_bytes()));
         if let Ok(wrapped) = fs::read(&path) {
-            return epoch
-                .unwrap_dek(pointer, &wrapped)
-                .map_err(|err| StoreError::Corrupt(format!("a stored DEK will not unwrap: {err}")));
+            // Tried against **every** key this node holds, not just the current
+            // one. A wrapping names the rotation it was made under, and the
+            // epoch advances on every membership change — so a node that only
+            // tried its newest key could not open its own content the moment
+            // anybody joined or left. That is not hypothetical: it is what
+            // happened the first time a revocation actually rotated anything.
+            let keys = self.epoch_keys()?;
+            let dek = keys
+                .iter()
+                .find_map(|(_, key)| key.unwrap_dek(pointer, &wrapped).ok())
+                .ok_or_else(|| {
+                    StoreError::Corrupt(format!(
+                        "a stored DEK will not unwrap under any of this node's {} epoch key(s)",
+                        keys.len()
+                    ))
+                })?;
+
+            // Re-wrapped under the current epoch, which is exactly what Storage
+            // §5.3 means by any current member re-wrapping on rotation: it keeps
+            // the wrapping openable as superseded keys are eventually dropped,
+            // and it is deterministic, so doing it repeatedly changes nothing.
+            let refreshed = epoch.wrap(pointer, &dek);
+            if refreshed != wrapped {
+                write_private(&path, &refreshed)?;
+            }
+            return Ok(dek);
         }
 
         let mut raw = [0u8; 32];
@@ -450,4 +513,19 @@ fn fixed<const N: usize>(bytes: &[u8], what: &str) -> Result<[u8; N], StoreError
     bytes
         .try_into()
         .map_err(|_| StoreError::Corrupt(format!("{what} is {} bytes, expected {N}", bytes.len())))
+}
+
+/// Held while a process is appending to the governance log.
+///
+/// Released on drop, including on a panic — a lock that survived a crash would
+/// need a human to clear it, and the failure it guards against is rarer than
+/// the crashes it would cause.
+pub struct AppendLock {
+    path: PathBuf,
+}
+
+impl Drop for AppendLock {
+    fn drop(&mut self) {
+        let _ = fs::remove_dir(&self.path);
+    }
 }

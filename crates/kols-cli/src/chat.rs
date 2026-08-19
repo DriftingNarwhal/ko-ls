@@ -69,6 +69,10 @@ pub fn create_channel(
             )
         })?;
 
+    // Held across reading the head and writing, so a channel definition cannot
+    // land as a sibling of a rotation the daemon appended in between — which
+    // forks the log, and fork-choice then voids one of them.
+    let _lock = store.lock().map_err(|e| e.to_string())?;
     let head = store.head().map_err(|e| e.to_string())?;
     let log_entry = LogEntry::create(&author, head, Timestamp::from_millis(now_millis()), body);
     store.append_entry(&log_entry).map_err(|e| e.to_string())?;

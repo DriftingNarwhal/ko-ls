@@ -82,6 +82,11 @@ enum Command {
         /// The joiner's identity in this network, as hex.
         identity: String,
     },
+    /// Remove an identity from this network.
+    Revoke {
+        /// The member's identity in this network, as hex.
+        identity: String,
+    },
     /// Prepare a store for a network created elsewhere, before syncing it.
     Attach {
         /// The network id, as hex.
@@ -126,6 +131,7 @@ fn main() -> std::process::ExitCode {
         Command::Read { channel } => chat::read(root, &channel),
         Command::Serve { listen, peers } => serve::run(root, &listen, &peers),
         Command::Admit { identity } => admit(root, &identity),
+        Command::Revoke { identity } => revoke(root, &identity),
         Command::Attach { network, name } => attach(root, &network, &name),
     };
 
@@ -231,6 +237,9 @@ fn admit(root: std::path::PathBuf, identity_hex: &str) -> Result<(), String> {
     let admitter = store.identity().map_err(|e| e.to_string())?;
     let joiner = parse_identity(identity_hex)?;
 
+    // Held across reading the head and writing the entry, so this cannot land
+    // as a sibling of something the daemon appended in between.
+    let _lock = store.lock().map_err(|e| e.to_string())?;
     let head = store
         .head()
         .map_err(|e| e.to_string())?
@@ -260,6 +269,74 @@ fn admit(root: std::path::PathBuf, identity_hex: &str) -> Result<(), String> {
 
     println!("admitted {}", joiner.short());
     println!("They can read and post once they have synced this log.");
+    Ok(())
+}
+
+/// Removes an identity from this network.
+///
+/// Writes only the membership removal. The **epoch rotation that excludes them
+/// is `kols serve`'s job**, and the split is not an implementation convenience:
+/// rotating needs the live MLS group, which only the daemon holds, and Core §3.3
+/// requires the removal to be in the log *before* the rotation — a rotation
+/// minted while somebody is still a current member produces a key they remain
+/// entitled to, and a key cannot be un-known afterwards (§3.1).
+///
+/// So this is half of a revocation and says so. Until a node with the group runs,
+/// the removed member is refused service by honest nodes and can still decrypt
+/// anything newly published, which is the honest state rather than a hidden one.
+fn revoke(root: std::path::PathBuf, identity_hex: &str) -> Result<(), String> {
+    let store = Store::open(root).map_err(|e| e.to_string())?;
+    let remover = store.identity().map_err(|e| e.to_string())?;
+    let target = parse_identity(identity_hex)?;
+
+    if target == remover.id() {
+        return Err("that is you. Removing yourself would leave the network unmanaged \
+                    by the only node that can rotate its key"
+            .to_owned());
+    }
+
+    let before = store.state().map_err(|e| e.to_string())?;
+    if !before.is_member(&target) {
+        return Err(format!("{} is not a member of this network", target.short()));
+    }
+
+    let _lock = store.lock().map_err(|e| e.to_string())?;
+    let head = store
+        .head()
+        .map_err(|e| e.to_string())?
+        .ok_or("this network has no genesis to build on")?;
+    let entry = intranet_governance::LogEntry::create(
+        &remover,
+        Some(head),
+        intranet_crypto::Timestamp::from_millis(chat::now_millis()),
+        intranet_governance::EntryBody::MembershipChange {
+            group: intranet_governance::GroupId::everyone(),
+            identity: target,
+            // Non-cascading, which is the protocol's default and the right one:
+            // anyone this member admitted was validly admitted at the time, and
+            // cascading is a deliberate visible choice rather than something a
+            // command does on your behalf (Core §2.5).
+            action: intranet_governance::MembershipAction::Remove { cascade: None },
+        },
+    );
+    store.append_entry(&entry).map_err(|e| e.to_string())?;
+
+    // Replay rather than trust. Removal is gated on `revoke-node`, and an entry
+    // the log accepts structurally is refused by replay if the remover did not
+    // hold it — reporting success there would tell somebody they had removed a
+    // member who is still present.
+    let after = store.state().map_err(|err| {
+        format!("{err}\n\nRemoval needs revoke-node, which the founder holds by default.")
+    })?;
+    if after.is_member(&target) {
+        return Err("the entry was written but replay did not remove them".to_owned());
+    }
+
+    println!("removed {}", target.short());
+    println!("They are refused service by honest nodes from now on.");
+    println!();
+    println!("`kols serve` rotates the epoch to exclude them — until it runs, they can");
+    println!("still decrypt newly published content with the key they already hold.");
     Ok(())
 }
 

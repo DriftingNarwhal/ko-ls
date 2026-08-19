@@ -169,6 +169,13 @@ async fn serve(root: std::path::PathBuf, listen: &str, peers: &[String]) -> Resu
             event = node.next_event() => event,
             _ = refresh.tick() => {
                 adopt_local_changes(&store, &mut node, &identity)?;
+                if holds_group {
+                    let excluded = exclude_removed_members(&store, &mut node, &identity)?;
+                    if excluded > 0 {
+                        println!("rotated the epoch to exclude {excluded} removed member(s)");
+                    }
+                }
+
                 // Re-asked rather than assumed settled. Everything here is
                 // pull-based — the governance log, the ledger and pointers alike
                 // — so a peer that changed anything after the last exchange is
@@ -269,11 +276,18 @@ async fn serve(root: std::path::PathBuf, listen: &str, peers: &[String]) -> Resu
             // already applied before this arrives; what is left needs an
             // identity to sign with and a clock to sign at.
             NodeEvent::EpochKeyRequested { requester, request, .. } => {
-                match node.answer_epoch_key(
+                // Answering appends a rotation, parented on this node's head —
+                // so the store's head has to *be* this node's head first, and
+                // nothing else may append in between. Adopt under the lock, then
+                // rotate, then write back.
+                let lock = store.lock().map_err(|e| e.to_string())?;
+                adopt_local_changes(&store, &mut node, &identity)?;
+                let answered = node.answer_epoch_key(
                     request,
                     &identity,
                     Timestamp::from_millis(crate::chat::now_millis()),
-                ) {
+                );
+                match answered {
                     Ok(_) => {
                         println!("keyed in {}", requester.short());
                         // Adding a member rotates the epoch, so this node now
@@ -290,6 +304,7 @@ async fn serve(root: std::path::PathBuf, listen: &str, peers: &[String]) -> Resu
                     }
                     Err(err) => println!("could not key in {}: {err}", requester.short()),
                 }
+                drop(lock);
             }
 
             NodeEvent::EpochKeyDelivered {
@@ -598,6 +613,75 @@ fn adopt_local_changes(
     } else {
         Ok(None)
     }
+}
+
+/// Rotates the epoch away from anybody the log has removed.
+///
+/// The second half of a revocation. `kols revoke` writes the membership removal
+/// and stops there, because rotating needs the live MLS group that only this
+/// process holds — and Core §3.3 requires that order anyway: a rotation minted
+/// while somebody is still a current member produces a key they remain entitled
+/// to, and §3.1 is explicit that a key cannot be un-known afterwards.
+///
+/// Every identity the log has ever named is offered to `revoke_epoch_member`,
+/// which returns `None` for anybody with no leaf in the tree. That is cheaper
+/// than it looks and more robust than tracking who this node keyed in: a member
+/// removed while this node was offline gets excluded on the next run, which is
+/// exactly the convergent cascade `design/03` §5 describes — a removed member
+/// loses access as each node with the group processes the removal, not instantly.
+fn exclude_removed_members(
+    store: &Store,
+    node: &mut MemberNode,
+    identity: &intranet_identity::PerNetworkIdentity,
+) -> Result<usize, String> {
+    // Same discipline as answering a key request: this appends a rotation
+    // parented on the node's head, so the store's head has to be the node's head
+    // and nothing else may append in between.
+    let _lock = store.lock().map_err(|e| e.to_string())?;
+    adopt_local_changes(store, node, identity)?;
+
+    let Some(state) = replayable(store) else {
+        return Ok(0);
+    };
+    let log = store.log().map_err(|e| e.to_string())?;
+
+    let mut named = BTreeSet::new();
+    for hash in log.canonical_chain() {
+        if let Some(entry) = log.get(&hash)
+            && let intranet_governance::EntryBody::MembershipChange { identity: who, .. } =
+                &entry.body
+        {
+            named.insert(*who);
+        }
+    }
+
+    let mut excluded = 0;
+    for who in named {
+        if state.is_member(&who) {
+            continue;
+        }
+        match node.revoke_epoch_member(
+            &who,
+            identity,
+            Timestamp::from_millis(crate::chat::now_millis()),
+        ) {
+            // No leaf in the tree: either they were never keyed in, or this node
+            // already excluded them. Both are the steady state, not a problem.
+            Ok(None) => {}
+            Ok(Some(_)) => {
+                excluded += 1;
+                // The rotation is a governance entry and it advanced the group,
+                // so all three have to be written before anything else can go
+                // wrong. Saving here rather than on exit means a crash cannot
+                // lose a rotation other members have already been told about.
+                persist_governance(store, node)?;
+                persist_keyring(store, node)?;
+                persist_group(store, node)?;
+            }
+            Err(err) => println!("could not exclude {}: {err}", who.short()),
+        }
+    }
+    Ok(excluded)
 }
 
 /// Saves the node's MLS group, if it has one.
