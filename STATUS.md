@@ -1,6 +1,6 @@
 # ko-ls — Implementation Status
 
-**Updated:** 2026-08-19 (MLS group state persists; **in the working tree, uncommitted**)
+**Updated:** 2026-08-19 (retention policy and epoch catch-up; **in the working tree, uncommitted**)
 **Phase:** P1 — two nodes talk, a founder survives a restart; E4 next
 **Design:** [`design/`](design/) — `00`–`08`, all v1.0. **`distributed-intranet/specs/07` is normative** where it and the design set overlap.
 
@@ -45,7 +45,7 @@ readers are unavoidable rather than optional:
 2. **A channel entry is invalid in a `conversation`-profile network.** The protocol carries
    `chat` payloads without decoding them, so it cannot reach this verdict.
 
-**To pick up:** `cargo test` in this repo should show 78 passing and clippy silent. If it
+**To pick up:** `cargo test` in this repo should show 83 passing and clippy silent. If it
 does not, fix that before anything else — the tree was left green.
 
 ---
@@ -56,7 +56,7 @@ does not, fix that before anything else — the tree was left green.
 |---|---|
 | **Working on** | E4 — gossipsub live delivery |
 | **Blocked on** | Nothing |
-| **Runnable** | **`kols`** — init, attach, admit, revoke, serve, channel create/list, post, read. Two nodes hold a conversation. `cargo test` — 78 tests, clippy clean; `scripts/cross-check.sh` for big-endian |
+| **Runnable** | **`kols`** — init, attach, admit, revoke, serve, channel create/list, post, read. Two nodes hold a conversation. `cargo test` — 83 tests, clippy clean; `scripts/cross-check.sh` for big-endian |
 | **Next decision needed from the user** | Nothing blocking |
 
 ---
@@ -103,7 +103,7 @@ both green.
 |---|---|
 | `kols-core` | **Encoding, author logs, merge, collision recovery, chat policy, channel structure** — records/segments/ids, `AuthorLog` incl. `rebase`, `ChannelView`, permissions, capability vocabulary, `ChatPolicy`, `ChannelEntry`. 60 tests |
 | `kols-net` | **Publish and fetch** — stores/announces chunks, accepts pointers, reassembles segments. Two live two-node tests |
-| `kols-cli` | **`kols`, and its node daemon** — creates a network, admits and keys in joiners, serves and fetches content, renders a merged view across authors. 116 tests that drive the real binaries, five of them over a live wire between two processes |
+| `kols-cli` | **`kols`, and its node daemon** — creates a network, admits and keys in joiners, serves and fetches content, renders a merged view across authors. 117 tests that drive the real binaries, six of them over a live wire between two processes |
 | `kols-store` | Not created |
 | `kols-media` | Not created |
 | `kols-api` | Not created |
@@ -144,6 +144,39 @@ design changes before anything else is built.
 
 Newest first. One line per change that moved the state above.
 
+- **2026-08-19** — **Retention landed as two windows, and a catch-up bug was found asking
+  what the default should be.** The question was what to set for retiring superseded epoch
+  keys, with the worry that somebody absent for thirty days would come back locked out.
+  Checking that premise found it was not the failure mode — every rotation carries an MLS
+  commit, so an absent member derives the keys it missed by replaying them (Core §3.3), and
+  the log never shrinks. **But the daemon never called `apply_pending_rotations`**, so
+  nobody caught up on anything. It stayed invisible because an object keeps its DEK for
+  life: an absent node could still read appends to logs it already knew, and only a *new*
+  object under an epoch it never derived would fail — as content that fetched perfectly and
+  would not open. Fixed, with a three-node test where a member is offline while somebody
+  joins and posts.
+
+  That also settled the shape of the setting. Retiring keys is not a knob: a key is
+  droppable once nothing inside the retention window is still wrapped under it, which the
+  re-wrap-on-read path already arranges. A separate key-lifetime setting could contradict
+  the retention window — keep content a year, drop its key at six months — and make
+  retained content silently unreadable.
+
+  So it is **two content windows, not one**: `chat:retain-messages-days` and
+  `chat:retain-attachments-days`. A message is capped at 8 KiB with a capped rate, so a
+  million of them is a few gigabytes network-wide; one attachment may be 25 MiB, ten to a
+  message. A network bounding what it spends on other members' disks means the attachments,
+  and a single window would charge it the scrollback too.
+
+  **Both default to `Forever`, which revises `design/01` §8's earlier rolling-window
+  default.** The argument is asymmetry rather than taste: retention can be switched on
+  whenever a network wants it, and content already allowed to go dark cannot come back — so
+  a network that never thinks about the setting should keep its history. Zero, negative and
+  absurd values all read as `Forever` for the same reason. A log is judged on its *newest*
+  record: one somebody is still writing to is live however far back it reaches.
+
+  Attachments have a window and nothing yet to apply it to, since the CLI does not carry
+  attachments — the policy is readable and honest about that rather than pretending. 78 → 83.
 - **2026-08-19** — **Made "try every epoch key" stop growing without bound.** Raised as a
   scaling worry and it was a fair one, though the proposed fix — re-encrypting old content
   under a new key — is the one thing this design must never do: a per-object DEK is fixed

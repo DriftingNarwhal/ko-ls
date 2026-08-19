@@ -389,3 +389,65 @@ fn revoking_a_non_member_is_refused() {
         String::from_utf8_lossy(&out.stderr)
     );
 }
+
+#[test]
+fn a_node_offline_across_a_rotation_catches_up_and_can_still_read() {
+    // Every rotation is a governance entry carrying an MLS commit (Core §3.3),
+    // and applying those in order is how a member derives the keys it missed.
+    // So absence costs nothing — *provided the node catches up*. Before it did,
+    // a node that was offline across a rotation held only the keys it produced
+    // or was handed directly.
+    //
+    // The gap was invisible in every earlier test, and the reason is worth
+    // knowing: an object keeps its DEK for life, so the absent node could still
+    // read appends to logs it already knew. It took a *new* object — one whose
+    // wrapping is under an epoch it never derived — to show anything wrong, and
+    // then it presented as content that fetched perfectly and would not open.
+    let alice = Home::new("catchup-alice");
+    let bob = Home::new("catchup-bob");
+    let carol = Home::new("catchup-carol");
+
+    let created = ok(&alice, &["init", "catching up"]);
+    let network = field(&created, "network   ");
+
+    let bob_identity = field(&ok(&bob, &["attach", &network]), "kols admit ");
+    ok(&alice, &["admit", &bob_identity]);
+
+    let alice_node = serve(&alice, 45131, None);
+    let address = field(
+        &alice_node.wait_for("listening", Duration::from_secs(20)),
+        "listening ",
+    );
+    ok(&alice, &["channel", "create", "general"]);
+
+    // Bob joins and is keyed, then goes away.
+    let bob_node = serve(&bob, 45132, Some(&address));
+    bob_node.wait_for("keyed into this network", Duration::from_secs(45));
+    drop(bob_node);
+
+    // While Bob is offline, Carol is admitted and keyed — which rotates the
+    // epoch — and then writes a log Bob has never seen.
+    let carol_identity = field(&ok(&carol, &["attach", &network]), "kols admit ");
+    ok(&alice, &["admit", &carol_identity]);
+    let carol_node = serve(&carol, 45133, Some(&address));
+    carol_node.wait_for("keyed into this network", Duration::from_secs(45));
+    ok(&carol, &["post", "general", "written while bob was away"]);
+    // Waited for on *Alice's* side, because Carol's daemon prints nothing when
+    // it publishes — "picked up" is about governance entries, and a post is a
+    // record. Alice learning it is the signal that Carol's segment is actually
+    // out there to be fetched.
+    alice_node.wait_for("learned 1 record", Duration::from_secs(60));
+
+    // Bob returns. Carol's log is a new object, wrapped under the epoch that
+    // admitting her produced — one Bob was not present for and must derive from
+    // the commit in the log.
+    let bob_again = serve(&bob, 45134, Some(&address));
+    bob_again.wait_for("caught up on", Duration::from_secs(45));
+    bob_again.wait_for("learned 1 record", Duration::from_secs(60));
+
+    let read = ok(&bob, &["read", "general"]);
+    assert!(
+        read.contains("written while bob was away"),
+        "bob must derive the epoch he missed and read what was written then:\n{read}"
+    );
+}

@@ -381,12 +381,33 @@ window whose remaining history is fully visible to new joiners. That is not one 
 with three values; it is **two orthogonal settings**, and every requested model falls out
 of their combination.
 
-**Axis 1 — retention (app-layer network policy).** How long segments are kept:
-- `Unbounded` — nothing is ever dropped.
-- `Window { days | messages }` — segments older than the window stop being replicated,
-  and, decisively, **stop being re-wrapped on epoch rotation**. Storage §5.2 already
-  specifies that content with no live wrapping simply goes dark; retention needs no new
-  mechanism, only the decision to stop re-wrapping.
+**Axis 1 — retention (app-layer network policy).** How long content is kept:
+- `Forever` — nothing is ever dropped. **The shipped default**, see below.
+- `Days(n)` — content older than the window stops being replicated, and, decisively,
+  **stops being re-wrapped on epoch rotation**. Storage §5.2 already specifies that
+  content with no live wrapping simply goes dark; retention needs no new mechanism, only
+  the decision to stop re-wrapping.
+
+**Two windows, not one: `chat:retain-messages-days` and `chat:retain-attachments-days`.**
+Text and attachments differ in cost by orders of magnitude, so a single window has to be
+wrong for one of them. A message is capped at 8 KiB by `chat:message-max-bytes` and its
+flow is capped by the rate limits, so a million messages is a few gigabytes network-wide —
+years of a busy network. One attachment may be 25 MiB, ten to a message, so a single heavy
+week outweighs all of that text. A network bounding what it spends on other members' disks
+nearly always means the attachments, and one shared window would charge it the scrollback
+as well.
+
+**The default is `Forever` for both**, which revises this document's earlier default of a
+rolling window. The reasoning is asymmetry rather than preference: retention can be
+switched on whenever a network decides it wants it, and content already allowed to go dark
+cannot be brought back. Shipping a window by default means every network that never thinks
+about the setting quietly loses history it assumed it had. A zero, a negative or an absurd
+value all read as `Forever` for the same reason — a policy value that arrived corrupted
+must not start discarding history.
+
+**Judged on a log's newest record, not its oldest.** A log somebody is still writing to is
+live however far back it reaches, and retiring it because its first message is old would
+drop an active conversation.
 
 **Axis 2 — joiner access (protocol policy, Core §3.4).** Which epoch keys a new member
 receives: `CurrentEpochForward` (the protocol's conservative default) or `Full`
@@ -397,11 +418,19 @@ receives: `CurrentEpochForward` (the protocol's conservative default) or `Full`
 |---|---|---|---|
 | Open archive | `Unbounded` | `Full` | Discord with full scrollback for everyone |
 | Fresh start | `Unbounded` | `CurrentEpochForward` | History persists, but joining starts your clock |
-| Rolling window *(default)* | `Window` | `Full` | The network decides how far back anything is kept; joiners see all of what remains |
+| Rolling window | `Days(n)` | `Full` | The network decides how far back anything is kept; joiners see all of what remains |
 
-The default is the rolling window, per the requested hybrid. All three are genuine
-configurations of the same two switches, chosen at genesis and changeable afterward by a
-capability holder.
+All three are genuine configurations of the same two switches, chosen at genesis and
+changeable afterward by a capability holder. **Open archive is the shipped default**, per
+the reasoning above — an earlier draft of this document defaulted to the rolling window,
+and that is revised.
+
+**Retiring a superseded epoch key follows from retention rather than being its own
+setting.** A key becomes droppable once nothing still inside the window is wrapped under
+it, which the re-wrap-on-read path arranges by refreshing live wrappings forward. A
+separate "retire keys after n days" knob would be able to contradict the retention window
+— keep content a year, drop its key at six months — and make retained content silently
+unreadable.
 
 **Honest limits.** Retention is not deletion: a member who already fetched an old segment
 and its DEK keeps both, forever, and no rotation can take that back (Core §3.1). Dropping

@@ -170,6 +170,7 @@ async fn serve(root: std::path::PathBuf, listen: &str, peers: &[String]) -> Resu
             _ = refresh.tick() => {
                 adopt_local_changes(&store, &mut node, &identity)?;
                 if holds_group {
+                    catch_up_epochs(&store, &mut node)?;
                     let excluded = exclude_removed_members(&store, &mut node, &identity)?;
                     if excluded > 0 {
                         println!("rotated the epoch to exclude {excluded} removed member(s)");
@@ -231,6 +232,9 @@ async fn serve(root: std::path::PathBuf, listen: &str, peers: &[String]) -> Resu
                 let learned = persist_governance(&store, &node)?;
                 if learned > 0 {
                     println!("learned {learned} governance entr(ies)");
+                    // The entries that just arrived may include rotations this
+                    // node was not present for.
+                    catch_up_epochs(&store, &mut node)?;
                     // The log that just arrived may be the one that admits this
                     // node. Advertising and publishing are retried here rather
                     // than only at startup for exactly that reason, and the
@@ -377,12 +381,30 @@ fn publish_own_logs(store: &Store, node: &mut MemberNode) -> Result<usize, Strin
     };
     let mut published = 0;
 
+    let retention = kols_core::ChatPolicy::of(&state.policy).retain_messages();
+    let now = crate::chat::now_millis();
+
     for channel in store.channels_with_records().map_err(|e| e.to_string())? {
         let own = store
             .own_records(&channel, &identity.id())
             .map_err(|e| e.to_string())?;
         if own.is_empty() {
             continue;
+        }
+
+        // Retention, applied where `design/01` §8 says it lives: a log past the
+        // window stops being republished and stops being re-wrapped, and content
+        // with no live wrapping goes dark on its own (Storage §5.2). No new
+        // mechanism, only the decision to stop maintaining it.
+        //
+        // Judged on the *newest* record, not the oldest: a log somebody is still
+        // writing to is live, however far back it reaches. Dropping it because
+        // its first message is old would retire an active conversation.
+        if let Some(newest) = own.iter().map(|record| record.hlc.wall_millis).max() {
+            let age_days = u32::try_from((now - newest).max(0) / 86_400_000).unwrap_or(u32::MAX);
+            if !retention.covers(age_days) {
+                continue;
+            }
         }
         let pointer = kols_core::author_log_pointer(&channel, &identity.id());
         let dek = store.channel_dek(&pointer).map_err(|e| e.to_string())?;
@@ -707,6 +729,40 @@ fn exclude_removed_members(
         }
     }
     Ok(excluded)
+}
+
+/// Derives any epoch keys this node was absent for.
+///
+/// # Why a node cannot simply be given these
+///
+/// Every rotation is a governance entry carrying an MLS commit (Core §3.3), and
+/// applying those commits in order is how a member derives the keys it missed.
+/// So absence costs a member nothing *provided it catches up*: the log never
+/// shrinks, so the commits are always there to replay.
+///
+/// Without this, a node that was offline across a rotation held only the keys it
+/// produced or was handed directly. It could still read anything wrapped under
+/// an epoch it already had — including appends to objects it already knew, since
+/// an object keeps its DEK for life — so the gap stayed invisible until it met a
+/// *new* object wrapped under an epoch it never derived, and then presented as
+/// content that fetched perfectly and would not open.
+///
+/// Applying is idempotent by way of the keyring: a rotation already held is
+/// skipped, and a commit that will not apply is skipped rather than fatal, since
+/// it may belong to a branch this node cannot reach — which reconciliation
+/// resolves by re-welcome rather than by replay.
+fn catch_up_epochs(store: &Store, node: &mut MemberNode) -> Result<(), String> {
+    let applied = node.apply_pending_rotations();
+    if applied.is_empty() {
+        return Ok(());
+    }
+    println!("caught up on {} epoch rotation(s)", applied.len());
+    // Both, because applying a commit advances the group as well as the keyring,
+    // and a restart that recovered one without the other would be worse than
+    // recovering neither.
+    persist_keyring(store, node)?;
+    persist_group(store, node)?;
+    Ok(())
 }
 
 /// Saves the node's MLS group, if it has one.

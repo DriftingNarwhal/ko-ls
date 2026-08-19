@@ -47,6 +47,10 @@ pub mod keys {
     pub const MAX_FUTURE_SKEW_MILLIS: &str = "chat:max-future-skew-millis";
     /// The largest slowmode a channel manager may set.
     pub const SLOWMODE_MAX_SECONDS: &str = "chat:slowmode-max-seconds";
+    /// Days a message segment stays maintained. Zero or absent means forever.
+    pub const RETAIN_MESSAGES_DAYS: &str = "chat:retain-messages-days";
+    /// Days an attachment stays maintained. Zero or absent means forever.
+    pub const RETAIN_ATTACHMENTS_DAYS: &str = "chat:retain-attachments-days";
 }
 
 /// The shipped defaults, from spec 07 §4.3.
@@ -71,6 +75,49 @@ pub mod defaults {
     pub const MAX_FUTURE_SKEW_MILLIS: i64 = 300_000;
     /// See [`super::keys::SLOWMODE_MAX_SECONDS`].
     pub const SLOWMODE_MAX_SECONDS: i64 = 21_600;
+    /// See [`super::keys::RETAIN_MESSAGES_DAYS`] — forever.
+    pub const RETAIN_MESSAGES_DAYS: i64 = 0;
+    /// See [`super::keys::RETAIN_ATTACHMENTS_DAYS`] — forever.
+    pub const RETAIN_ATTACHMENTS_DAYS: i64 = 0;
+}
+
+/// How long content stays maintained — `design/01` §8's first axis.
+///
+/// # Why two of these rather than one
+///
+/// Text and attachments differ in cost by orders of magnitude, and a single
+/// window has to be wrong for one of them. A message is capped at 8 KiB and rate
+/// limits cap the flow, so a million of them is a few gigabytes network-wide —
+/// years of a busy network, and cheap. One attachment may be 25 MiB, ten to a
+/// message: a single heavy week outweighs all of that text. A network that wants
+/// to bound what it spends on other people's disks almost always means the
+/// attachments, and taking the scrollback with them is a cost it did not intend.
+///
+/// # Retention is a decision to stop maintaining, not to delete
+///
+/// Content past its window stops being replicated and, decisively, stops being
+/// re-wrapped on epoch rotation. Storage §5.2 already has content with no live
+/// wrapping simply going dark, so this needs no new mechanism — only the
+/// decision to stop refreshing. It is emphatically **not** deletion: a member who
+/// already fetched a segment and its DEK keeps both forever, and no rotation
+/// takes that back (Core §3.1). Dropping content makes it unavailable to those
+/// who did not already hold it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Retention {
+    /// Kept and re-wrapped for as long as the network exists.
+    Forever,
+    /// Maintained for this many days, then allowed to go dark.
+    Days(u32),
+}
+
+impl Retention {
+    /// Whether something this many days old is still maintained.
+    pub const fn covers(&self, age_days: u32) -> bool {
+        match self {
+            Self::Forever => true,
+            Self::Days(window) => age_days <= *window,
+        }
+    }
 }
 
 /// A typed view over a network's chat settings.
@@ -149,6 +196,50 @@ impl<'a> ChatPolicy<'a> {
     pub fn slowmode_max_seconds(&self) -> i64 {
         self.policy
             .app_policy_int(keys::SLOWMODE_MAX_SECONDS, defaults::SLOWMODE_MAX_SECONDS)
+    }
+
+    /// How long message segments stay maintained — `design/01` §8.
+    ///
+    /// **Forever by default**, and the direction of that choice is deliberate.
+    /// Retention can be switched on whenever a network wants it; content already
+    /// allowed to go dark cannot be brought back. So a network that never thinks
+    /// about this keeps its history, which is both what a chat product is
+    /// expected to do and the recoverable side of the mistake.
+    pub fn retain_messages(&self) -> Retention {
+        Self::retention(
+            self.policy
+                .app_policy_int(keys::RETAIN_MESSAGES_DAYS, defaults::RETAIN_MESSAGES_DAYS),
+        )
+    }
+
+    /// How long attachments stay maintained — `design/01` §8.
+    ///
+    /// Separate from messages because the costs are not comparable. A message is
+    /// bounded at 8 KiB and its rate is capped, so a million of them is a few
+    /// gigabytes network-wide — years of a busy network. One attachment may be
+    /// 25 MiB, ten to a message, so a single heavy week outweighs all of that
+    /// text. A network bounding what it spends on other members' disks nearly
+    /// always means these, and one shared window would make it pay for that in
+    /// scrollback it never intended to give up.
+    pub fn retain_attachments(&self) -> Retention {
+        Self::retention(self.policy.app_policy_int(
+            keys::RETAIN_ATTACHMENTS_DAYS,
+            defaults::RETAIN_ATTACHMENTS_DAYS,
+        ))
+    }
+
+    /// Reads a day count as a window, treating anything meaningless as forever.
+    ///
+    /// Zero and negative both mean forever rather than "expire immediately",
+    /// which is the fail-safe reading: a value that arrived corrupted, or from a
+    /// client with a different idea of the key, must not quietly start
+    /// discarding a network's history.
+    const fn retention(days: i64) -> Retention {
+        if days <= 0 || days > u32::MAX as i64 {
+            Retention::Forever
+        } else {
+            Retention::Days(days as u32)
+        }
     }
 
     /// Reads a size, refusing to let a negative one become a huge `usize`.

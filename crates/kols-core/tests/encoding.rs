@@ -404,3 +404,92 @@ fn a_wrongly_typed_value_falls_back_to_the_default() {
         defaults::MESSAGE_RATE
     );
 }
+
+// ── retention (`design/01` §8) ─────────────────────────────────────────
+
+#[test]
+fn a_network_that_never_configured_retention_keeps_everything() {
+    // The default, and the direction of the choice. Retention can be switched on
+    // whenever a network decides it wants it; content already allowed to go dark
+    // cannot be brought back. A network that never thinks about this keeping its
+    // history is both what a chat product is expected to do and the recoverable
+    // side of the mistake.
+    let policy = intranet_governance::NetworkPolicy::conservative_default();
+    let chat = ChatPolicy::of(&policy);
+
+    assert_eq!(chat.retain_messages(), Retention::Forever);
+    assert_eq!(chat.retain_attachments(), Retention::Forever);
+    assert!(chat.retain_messages().covers(u32::MAX));
+}
+
+#[test]
+fn messages_and_attachments_carry_separate_windows() {
+    // The reason there are two. A message is bounded at 8 KiB with a capped
+    // rate, so a million of them is a few gigabytes network-wide; one attachment
+    // may be 25 MiB, ten to a message. A network bounding what it spends on
+    // other members' disks means the attachments, and one shared window would
+    // charge it the scrollback as well.
+    let mut policy = intranet_governance::NetworkPolicy::conservative_default();
+    policy.app_policy.insert(
+        keys::RETAIN_ATTACHMENTS_DAYS.to_owned(),
+        intranet_governance::PolicyValue::Int(30),
+    );
+    let chat = ChatPolicy::of(&policy);
+
+    assert_eq!(chat.retain_messages(), Retention::Forever);
+    assert_eq!(chat.retain_attachments(), Retention::Days(30));
+    assert!(chat.retain_attachments().covers(30), "the window is inclusive");
+    assert!(!chat.retain_attachments().covers(31));
+}
+
+#[test]
+fn a_meaningless_window_reads_as_forever_rather_than_as_expire_now() {
+    // Fail-safe, and the failure it guards is severe: a value that arrived
+    // corrupted, or written by a client with a different idea of the key, must
+    // not quietly start discarding a network's history. Zero is the documented
+    // way to say "forever", and a negative or absurd value is treated the same
+    // rather than being read as a window that has already passed.
+    for value in [0i64, -1, -86_400, i64::MIN, i64::MAX] {
+        let mut policy = intranet_governance::NetworkPolicy::conservative_default();
+        policy.app_policy.insert(
+            keys::RETAIN_MESSAGES_DAYS.to_owned(),
+            intranet_governance::PolicyValue::Int(value),
+        );
+        assert_eq!(
+            ChatPolicy::of(&policy).retain_messages(),
+            Retention::Forever,
+            "{value} must read as forever"
+        );
+    }
+}
+
+#[test]
+fn a_configured_window_survives_encoding_like_any_other_policy_value() {
+    // Retention is a validity-adjacent setting every node must agree on, so it
+    // rides the app policy map (Core §2.6.2) and has to encode identically on
+    // two nodes that built the same logical policy.
+    let mut policy = intranet_governance::NetworkPolicy::conservative_default();
+    policy.app_policy.insert(
+        keys::RETAIN_MESSAGES_DAYS.to_owned(),
+        intranet_governance::PolicyValue::Int(365),
+    );
+    policy.app_policy.insert(
+        keys::RETAIN_ATTACHMENTS_DAYS.to_owned(),
+        intranet_governance::PolicyValue::Int(30),
+    );
+
+    let mut rebuilt = intranet_governance::NetworkPolicy::conservative_default();
+    for (key, value) in policy.app_policy.iter().rev() {
+        rebuilt.app_policy.insert(key.clone(), value.clone());
+    }
+
+    let mut a = intranet_crypto::Enc::domain("test");
+    let mut b = intranet_crypto::Enc::domain("test");
+    policy.encode(&mut a);
+    rebuilt.encode(&mut b);
+    assert_eq!(a.finish(), b.finish(), "insertion order must not matter");
+    assert_eq!(
+        ChatPolicy::of(&rebuilt).retain_messages(),
+        Retention::Days(365)
+    );
+}
