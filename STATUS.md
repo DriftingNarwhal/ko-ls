@@ -18,7 +18,7 @@ Two repositories, both on this machine, both with unpushed work:
 
 | Repo | State |
 |---|---|
-| `ko-ls` (this one) | 12 commits. Pushed to GitHub — see §8 |
+| `ko-ls` (this one) | Pushed to `DriftingNarwhal/ko-fi` (private), branch `main` |
 | `../distributed-intranet` | **3 commits ahead of `origin/main` and not pushed**: spec 07, E9, E2. They are on `main` locally. Push them, or the client's path dependencies point at code GitHub does not have |
 
 **Next task:** the chat side of E2 — define `ChannelDefinition`, `ChannelUpdate`,
@@ -121,8 +121,8 @@ design changes before anything else is built.
 
 ## 7. Where the Code Lives
 
-- `ko-ls` — pushed to a private GitHub repository (see the session's closing notes for the
-  exact remote; `git remote -v` here is authoritative).
+- `ko-ls` — `origin` is `github.com/DriftingNarwhal/ko-fi` (private). The repository name
+  differs from the project name; that is deliberate, not a mistake to correct.
 - `distributed-intranet` — `origin` is `github.com/DriftingNarwhal/distributed-intranet`.
   **Its three newest commits are local only.** Nothing in the client builds against a
   published version of the protocol yet: the crates are path dependencies on the sibling
