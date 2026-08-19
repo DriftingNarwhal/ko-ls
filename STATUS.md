@@ -15,8 +15,7 @@ it is believed.
 
 **Read this section, then §1. Everything else is reference.**
 
-Two repositories on this machine, **both committed on `main`** — the E12 round is local
-until pushed:
+Two repositories on this machine, **both pushed and current**:
 
 | Repo | Remote |
 |---|---|
