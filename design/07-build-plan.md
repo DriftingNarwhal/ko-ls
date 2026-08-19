@@ -1,6 +1,6 @@
 # Finalization and P0 Build Plan
 
-**Document status:** v1.0 — F1, F2, S1 and P0 complete; F3 done; P1 not started
+**Document status:** v1.0 — F1, F2, F3, S1, S3 and P0 complete; P1 not started
 **Depends on:** `00`–`06`
 **Consumed by:** whoever starts building
 
@@ -10,10 +10,11 @@
 
 The design set is complete at the architectural level: every mechanism has a home, every
 protocol change is enumerated with acceptance criteria, and no architectural question is
-carried open. What is *not* done is the layer below architecture — byte formats,
-repository layout, and a development environment that can build a Tauri app.
+carried open. What was *not* done when this was written is the layer below architecture —
+byte formats, repository layout, and a development environment that can build a Tauri app.
 
-This document lists exactly that, in the order it has to happen.
+This document lists exactly that, in the order it has to happen. All of it is now done;
+what each item turned out to cost is recorded in its own section.
 
 ---
 
@@ -86,11 +87,20 @@ tested together:
 /workspaces/ko-ls/
 ├── distributed-intranet/     existing repo — protocol, specs, harness
 └── ko-ls/                    new repo — the client
+    ├── .devcontainer/        the environment for both workspaces (S3)
     ├── design/               these documents (moved from chat-app/design/)
     └── crates/               kols-core, kols-store, kols-net, kols-media, kols-api, kols-app
 ```
 
 Switch the dependency to a git tag once the protocol changes have landed and stabilised.
+
+**The dev container config lives in the client repo and is tracked there**, because the
+client is what needs a Tauri toolchain and this document is what owns S3. Since the path
+dependency above means a container seeing only this repo would be missing half the build,
+it mounts the *parent* of the two and lands at `/workspaces/ko-ls` — the tree drawn here.
+So the folder to open is `ko-ls`, and the tree you land in is the one above. The protocol
+repo carried a second, older config until S3; two configs for one workspace is the same
+drift this project objects to elsewhere, so there is now one.
 
 ### S2 — Protocol changes land on `main`, one at a time
 
@@ -105,20 +115,38 @@ Order for P1: **E9** (app policy map, small) → **E2** (channel entry variants)
 protocol change, since `PointerId::from_bytes` is already public (`06` §3). **P0 therefore
 requires no protocol change at all**, which is a better position than the plan assumed.
 
-### S3 — Development environment
+### S3 — Development environment ✅ **done**
 
-Present and working: Rust 1.97.1, cargo, clippy, Docker (for the NAT harness).
+All three items landed in `.devcontainer/`, so a rebuilt container has them rather than
+each machine acquiring them by hand:
 
-Missing, and needed before the Tauri shell can build:
+- **Node.js 24 LTS**, from NodeSource. Debian 12 ships Node 18, which is past end of life.
+- **webkit2gtk 4.1 and the GTK stack Tauri v2 links against** — `libwebkit2gtk-4.1-dev`,
+  `libjavascriptcoregtk-4.1-dev`, `libsoup-3.0-dev`, `libayatana-appindicator3-dev`,
+  `librsvg2-dev`, plus `patchelf`, `file` and `xdg-utils` for the bundler.
+- **A display path**, confirmed by running rather than by argument.
 
-- **Node.js** — for the UI toolchain. Not needed for P0, which is CLI-only.
-- **webkit2gtk 4.1 + Tauri system dependencies** — `libwebkit2gtk-4.1-dev`,
-  `libappindicator3-dev`, `librsvg2-dev`, `patchelf`, `build-essential`. Also CLI-free
-  for P0.
-- **A display path for GUI on WSL2** — WSLg handles this on Windows 11; worth confirming
-  early rather than discovering it at P1.
+**Two things this list had wrong, both found by running it.** `libappindicator3-dev` does
+not exist in Debian 12 — the tray library it ships is the Ayatana fork,
+`libayatana-appindicator3-dev` — so the environment as written could not have been built.
+And the display arrives differently than assumed: there is no `/mnt/wslg` inside the
+container, because WSLg is on the *host* and what reaches the container is VS Code's own
+forwarding — an X server on `$DISPLAY` and a Wayland socket in `$XDG_RUNTIME_DIR`, both
+live. GTK takes the Wayland one when `WAYLAND_DISPLAY` is set, which leaves nothing for
+`xwininfo` to observe, so `GDK_BACKEND=x11` is what a script checks a window with.
 
-None of this blocks P0. All of it blocks P1.
+**Confirming it meant building a Tauri v2 app and launching it**, which is the only form
+of confirmation this item accepts: a scaffolded app compiled and linked against the system
+webview in 44 seconds, and an 800×600 window mapped on the X display within a second, with
+its WebKit child process alongside. Done in a scratch directory, not in this repo — crates
+are created when there is code for them.
+
+One thing worth having found now rather than at P1: the image carried only the C locale
+while `LANG` arrived set to `en_US.UTF-8`, so GTK started with *"Locale not supported by C
+library"* and fell back. A poor footing for a client whose entire payload is other
+people's text, and one generated locale away from fixed.
+
+None of this blocked P0. All of it blocked P1, and no longer does.
 
 ---
 

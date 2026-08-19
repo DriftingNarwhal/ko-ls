@@ -1,8 +1,8 @@
 # ko-ls — Implementation Status
 
-**Updated:** 2026-08-19 (E12 landed, narrowed to optional peer discovery)
+**Updated:** 2026-08-19 (S3 done — the environment can build and run a Tauri app)
 **Phase:** P1 — two nodes talk live and durably, and a joiner reads back through sealed
-history. The interface is designed; the environment for it is not built
+history. The interface is designed, and the environment for it now builds and runs
 **Design:** [`design/`](design/) — `00`–`08` at v1.0, `09` at v0.2. **`distributed-intranet/specs/07` is normative** where it and the design set overlap.
 
 This file is the answer to "where are we?". It is updated in the same change that moves
@@ -26,9 +26,22 @@ The client builds against the sibling checkout by **path dependency**, not a pub
 version, and deliberately so while the extensions are still moving. A fresh machine needs
 both repos cloned side by side.
 
-**Next task:** **S3** — the development environment (Node.js, webkit2gtk 4.1, a WSLg display
-path). Nothing about the Tauri shell can be built until it exists, `design/09` is written and
-E12's protocol half has landed, so the environment is the only thing in the way.
+**Next task:** **P1's client work** — the first thing that is not setup. `design/07` §2's
+list is exhausted: S3 is done, `design/09` is written, and E12's protocol half has landed, so
+nothing environmental is in the way. The two obvious starting points are the `kols-api`
+boundary (`design/05` §3), which everything in the interface has to cross, and the small owed
+E12 client item below.
+
+**S3 is done and was confirmed by running, not by installing.** A scaffolded Tauri v2 app
+compiled and linked against the system webview in 44 seconds and mapped an 800×600 window on
+the X display within a second, WebKit child process alongside. It was built in a scratch
+directory rather than this repo, because a crate here is a claim that something exists. Two
+corrections came out of it, both in `design/07` §2 now: `libappindicator3-dev` does not exist
+in Debian 12 (the Ayatana fork is what Tauri builds against), so the package list as written
+could not have been installed; and there is no `/mnt/wslg` in the container — WSLg is on the
+host, and what arrives is VS Code's forwarding of both an X server and a Wayland socket. GTK
+prefers Wayland when `WAYLAND_DISPLAY` is set, which leaves `xwininfo` nothing to observe, so
+`GDK_BACKEND=x11` is what a *script* checks a window with.
 
 **One small client item is owed and is not blocking:** `kols` still builds every node with
 `MemberNode::new`, so nothing yet asks for `Discovery::Off` on a conversation-profile network.
@@ -93,7 +106,7 @@ left green.
 
 | | |
 |---|---|
-| **Working on** | S3 — the development environment for Tauri |
+| **Working on** | P1 client work — nothing environmental is left |
 | **Blocked on** | Nothing |
 | **Runnable** | **`kols`** — init, attach, admit, revoke, serve, channel create/list, post, read. Two nodes hold a conversation. `cargo test` — 98 tests here and 644 in `../distributed-intranet`, clippy clean in both; `scripts/cross-check.sh` for big-endian |
 | **Next decision needed from the user** | Nothing blocking |
@@ -112,9 +125,9 @@ left green.
 
 | Item | State | Notes |
 |---|---|---|
-| S1 client repo | **Done** | `/workspaces/ko-ls/ko-ls`, git initialised, design moved in, `kols-core` scaffolded. **Nothing committed yet** — no commit has been made in either repo |
+| S1 client repo | **Done** | `/workspaces/ko-ls/ko-ls`, design moved in, crates building. Committed and pushed to `DriftingNarwhal/ko-ls` on `main`, in step with `origin` — §0's table is the current statement of that |
 | S2 protocol changes on `main` | In progress | E9 (Core §2.6.2), E2 (Core §2.7.2), E5, E4, E11 (Core §2.2.1) and E12 (Core §5.1.1) landed, each with spec text, implementation and tests together. P1's protocol work is finished again; E7, E10 and E13 are P2 |
-| S3 Tauri environment | Not started | Node and webkit2gtk absent. Blocks P1, not P0 |
+| S3 Tauri environment | **Done** | Node 24 LTS, webkit2gtk 4.1 and the GTK stack, bundler tools, a generated UTF-8 locale — all in `.devcontainer/Dockerfile`, so a rebuild has them rather than each machine acquiring them by hand. Proven by building a Tauri v2 app and watching a window map |
 
 ## 4. Protocol Extensions
 
@@ -184,6 +197,66 @@ design changes before anything else is built.
 ## 8. Log
 
 Newest first. One line per change that moved the state above.
+
+- **2026-08-19** — **S3 done: the environment builds and runs a Tauri app, and the list of
+  what it needed was wrong in two places.** Installing the packages is not the interesting
+  part; finding out what the packages actually are is. `design/07` §2 named
+  `libappindicator3-dev`, which **does not exist in Debian 12** — the tray library it ships is
+  the Ayatana fork — so the environment as specified could not have been built by anyone
+  following it. And the display arrives by a different route than assumed: there is no
+  `/mnt/wslg` inside the container, because WSLg runs on the *host*; what reaches the
+  container is VS Code's own forwarding of both an X server and a Wayland socket, and both are
+  live.
+
+  **Confirmation had to be a running window, because nothing weaker distinguishes "the
+  packages are installed" from "a GUI works here".** A scaffolded Tauri v2 app compiled and
+  linked against the system webview in 44 seconds, and an 800×600 window mapped on `$DISPLAY`
+  within a second with its WebKit child process alongside. Built in a scratch directory, not
+  in this repo — `kols-app` gets created when it has code, not to hold a smoke test.
+
+  One consequence worth keeping for whoever writes a test that looks for a window: GTK takes
+  the Wayland socket when `WAYLAND_DISPLAY` is set, and a Wayland window is invisible to
+  `xwininfo`. The app is fine either way; a *script* asserting on a window needs
+  `GDK_BACKEND=x11`, or it will conclude nothing opened.
+
+  **A papercut found on the way, worth having now rather than at P1**: the image carried only
+  the C locale while `LANG` arrived set to `en_US.UTF-8`, so every GTK process started with
+  "Locale not supported by C library" and fell back. That is a poor footing for a client whose
+  entire payload is other people's text, and it was one generated locale away from fixed.
+
+  All of it landed in `.devcontainer/` rather than in this shell's history: the Dockerfile
+  carries the packages, Node 24 LTS from NodeSource (Debian ships 18, past end of life) and
+  the locale; `devcontainer.json` gains `ko-ls/Cargo.toml` in `rust-analyzer.linkedProjects`,
+  which had named only the protocol workspace and left half the tree unanalysed, and its
+  `postCreateCommand` now checks node, npm and `pkg-config --modversion webkit2gtk-4.1` —
+  the dependency whose absence otherwise surfaces as a Rust link error.
+
+  **That config now lives in this repo, at `.devcontainer/`, and is tracked.** It sat at the
+  workspace root, which is in neither git repo — so the environment every claim above depends
+  on was the one thing nothing recorded. It is the client that needs Tauri and this repo's
+  `design/07` that owns S3, so this is where it belongs. Because the client builds against
+  its sibling by path dependency, the container still has to see both: `workspaceMount` binds
+  the *parent* of the two repos and `workspaceFolder` lands at `/workspaces/ko-ls`, so the
+  folder you open is now the `ko-ls` repo and the tree you land in is unchanged.
+
+  **Two build caches, not one.** `ko-ls/target` had been sitting on the bind mount while the
+  protocol's was in a named volume — the exact case the volumes exist to avoid — so
+  `ko-ls-client-target` joins them. The first build after this recompiles from scratch, and
+  the 2.1 GB already in `ko-ls/target` on the host is shadowed rather than removed; it wants
+  deleting from outside the container.
+
+  **`distributed-intranet/.devcontainer/` is deleted.** It called itself `dclone-dev`,
+  predated the NAT harness and the clippy half of the gate, mounted no docker socket, and was
+  referenced by nothing. One config, in one place, that is actually the one being used.
+
+  **The Dockerfile was then built from scratch rather than trusted**, because everything
+  above had been proven against a container patched by hand, and "a rebuild has these" is a
+  different claim from "this machine has these". A clean `docker build` of it comes up with
+  Node 24.19.0, webkit2gtk 4.1, JavaScriptCore, libsoup 3, Ayatana appindicator, patchelf and
+  a resolving `en_US.UTF-8` — so the image reproduces the environment rather than recording
+  what was done to one instance of it.
+
+  No client code changed: 98 tests here and clippy silent, both unchanged.
 
 - **2026-08-19** — **E12 landed, and landed narrower than it was written.** `design/06` §12
   asked for tiered node liveness — hot, warm and cold, with a warm node holding a relay

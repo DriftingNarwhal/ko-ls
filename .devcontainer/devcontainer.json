@@ -1,0 +1,61 @@
+{
+  "name": "ko-ls-dev",
+  "build": {
+    "dockerfile": "Dockerfile"
+  },
+
+  // This config lives in the client repo, so it is version-controlled with the
+  // work it serves — but the client builds against `distributed-intranet` by
+  // path dependency, so the container has to see the *parent* of both repos or
+  // half the build is missing. Hence: open the `ko-ls` folder, mount its parent,
+  // and land in the same `/workspaces/ko-ls` the layout in `design/07` §2 draws.
+  "workspaceMount": "source=${localWorkspaceFolder}/..,target=/workspaces/ko-ls,type=bind",
+  "workspaceFolder": "/workspaces/ko-ls",
+
+  "mounts": [
+    // Lets `docker compose` inside the container drive the host daemon, which is
+    // what harness/run-scenario.sh needs. Drop this line if you never run the
+    // NAT scenarios, or if your host has no socket at this path.
+    "source=/var/run/docker.sock,target=/var/run/docker.sock,type=bind",
+
+    // Keep cargo's registry and both workspaces' build artifacts in named
+    // volumes: rebuilds stay fast across container restarts and the container's
+    // toolchain never fights the host's over the same target/ directory. Both
+    // workspaces need this, not just the protocol — the client's target/ was
+    // landing on the bind mount, which is the case the third line was added to
+    // avoid. `ko-ls-cargo-target` is the *protocol's*, named before there was a
+    // client to distinguish it from; renaming it would throw away a multi-gigabyte
+    // cache to fix a word.
+    "source=ko-ls-cargo-registry,target=/usr/local/cargo/registry,type=volume",
+    "source=ko-ls-cargo-target,target=/workspaces/ko-ls/distributed-intranet/target,type=volume",
+    "source=ko-ls-client-target,target=/workspaces/ko-ls/ko-ls/target,type=volume"
+  ],
+
+  // --init reaps the processes cargo test and the harness leave behind.
+  "runArgs": ["--init"],
+
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "rust-lang.rust-analyzer",
+        "tamasfe.even-better-toml",
+        "vadimcn.vscode-lldb",
+        "ms-azuretools.vscode-docker"
+      ],
+      "settings": {
+        // Both Cargo workspaces are a level down from the folder being opened,
+        // and the client is a path dependency on the protocol, so naming only
+        // one leaves half the tree unanalysed.
+        "rust-analyzer.linkedProjects": [
+          "distributed-intranet/Cargo.toml",
+          "ko-ls/Cargo.toml"
+        ]
+      }
+    }
+  },
+
+  // Fails loudly here rather than at the first Tauri build. `pkg-config
+  // --exists webkit2gtk-4.1` is the one worth keeping: it is the dependency
+  // whose absence looks like a Rust link error rather than a missing package.
+  "postCreateCommand": "cargo --version && cargo clippy --version && cargo fmt --version && docker --version && docker compose version && claude --version && node --version && npm --version && pkg-config --modversion webkit2gtk-4.1"
+}
