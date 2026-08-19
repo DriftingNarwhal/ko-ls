@@ -143,12 +143,39 @@ impl Segment {
         Ok(())
     }
 
-    /// Whether an author's readings strictly increase through this segment.
+    /// Whether this segment's records are in a valid order.
     ///
-    /// `design/08` §4.1 requires it, and it is what gives an author's own
-    /// records a total order with no separate sequence field, plus duplicate-id
-    /// prevention for free.
-    pub fn hlcs_strictly_increase(&self) -> bool {
-        self.records.windows(2).all(|w| w[0].hlc < w[1].hlc)
+    /// Two conditions, and the split between them is what makes multi-device
+    /// authorship possible at all:
+    ///
+    /// 1. **Records ascend by `(hlc, id)`**, the same total order readers merge
+    ///    by, so a segment is already in reading order and a reader never has to
+    ///    sort within one.
+    /// 2. **Readings strictly increase per device**, not per author. One device
+    ///    always knows its own last reading and can advance past it; two devices
+    ///    of one identity, writing concurrently, genuinely cannot without
+    ///    coordinating — and requiring them to would make multi-device
+    ///    authorship need a lock. Cross-device ties break by record id instead,
+    ///    which every node computes identically.
+    ///
+    /// *The per-device split was found implementing pointer-collision recovery,
+    /// where a merged segment necessarily interleaves two devices' records;
+    /// `design/08` §4.1 records it.*
+    pub fn ordering_is_valid(&self) -> bool {
+        let ascending = self
+            .records
+            .windows(2)
+            .all(|w| (w[0].hlc, w[0].id()) < (w[1].hlc, w[1].id()));
+
+        let mut per_device: std::collections::BTreeMap<_, crate::Hlc> =
+            std::collections::BTreeMap::new();
+        let per_device_strict = self.records.iter().all(|record| {
+            match per_device.insert(record.device, record.hlc) {
+                Some(previous) => previous < record.hlc,
+                None => true,
+            }
+        });
+
+        ascending && per_device_strict
     }
 }

@@ -11,7 +11,7 @@ use intranet_governance::{
     NetworkPolicy,
 };
 use intranet_identity::{MasterSeed, NetworkId, PerNetworkIdentity};
-use intranet_storage::{ChunkSpec, Dek};
+use intranet_storage::{ChunkSpec, Dek, MutablePointer};
 use kols_core::*;
 
 fn network() -> NetworkId {
@@ -281,4 +281,193 @@ fn an_author_without_the_capability_cannot_publish() {
         stranger_log.append(&stranger, record, &state),
         Err(CoreError::Storage(_))
     ));
+}
+
+// ── criterion 5: version collision loses no records ────────────────────
+
+/// Two writers on one identity, publishing concurrently.
+///
+/// The multi-device case (`design/05` §6): both hold the same identity and the
+/// same derived pointer, neither has seen the other, and both publish at the
+/// same version. The protocol settles which record is canonical; what the losing
+/// side's *records* mean is left to us, and the answer must not be "they are
+/// gone" — their author published validly and has no way to know they lost.
+#[test]
+fn a_version_collision_loses_no_records() {
+    let author = identity(1);
+    let state = state(&author);
+    let channel = server_channel_id(&network(), &[9u8; 32]);
+    let dek = || Dek::from_bytes([5u8; 32]);
+
+    let mut left = AuthorLog::open(&author, channel, dek(), ChunkSpec::default());
+    let mut right = AuthorLog::open(&author, channel, dek(), ChunkSpec::default());
+
+    let left_published = left
+        .append(
+            &author,
+            Record::create(&author, channel, Hlc::new(100, 0), message("from the laptop")),
+            &state,
+        )
+        .expect("appends");
+    let right_published = right
+        .append(
+            &author,
+            Record::create(&author, channel, Hlc::new(101, 0), message("from the phone")),
+            &state,
+        )
+        .expect("appends");
+
+    // Same pointer, same version, different content: a genuine collision.
+    assert_eq!(left_published.pointer.pointer_id, right_published.pointer.pointer_id);
+    assert_eq!(left_published.pointer.version, right_published.pointer.version);
+
+    let winner = MutablePointer::resolve(&left_published.pointer, &right_published.pointer);
+    let winner_is_left = winner == &left_published.pointer;
+
+    // Both sides compute the same winner, from the records alone.
+    assert_eq!(
+        MutablePointer::resolve(&right_published.pointer, &left_published.pointer),
+        winner
+    );
+
+    let (winner_pointer, winner_segment, loser, loser_published) = if winner_is_left {
+        (
+            left_published.pointer.clone(),
+            left.segment().clone(),
+            &mut right,
+            &right_published,
+        )
+    } else {
+        (
+            right_published.pointer.clone(),
+            right.segment().clone(),
+            &mut left,
+            &left_published,
+        )
+    };
+
+    let rebased = loser
+        .rebase(&author, &winner_pointer, &winner_segment, &state)
+        .expect("rebases");
+
+    // The union, at the next version, in reading order.
+    assert_eq!(rebased.pointer.version, winner_pointer.version + 1);
+    assert!(rebased.pointer.supersedes(&winner_pointer));
+    assert_eq!(loser.segment().records.len(), 2);
+    assert!(loser.segment().ordering_is_valid());
+
+    let bodies: Vec<_> = loser
+        .segment()
+        .records
+        .iter()
+        .map(|record| match &record.body {
+            RecordBody::Message { body, .. } => body.clone(),
+            _ => unreachable!(),
+        })
+        .collect();
+    assert_eq!(bodies, vec!["from the laptop", "from the phone"]);
+
+    let _ = loser_published;
+}
+
+/// What a rebase costs, which depends on where the loser's records sort.
+///
+/// A segment is prefix-stable: chunks before the first change survive. So a
+/// loser whose records sort *after* the winner's re-uploads only the tail, while
+/// one whose records interleave rewrites from the first interleaved point on.
+/// Neither is a correctness problem — no records are lost either way — but it is
+/// worth knowing that a device coming back online after a long absence is the
+/// cheap case, and two devices writing simultaneously is the expensive one.
+#[test]
+fn a_rebase_reuses_the_canonical_chunks_when_records_sort_after() {
+    let author = identity(1);
+    let state = state(&author);
+    let channel = server_channel_id(&network(), &[9u8; 32]);
+
+    // The canonical side, long enough to span several chunks.
+    let mut canonical = AuthorLog::open(
+        &author,
+        channel,
+        Dek::from_bytes([5u8; 32]),
+        ChunkSpec::from_target(16 * 1024),
+    );
+    for i in 0..600u32 {
+        canonical
+            .append(
+                &author,
+                Record::create(
+                    &author,
+                    channel,
+                    Hlc::new(1_700_000_000_000, i),
+                    message(&format!("canonical message {i} with a sentence of text")),
+                ),
+                &state,
+            )
+            .expect("appends");
+    }
+    let canonical_pointer = canonical.pointer().expect("published").clone();
+    let canonical_segment = canonical.segment().clone();
+
+    // The losing side, whose one record sorts after everything above.
+    let mut loser = AuthorLog::open(
+        &author,
+        channel,
+        Dek::from_bytes([5u8; 32]),
+        ChunkSpec::from_target(16 * 1024),
+    );
+    loser
+        .append(
+            &author,
+            Record::create(
+                &author,
+                channel,
+                Hlc::new(1_700_000_001_000, 0),
+                message("arrived late"),
+            ),
+            &state,
+        )
+        .expect("appends");
+
+    let rebased = loser
+        .rebase(&author, &canonical_pointer, &canonical_segment, &state)
+        .expect("rebases");
+
+    println!(
+        "rebase moved {} of {} bytes",
+        rebased.new_bytes(),
+        rebased.total_bytes()
+    );
+    assert_eq!(loser.segment().records.len(), 601);
+    assert!(
+        rebased.new_bytes() < rebased.total_bytes() / 4,
+        "rebase moved {} of {} bytes — canonical chunks were not reused",
+        rebased.new_bytes(),
+        rebased.total_bytes()
+    );
+}
+
+#[test]
+fn a_rebase_is_idempotent_when_there_is_nothing_to_merge() {
+    let author = identity(1);
+    let state = state(&author);
+    let channel = server_channel_id(&network(), &[9u8; 32]);
+
+    let mut log = AuthorLog::open(&author, channel, Dek::from_bytes([5u8; 32]), ChunkSpec::default());
+    let published = log
+        .append(
+            &author,
+            Record::create(&author, channel, Hlc::new(1, 0), message("only")),
+            &state,
+        )
+        .expect("appends");
+
+    // Rebasing onto its own state must add nothing, so a node that reconciles
+    // twice does not grow its log.
+    let segment = log.segment().clone();
+    let rebased = log
+        .rebase(&author, &published.pointer, &segment, &state)
+        .expect("rebases");
+
+    assert_eq!(log.segment().records.len(), 1);
+    assert_eq!(rebased.new_bytes(), 0, "an empty rebase moved bytes");
 }

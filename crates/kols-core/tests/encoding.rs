@@ -158,7 +158,7 @@ fn segment_round_trips_and_re_emits_identically() {
     // is what makes an id stable across the durable and live paths.
     assert_eq!(decoded.canonical_bytes(), bytes);
     decoded.verify().expect("verifies");
-    assert!(decoded.hlcs_strictly_increase());
+    assert!(decoded.ordering_is_valid());
 }
 
 // ── §10.3 injectivity ──────────────────────────────────────────────────

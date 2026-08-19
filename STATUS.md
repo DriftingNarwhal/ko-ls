@@ -1,7 +1,7 @@
 # ko-ls — Implementation Status
 
 **Updated:** 2026-08-19
-**Phase:** P0 (spike) — criteria 1–4 met at the domain layer; 5 and the wire remain
+**Phase:** P0 (spike) — all five criteria met at the domain layer; the wire remains
 **Design:** [`design/`](design/) — `00`–`08`. `08-record-encoding.md` is normative.
 
 This file is the answer to "where are we?". It is updated in the same change that moves
@@ -14,9 +14,9 @@ it is believed.
 
 | | |
 |---|---|
-| **Working on** | P0 criterion 5, then `kols-net` for the wire half of 1–3 |
+| **Working on** | `kols-net` — the wire half of criteria 1–3, over real `MemberNode` transport |
 | **Blocked on** | Nothing |
-| **Runnable** | `cargo test` — 27 tests, clippy clean. No binary yet |
+| **Runnable** | `cargo test` — 30 tests, clippy clean. No binary yet |
 | **Next decision needed from the user** | None outstanding |
 
 ---
@@ -61,7 +61,7 @@ both green.
 
 | Crate | State |
 |---|---|
-| `kols-core` | **Encoding, author logs, merge** — records/segments/ids, `AuthorLog`, `ChannelView` merge and render, permission resolution, capability vocabulary. 27 tests |
+| `kols-core` | **Encoding, author logs, merge, collision recovery** — records/segments/ids, `AuthorLog` incl. `rebase`, `ChannelView`, permissions, capability vocabulary. 30 tests |
 | `kols-store` | Not created |
 | `kols-net` | Not created |
 | `kols-media` | Not created |
@@ -82,7 +82,7 @@ From `design/07-build-plan.md` §3. None of these pass yet.
 | 2 | Appending one message transfers **only new tail chunks**, asserted on bytes moved | **Met (single-node half)** — 1,556 of 176,115 bytes, 1 new chunk of 8. The wire half still needs two nodes |
 | 3 | Partition, both post, heal, converge byte-identically | **Met (merge layer)** — both sides write at overlapping clock readings, heal in different orders, converge. Wire half open |
 | 4 | Records from an identity without `publish:chat-log` are refused by the *reader* | **Met** — non-members, forged signatures and wrong-channel records all refused at admission, with the reason surfaced |
-| 5 | Pointer version collision resolves by lower record hash, loser re-publishes | Not started |
+| 5 | Pointer version collision resolves by lower record hash, loser re-publishes | **Met** — `AuthorLog::rebase` unions by record id and republishes at the next version, losing nothing. Winner's chunks recomputed locally, so a late record costs 15,901 of 164,956 bytes |
 
 Criterion 2 is the one P0 exists for. If it fails, the segment model is wrong and the
 design changes before anything else is built.
@@ -93,6 +93,13 @@ design changes before anything else is built.
 
 Newest first. One line per change that moved the state above.
 
+- **2026-08-19** — **P0 criterion 5 met.** `AuthorLog::rebase` implements the content-merge
+  semantics Storage §2.2 deliberately left to the application layer: union by record id,
+  republish at the next version, nothing dropped. Two findings recorded in the design —
+  HLC strictness is per **(author, device)** rather than per author, since two devices
+  cannot coordinate a shared counter without a lock; and rebase cost depends on where the
+  loser's records sort, cheap when they follow the winner's and expensive when they
+  interleave.
 - **2026-08-19** — **P0 criteria 1, 3 and 4 met at the merge layer.** `ChannelView` renders
   as a pure function of the admitted record set: 40 permutations, reversal, duplicate
   delivery and a two-sided partition heal all converge on identical output. Reader-side

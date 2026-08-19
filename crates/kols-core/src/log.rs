@@ -143,7 +143,15 @@ impl AuthorLog {
         if record.channel != self.channel || record.author != author.id() {
             return Err(CoreError::BadSignature);
         }
-        if let Some(last) = self.segment.records.last()
+        // Against this device's own last reading, not the segment's: after a
+        // rebase (§`rebase`) a segment interleaves two devices, and the other
+        // device's readings are not this one's to advance past.
+        if let Some(last) = self
+            .segment
+            .records
+            .iter()
+            .rev()
+            .find(|existing| existing.device == record.device)
             && record.hlc <= last.hlc
         {
             return Err(CoreError::NonMonotonicClock {
@@ -210,5 +218,63 @@ impl AuthorLog {
     /// The current signed pointer, once anything has been published.
     pub const fn pointer(&self) -> Option<&MutablePointer> {
         self.pointer.as_ref()
+    }
+
+    /// Recovers from losing a version collision, without losing records.
+    ///
+    /// # The gap this fills
+    ///
+    /// Storage §2.2 settles which of two same-version pointer records is
+    /// canonical — lower record hash wins — and then says plainly that it
+    /// "supplies no content-merge semantics", leaving what two concurrent edits
+    /// mean together to the application layer. This is that decision, for author
+    /// logs.
+    ///
+    /// It is easy because of how the log is shaped: a segment is a set of
+    /// independently signed, content-addressed records, so merging two versions
+    /// is a union by id and a sort, with no field-level conflict to invent a
+    /// rule for. The loser adopts the winner's pointer and republishes the union
+    /// at the next version. **Nothing is dropped** — which matters, because the
+    /// loser's records were validly published and their author has no way to
+    /// know they lost except by being told.
+    ///
+    /// The winner's manifest is recomputed locally rather than fetched: chunk
+    /// encryption is deterministic per (chunk, DEK), so re-encoding the winning
+    /// segment reproduces the winner's exact chunk set. That is what keeps
+    /// `new_chunks` meaningful across a rebase instead of reporting the whole
+    /// object.
+    pub fn rebase(
+        &mut self,
+        author: &PerNetworkIdentity,
+        canonical: &MutablePointer,
+        canonical_segment: &Segment,
+        state: &GovernanceState,
+    ) -> Result<Published, CoreError> {
+        if canonical.pointer_id != self.pointer_id
+            || canonical_segment.channel != self.channel
+            || canonical_segment.author != self.segment.author
+        {
+            return Err(CoreError::BadSignature);
+        }
+
+        let mut union: std::collections::BTreeMap<(crate::Hlc, crate::MessageId), Record> =
+            canonical_segment
+                .records
+                .iter()
+                .chain(self.segment.records.iter())
+                .map(|record| ((record.hlc, record.id()), record.clone()))
+                .collect();
+
+        self.segment.sequence = canonical_segment.sequence;
+        self.segment.previous = canonical_segment.previous;
+        self.segment.records = std::mem::take(&mut union).into_values().collect();
+
+        self.pointer = Some(canonical.clone());
+        self.previous_manifest = Some(
+            intranet_storage::encode(&canonical_segment.canonical_bytes(), &self.dek, self.spec)
+                .manifest,
+        );
+
+        self.publish(author, state)
     }
 }

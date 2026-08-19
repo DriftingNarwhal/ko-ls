@@ -146,6 +146,32 @@ size, manifests grow without bound, and — decisively — retention (§8) needs
 history, which means old history must be *separate objects with separate DEKs*. A single
 object cannot be partially forgotten.
 
+### 3.1.1 Two Writers, One Log
+
+Two devices of one identity can publish the same author log concurrently — neither has
+seen the other, both publish at the same version. Storage §2.2 settles which *record* is
+canonical (lower record hash) and then says plainly that it supplies no content-merge
+semantics, leaving what the two versions mean together to the application layer. This is
+that decision.
+
+**The loser adopts the winner's pointer and republishes the union at the next version.**
+Nothing is dropped. Merging is a union by record id followed by a sort, with no field-level
+conflict to invent a rule for, because a segment is a set of independently signed,
+content-addressed records rather than a document. The loser's records were validly
+published and their author has no way to learn they lost except by being told, so
+discarding them would be the one unacceptable outcome.
+
+The winner's chunk set is **recomputed locally rather than fetched** — chunk encryption is
+deterministic per (chunk, DEK), so re-encoding the winning segment reproduces the winner's
+exact chunks.
+
+**What a rebase costs depends on where the loser's records sort**, and this is worth
+knowing before it surprises someone. A segment is prefix-stable, so a loser whose records
+sort *after* the winner's re-uploads only the tail — measured at 15,901 of 164,956 bytes
+for one late record against 600. A loser whose records interleave rewrites from the first
+interleaved point onward. A device returning after an absence is therefore the cheap case,
+and two devices writing simultaneously the expensive one; neither loses anything.
+
 ### 3.2 Locating a Log Without a Directory
 
 Each author log has exactly one mutable pointer, whose id is **derived**:

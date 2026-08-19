@@ -84,12 +84,21 @@ Ordering is `(wall_millis, counter)` ascending, compared as signed then unsigned
 milliseconds match `intranet_crypto::Timestamp` exactly, so no conversion exists to get
 wrong.
 
-**The counter is monotonic per (author, channel), and an HLC must strictly increase within
-one author's log.** Two records from the same author in the same channel sharing an HLC
-are **invalid** — both of them, not just the later one, since "later" is what is in
-dispute. This gives three properties at once: no duplicate ids from one author, gap
-detection within a segment, and a total order over an author's own records that needs no
-separate sequence field.
+**Readings strictly increase per (author, device, channel) — per *device*, not per
+author.** One device always knows its own last reading and can advance past it. Two
+devices of one identity, writing concurrently, genuinely cannot without coordinating, and
+requiring them to would make multi-device authorship need a lock across machines. Two
+records sharing a device and a reading are **invalid** — both of them, not just the later,
+since "later" is what is in dispute.
+
+Across devices, a tie breaks by **record id**, the same rule readers merge by. So a
+segment's records ascend by `(hlc, id)`, which is a total order every node computes
+identically, and one device's own records remain strictly ordered within it — no separate
+sequence field needed either way.
+
+*Corrected while implementing pointer-collision recovery, where a merged segment
+necessarily interleaves two devices' records and a per-author rule would have declared the
+merge invalid.*
 
 ### 4.2 Identifiers
 
