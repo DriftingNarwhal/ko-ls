@@ -41,7 +41,7 @@ readers are unavoidable rather than optional:
 2. **A channel entry is invalid in a `conversation`-profile network.** The protocol carries
    `chat` payloads without decoding them, so it cannot reach this verdict.
 
-**To pick up:** `cargo test` in this repo should show 56 passing and clippy silent. If it
+**To pick up:** `cargo test` in this repo should show 62 passing and clippy silent. If it
 does not, fix that before anything else — the tree was left green.
 
 ---
@@ -52,7 +52,7 @@ does not, fix that before anything else — the tree was left green.
 |---|---|
 | **Working on** | E4 — gossipsub live delivery |
 | **Blocked on** | Nothing |
-| **Runnable** | `cargo test` — 56 tests, clippy clean; `scripts/cross-check.sh` for big-endian. No binary yet |
+| **Runnable** | `cargo test` — 62 tests, clippy clean; `scripts/cross-check.sh` for big-endian. No binary yet |
 | **Next decision needed from the user** | Whether to do E4 next, or build a runnable CLI first so P1 has something to drive |
 
 ---
@@ -97,7 +97,7 @@ both green.
 
 | Crate | State |
 |---|---|
-| `kols-core` | **Encoding, author logs, merge, collision recovery, chat policy, channel structure** — records/segments/ids, `AuthorLog` incl. `rebase`, `ChannelView`, permissions, capability vocabulary, `ChatPolicy`, `ChannelEntry`. 54 tests |
+| `kols-core` | **Encoding, author logs, merge, collision recovery, chat policy, channel structure** — records/segments/ids, `AuthorLog` incl. `rebase`, `ChannelView`, permissions, capability vocabulary, `ChatPolicy`, `ChannelEntry`. 60 tests |
 | `kols-net` | **Publish and fetch** — stores/announces chunks, accepts pointers, reassembles segments. Two live two-node tests |
 | `kols-store` | Not created |
 | `kols-media` | Not created |
@@ -168,8 +168,25 @@ Newest first. One line per change that moved the state above.
   rendered (`design/08` §9); an unknown channel entry carries structure, and a reader that
   skipped it would hold different channel state from one that understood it.
 
-  Nineteen tests, including frozen vectors — spec 07 §3.8 is normative now, so a change to
-  one is a wire break rather than a value to re-bless. 37 → 56 in this repo.
+  Frozen vectors included, since §3.8 is normative now and a change to one is a wire break
+  rather than a value to re-bless.
+
+  **A bug found immediately afterwards, by wiring it to a real governance log.** The entry
+  declared a *fixed* capability per kind, which made channel creation work for Founders and
+  nobody else: an extension capability resolves by exact name, so a member holding
+  `chat:create-channel:*` — the grant `capabilities::network_scoped()` exists to register,
+  and the whole reason the verb is Ordinary — was refused, because the entry declared a
+  channel-scoped name they did not hold and which nobody *could* have registered in advance,
+  the channel id not existing until the entry creating it does. The declaration is now
+  chosen from what the author actually holds, narrowest first, and refuses up front when
+  they hold nothing rather than producing a log entry every node rejects.
+
+  The lesson is worth more than the fix: **what an entry declares has to be a name its
+  author was really granted, not the one that best describes the action.** The encoding
+  tests could not have caught it — they build values by hand, which is right for a wire
+  contract and blind to whether the protocol accepts what this client produces.
+  `channel_governance.rs` closes that, replaying a real log end to end. 37 → 62 in this
+  repo.
 - **2026-08-19** — **A relay can now refuse, and its advertisement binds.** Found by asking
   what actually stops a volunteer being asked for more than it offered: nothing did. A
   node's `bandwidth_cap` was read by every node *except* the one that declared it — it

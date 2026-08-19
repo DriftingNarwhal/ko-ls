@@ -639,42 +639,6 @@ fn every_channel_entry_kind_keeps_its_discriminant() {
 // ── the round trip through a governance entry ──────────────────────────
 
 #[test]
-fn an_entry_this_client_wrote_reads_back_through_every_check() {
-    // The writing side declares its capability from the entry's own kind, so a
-    // client cannot publish one declaring something else. The reading side then
-    // runs both checks E2 moved onto readers. Together they close the loop.
-    use intranet_governance::EntryBody;
-
-    let entry = definition(Some(category()));
-    let body = entry.to_app_entry();
-
-    let EntryBody::AppEntry {
-        namespace,
-        kind,
-        required,
-        ..
-    } = &body
-    else {
-        panic!("to_app_entry must produce an application entry");
-    };
-    assert_eq!(namespace, CHAT_NAMESPACE);
-    assert_eq!(kind, "channel-definition");
-    assert_eq!(
-        required,
-        &cap(&format!(
-            "chat:create-channel:cat:{}",
-            intranet_crypto::to_hex(category().as_bytes())
-        )),
-        "the declared capability comes from the kind, not from the caller"
-    );
-
-    assert_eq!(
-        ChannelEntry::read(&body, NetworkProfile::Server, None).expect("reads back"),
-        entry
-    );
-}
-
-#[test]
 fn read_refuses_what_admit_refuses_so_neither_check_can_be_skipped() {
     // The point of routing everything through one function: a client that
     // reaches a usable ChannelEntry has necessarily passed both checks. Decoding
@@ -683,11 +647,6 @@ fn read_refuses_what_admit_refuses_so_neither_check_can_be_skipped() {
     use intranet_governance::EntryBody;
 
     let entry = definition(None);
-
-    assert_eq!(
-        ChannelEntry::read(&entry.to_app_entry(), NetworkProfile::Conversation, None),
-        Err(ChannelRefusal::NotAServer)
-    );
 
     // A hand-built entry declaring a capability its kind does not need — the
     // exact case the protocol cannot catch, since it verified only that the

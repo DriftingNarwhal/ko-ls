@@ -38,7 +38,7 @@
 
 use crate::{CategoryId, ChannelId, CoreError, NetworkProfile};
 use intranet_crypto::{Dec, Enc, Hash, VerifyingKey, to_hex};
-use intranet_governance::{Capability, EntryBody, is_valid_app_entry_name};
+use intranet_governance::{Capability, EntryBody, GovernanceState, is_valid_app_entry_name};
 use intranet_identity::PerNetworkIdentityId;
 
 /// Domain tag for a channel entry payload — spec 07 §3.2.
@@ -230,11 +230,23 @@ impl ChannelEntry {
         Self { channel, body }
     }
 
-    /// The capability this entry must declare, at the scope it names.
+    /// The narrowest capability that authorizes this entry.
     ///
-    /// A definition may declare its category's scope, since that is where a new
-    /// channel's permissions come from and the channel's own scope does not exist
-    /// until it does. Everything else names the channel.
+    /// **Not the one an entry must declare.** There is no single such
+    /// capability: the protocol checks that the author holds exactly what the
+    /// entry declared, so a valid declaration must name something the author
+    /// actually has — which depends on whether they were granted this channel,
+    /// its category, or the network. [`Self::acceptable`] is the set, and
+    /// [`Self::declaration`] picks from it. This is the narrowest member, useful
+    /// for saying what was expected when a declaration is refused.
+    ///
+    /// The channel-scoped form is deliberately unusable for a *definition*
+    /// without a category, and this is worth knowing rather than discovering: an
+    /// extension capability must be registered by exact name before it resolves
+    /// (Core §2.2), and a new channel's id does not exist until the entry
+    /// creating it does — so nobody can have registered it. A definition is
+    /// authorized by its category's scope or the network-wide form in practice,
+    /// which is what `kols-core::capabilities` registers.
     pub fn required(&self) -> Capability {
         let verb = self.body.required_verb();
         match &self.body {
@@ -550,20 +562,62 @@ pub fn admit(
 }
 
 impl ChannelEntry {
+    /// The capability this author should declare, from what they actually hold.
+    ///
+    /// Narrowest first — channel, then category, then network-wide — so an entry
+    /// claims the least authority that authorizes it. `None` means the author
+    /// holds nothing that would authorize this entry, and publishing it would
+    /// produce a log entry every replaying node refuses.
+    ///
+    /// # Why this cannot be a constant
+    ///
+    /// The protocol verifies the author holds *exactly* what the entry declared.
+    /// A declaration is therefore only valid if the author has that specific
+    /// name, and which name that is depends on how they were granted — a member
+    /// with `chat:create-channel:*` and a member with a category grant must
+    /// declare different things for the same entry. An earlier version of this
+    /// module declared a fixed capability per kind, which made channel creation
+    /// work only for Founders: everyone else declared a channel-scoped name they
+    /// did not hold, and which could not have been registered in advance because
+    /// the channel id did not exist yet.
+    pub fn declaration(
+        &self,
+        state: &GovernanceState,
+        author: &PerNetworkIdentityId,
+        category: Option<&CategoryId>,
+    ) -> Option<Capability> {
+        self.acceptable(category)
+            .into_iter()
+            .find(|capability| state.identity_holds(author, capability))
+    }
+
     /// Packages this entry as an application entry body for the governance log.
     ///
-    /// The declared capability comes from [`Self::required`] rather than from the
-    /// caller, so a client cannot accidentally publish an entry declaring
-    /// something other than what its kind needs — which is the mistake the reader
-    /// side of §3.8 exists to catch, made unavailable here rather than merely
-    /// detected there.
-    pub fn to_app_entry(&self) -> EntryBody {
-        EntryBody::AppEntry {
+    /// The declaration is chosen from what `author` holds rather than taken from
+    /// the caller, so a client cannot publish an entry declaring a capability its
+    /// kind does not need — the mistake the reader side of §3.8 exists to catch,
+    /// made unavailable here rather than merely detected there.
+    ///
+    /// Refuses when the author holds nothing that authorizes the entry, which is
+    /// better than producing a log entry every replaying node rejects.
+    pub fn to_app_entry(
+        &self,
+        state: &GovernanceState,
+        author: &PerNetworkIdentityId,
+        category: Option<&CategoryId>,
+    ) -> Result<EntryBody, ChannelRefusal> {
+        let required = self.declaration(state, author, category).ok_or_else(|| {
+            ChannelRefusal::WrongCapability {
+                declared: Capability::extension(String::new()),
+                required: self.required(),
+            }
+        })?;
+        Ok(EntryBody::AppEntry {
             namespace: CHAT_NAMESPACE.to_owned(),
             kind: self.body.kind().to_owned(),
-            required: self.required(),
+            required,
             payload: self.encode(),
-        }
+        })
     }
 
     /// Reads a channel entry out of a governance log entry, applying every check.
