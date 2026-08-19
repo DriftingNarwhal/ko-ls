@@ -1,7 +1,7 @@
 # ko-ls — Implementation Status
 
 **Updated:** 2026-08-19
-**Phase:** P0 (spike) — all five criteria met at the domain layer; the wire remains
+**Phase:** P0 — complete. All five criteria met, including over the wire
 **Design:** [`design/`](design/) — `00`–`08`. `08-record-encoding.md` is normative.
 
 This file is the answer to "where are we?". It is updated in the same change that moves
@@ -14,10 +14,10 @@ it is believed.
 
 | | |
 |---|---|
-| **Working on** | `kols-net` — the wire half of criteria 1–3, over real `MemberNode` transport |
+| **Working on** | Nothing in flight — P0 closed, P1 not started |
 | **Blocked on** | Nothing |
-| **Runnable** | `cargo test` — 30 tests, clippy clean. No binary yet |
-| **Next decision needed from the user** | None outstanding |
+| **Runnable** | `cargo test` — 32 tests incl. two live-node tests, clippy clean. No binary yet |
+| **Next decision needed from the user** | Whether to start P1 (text chat MVP) or close out P0 with F2/F3 first |
 
 ---
 
@@ -62,6 +62,7 @@ both green.
 | Crate | State |
 |---|---|
 | `kols-core` | **Encoding, author logs, merge, collision recovery** — records/segments/ids, `AuthorLog` incl. `rebase`, `ChannelView`, permissions, capability vocabulary. 30 tests |
+| `kols-net` | **Publish and fetch** — stores/announces chunks, accepts pointers, reassembles segments. Two live two-node tests |
 | `kols-store` | Not created |
 | `kols-net` | Not created |
 | `kols-media` | Not created |
@@ -78,9 +79,9 @@ From `design/07-build-plan.md` §3. None of these pass yet.
 
 | # | Criterion | State |
 |---|---|---|
-| 1 | 100 messages across sealed segments render in identical order on both nodes | **Met (merge layer)** — 40 permutations plus reversal render identically; duplicates idempotent. Wire half open |
-| 2 | Appending one message transfers **only new tail chunks**, asserted on bytes moved | **Met (single-node half)** — 1,556 of 176,115 bytes, 1 new chunk of 8. The wire half still needs two nodes |
-| 3 | Partition, both post, heal, converge byte-identically | **Met (merge layer)** — both sides write at overlapping clock readings, heal in different orders, converge. Wire half open |
+| 1 | 100 messages across sealed segments render in identical order on both nodes | **Met** — 40 permutations plus reversal at the merge layer; and 120 messages crossing two live nodes render identically on both |
+| 2 | Appending one message transfers **only new tail chunks**, asserted on bytes moved | **Met** — 1,556 of 176,115 bytes locally; over the wire a reader holding the previous version refetches **1 chunk of 3** |
+| 3 | Partition, both post, heal, converge byte-identically | **Met (merge layer)**; the wire path is exercised by criterion 1's live test, but a live *partition* test is P1 work |
 | 4 | Records from an identity without `publish:chat-log` are refused by the *reader* | **Met** — non-members, forged signatures and wrong-channel records all refused at admission, with the reason surfaced |
 | 5 | Pointer version collision resolves by lower record hash, loser re-publishes | **Met** — `AuthorLog::rebase` unions by record id and republishes at the next version, losing nothing. Winner's chunks recomputed locally, so a late record costs 15,901 of 164,956 bytes |
 
@@ -93,6 +94,13 @@ design changes before anything else is built.
 
 Newest first. One line per change that moved the state above.
 
+- **2026-08-19** — **P0 closed: the wire half works.** `kols-net` publishes a segment
+  (store, announce per chunk, accept pointer) and reassembles one from fetched chunks. Two
+  live `MemberNode`s: 120 messages cross the wire and render identically on both sides, and
+  a reader holding the previous version refetches **1 chunk of 3** after an append. Three
+  documented gotchas were all real — Kademlia client mode had to be turned off, ledger
+  advertisement had to precede the fetch, and the manifest needs its own round before the
+  chunks it names.
 - **2026-08-19** — **P0 criterion 5 met.** `AuthorLog::rebase` implements the content-merge
   semantics Storage §2.2 deliberately left to the application layer: union by record id,
   republish at the next version, nothing dropped. Two findings recorded in the design —

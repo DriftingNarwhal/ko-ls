@@ -147,6 +147,19 @@ attachments, moderation, retention.
 5. Pointer version collision between two writers resolves by lower record hash, and the
    loser's records are re-published rather than dropped.
 
+### Outcome
+
+**All five met.** Two findings changed the design rather than the code: the record list
+carries no count prefix (`08` §6), and HLC strictness is per device rather than per author
+(`08` §4.1). Both were found by measurement and assertion, not review — which is the
+argument for putting a byte-level test at the front of a plan rather than at the end.
+
+Three things the protocol's own guidance warned about were all real, and all cost time
+exactly where it said they would: Kademlia stays in client mode without a confirmed
+external address, so provider lookups return nobody on loopback; a holder that has not
+advertised capacity is dropped by source selection regardless of what the DHT says; and a
+manifest needs its own fetch round before the chunks it names can be requested.
+
 ### What P0 measures, for tuning later
 
 Bytes on the wire per message at steady state; segment seal latency; time to render a
