@@ -46,7 +46,7 @@ directory — the protocol crates are path dependencies while the extensions it 
 still landing.
 
 ```bash
-cargo test                                   # 77 tests; the two-node ones spawn real nodes on loopback
+cargo test                                   # 78 tests; the two-node ones spawn real nodes on loopback
 cargo clippy --workspace --all-targets       # must stay clean
 ./scripts/cross-check.sh                     # big-endian verification, see below
 ```

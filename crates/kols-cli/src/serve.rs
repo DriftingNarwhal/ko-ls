@@ -502,6 +502,13 @@ fn absorb_segments(
     let (channels, _) = network::channels(store, &state).map_err(|e| e.to_string())?;
     let mut learned = 0;
 
+    // Loaded once. This reads and opens every stored epoch key, so calling it
+    // per (channel, member) meant a long-lived network paid a full directory
+    // scan a thousand times per tick — far more than the unwrap it was there to
+    // serve. Lazily, because a node with nothing to absorb should not pay for it
+    // at all.
+    let mut keys: Option<Vec<_>> = None;
+
     for channel in channels.keys() {
         for member in members(&state) {
             if member == identity.id() {
@@ -514,23 +521,41 @@ fn absorb_segments(
             let cid = pointer.current_cid;
             let commitment = pointer.dek_commitment;
 
-            // Never `store.channel_dek` here: that mints a DEK for an object
-            // this node owns, and would quietly produce a key that opens
-            // nothing. Another member's DEK can only come from a wrapping under
-            // an epoch key this node holds, validated against the owner's
-            // commitment rather than against who signed it — which is what makes
-            // "any current member may re-wrap" safe.
-            // Tried against every epoch key this node holds, because a wrapping
-            // names the rotation it is under and that may predate this node's
-            // arrival. `unwrap` validates against the owner's commitment rather
-            // than against who signed, so a wrong key fails cleanly and the next
-            // one is tried.
-            let keys = store.epoch_keys().map_err(|e| e.to_string())?;
-            let Some(dek) = node.wrappings_for(&pointer_id).into_iter().find_map(|wrapping| {
-                keys.iter()
-                    .find_map(|(_, key)| wrapping.unwrap(key, &commitment).ok())
-            }) else {
-                continue;
+            // The cached DEK first, checked against the pointer's own commitment
+            // so a stale one — the author sealed that object and started another
+            // — is discarded rather than used to fail at decryption. In the
+            // steady state this is one unwrap under the current key and no scan.
+            let dek = match store
+                .known_dek(&pointer_id, Some(&commitment))
+                .map_err(|e| e.to_string())?
+            {
+                Some(dek) => dek,
+                None => {
+                    // Never `channel_dek` here: that mints a key for an object
+                    // this node owns, which for somebody else's log would open
+                    // nothing. A foreign DEK can only come from their wrapping,
+                    // validated against the owner's commitment rather than
+                    // against who signed it — which is what makes "any current
+                    // member may re-wrap" safe.
+                    let held = match &keys {
+                        Some(keys) => keys,
+                        None => keys.insert(store.epoch_keys().map_err(|e| e.to_string())?),
+                    };
+                    let Some(dek) =
+                        node.wrappings_for(&pointer_id).into_iter().find_map(|wrapping| {
+                            held.iter()
+                                .find_map(|(_, key)| wrapping.unwrap(key, &commitment).ok())
+                        })
+                    else {
+                        continue;
+                    };
+                    // Remembered under the current epoch, so this scan happens
+                    // once per object rather than on every tick forever.
+                    store
+                        .remember_dek(&pointer_id, &dek)
+                        .map_err(|e| e.to_string())?;
+                    dek
+                }
             };
             // A segment we cannot assemble yet is not an error: the fetch runs
             // in rounds, and the manifest arrives before the chunks it names.

@@ -45,7 +45,7 @@ readers are unavoidable rather than optional:
 2. **A channel entry is invalid in a `conversation`-profile network.** The protocol carries
    `chat` payloads without decoding them, so it cannot reach this verdict.
 
-**To pick up:** `cargo test` in this repo should show 77 passing and clippy silent. If it
+**To pick up:** `cargo test` in this repo should show 78 passing and clippy silent. If it
 does not, fix that before anything else — the tree was left green.
 
 ---
@@ -56,7 +56,7 @@ does not, fix that before anything else — the tree was left green.
 |---|---|
 | **Working on** | E4 — gossipsub live delivery |
 | **Blocked on** | Nothing |
-| **Runnable** | **`kols`** — init, attach, admit, revoke, serve, channel create/list, post, read. Two nodes hold a conversation. `cargo test` — 77 tests, clippy clean; `scripts/cross-check.sh` for big-endian |
+| **Runnable** | **`kols`** — init, attach, admit, revoke, serve, channel create/list, post, read. Two nodes hold a conversation. `cargo test` — 78 tests, clippy clean; `scripts/cross-check.sh` for big-endian |
 | **Next decision needed from the user** | Nothing blocking |
 
 ---
@@ -103,7 +103,7 @@ both green.
 |---|---|
 | `kols-core` | **Encoding, author logs, merge, collision recovery, chat policy, channel structure** — records/segments/ids, `AuthorLog` incl. `rebase`, `ChannelView`, permissions, capability vocabulary, `ChatPolicy`, `ChannelEntry`. 60 tests |
 | `kols-net` | **Publish and fetch** — stores/announces chunks, accepts pointers, reassembles segments. Two live two-node tests |
-| `kols-cli` | **`kols`, and its node daemon** — creates a network, admits and keys in joiners, serves and fetches content, renders a merged view across authors. 115 tests that drive the real binaries, five of them over a live wire between two processes |
+| `kols-cli` | **`kols`, and its node daemon** — creates a network, admits and keys in joiners, serves and fetches content, renders a merged view across authors. 116 tests that drive the real binaries, five of them over a live wire between two processes |
 | `kols-store` | Not created |
 | `kols-media` | Not created |
 | `kols-api` | Not created |
@@ -144,6 +144,36 @@ design changes before anything else is built.
 
 Newest first. One line per change that moved the state above.
 
+- **2026-08-19** — **Made "try every epoch key" stop growing without bound.** Raised as a
+  scaling worry and it was a fair one, though the proposed fix — re-encrypting old content
+  under a new key — is the one thing this design must never do: a per-object DEK is fixed
+  for the object's lifetime (Storage §1.2), which is what makes chunk encryption
+  deterministic, which is what makes delta-fetch work. Re-encrypting re-chunks everything
+  and destroys the 1,556-of-176,115 property the segment model exists for.
+
+  What gets refreshed is the **wrapping** — a 48-byte record, one AEAD seal — which Storage
+  §5.3 already specifies and `design/05` §4 already lists as daemon maintenance nobody had
+  written. `design/01` §8's retention is the same lever inverted: content that stops being
+  re-wrapped goes dark on its own.
+
+  **Measured before changing anything**, at ~720ns per unwrap attempt: 0.72ms to scan a
+  thousand keys, 3.6ms for five thousand. Survivable per unwrap; the real cost was that
+  `absorb_segments` called `epoch_keys()` *inside* a channels × members loop, and that reads
+  and AEAD-opens every stored key from disk — a thousand directory scans per two-second
+  tick on a network that had rotated a thousand times, dwarfing the crypto it was there to
+  serve. A wrapping that opened under no held key paid the full scan forever, every tick,
+  never converging.
+
+  Three changes, all correctness-preserving: keys come back **current-first**, so a
+  refreshed wrapping opens on the first attempt; a wrapping opened under an older key is
+  **re-wrapped under the current one**; and a DEK learned from somebody else's wrapping is
+  **remembered**, so the scan happens once per object rather than every tick. Foreign DEKs
+  are checked against the pointer's own commitment, so a stale cache — the author sealed
+  that object and started another — is discarded rather than used to fail at decryption.
+
+  **Retiring old keys is deliberately not done here.** Dropping a key makes anything still
+  wrapped under it unreadable forever, so it is `design/01` §8's retention decision rather
+  than a cleanup to do quietly. Next. 77 → 78 tests.
 - **2026-08-19** — **`kols revoke` closes the revocation path, and found two bugs doing it.**
   The command writes the membership removal; the daemon rotates the epoch to exclude them.
   The split is not convenience — rotating needs the live MLS group only the daemon holds, and

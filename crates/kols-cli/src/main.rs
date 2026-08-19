@@ -19,8 +19,11 @@
 //! Not the product. `design/05` describes a Tauri client with a capability-shaped
 //! API boundary, and this is not a step toward it — it is a way to exercise the
 //! layers underneath it from a terminal. Where it takes a shortcut, the shortcut
-//! is named where it is taken rather than hidden behind a plausible surface: see
-//! [`store::Store::channel_dek`], which is the significant one.
+//! is named where it is taken rather than hidden behind a plausible surface. The
+//! one that matters now is that nothing here ever retires a superseded epoch key
+//! ([`store::Store::channel_dek`]) — a retention decision rather than an
+//! oversight, because dropping a key makes anything still wrapped under it
+//! unreadable forever.
 
 #![deny(missing_docs)]
 

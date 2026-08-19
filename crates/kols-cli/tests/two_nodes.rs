@@ -340,7 +340,30 @@ fn a_revocation_rotates_the_epoch_and_leaves_the_network_working() {
 
     // And the network still works: posting needs the author's own DEK, whose
     // wrapping is now under a superseded epoch key.
+    //
+    // The wrapping must also be *refreshed* to the current epoch on the way
+    // through. Without that, every future read falls back through every key the
+    // network has ever rotated through — measured at ~0.72ms per thousand keys,
+    // paid per unwrap, on a list that grows with every membership change.
+    let wrapping = |home: &Home| {
+        let dir = home.path().join("deks");
+        let path = std::fs::read_dir(&dir)
+            .expect("a wrapping directory")
+            .next()
+            .expect("one wrapping")
+            .unwrap()
+            .path();
+        std::fs::read(path).unwrap()
+    };
+    let stale = wrapping(&alice);
+
     ok(&alice, &["post", "general", "after the revocation"]);
+
+    assert_ne!(
+        wrapping(&alice),
+        stale,
+        "a wrapping opened under a superseded key must be re-wrapped under the current one"
+    );
     let read = ok(&alice, &["read", "general"]);
     assert!(read.contains("before the revocation"), "{read}");
     assert!(read.contains("after the revocation"), "{read}");

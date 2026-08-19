@@ -343,3 +343,38 @@ fn a_store_whose_epoch_key_is_gone_refuses_rather_than_inventing_one() {
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(stderr.contains("epoch key"), "{stderr}");
 }
+
+#[test]
+fn an_already_current_wrapping_is_not_rewritten_on_every_read() {
+    // Half of what keeps "try every key" cheap. The other half — refreshing a
+    // wrapping found under a superseded key — needs a real rotation, so it is
+    // asserted in the revocation test where one actually happens.
+    //
+    // This half matters on its own: reading is the hottest path there is, and
+    // rewriting the wrapping every time would be pointless disk traffic. Storage
+    // §5.3 makes wrapping deterministic, so "unchanged" is a comparison rather
+    // than a guess.
+    let home = Home::new("rewrap");
+    ok(&home, &["init", "refreshing"]);
+    let _node = keyed(&home, 45209);
+    ok(&home, &["channel", "create", "general"]);
+    ok(&home, &["post", "general", "wrapped under the first epoch"]);
+
+    let dir = home.path().join("deks");
+    let path = std::fs::read_dir(&dir)
+        .expect("a wrapping directory")
+        .next()
+        .expect("one wrapping")
+        .unwrap()
+        .path();
+    let before = std::fs::read(&path).unwrap();
+
+    ok(&home, &["read", "general"]);
+    ok(&home, &["post", "general", "still the same epoch"]);
+
+    assert_eq!(
+        std::fs::read(&path).unwrap(),
+        before,
+        "an already-current wrapping must not be rewritten"
+    );
+}

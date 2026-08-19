@@ -414,6 +414,17 @@ impl Store {
                 EpochKey::from_bytes(fixed(&bytes, "epoch key")?),
             ));
         }
+
+        // Current first, because every caller scans this list until something
+        // opens and the current epoch is what a refreshed wrapping is under.
+        // Filesystem order made the common case cost a scan of everything a
+        // long-lived network had ever rotated through — measured at 0.72ms per
+        // thousand keys, paid on every unwrap.
+        if let Ok(current) = self.rotation_ref()
+            && let Some(at) = out.iter().position(|(rotation, _)| rotation == &current)
+        {
+            out.swap(0, at);
+        }
         Ok(out)
     }
 
@@ -434,68 +445,95 @@ impl Store {
         Ok(Hash::from_bytes(fixed(&bytes, "rotation reference")?))
     }
 
-    /// The data-encryption key for one author log, wrapped under the epoch key.
+    /// The DEK this node already holds for an object, if any.
     ///
-    /// Storage §5's actual shape rather than a stand-in for it: the DEK is
-    /// random per object, and what persists is the DEK **wrapped under the
-    /// network's epoch key** — so recovering it requires key material only
-    /// members hold, and a non-member who obtains the ciphertext has nothing to
-    /// open it with.
+    /// Tries the current epoch key first and falls back through the rest, then
+    /// **re-wraps under the current epoch** whenever it opened under an older
+    /// one. That refresh is what keeps the scan short: a wrapping is upgraded
+    /// once per rotation rather than re-scanned on every read, which is what
+    /// Storage §5.3 means by any current member re-wrapping — and it is
+    /// deterministic, so several members doing it produce identical bytes and
+    /// create nothing to reconcile.
     ///
-    /// # What is still missing, stated rather than implied
-    ///
-    /// **Rotation.** Core §3.3 advances the epoch on every membership change,
-    /// which is what stops a removed member reading anything published
-    /// afterwards. Advancing it needs live MLS group state, and `GroupSession`
-    /// holds an in-memory openmls provider with no persistence — so a process
-    /// that exits cannot rotate, and this build does not. A removed member keeps
-    /// the key, which is the naive scheme Core §3.2 rejects for exactly that
-    /// reason. It is held deliberately and only until one of two things exists:
-    /// an `intranet-epoch` that can persist a group, or a long-running node here
-    /// that keeps one in memory.
-    pub fn channel_dek(&self, pointer: &PointerId) -> Result<Dek, StoreError> {
-        let epoch = self.epoch_key()?;
-        let path = self.root.join("deks").join(to_hex(pointer.as_bytes()));
-        if let Ok(wrapped) = fs::read(&path) {
-            // Tried against **every** key this node holds, not just the current
-            // one. A wrapping names the rotation it was made under, and the
-            // epoch advances on every membership change — so a node that only
-            // tried its newest key could not open its own content the moment
-            // anybody joined or left. That is not hypothetical: it is what
-            // happened the first time a revocation actually rotated anything.
-            let keys = self.epoch_keys()?;
-            let dek = keys
-                .iter()
-                .find_map(|(_, key)| key.unwrap_dek(pointer, &wrapped).ok())
-                .ok_or_else(|| {
-                    StoreError::Corrupt(format!(
-                        "a stored DEK will not unwrap under any of this node's {} epoch key(s)",
-                        keys.len()
-                    ))
-                })?;
+    /// `commitment`, when given, is the pointer's own commitment to its DEK. A
+    /// cached key that no longer matches it is stale — the author sealed that
+    /// object and started another — so it is discarded rather than returned to
+    /// fail more confusingly at decryption.
+    pub fn known_dek(
+        &self,
+        pointer: &PointerId,
+        commitment: Option<&Hash>,
+    ) -> Result<Option<Dek>, StoreError> {
+        let path = self.dek_path(pointer);
+        let Ok(wrapped) = fs::read(&path) else {
+            return Ok(None);
+        };
+        let keys = self.epoch_keys()?;
+        let Some(dek) = keys
+            .iter()
+            .find_map(|(_, key)| key.unwrap_dek(pointer, &wrapped).ok())
+        else {
+            return Ok(None);
+        };
+        if let Some(commitment) = commitment
+            && &dek.commitment() != commitment
+        {
+            return Ok(None);
+        }
 
-            // Re-wrapped under the current epoch, which is exactly what Storage
-            // §5.3 means by any current member re-wrapping on rotation: it keeps
-            // the wrapping openable as superseded keys are eventually dropped,
-            // and it is deterministic, so doing it repeatedly changes nothing.
+        if let Ok(epoch) = self.epoch_key() {
             let refreshed = epoch.wrap(pointer, &dek);
             if refreshed != wrapped {
                 write_private(&path, &refreshed)?;
             }
+        }
+        Ok(Some(dek))
+    }
+
+    /// Records a DEK learned from somebody else's wrapping.
+    ///
+    /// Stored wrapped under the current epoch, which makes it both a cache and
+    /// the re-wrap Storage §5.3 asks of a current member: the next read opens it
+    /// in one attempt instead of scanning every key this node holds, and it
+    /// stays openable as superseded keys are eventually retired.
+    pub fn remember_dek(&self, pointer: &PointerId, dek: &Dek) -> Result<(), StoreError> {
+        let epoch = self.epoch_key()?;
+        fs::create_dir_all(self.root.join("deks"))?;
+        write_private(&self.dek_path(pointer), &epoch.wrap(pointer, dek))
+    }
+
+    /// The data-encryption key for one author log **this node owns**.
+    ///
+    /// Minting one when there is none is correct only here. Another member's DEK
+    /// can only come from their wrapping, and minting one there would produce a
+    /// key that opens nothing — foreign objects go through
+    /// [`known_dek`](Self::known_dek) and [`remember_dek`](Self::remember_dek).
+    ///
+    /// # What is still missing, stated rather than implied
+    ///
+    /// **Nothing is ever retired.** Superseded epoch keys accumulate, and while
+    /// a refreshed wrapping means they are rarely *scanned*, they are still held
+    /// and this node can still read anything wrapped under them. Retiring them is
+    /// `design/01` §8's retention question — content that stops being re-wrapped
+    /// goes dark — and is a deliberate policy choice rather than a cleanup to do
+    /// quietly, because dropping a key makes anything still wrapped under it
+    /// unreadable forever.
+    pub fn channel_dek(&self, pointer: &PointerId) -> Result<Dek, StoreError> {
+        if let Some(dek) = self.known_dek(pointer, None)? {
             return Ok(dek);
         }
-
+        let epoch = self.epoch_key()?;
         let mut raw = [0u8; 32];
         intranet_crypto::random_bytes(&mut raw)
             .map_err(|err| StoreError::Corrupt(format!("no entropy: {err}")))?;
         let dek = Dek::from_bytes(raw);
         fs::create_dir_all(self.root.join("deks"))?;
-        // The wrapping is what persists, never the DEK. Wrapping is
-        // deterministic per (pointer, epoch key) by requirement (§5.3), so a
-        // re-wrap by another member produces identical bytes and creates no
-        // conflict to resolve.
-        write_private(&path, &epoch.wrap(pointer, &dek))?;
+        write_private(&self.dek_path(pointer), &epoch.wrap(pointer, &dek))?;
         Ok(dek)
+    }
+
+    fn dek_path(&self, pointer: &PointerId) -> PathBuf {
+        self.root.join("deks").join(to_hex(pointer.as_bytes()))
     }
 }
 
