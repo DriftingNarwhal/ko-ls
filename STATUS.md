@@ -1,6 +1,6 @@
 # ko-ls — Implementation Status
 
-**Updated:** 2026-08-19 (end of session)
+**Updated:** 2026-08-19 (end of session; both repos pushed)
 **Phase:** P1 — E9 and E2 landed; chat entry payloads next
 **Design:** [`design/`](design/) — `00`–`08`, all v1.0. **`distributed-intranet/specs/07` is normative** where it and the design set overlap.
 
@@ -14,12 +14,16 @@ it is believed.
 
 **Read this section, then §1. Everything else is reference.**
 
-Two repositories on this machine:
+Two repositories on this machine, **both pushed and current**:
 
-| Repo | State |
+| Repo | Remote |
 |---|---|
-| `ko-ls` (this one) | Pushed to `DriftingNarwhal/ko-fi` (private), branch `main` |
-| `../distributed-intranet` | **3 commits ahead of `origin/main` and not pushed**: spec 07, E9, E2. They are on `main` locally. Push them, or the client's path dependencies point at code GitHub does not have |
+| `ko-ls` (this one) | `DriftingNarwhal/ko-ls` (private), branch `main` |
+| `../distributed-intranet` | `DriftingNarwhal/distributed-intranet`, branch `main` — carries spec 07, E9 (Core §2.6.2) and E2 (Core §2.7.2) |
+
+The client builds against the sibling checkout by **path dependency**, not a published
+version, and deliberately so while the extensions are still moving. A fresh machine needs
+both repos cloned side by side.
 
 **Next task:** the chat side of E2 — define `ChannelDefinition`, `ChannelUpdate`,
 `ChannelMembership` and `ChannelRotation` as payloads in the `chat` namespace of the new
@@ -121,12 +125,11 @@ design changes before anything else is built.
 
 ## 7. Where the Code Lives
 
-- `ko-ls` — `origin` is `github.com/DriftingNarwhal/ko-fi` (private). The repository name
-  differs from the project name; that is deliberate, not a mistake to correct.
-- `distributed-intranet` — `origin` is `github.com/DriftingNarwhal/distributed-intranet`.
-  **Its three newest commits are local only.** Nothing in the client builds against a
-  published version of the protocol yet: the crates are path dependencies on the sibling
-  checkout, deliberately, until the extensions stop moving.
+- `ko-ls` — `origin` is `github.com/DriftingNarwhal/ko-ls` (private).
+- `distributed-intranet` — `origin` is `github.com/DriftingNarwhal/distributed-intranet`,
+  up to date. Nothing in the client builds against a *published* version of the protocol:
+  the crates are path dependencies on the sibling checkout, deliberately, until the
+  extensions stop moving.
 
 ---
 
