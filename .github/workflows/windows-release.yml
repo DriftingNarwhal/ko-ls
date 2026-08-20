@@ -58,7 +58,7 @@ jobs:
 
           The client depends on the protocol crates by path, so this workflow has to
           check out both repositories as siblings. A job's own token reaches only the
-          repository it runs in, so while distributed-intranet is private a PAT is
+          repository it runs in, so if distributed-intranet is private a PAT is
           required:
 
             Settings -> Secrets and variables -> Actions -> New repository secret
@@ -82,8 +82,8 @@ jobs:
       - uses: actions/checkout@v4
         with:
           path: ko-ls
-      # See gate.yml: the secret is only needed while the protocol repo is
-      # private, and the fallback means going public changes nothing here.
+      # See gate.yml: no secret is needed while the protocol repo is public, and
+      # the fallback means its visibility changing would not need an edit here.
       - uses: actions/checkout@v4
         with:
           repository: DriftingNarwhal/distributed-intranet

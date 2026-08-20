@@ -1,6 +1,6 @@
 # ko-ls — Implementation Status
 
-**Updated:** 2026-08-20 (Windows builds move to GitHub Actions; the repo goes back to being OS-neutral)
+**Updated:** 2026-08-20 (all three repos public; CI needs no secret, and the preflight that proves it)
 **Phase:** P1 — two nodes talk live and durably, a joiner reads back through sealed
 history, and the boundary carries commands in and events out
 **Design:** [`design/`](design/) — `00`–`08` at v1.0, `09` at v0.2. **`distributed-intranet/specs/07` is normative** where it and the design set overlap.
@@ -27,7 +27,7 @@ Two repositories, side by side, both on `main` and pushed:
 
 | Repo | Remote |
 |---|---|
-| `ko-ls` (this one) | `DriftingNarwhal/ko-ls` (private) |
+| `ko-ls` (this one) | `DriftingNarwhal/ko-ls` (public) |
 | `../distributed-intranet` | `DriftingNarwhal/distributed-intranet` — spec 07 plus E2, E4, E5, E9, E11, E12, MLS persistence, invite serialization and `NetworkPolicy.bootstrap_relays` |
 
 The client builds against the sibling checkout by **path dependency** while the extensions
@@ -75,14 +75,14 @@ without publishing, which is how to test the workflow itself. `gate.yml` runs th
 clippy on Linux *and* Windows for every push, which is the only reason the platform-specific
 half of `kols-cli::secret` is ever exercised by anything but a person.
 
-Two things it needs from a human, once:
+One thing it needs from a human: **a tag**, to publish — `git tag v0.1.0 && git push origin
+v0.1.0`. A `workflow_dispatch` run builds the same artifacts without releasing them.
 
-- **`PROTOCOL_REPO_TOKEN`**, a secret on this repo holding a PAT that can read
-  `distributed-intranet`. The client depends on the protocol by path, so CI checks out both
-  as siblings, and the default token is scoped to one repository. Both workflows fall back to
-  `github.token`, so **the day the protocol repo goes public the secret can simply be
-  deleted** and nothing needs editing.
-- **A tag** to publish: `git tag v0.1.0 && git push origin v0.1.0`.
+**No token is needed any more.** CI checks out both repos as siblings, because the client
+depends on the protocol by path, and that used to require a PAT in `PROTOCOL_REPO_TOKEN`
+because a job's own token reaches only its own repository. All three repos are public now, so
+the job token can read the protocol repo and the workflows' `secrets.PROTOCOL_REPO_TOKEN ||
+github.token` falls through to it. If that secret was ever created it can be deleted.
 
 The cross-compile that produced the first `.exe` is gone from `.devcontainer/`, deliberately.
 It worked, and it cost something at the far end: a mingw build *imports* `WebView2Loader.dll`
@@ -223,7 +223,8 @@ design changes before anything else is built.
 
 ## 8. Where the Code Lives
 
-- `ko-ls` — `origin` is `github.com/DriftingNarwhal/ko-ls` (private).
+- `ko-ls` — `origin` is `github.com/DriftingNarwhal/ko-ls`. Public, as are
+  `distributed-intranet` and `DI-Relay`.
 - `distributed-intranet` — `origin` is `github.com/DriftingNarwhal/distributed-intranet`,
   up to date. Nothing in the client builds against a *published* version of the protocol:
   the crates are path dependencies on the sibling checkout, deliberately, until the
@@ -234,6 +235,31 @@ design changes before anything else is built.
 ## 9. Log
 
 Newest first. One line per change that moved the state above.
+
+- **2026-08-20** — **All three repos are public, and CI needs no secret because of it.** The
+  first workflow run failed at `actions/checkout` with a 404 on `distributed-intranet`, which
+  reads as "that repository is gone" and means "this token cannot see it" — GitHub answers 404
+  rather than 403 for a private repository so its existence is not disclosed. The fallback I
+  wrote caused it: `secrets.PROTOCOL_REPO_TOKEN || github.token` is right for going public and,
+  while private, quietly turned a missing secret into an unintelligible error two steps later.
+  Same defect as the one fixed in `kols-cli::secret` the same morning, reintroduced in a
+  workflow hours after writing about it.
+
+  A preflight step now probes the API before checkout and fails with the cause named. **Two
+  bugs came out of running that step rather than reading it**, which is the whole argument for
+  the exercise. The heredoc terminator lands at column 0 only after YAML strips the block
+  indentation — true, and worth confirming. And an **empty `Authorization` header is a bad
+  credential rather than no credential**: GitHub answers 401 to it even for a public
+  repository, so the check would have failed *after* the repos went public, which is the one
+  scenario it existed to survive. The header is omitted when there is no token, and the
+  post-public path is now the tested one: public repo, no secret, 200, exit 0.
+
+  With the repos public the fallback is the live path and `PROTOCOL_REPO_TOKEN` is not needed.
+  It stays supported, because visibility is a decision somebody may revisit and this keeps that
+  a repository setting rather than an edit to every workflow.
+
+  History was scanned for keys and credentials before this entry was written, since publishing
+  a repository publishes every commit in it. Nothing found.
 
 - **2026-08-20** — **Windows builds move to GitHub Actions, and the repo goes back to being
   OS-neutral.** Cross-compiling from the dev container was the fastest way to get an `.exe`
