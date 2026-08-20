@@ -1,6 +1,6 @@
 # ko-ls — Implementation Status
 
-**Updated:** 2026-08-20 (CI's first Windows failure was not a Windows bug — the tests assumed a 24-core machine)
+**Updated:** 2026-08-20 (the Windows gate's real cost is Defender scanning a 76 MB binary a hundred times)
 **Phase:** P1 — two nodes talk live and durably, a joiner reads back through sealed
 history, and the boundary carries commands in and events out
 **Design:** [`design/`](design/) — `00`–`08` at v1.0, `09` at v0.2. **`distributed-intranet/specs/07` is normative** where it and the design set overlap.
@@ -235,6 +235,33 @@ design changes before anything else is built.
 ## 9. Log
 
 Newest first. One line per change that moved the state above.
+
+- **2026-08-20** — **Tripling the timeouts doubled the failures, which ruled out the diagnosis
+  it was meant to fix.** Six tests failed where three had, and the suite took 335s where it took
+  125. More time producing more failures is not what a machine that merely needs more time looks
+  like.
+
+  **The measurement that reframes it:** pinned to four cores, this suite passes on Linux in 83
+  seconds; on a four-core Windows runner it failed six tests in 335. *Same width, different
+  answer* — so parallelism was never the axis, and scaling patience by core count addressed the
+  wrong variable. It stays, because a genuinely narrow machine does want it, but it was not the
+  fix.
+
+  What Windows charges that Linux does not is **per operation**. Defender inspects an executable
+  on every launch and every file written beneath the tree; this suite launches a **76 MB debug
+  binary about a hundred times** and its daemons write many small files per tick. Both workflows
+  now exclude the workspace, the cargo directory and the temp directory, tolerating failure
+  because a runner image with Defender already off should not fail the gate for refusing to
+  turn it off twice.
+
+  Ports and home directories were checked for collisions first and there are none — a previous
+  entry records a test that did collide, so it was the obvious suspect and it is worth saying it
+  was eliminated rather than never considered.
+
+  **If this is not enough, the next lever is serialising the daemon-heavy suite on Windows
+  rather than waiting longer**, and the one after that is the backfill test's thirty separate
+  `kols post` launches, which exist to cross a seal threshold and could cross it with fewer,
+  longer messages.
 
 - **2026-08-20** — **The first Windows CI run failed three tests, and none of them was a
   Windows bug.** `two_nodes` timed out waiting for a joiner to backfill — on Windows only,

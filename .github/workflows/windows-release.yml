@@ -94,6 +94,18 @@ jobs:
         with:
           workspaces: ko-ls
 
+      # Same reason as gate.yml: real-time scanning inspects every object file a
+      # release build writes, and this dependency tree is large.
+      - name: Take Defender off the build tree
+        shell: pwsh
+        run: |
+          foreach ($path in @($env:GITHUB_WORKSPACE, "$env:USERPROFILE\.cargo")) {
+            Add-MpPreference -ExclusionPath $path -ErrorAction SilentlyContinue
+          }
+          foreach ($proc in @("cargo.exe", "rustc.exe", "link.exe")) {
+            Add-MpPreference -ExclusionProcess $proc -ErrorAction SilentlyContinue
+          }
+
       # The portable pair. `kols.exe` is the terminal client and `kols-desktop.exe`
       # is the window; neither needs installing, and on MSVC neither needs a DLL
       # carried beside it.
