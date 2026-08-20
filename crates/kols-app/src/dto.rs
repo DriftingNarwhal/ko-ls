@@ -135,6 +135,19 @@ impl Network {
     }
 }
 
+/// Where a redeemed invite left this member.
+#[derive(Debug, Serialize)]
+pub struct Joined {
+    /// Whether they were admitted outright, or are waiting for an admin.
+    ///
+    /// Both are successful joins (Core §2.4). A client that treated waiting as a
+    /// failure would report a network screening its members — working exactly as
+    /// configured — as though something had broken.
+    pub admitted: bool,
+    /// Their identity here, for whoever will admit them. Empty when admitted.
+    pub identity: String,
+}
+
 /// Who this member is here, and what they may do.
 ///
 /// The permission flags exist so the interface can hide controls it should not

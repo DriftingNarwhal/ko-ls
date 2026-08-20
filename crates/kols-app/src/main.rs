@@ -276,6 +276,50 @@ fn create_network(
     Ok(known)
 }
 
+/// Redeems an invite, joining the network it names.
+///
+/// Outside the command vocabulary for the same reason creating one is: it makes
+/// the state every command needs before any exists. The invite is the only thing
+/// the joiner has, and everything after the first connection is ordinary sync
+/// (Core §5.7).
+#[tauri::command]
+async fn join_network(
+    handle: tauri::AppHandle,
+    invite: String,
+) -> Result<dto::Joined, String> {
+    let credential = kols_cli::invite::from_uri(&invite)?;
+    let workspace = {
+        let app = handle.state::<App>();
+        Workspace::at(app.workspace.root().to_path_buf())
+    };
+    let path = workspace.path_for(&credential.network);
+
+    let landed = kols_cli::join::redeem(path.clone(), credential, 30, false).await?;
+
+    // Open it either way. A waiting-room member holds an identity and nothing
+    // else, and showing them that — rather than nothing — is the difference
+    // between "you are waiting" and "something went wrong".
+    let executor = Executor::open(path.clone()).map_err(|err| err.to_string())?;
+    {
+        let app = handle.state::<App>();
+        *app.open
+            .lock()
+            .map_err(|_| "the workspace lock is poisoned")? = Some(executor);
+    }
+    start_node(&handle, handle.state::<App>(), path);
+
+    Ok(match landed {
+        kols_cli::join::Landed::Admitted => dto::Joined {
+            admitted: true,
+            identity: String::new(),
+        },
+        kols_cli::join::Landed::Waiting { identity } => dto::Joined {
+            admitted: false,
+            identity,
+        },
+    })
+}
+
 /// Opens one of this client's networks, and starts a node for it.
 #[tauri::command]
 fn open_network(
@@ -395,6 +439,7 @@ fn main() {
             set_name,
             networks,
             create_network,
+            join_network,
             open_network
         ])
         .run(tauri::generate_context!())

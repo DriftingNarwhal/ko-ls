@@ -411,3 +411,8 @@ body {
 }
 
 .network .switcher:hover { border-color: var(--accent); color: var(--text); }
+
+/* Two forms on the picker, so they need separating rather than running together. */
+#joiner { border-bottom: 1px solid var(--line); margin-bottom: 20px; padding-bottom: 20px; }
+#joiner button[disabled] { opacity: 0.6; cursor: default; }
+.picker-error { line-height: 1.6; white-space: pre-wrap; }

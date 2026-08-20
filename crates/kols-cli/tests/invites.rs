@@ -217,3 +217,49 @@ fn minting_an_invite_needs_approve_node() {
     let _node = serving(&home, 45502);
     assert!(ok(&home, &["invite"]).starts_with("intranet-chat://join/"));
 }
+
+#[test]
+fn the_window_takes_the_same_path_as_the_terminal_to_join() {
+    // What `kols-app`'s join_network does, minus the Tauri wrapper: resolve the
+    // store's place in a workspace from the invite's network, then redeem. The
+    // button cannot be pressed from a test, so the path behind it is covered
+    // here rather than not at all.
+    let relay = hosted_relay();
+    let alice = Home::new("win-alice");
+    ok(&alice, &["init", "the workshop", "--relay", &relay]);
+    let _node = serving(&alice, 45503);
+
+    let minted = ok(&alice, &["invite"]);
+    let uri = minted.lines().next().expect("an invite").to_owned();
+
+    // A workspace, not a store: the window holds several networks and puts each
+    // one where its id says, so redeeming the same invite twice lands in the
+    // same place rather than making a second identity in that network.
+    let workspace_dir = Home::new("win-bob");
+    let workspace = kols_cli::workspace::Workspace::at(workspace_dir.path().to_path_buf());
+    let credential = kols_cli::invite::from_uri(&uri).expect("decodes");
+    let path = workspace.path_for(&credential.network);
+
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+        .expect("a runtime");
+    let landed = runtime
+        .block_on(kols_cli::join::redeem(path.clone(), credential, 30, false))
+        .expect("joins");
+
+    // Explicit intake, so waiting is the expected landing and is a success.
+    match landed {
+        kols_cli::join::Landed::Waiting { identity } => {
+            assert_eq!(identity.len(), 64, "an identity to be admitted by");
+            assert!(ok(&alice, &["waiting"]).contains(&identity));
+        }
+        kols_cli::join::Landed::Admitted => panic!("this network screens its members"),
+    }
+
+    // And the workspace now holds it, so the window has something to open.
+    let listed = workspace.list();
+    assert_eq!(listed.len(), 1, "the joined network is in the workspace");
+    assert_eq!(listed[0].path, path);
+    assert!(!listed[0].keyed, "joined, and not keyed in until admitted");
+}

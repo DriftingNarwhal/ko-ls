@@ -20,22 +20,68 @@ use libp2p::Multiaddr;
 use std::path::PathBuf;
 use std::time::Duration;
 
-/// Redeems an invite, creating this node's store for the network it names.
+/// Where a redeemed invite left this node.
+///
+/// Both are successful joins (Core §2.4), and a client that treated the second
+/// as a failure would report a network working as configured as though
+/// something had gone wrong.
+#[derive(Debug, Clone)]
+pub enum Landed {
+    /// Admitted outright — the network auto-admits.
+    Admitted,
+    /// Given a waiting-room place, pending an admin.
+    Waiting {
+        /// This member's identity here, as hex, for whoever will admit them.
+        identity: String,
+    },
+}
+
+/// Redeems an invite from a terminal, printing what happened.
 pub fn run(root: PathBuf, uri: &str, timeout_secs: u64) -> Result<(), String> {
     let invite = crate::invite::from_uri(uri)?;
-
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()
         .map_err(|err| format!("could not start a runtime: {err}"))?;
-    runtime.block_on(join(root, invite, timeout_secs))
+
+    println!("redeeming an invite to {}", invite.network.short());
+    let landed = runtime.block_on(redeem(root, invite, timeout_secs, true))?;
+
+    println!();
+    match landed {
+        Landed::Admitted => {
+            println!("admitted to the network");
+            println!();
+            println!("Next: `kols name <name>` claims a display name, and `kols serve`");
+            println!("syncs the log and asks to be keyed in.");
+        }
+        Landed::Waiting { identity } => {
+            println!("waiting to be admitted");
+            println!();
+            println!("This network screens its members, so the invite got you a connection");
+            println!("and an identity here and nothing else — no content, no keys — until");
+            println!("somebody admits you. Ask a member to run:");
+            println!();
+            println!("  kols admit {identity}");
+            println!();
+            println!("Then `kols serve` syncs the log and asks to be keyed in.");
+        }
+    }
+    Ok(())
 }
 
-async fn join(
+/// Redeems an invite, creating this node's store for the network it names.
+///
+/// `chatty` is whether to narrate progress. A terminal wants the dialling
+/// reported as it happens, because a join that is going to fail spends its whole
+/// timeout looking identical to one that is about to work; a window shows a
+/// spinner and the outcome.
+pub async fn redeem(
     root: PathBuf,
     invite: intranet_invite::Invite,
     timeout_secs: u64,
-) -> Result<(), String> {
+    chatty: bool,
+) -> Result<Landed, String> {
     // The identity is derived from the network id the invite names, so it can
     // only exist once the invite has been read. This is the same work `attach`
     // does, minus having to be told the network id by hand.
@@ -56,9 +102,10 @@ async fn join(
     };
     let identity = store.identity().map_err(|e| e.to_string())?;
 
-    println!("redeeming an invite to {}", invite.network.short());
-    println!("  you       {}", identity.id().short());
-    println!("  issued by {}", invite.issuer.short());
+    if chatty {
+        println!("  you       {}", identity.id().short());
+        println!("  issued by {}", invite.issuer.short());
+    }
 
     let mut node = MemberNode::new(&identity).map_err(|err| format!("could not start: {err}"))?;
     node.listen_on(
@@ -74,7 +121,9 @@ async fn join(
             .map_err(|err| format!("the invite carries an unusable address {address:?}: {err}"))?;
         node.dial_candidates([parsed])
             .map_err(|err| format!("could not dial {address}: {err}"))?;
-        println!("  dialing   {address}");
+        if chatty {
+            println!("  dialing   {address}");
+        }
     }
 
     // Remembered before the answer rather than after: these are how this node
@@ -101,7 +150,9 @@ async fn join(
 
         match event {
             NodeEvent::Connected { peer, .. } if !asked => {
-                println!("connected to {peer}");
+                if chatty {
+                    println!("connected to {peer}");
+                }
                 // Asking the issuer, whom the invite names. Any member holding
                 // `approve-node` could answer, but the issuer is the one this
                 // invite came from and is therefore the one known to be willing.
@@ -109,31 +160,14 @@ async fn join(
                 asked = true;
             }
 
-            NodeEvent::Admitted { entry, .. } => {
-                println!();
-                println!("admitted to the network");
-                println!("  entry     {}", &intranet_crypto::to_hex(entry.as_bytes())[..16]);
-                println!();
-                println!("Next: `kols name <name>` claims a display name, and `kols serve`");
-                println!("syncs the log and asks to be keyed in.");
-                return Ok(());
-            }
+            NodeEvent::Admitted { .. } => return Ok(Landed::Admitted),
 
             NodeEvent::AwaitingAdmission { .. } => {
-                println!();
-                println!("waiting to be admitted");
-                println!();
-                println!("This network screens its members, so the invite got you a connection");
-                println!("and an identity here and nothing else — no content, no keys — until");
-                println!("somebody admits you. Ask a member to run:");
-                println!();
-                println!(
-                    "  kols admit {}",
-                    intranet_crypto::to_hex(identity.id().verifying_key().as_bytes())
-                );
-                println!();
-                println!("Then `kols serve` syncs the log and asks to be keyed in.");
-                return Ok(());
+                return Ok(Landed::Waiting {
+                    identity: intranet_crypto::to_hex(
+                        identity.id().verifying_key().as_bytes(),
+                    ),
+                });
             }
 
             NodeEvent::JoinRefused { reason, .. } => {

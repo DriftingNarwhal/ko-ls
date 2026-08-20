@@ -59,6 +59,17 @@ function fail(err) {
   el("picker-error").textContent = String(err);
 }
 
+/// Whether this network is readable yet.
+///
+/// A member who has joined and not been keyed in holds an identity and nothing
+/// else, which is an ordinary place to be rather than a fault — and looks
+/// identical to an empty network unless something says so.
+function drawKeyState(me) {
+  el("key-state").textContent = me.has_key
+    ? ""
+    : "waiting to be keyed in — you can read nothing here until a member admits you";
+}
+
 /// Draws the network header and gates the chrome on what this member holds.
 function drawMe(me) {
   state.me = me;
@@ -75,11 +86,7 @@ function drawMe(me) {
   // second is the one that matters.
   el("new-channel").hidden = !me.may_create_channel;
 
-  // Said plainly rather than left to be inferred from an empty channel: without
-  // an epoch key this node can fetch content and open none of it.
-  el("key-state").textContent = me.has_key
-    ? ""
-    : "no epoch key — run `kols serve` to key this network";
+  drawKeyState(me);
 }
 
 function drawChannels(channels) {
@@ -262,6 +269,38 @@ el("maker").addEventListener("submit", async (event) => {
     await start();
   } catch (err) {
     fail(err);
+  }
+});
+
+el("joiner").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const invite = el("invite").value.trim();
+  if (!invite) return;
+
+  const button = event.target.querySelector("button");
+  button.disabled = true;
+  button.textContent = "joining…";
+  try {
+    const landed = await invoke("join_network", { invite });
+    el("invite").value = "";
+    state.current = null;
+    if (landed.admitted) {
+      await start();
+      return;
+    }
+    // Waiting is a successful join, not a failure: an invite to a network that
+    // screens its members buys a connection and an identity and nothing else,
+    // until somebody admits you. Saying so beats an empty channel list.
+    fail(
+      `You are in. This network screens its members, so you are waiting to be ` +
+        `admitted — ask a member to run:\n\n  kols admit ${landed.identity}`,
+    );
+    await start();
+  } catch (err) {
+    fail(err);
+  } finally {
+    button.disabled = false;
+    button.textContent = "join";
   }
 });
 

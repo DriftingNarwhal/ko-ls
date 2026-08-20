@@ -60,6 +60,13 @@ front ends.
 picker; with exactly one network it opens that one, because being asked to choose between one
 thing is noise.
 
+**The picker offers joining before creating**, because those are not equally likely. Somebody
+opening this client for the first time is usually holding an invite, and has one thing to do
+which is not founding a network of their own. And a joiner who lands in a waiting room has
+*succeeded*: under explicit intake an invite buys a connection and an identity and nothing
+else until a member admits them (`02` §6.2), so the interface says that rather than showing an
+empty network, which is what the same state looks like when nothing explains it.
+
 **Honest limit, stated because the interface should not oversell it.** Unlinkability holds
 at the *identity* layer. Two of a user's identities connecting from one IP address remain
 correlatable by any peer that is in both networks, and by any relay that sees both. The

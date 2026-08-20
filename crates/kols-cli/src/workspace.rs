@@ -139,6 +139,15 @@ impl Workspace {
         self.create_at(path, label, relays)
     }
 
+    /// Where a network's store belongs in this workspace.
+    ///
+    /// Derived from the id so joining the same network twice lands in the same
+    /// place rather than making a second identity in it — which would look like
+    /// two memberships and be two strangers.
+    pub fn path_for(&self, network: &NetworkId) -> PathBuf {
+        self.root.join(&to_hex(network.as_bytes())[..16])
+    }
+
     /// Creates a network at an exact path.
     ///
     /// What `kols init` uses, since `--home` names one store rather than a

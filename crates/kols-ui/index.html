@@ -21,8 +21,26 @@
           <ul class="picker-list" id="picker-list"></ul>
         </div>
 
+        <!-- Join first, deliberately: somebody arriving with an invite has one
+             thing to do, and it is not making a network of their own. -->
+        <form class="maker" id="joiner">
+          <h2>join with an invite</h2>
+          <label for="invite">invite</label>
+          <input
+            id="invite"
+            type="text"
+            autocomplete="off"
+            placeholder="intranet-chat://join/…"
+          />
+          <p class="maker-note">
+            Paste what you were given. It carries the network, who invited you, and
+            an address to reach them at.
+          </p>
+          <button type="submit">join</button>
+        </form>
+
         <form class="maker" id="maker">
-          <h2>make one</h2>
+          <h2>or make one</h2>
           <label for="new-name">name</label>
           <input id="new-name" type="text" autocomplete="off" placeholder="the workshop" />
 
