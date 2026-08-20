@@ -78,24 +78,6 @@ RUN install -m 0755 -d /etc/apt/keyrings \
     && apt-get update && apt-get install -y --no-install-recommends nodejs \
     && rm -rf /var/lib/apt/lists/*
 
-# Cross-compiling for Windows. The GNU target rather than MSVC, because MSVC
-# needs Microsoft's linker and cannot be reached from a Linux container at all;
-# mingw can.
-#
-# **This builds `kols-desktop` as well as `kols`**, which was not expected — the
-# received wisdom is that Tauri on Windows wants MSVC, and the only thing that
-# actually stopped it here was a missing `icons/icon.ico`. The window links the
-# whole stack (tao, wry, webview2-com) against mingw.
-#
-# One thing the GNU target changes about the *product*: `kols-desktop.exe`
-# imports `WebView2Loader.dll` rather than linking the loader statically the way
-# an MSVC build does, so that DLL has to sit beside the binary. It is
-# Microsoft's redistributable, out of the `Microsoft.Web.WebView2` NuGet
-# package, and it is not vendored here — packaging owes this a real answer.
-RUN apt-get update && apt-get install -y --no-install-recommends mingw-w64 \
-    && rm -rf /var/lib/apt/lists/* \
-    && rustup target add x86_64-pc-windows-gnu
-
 # CLAUDE.md gates work on `cargo test --workspace` *and*
 # `cargo clippy --workspace --all-targets`, so clippy has to be present.
 RUN rustup component add clippy rustfmt

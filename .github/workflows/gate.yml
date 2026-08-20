@@ -1,0 +1,77 @@
+# The gate, on every push: the same two commands CLAUDE.md and STATUS name.
+#
+# It runs on Windows as well as Linux, and that is the point rather than a
+# flourish. The client has platform-specific code — `kols-cli::secret` restricts
+# a seed differently on each — and the two bugs the first Windows run found were
+# both invisible from a Linux container. A gate that only ever ran on the
+# development machine would have shipped them again.
+name: gate
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  gate:
+    strategy:
+      # Not fail-fast: when one platform breaks, the useful question is whether
+      # the other did too, and cancelling the answer to save a runner-minute is
+      # a poor trade.
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      # Both repos, as siblings. The client depends on the protocol by *path*
+      # while the extensions still move (STATUS §0), so a checkout of this repo
+      # alone cannot build — `../distributed-intranet` has to be there too.
+      #
+      # The token falls back deliberately. While the protocol repo is private a
+      # PAT in `PROTOCOL_REPO_TOKEN` is required, because the default token is
+      # scoped to this repository alone; once it is public the default token can
+      # read it and the secret can simply be deleted. Writing it this way means
+      # going public is a decision about the repository rather than an edit to
+      # every workflow that checks it out.
+      - uses: actions/checkout@v4
+        with:
+          path: ko-ls
+      - uses: actions/checkout@v4
+        with:
+          repository: DriftingNarwhal/distributed-intranet
+          token: ${{ secrets.PROTOCOL_REPO_TOKEN || github.token }}
+          path: distributed-intranet
+
+      - name: Toolchain
+        run: rustup component add clippy
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: ko-ls
+
+      # What `.devcontainer/Dockerfile` installs for the same reason: Tauri v2
+      # links against webkit2gtk 4.1 here, and the tray library Debian and Ubuntu
+      # ship is the Ayatana fork rather than `libappindicator3-dev`.
+      - name: GTK and webview, for kols-app
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libwebkit2gtk-4.1-dev \
+            libjavascriptcoregtk-4.1-dev \
+            libsoup-3.0-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev
+
+      - name: Tests
+        working-directory: ko-ls
+        run: cargo test --workspace
+
+      - name: Clippy
+        working-directory: ko-ls
+        run: cargo clippy --workspace --all-targets -- -D warnings

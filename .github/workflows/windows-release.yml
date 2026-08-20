@@ -1,0 +1,97 @@
+# Windows binaries, built on Windows, published to a GitHub release.
+#
+# # Why this is not the cross-compile it replaces
+#
+# The first Windows binaries were cross-compiled from the Linux dev container
+# with mingw, which worked and cost something at the far end: a GNU build
+# *imports* `WebView2Loader.dll` rather than linking the loader statically, so
+# the window would not start unless that DLL was copied alongside it. An MSVC
+# build links it in, which is why this runs on `windows-latest` and why the
+# artifacts below stand on their own.
+#
+# It also puts the build somewhere both of us can reach. A binary that exists
+# only in one container is not distribution.
+name: windows-release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: ko-ls
+      # See gate.yml: the secret is only needed while the protocol repo is
+      # private, and the fallback means going public changes nothing here.
+      - uses: actions/checkout@v4
+        with:
+          repository: DriftingNarwhal/distributed-intranet
+          token: ${{ secrets.PROTOCOL_REPO_TOKEN || github.token }}
+          path: distributed-intranet
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: ko-ls
+
+      # The portable pair. `kols.exe` is the terminal client and `kols-desktop.exe`
+      # is the window; neither needs installing, and on MSVC neither needs a DLL
+      # carried beside it.
+      - name: Build
+        working-directory: ko-ls
+        run: cargo build --release --bin kols --bin kols-desktop
+
+      # The installer. `bundle.active` is false in tauri.conf.json because an
+      # ordinary `cargo build` has no business producing one, so the bundle is
+      # asked for here instead of turned on there.
+      # The npm package installs a `tauri` binary. `cargo tauri` is the other
+      # distribution of the same CLI and is not this one, which is the sort of
+      # thing a workflow discovers on its first run if nobody says it here.
+      - name: Tauri CLI
+        run: npm install -g @tauri-apps/cli@^2
+
+      - name: Installer
+        working-directory: ko-ls/crates/kols-app
+        run: tauri build --bundles nsis
+        continue-on-error: true
+
+      - name: Collect
+        working-directory: ko-ls
+        shell: bash
+        run: |
+          mkdir -p out
+          cp target/release/kols.exe out/
+          cp target/release/kols-desktop.exe out/
+          # The installer is best-effort: the portable pair is the deliverable
+          # that must not fail, and a bundler that cannot run should not take
+          # the binaries down with it.
+          find target/release/bundle -name "*-setup.exe" -exec cp {} out/ \; 2>/dev/null || true
+          ls -la out
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows-x64
+          path: ko-ls/out/*
+
+      # A tag publishes; a manual run just leaves the artifacts above, which is
+      # what you want while testing the workflow itself.
+      - name: Release
+        if: startsWith(github.ref, 'refs/tags/')
+        working-directory: ko-ls
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release create "${GITHUB_REF_NAME}" out/* \
+            --repo "${GITHUB_REPOSITORY}" \
+            --title "${GITHUB_REF_NAME}" \
+            --notes "Windows x64. \`kols-desktop.exe\` is the window and \`kols.exe\` the terminal client; both are portable. The \`-setup.exe\`, if present, installs the window.
+
+          Needs the WebView2 runtime, which ships with Windows 11 and current Windows 10."

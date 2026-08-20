@@ -1,1 +1,7 @@
 /target
+
+# Tauri regenerates these from the capability files on every build — including
+# `windows-schema.json` on Linux, which is worth knowing because it is the
+# opposite of what the filename suggests. Build output either way, and tracking
+# it meant a diff every time a different machine built.
+/crates/kols-app/gen/schemas
