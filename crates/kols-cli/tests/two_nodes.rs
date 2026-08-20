@@ -21,6 +21,9 @@ use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
 
+mod common;
+use common::patience;
+
 struct Home(PathBuf);
 
 impl Home {
@@ -61,6 +64,9 @@ impl Daemon {
 
     /// Waits for `needle` to appear, or gives up and shows what did appear.
     fn wait_for(&self, needle: &str, within: Duration) -> String {
+        // Scaled here rather than at each call site: a deadline is a claim about
+        // the machine, and one place to make it is one place to be wrong.
+        let within = patience(within);
         let deadline = Instant::now() + within;
         loop {
             let seen = self.output();
@@ -189,7 +195,10 @@ fn a_joiner_is_admitted_keyed_and_reads_what_was_written_before_they_arrived() {
 
     // Written before Bob has ever connected, and under the epoch that exists
     // now — which is not the epoch that will exist once he is keyed in.
-    ok(&alice, &["channel", "create", "general", "--topic", "shared"]);
+    ok(
+        &alice,
+        &["channel", "create", "general", "--topic", "shared"],
+    );
     ok(&alice, &["post", "general", "written before bob arrived"]);
     alice_node.wait_for("picked up", Duration::from_secs(20));
 
@@ -395,7 +404,10 @@ fn a_revocation_rotates_the_epoch_and_leaves_the_network_working() {
     // protocol behaviour which, the first time it happened here, deleted the
     // channel without a word.
     let listed = ok(&alice, &["channel", "list"]);
-    assert!(listed.contains("#general"), "the channel must survive:\n{listed}");
+    assert!(
+        listed.contains("#general"),
+        "the channel must survive:\n{listed}"
+    );
 
     // And the network still works: posting needs the author's own DEK, whose
     // wrapping is now under a superseded epoch key.
@@ -540,7 +552,7 @@ fn a_record_goes_out_live_and_arrives_exactly_once() {
     alice_node.wait_for("broadcast 1 record(s) live", Duration::from_secs(45));
 
     // Bob ends up with it, whichever path won.
-    let deadline = Instant::now() + Duration::from_secs(45);
+    let deadline = Instant::now() + patience(Duration::from_secs(45));
     loop {
         let read = ok(&bob, &["read", "general"]);
         if read.contains("sent while you were watching") {
@@ -591,7 +603,10 @@ fn history_still_converges_with_the_live_path_carrying_nothing() {
         "listening ",
     );
     ok(&alice, &["channel", "create", "general"]);
-    ok(&alice, &["post", "general", "written with nobody listening"]);
+    ok(
+        &alice,
+        &["post", "general", "written with nobody listening"],
+    );
     alice_node.wait_for("picked up", Duration::from_secs(20));
 
     let bob_node = serve_sealing(&bob, 45144, Some(&address), None, false);
@@ -655,7 +670,7 @@ fn a_joiner_walks_back_through_sealed_segments_to_read_the_start() {
     // costs a tick, so a chain several seals long converges over several ticks —
     // reading at the first "backfilled" catches the walk partway and reports a
     // missing history that is merely a slow one.
-    let deadline = Instant::now() + Duration::from_secs(120);
+    let deadline = Instant::now() + patience(Duration::from_secs(120));
     let read = loop {
         let read = ok(&bob, &["read", "general"]);
         let missing: Vec<_> = (0..MESSAGES)
@@ -702,7 +717,10 @@ fn history_is_not_re_broadcast_live_to_a_peer_that_arrives_later() {
         "listening ",
     );
     ok(&alice, &["channel", "create", "general"]);
-    ok(&alice, &["post", "general", "written well before bob showed up"]);
+    ok(
+        &alice,
+        &["post", "general", "written well before bob showed up"],
+    );
     alice_node.wait_for("picked up", Duration::from_secs(20));
 
     // Past the window, so this record is now history by the node's own reckoning

@@ -1,6 +1,6 @@
 # ko-ls — Implementation Status
 
-**Updated:** 2026-08-20 (all three repos public; CI needs no secret, and the preflight that proves it)
+**Updated:** 2026-08-20 (CI's first Windows failure was not a Windows bug — the tests assumed a 24-core machine)
 **Phase:** P1 — two nodes talk live and durably, a joiner reads back through sealed
 history, and the boundary carries commands in and events out
 **Design:** [`design/`](design/) — `00`–`08` at v1.0, `09` at v0.2. **`distributed-intranet/specs/07` is normative** where it and the design set overlap.
@@ -52,7 +52,7 @@ What that needs, and where it stands:
 
 ### Start here tomorrow
 
-1. `cargo test` — **186 here, 649 in `../distributed-intranet`** — and
+1. `cargo test` — **189 here, 649 in `../distributed-intranet`** — and
    `cargo clippy --workspace --all-targets` clean in both. Both trees were left green; if they
    are not, fix that before anything else. Clippy on the Windows target is a *second* run,
    `cargo clippy -p kols-cli --target x86_64-pc-windows-gnu`, and it caught something the
@@ -114,7 +114,7 @@ people can reach — which a container never was.
 |---|---|
 | **Working on** | Milestone: a client two people on separate networks can use. The window creates, joins and runs a node; the Windows build is next |
 | **Blocked on** | Nothing |
-| **Runnable** | **`kols`** — init (with `--relay`), relay list/set, invite, join, waiting, attach, admit, revoke, name, serve, post, read, edit, delete, react, pin, and channel create/list/rename/topic/slowmode/archive. **`kols-desktop`** — a window that creates a network or joins one by invite, runs a node for it, lists channels, renders one and posts to it, updating as records arrive. `cargo test` — 186 tests here and 649 in `../distributed-intranet`, clippy clean in both; `scripts/cross-check.sh` for big-endian |
+| **Runnable** | **`kols`** — init (with `--relay`), relay list/set, invite, join, waiting, attach, admit, revoke, name, serve, post, read, edit, delete, react, pin, and channel create/list/rename/topic/slowmode/archive. **`kols-desktop`** — a window that creates a network or joins one by invite, runs a node for it, lists channels, renders one and posts to it, updating as records arrive. `cargo test` — 189 tests here and 649 in `../distributed-intranet`, clippy clean in both; `scripts/cross-check.sh` for big-endian |
 | **Next decision needed from the user** | Nothing blocking |
 
 ---
@@ -235,6 +235,37 @@ design changes before anything else is built.
 ## 9. Log
 
 Newest first. One line per change that moved the state above.
+
+- **2026-08-20** — **The first Windows CI run failed three tests, and none of them was a
+  Windows bug.** `two_nodes` timed out waiting for a joiner to backfill — on Windows only,
+  which reads like a platform difference and is the wrong conclusion. **Pinning the same suite
+  to two cores on Linux reproduces it exactly.**
+
+  Every deadline in these tests is wall-clock and was tuned on a 24-core box, which makes them
+  an assumption about the machine rather than about the software. The suite runs its tests in
+  parallel and each spawns two or three daemons that sign, verify and encrypt, so a four-core
+  runner does not run the same work slightly slower — it runs ten tests' worth against a sixth
+  of the cores. The failing daemons were making steady progress and simply had less machine
+  than the numbers assumed.
+
+  So `tests/common::patience` scales a timeout by how much machine there is: at or above twelve
+  cores nothing changes, below it the shortfall is the multiplier, bounded at eight because past
+  that a hang should be reported as one rather than waited out. `KOLS_TEST_PATIENCE` overrides
+  it, since `available_parallelism` reports cores rather than idleness and a loaded laptop looks
+  nothing like an idle one. Applied inside `wait_for` rather than at each call site, and to the
+  other five test files carrying the same assumption.
+
+  **Verified at the width that failed**: all thirteen `two_nodes` tests pass pinned to four
+  cores, in 83s. Two cores still fails one, and that is recorded rather than tuned away — it is
+  half the narrowest runner anybody is proposing to use, and raising the bound far enough to
+  cover it would trade a hang detector for a coffee break.
+
+  Two notes for whoever touches this next. The helper's own tests live in `tests/patience.rs`
+  rather than beside it, because `common` is compiled into every integration binary that
+  declares it and unit tests there would run six times and report a count that lies. And
+  `cargo fmt` reformats source files this repo has never run it over, so it was reverted off
+  everything this change did not otherwise touch — a formatting sweep is its own commit, not a
+  rider on a fix.
 
 - **2026-08-20** — **All three repos are public, and CI needs no secret because of it.** The
   first workflow run failed at `actions/checkout` with a 404 on `distributed-intranet`, which

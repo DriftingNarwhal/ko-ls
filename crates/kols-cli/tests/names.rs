@@ -10,6 +10,9 @@ use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Output, Stdio};
 use std::time::{Duration, Instant};
 
+mod common;
+use common::patience;
+
 struct Home(PathBuf);
 
 impl Home {
@@ -48,7 +51,7 @@ fn keyed(home: &Home, port: u16) -> Daemon {
         .stderr(Stdio::null())
         .spawn()
         .expect("serve starts");
-    let deadline = Instant::now() + Duration::from_secs(20);
+    let deadline = Instant::now() + patience(Duration::from_secs(20));
     while !home.path().join("rotation").exists() {
         assert!(Instant::now() < deadline, "the network was never keyed");
         std::thread::sleep(Duration::from_millis(100));
@@ -78,7 +81,11 @@ fn ok(home: &Home, args: &[&str]) -> String {
 
 fn fails(home: &Home, args: &[&str]) -> String {
     let out = run(home, args);
-    assert!(!out.status.success(), "`kols {}` should have failed", args.join(" "));
+    assert!(
+        !out.status.success(),
+        "`kols {}` should have failed",
+        args.join(" ")
+    );
     String::from_utf8_lossy(&out.stderr).into_owned()
 }
 

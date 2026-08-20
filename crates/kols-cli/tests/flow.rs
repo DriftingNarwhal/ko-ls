@@ -14,6 +14,9 @@ use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Output, Stdio};
 use std::time::{Duration, Instant};
 
+mod common;
+use common::patience;
+
 /// A scratch home, removed when the test ends.
 struct Home(PathBuf);
 
@@ -63,7 +66,7 @@ fn keyed(home: &Home, port: u16) -> Daemon {
 
     // Wait for the key to land rather than for a log line: the store is the
     // contract between these processes, so that is the thing to observe.
-    let deadline = Instant::now() + Duration::from_secs(20);
+    let deadline = Instant::now() + patience(Duration::from_secs(20));
     while !home.path().join("rotation").exists() {
         assert!(Instant::now() < deadline, "the network was never keyed");
         std::thread::sleep(Duration::from_millis(100));
@@ -107,7 +110,10 @@ fn a_network_carries_a_conversation_from_creation_to_render() {
     assert!(who.contains("post             yes"), "{who}");
     assert!(who.contains("create channels  yes"), "{who}");
 
-    ok(&home, &["channel", "create", "general", "--topic", "anything"]);
+    ok(
+        &home,
+        &["channel", "create", "general", "--topic", "anything"],
+    );
     let listed = ok(&home, &["channel", "list"]);
     assert!(listed.contains("#general"), "{listed}");
     assert!(listed.contains("anything"), "{listed}");
@@ -175,7 +181,11 @@ fn commands_refuse_helpfully_before_a_network_exists() {
         vec!["read", "general"],
     ] {
         let out = run(&home, &args);
-        assert!(!out.status.success(), "`kols {}` should fail", args.join(" "));
+        assert!(
+            !out.status.success(),
+            "`kols {}` should fail",
+            args.join(" ")
+        );
         let stderr = String::from_utf8_lossy(&out.stderr);
         assert!(
             stderr.contains("kols init"),
@@ -317,10 +327,17 @@ fn secrets_are_written_unreadable_to_other_users() {
         for entry in std::fs::read_dir(home.path().join("deks")).unwrap() {
             let path = entry.unwrap().path();
             let mode = std::fs::metadata(&path).unwrap().permissions().mode();
-            assert_eq!(mode & 0o077, 0, "a DEK wrapping is readable beyond its owner");
+            assert_eq!(
+                mode & 0o077,
+                0,
+                "a DEK wrapping is readable beyond its owner"
+            );
             checked += 1;
         }
-        assert!(checked >= 3, "expected seed, epoch and at least one wrapping");
+        assert!(
+            checked >= 3,
+            "expected seed, epoch and at least one wrapping"
+        );
     }
 }
 
@@ -339,7 +356,10 @@ fn a_store_whose_epoch_key_is_gone_refuses_rather_than_inventing_one() {
     std::fs::remove_file(home.path().join("rotation")).unwrap();
 
     let out = run(&home, &["post", "general", "after"]);
-    assert!(!out.status.success(), "posting without an epoch key must fail");
+    assert!(
+        !out.status.success(),
+        "posting without an epoch key must fail"
+    );
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(stderr.contains("epoch key"), "{stderr}");
 }

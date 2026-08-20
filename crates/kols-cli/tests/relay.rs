@@ -25,6 +25,9 @@ use intranet_transport::{MemberNode, NodeEvent, RelayNode};
 use libp2p::multiaddr::Protocol;
 use std::time::Duration;
 
+mod common;
+use common::patience;
+
 fn person(seed: u8, net: u8) -> intranet_identity::PerNetworkIdentity {
     MasterSeed::from_entropy([seed; 32])
         .identity_for(&NetworkId::from_bytes([net; 32]))
@@ -39,14 +42,16 @@ async fn a_reservation_produces_a_circuit_listener() {
 
     let relay_identity = person(1, 42);
     let mut relay = RelayNode::new(&relay_identity).unwrap();
-    relay.listen_on("/ip4/0.0.0.0/tcp/0".parse().unwrap()).unwrap();
+    relay
+        .listen_on("/ip4/0.0.0.0/tcp/0".parse().unwrap())
+        .unwrap();
 
     // A routable address, not loopback: a relay only promotes non-loopback
     // listen addresses to external ones, and libp2p builds the address list it
     // returns in a reservation from external addresses alone. A loopback relay
     // therefore grants reservations that carry no address, which is correct and
     // useless.
-    let relay_addr = tokio::time::timeout(Duration::from_secs(5), async {
+    let relay_addr = tokio::time::timeout(patience(Duration::from_secs(5)), async {
         loop {
             if let NodeEvent::Listening(address) = relay.next_event().await
                 && !address.to_string().contains("127.0.0.1")
@@ -63,7 +68,9 @@ async fn a_reservation_produces_a_circuit_listener() {
     // not a member of what it serves.
     let member_identity = person(2, 7);
     let mut member = MemberNode::new(&member_identity).unwrap();
-    member.listen_on("/ip4/127.0.0.1/tcp/0".parse().unwrap()).unwrap();
+    member
+        .listen_on("/ip4/127.0.0.1/tcp/0".parse().unwrap())
+        .unwrap();
 
     // Drive the relay in the background, the way a separate process would.
     tokio::spawn(async move {

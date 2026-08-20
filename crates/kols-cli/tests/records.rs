@@ -12,6 +12,9 @@ use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Output, Stdio};
 use std::time::{Duration, Instant};
 
+mod common;
+use common::patience;
+
 struct Home(PathBuf);
 
 impl Home {
@@ -53,7 +56,7 @@ fn keyed(home: &Home, port: u16) -> Daemon {
         .spawn()
         .expect("serve starts");
 
-    let deadline = Instant::now() + Duration::from_secs(20);
+    let deadline = Instant::now() + patience(Duration::from_secs(20));
     while !home.path().join("rotation").exists() {
         assert!(Instant::now() < deadline, "the network was never keyed");
         std::thread::sleep(Duration::from_millis(100));
@@ -124,7 +127,10 @@ fn an_edit_replaces_the_body_and_says_it_was_edited() {
 
     let read = ok(&home, &["read", "general"]);
     assert!(read.contains("second draft"), "{read}");
-    assert!(!read.contains("first draft"), "the old body still renders:\n{read}");
+    assert!(
+        !read.contains("first draft"),
+        "the old body still renders:\n{read}"
+    );
     assert!(read.contains("edited"), "{read}");
 }
 
@@ -152,7 +158,10 @@ fn a_reaction_lands_and_can_be_taken_back() {
 
     ok(&home, &["react", "general", &id, "+1", "--remove"]);
     let read = ok(&home, &["read", "general"]);
-    assert!(!read.contains("+1 ×"), "the reaction survived removal:\n{read}");
+    assert!(
+        !read.contains("+1 ×"),
+        "the reaction survived removal:\n{read}"
+    );
 }
 
 #[test]
@@ -186,7 +195,10 @@ fn renaming_a_channel_survives_replay() {
 
     let listed = ok(&home, &["channel", "list"]);
     assert!(listed.contains("#lobby"), "{listed}");
-    assert!(!listed.contains("#general"), "the old name survived:\n{listed}");
+    assert!(
+        !listed.contains("#general"),
+        "the old name survived:\n{listed}"
+    );
 }
 
 #[test]
@@ -252,5 +264,8 @@ fn the_rate_ceiling_stops_a_flood_before_it_is_signed() {
 
     let complaint = refused.expect("40 messages in a minute should have hit the ceiling");
     assert!(complaint.contains("too fast"), "{complaint}");
-    assert!(complaint.contains("30"), "the ceiling should be named: {complaint}");
+    assert!(
+        complaint.contains("30"),
+        "the ceiling should be named: {complaint}"
+    );
 }

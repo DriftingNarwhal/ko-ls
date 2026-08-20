@@ -14,6 +14,9 @@ use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Output, Stdio};
 use std::time::{Duration, Instant};
 
+mod common;
+use common::patience;
+
 struct Home(PathBuf);
 
 impl Home {
@@ -71,7 +74,7 @@ fn hosted_relay() -> String {
             }
         });
     });
-    rx.recv_timeout(Duration::from_secs(10))
+    rx.recv_timeout(patience(Duration::from_secs(10)))
         .expect("the relay reports a routable address")
 }
 
@@ -98,7 +101,7 @@ fn serving(home: &Home, port: u16) -> Daemon {
     // A circuit, not merely an address: an invite that carried only this
     // machine's own addresses would reach nobody off it, which is what the
     // relay requirement exists to prevent.
-    let deadline = Instant::now() + Duration::from_secs(40);
+    let deadline = Instant::now() + patience(Duration::from_secs(40));
     loop {
         let reserved = std::fs::read_to_string(home.path().join("addresses"))
             .map(|text| text.contains("p2p-circuit"))
@@ -137,7 +140,11 @@ fn ok(home: &Home, args: &[&str]) -> String {
 
 fn fails(home: &Home, args: &[&str]) -> String {
     let out = run(home, args);
-    assert!(!out.status.success(), "`kols {}` should have failed", args.join(" "));
+    assert!(
+        !out.status.success(),
+        "`kols {}` should have failed",
+        args.join(" ")
+    );
     String::from_utf8_lossy(&out.stderr).into_owned()
 }
 
@@ -149,7 +156,11 @@ fn one_string_takes_a_stranger_from_nothing_to_a_place_in_the_network() {
     let _node = serving(&alice, 45501);
 
     let minted = ok(&alice, &["invite", "--uses", "3", "--hours", "12"]);
-    let uri = minted.lines().next().expect("an invite is printed").to_owned();
+    let uri = minted
+        .lines()
+        .next()
+        .expect("an invite is printed")
+        .to_owned();
     assert!(uri.starts_with("intranet-chat://join/"), "{uri}");
 
     // Bob holds one string and nothing else — no network id, no address, no
@@ -162,7 +173,10 @@ fn one_string_takes_a_stranger_from_nothing_to_a_place_in_the_network() {
     // told an address by hand later — and it is the circuit that matters, since
     // that is the one address that works from another network.
     let peers = std::fs::read_to_string(bob.path().join("peers")).expect("peers were kept");
-    assert!(peers.contains("p2p-circuit"), "no circuit in the invite:\n{peers}");
+    assert!(
+        peers.contains("p2p-circuit"),
+        "no circuit in the invite:\n{peers}"
+    );
 
     // And the admin can see him without being sent his identity out of band.
     let waiting = ok(&alice, &["waiting"]);
