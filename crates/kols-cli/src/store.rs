@@ -76,12 +76,19 @@ impl From<io::Error> for StoreError {
 
 impl Store {
     /// Where state lives: `$KOLS_HOME`, else `~/.kols`.
+    ///
+    /// **Home is not one variable.** `HOME` is the Unix answer and is normally
+    /// unset on Windows, where the profile is `USERPROFILE` — so reading only
+    /// `HOME` there does not fail, it silently succeeds with the wrong answer:
+    /// the fallback puts `.kols` in the *current directory*, and a client whose
+    /// store follows you around is one that appears to lose a network whenever
+    /// you run it from somewhere else. Found the first time `kols.exe` was run.
     pub fn default_root() -> PathBuf {
         if let Ok(explicit) = std::env::var("KOLS_HOME") {
             return PathBuf::from(explicit);
         }
-        let home = std::env::var("HOME").unwrap_or_else(|_| ".".to_owned());
-        Path::new(&home).join(".kols")
+        let home = home_dir().unwrap_or_else(|| PathBuf::from("."));
+        home.join(".kols")
     }
 
     /// Creates a store, generating a seed if there is not one already.
@@ -776,6 +783,37 @@ impl Store {
     }
 }
 
+/// This user's home directory, by whichever name the platform gives it.
+///
+/// `USERPROFILE` first on Windows and `HOME` first elsewhere, each falling back
+/// to the other rather than to nothing: a Unix shell that exports `USERPROFILE`
+/// is odd but not wrong, and Git Bash on Windows sets `HOME` and is common.
+fn home_dir() -> Option<PathBuf> {
+    let profile = std::env::var_os("USERPROFILE");
+    let home = std::env::var_os("HOME");
+    if cfg!(windows) {
+        first_set(profile, home)
+    } else {
+        first_set(home, profile)
+    }
+}
+
+/// The first of two candidates that is set and not empty.
+///
+/// Not `or_else` followed by a check: a variable set to the empty string would
+/// win that race and then be discarded, throwing away a perfectly good second
+/// answer. Empty means unset here.
+fn first_set(
+    first: Option<std::ffi::OsString>,
+    second: Option<std::ffi::OsString>,
+) -> Option<PathBuf> {
+    first
+        .into_iter()
+        .chain(second)
+        .find(|value| !value.is_empty())
+        .map(PathBuf::from)
+}
+
 fn fixed<const N: usize>(bytes: &[u8], what: &str) -> Result<[u8; N], StoreError> {
     bytes
         .try_into()
@@ -843,5 +881,45 @@ pub struct AppendLock {
 impl Drop for AppendLock {
     fn drop(&mut self) {
         let _ = fs::remove_dir(&self.path);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::first_set;
+    use std::ffi::OsString;
+    use std::path::PathBuf;
+
+    fn os(value: &str) -> Option<OsString> {
+        Some(OsString::from(value))
+    }
+
+    #[test]
+    fn the_first_candidate_wins_when_it_is_set() {
+        assert_eq!(
+            first_set(os("/first"), os("/second")),
+            Some(PathBuf::from("/first"))
+        );
+    }
+
+    #[test]
+    fn an_absent_first_candidate_falls_through() {
+        // Which is the whole point on Windows, where HOME is normally unset and
+        // USERPROFILE is the answer — and on Git Bash, where it is the reverse.
+        assert_eq!(first_set(None, os("/second")), Some(PathBuf::from("/second")));
+    }
+
+    #[test]
+    fn an_empty_first_candidate_falls_through_rather_than_winning() {
+        // The case `or_else` gets wrong: set-but-empty is not an answer, and
+        // treating it as one throws away a good second candidate to return a
+        // path that is silently the current directory.
+        assert_eq!(first_set(os(""), os("/second")), Some(PathBuf::from("/second")));
+    }
+
+    #[test]
+    fn nothing_set_is_nothing() {
+        assert_eq!(first_set(None, None), None);
+        assert_eq!(first_set(os(""), os("")), None);
     }
 }

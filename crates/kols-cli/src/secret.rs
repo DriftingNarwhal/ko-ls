@@ -33,13 +33,46 @@ use std::fs;
 use std::io;
 use std::path::Path;
 
+/// `ERROR_INVALID_FUNCTION`, which is what a filesystem with no notion of
+/// Windows permissions returns when asked to set some.
+#[cfg(windows)]
+const ERROR_INVALID_FUNCTION: i32 = 1;
+
+/// Explains a refusal, because the raw OS error does not.
+///
+/// "Incorrect function. (os error 1)" is what this looked like the first time
+/// `kols.exe` ran, and it names neither the file, nor what was being attempted,
+/// nor the one thing that would fix it. An error nobody can act on costs more
+/// than the check that produced it saves.
+fn unprotected(call: &str, path: &Path, err: &io::Error) -> io::Error {
+    #[cfg(windows)]
+    let hint = if err.raw_os_error() == Some(ERROR_INVALID_FUNCTION) {
+        ". That error means this filesystem has no Windows permissions to set — a FAT or \
+         exFAT drive, a network share, or a \\\\wsl$\\ path. A seed cannot be protected \
+         there. Run from a local NTFS drive, or point KOLS_HOME at a directory on one"
+    } else {
+        ""
+    };
+    #[cfg(not(windows))]
+    let hint = "";
+
+    io::Error::new(
+        err.kind(),
+        format!(
+            "could not restrict {} to your account, so the secret was not written — \
+             {call} failed: {err}{hint}",
+            path.display()
+        ),
+    )
+}
+
 /// Writes `bytes` to `path`, readable and writable by this user and nobody else.
 ///
 /// Refuses rather than falling back to the platform's default permissions — see
 /// the module documentation for why that trade only goes one way.
 pub fn write_private(path: &Path, bytes: &[u8]) -> io::Result<()> {
     fs::File::create(path)?;
-    if let Err(err) = restrict_to_owner(path) {
+    if let Err(err) = restrict_to_owner(path).map_err(|(call, err)| unprotected(call, path, &err)) {
         // Leaving an empty file behind would be harmless; leaving it and then
         // having a later write land in it would not, so it goes.
         let _ = fs::remove_file(path);
@@ -50,10 +83,11 @@ pub fn write_private(path: &Path, bytes: &[u8]) -> io::Result<()> {
 
 /// Restricts an existing file to the account running this process.
 #[cfg(unix)]
-fn restrict_to_owner(path: &Path) -> io::Result<()> {
+fn restrict_to_owner(path: &Path) -> Result<(), (&'static str, io::Error)> {
     use std::os::unix::fs::PermissionsExt;
 
     fs::set_permissions(path, fs::Permissions::from_mode(0o600))
+        .map_err(|err| ("chmod 0600", err))
 }
 
 /// Restricts an existing file to the account running this process.
@@ -75,7 +109,7 @@ fn restrict_to_owner(path: &Path) -> io::Result<()> {
 /// outstanding half of O8. Cross-compilation proves the calls exist with the
 /// shapes assumed here and proves nothing about the ACL that results.
 #[cfg(windows)]
-fn restrict_to_owner(path: &Path) -> io::Result<()> {
+fn restrict_to_owner(path: &Path) -> Result<(), (&'static str, io::Error)> {
     use std::os::windows::ffi::OsStrExt;
 
     use windows_sys::Win32::Foundation::{CloseHandle, ERROR_SUCCESS, HANDLE, LocalFree};
@@ -105,7 +139,7 @@ fn restrict_to_owner(path: &Path) -> io::Result<()> {
     // SAFETY: `GetCurrentProcess` returns a pseudo-handle that needs no closing,
     // and `raw` is a live pointer to a handle-sized slot for the call to fill.
     if unsafe { OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &mut raw) } == 0 {
-        return Err(io::Error::last_os_error());
+        return Err(("OpenProcessToken", io::Error::last_os_error()));
     }
     let token = Token(raw);
 
@@ -118,7 +152,7 @@ fn restrict_to_owner(path: &Path) -> io::Result<()> {
     // the size; this call is expected to fail and only `needed` is read.
     unsafe { GetTokenInformation(token.0, TokenUser, std::ptr::null_mut(), 0, &mut needed) };
     if needed == 0 {
-        return Err(io::Error::last_os_error());
+        return Err(("GetTokenInformation", io::Error::last_os_error()));
     }
     let mut buffer = vec![0u64; (needed as usize).div_ceil(size_of::<u64>())];
     // SAFETY: `buffer` is at least `needed` bytes and outlives every read of the
@@ -133,7 +167,7 @@ fn restrict_to_owner(path: &Path) -> io::Result<()> {
         )
     } == 0
     {
-        return Err(io::Error::last_os_error());
+        return Err(("GetTokenInformation", io::Error::last_os_error()));
     }
     // SAFETY: the call above filled `buffer` with a TOKEN_USER, and the buffer is
     // aligned for one.
@@ -157,7 +191,10 @@ fn restrict_to_owner(path: &Path) -> io::Result<()> {
     // and `acl` receives an allocation this function frees below.
     let built = unsafe { SetEntriesInAclW(1, &access, std::ptr::null_mut(), &mut acl) };
     if built != ERROR_SUCCESS {
-        return Err(io::Error::from_raw_os_error(built as i32));
+        return Err((
+            "SetEntriesInAclW",
+            io::Error::from_raw_os_error(built as i32),
+        ));
     }
 
     let mut wide: Vec<u16> = path.as_os_str().encode_wide().collect();
@@ -179,7 +216,10 @@ fn restrict_to_owner(path: &Path) -> io::Result<()> {
     unsafe { LocalFree(acl.cast()) };
 
     if applied != ERROR_SUCCESS {
-        return Err(io::Error::from_raw_os_error(applied as i32));
+        return Err((
+            "SetNamedSecurityInfoW",
+            io::Error::from_raw_os_error(applied as i32),
+        ));
     }
     Ok(())
 }
@@ -190,10 +230,10 @@ fn restrict_to_owner(path: &Path) -> io::Result<()> {
 /// same call the two implemented paths make when they fail: a secret this
 /// process cannot protect is one it declines to write.
 #[cfg(not(any(unix, windows)))]
-fn restrict_to_owner(_path: &Path) -> io::Result<()> {
-    Err(io::Error::other(
-        "this platform has no supported way to restrict a file to its owner, so a secret \
-         cannot be written here",
+fn restrict_to_owner(_path: &Path) -> Result<(), (&'static str, io::Error)> {
+    Err((
+        "restricting a file",
+        io::Error::other("this platform has no supported way to restrict a file to its owner"),
     ))
 }
 
@@ -235,6 +275,22 @@ mod tests {
         let mode = fs::metadata(&path).unwrap().permissions().mode();
         assert_eq!(mode & 0o077, 0, "an overwritten secret kept the old mode");
         assert_eq!(fs::read(&path).unwrap(), b"seed");
+    }
+
+    #[test]
+    fn a_refusal_says_which_file_and_which_call() {
+        // "Incorrect function. (os error 1)" is what this said the first time
+        // kols.exe ran, which named neither. A refusal nobody can act on costs
+        // more than the check that produced it saves.
+        let err = super::unprotected(
+            "SetNamedSecurityInfoW",
+            std::path::Path::new("/somewhere/seed"),
+            &std::io::Error::from_raw_os_error(1),
+        );
+        let said = err.to_string();
+        assert!(said.contains("/somewhere/seed"), "{said}");
+        assert!(said.contains("SetNamedSecurityInfoW"), "{said}");
+        assert!(said.contains("was not written"), "{said}");
     }
 
     #[test]

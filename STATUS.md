@@ -1,6 +1,6 @@
 # ko-ls — Implementation Status
 
-**Updated:** 2026-08-20 (`kols` builds for Windows, and the seed it writes there is restricted)
+**Updated:** 2026-08-20 (`kols.exe` ran on Windows and found two bugs — home, and a refusal nobody could act on)
 **Phase:** P1 — two nodes talk live and durably, a joiner reads back through sealed
 history, and the boundary carries commands in and events out
 **Design:** [`design/`](design/) — `00`–`08` at v1.0, `09` at v0.2. **`distributed-intranet/specs/07` is normative** where it and the design set overlap.
@@ -47,20 +47,21 @@ What that needs, and where it stands:
 | Relay reachability — a network designates relays, a node reserves a circuit, invites carry it | **done** |
 | One string to join — `kols invite` / `kols join` | **done** |
 | A window that creates, joins, opens and runs a node for a network | **done** |
-| **A Windows build** | **`kols.exe` builds**; `kols-desktop` needs a Windows runner, and nothing has *run* either |
+| **A Windows build** | **`kols.exe` builds and has been run once**, which found two bugs; `kols-desktop` still needs a Windows runner |
 | Minting an invite from the window | not started; a founder still needs one terminal step |
 
 ### Start here tomorrow
 
-1. `cargo test` — **181 here, 649 in `../distributed-intranet`** — and
+1. `cargo test` — **186 here, 649 in `../distributed-intranet`** — and
    `cargo clippy --workspace --all-targets` clean in both. Both trees were left green; if they
    are not, fix that before anything else. Clippy on the Windows target is a *second* run,
    `cargo clippy -p kols-cli --target x86_64-pc-windows-gnu`, and it caught something the
    Linux one cannot see, so it is worth making when `src/secret.rs` changes.
-2. **Run `kols.exe` on a real Windows machine.** It cross-compiles and links here, and that
-   is the whole of what is known about it — no test in this repo has executed a Windows
-   binary. The first thing to check is O8's DACL: create a network, then confirm the seed at
-   `%USERPROFILE%\.kols\seed` is readable by its owner and by nobody else.
+2. **`kols.exe` has been run once, on NTFS it has not.** The first run was from a `\\wsl$\`
+   path and refused, correctly — that filesystem has no Windows permissions to set. What is
+   still unconfirmed is the *successful* path: create a network on a local NTFS drive and
+   confirm `%USERPROFILE%\.kols\seed` grants your account and nothing else, with inheritance
+   off. That is the half of O8 no build can prove.
 3. `kols-desktop` on Windows still needs a runner or a machine, because Tauri wants MSVC and
    WebView2 and neither is reachable from this container. `design/07` §2 S3 records what the
    Linux toolchain needed.
@@ -89,7 +90,7 @@ What that needs, and where it stands:
 |---|---|
 | **Working on** | Milestone: a client two people on separate networks can use. The window creates, joins and runs a node; the Windows build is next |
 | **Blocked on** | Nothing |
-| **Runnable** | **`kols`** — init (with `--relay`), relay list/set, invite, join, waiting, attach, admit, revoke, name, serve, post, read, edit, delete, react, pin, and channel create/list/rename/topic/slowmode/archive. **`kols-desktop`** — a window that creates a network or joins one by invite, runs a node for it, lists channels, renders one and posts to it, updating as records arrive. `cargo test` — 181 tests here and 649 in `../distributed-intranet`, clippy clean in both; `scripts/cross-check.sh` for big-endian |
+| **Runnable** | **`kols`** — init (with `--relay`), relay list/set, invite, join, waiting, attach, admit, revoke, name, serve, post, read, edit, delete, react, pin, and channel create/list/rename/topic/slowmode/archive. **`kols-desktop`** — a window that creates a network or joins one by invite, runs a node for it, lists channels, renders one and posts to it, updating as records arrive. `cargo test` — 186 tests here and 649 in `../distributed-intranet`, clippy clean in both; `scripts/cross-check.sh` for big-endian |
 | **Next decision needed from the user** | Nothing blocking |
 
 ---
@@ -209,6 +210,33 @@ design changes before anything else is built.
 ## 9. Log
 
 Newest first. One line per change that moved the state above.
+
+- **2026-08-20** — **The first Windows run failed, and both reasons were worth having.** It
+  said `kols: Incorrect function. (os error 1)` — which names neither the file it was writing,
+  nor what it was attempting, nor the one thing that would have fixed it.
+
+  **The refusal was correct.** `SetNamedSecurityInfoW` returns `ERROR_INVALID_FUNCTION` on a
+  filesystem that has no Windows permissions to set, and the run was from a `\\wsl$\` path,
+  which is one. So the code did exactly what it was built to do — decline to write a seed it
+  could not protect — and then failed at the only other thing it owed, which was saying so.
+  A refusal nobody can act on costs more than the check that produced it saves. The message
+  now names the file, the call, and the fix.
+
+  **Underneath it was a real bug, and the reason it was silent is the interesting part.**
+  `Store::default_root` read `$HOME`, which is normally unset on Windows — so it did not fail,
+  it fell back to `"."` and put the store in the *current directory*. A client whose store
+  follows the shell around is one that appears to lose a network whenever it is run from
+  somewhere else, and nothing would ever have said why. Home is now `USERPROFILE` first on
+  Windows and `HOME` first elsewhere, each falling back to the other, because Git Bash sets
+  `HOME` on Windows and is common.
+
+  **Set-but-empty is not an answer**, which `or_else` gets wrong: an empty variable would win
+  the fallback and then be discarded, throwing away a good second candidate. That is a pure
+  function with four tests rather than a line nobody can reach.
+
+  Neither bug was reachable from this container — one needs a Windows filesystem and the other
+  needs Windows environment variables — which is the argument for running the binary rather
+  than admiring the build. 181 → 186 tests, clippy clean on both targets.
 
 - **2026-08-20** — **`kols` builds for Windows, and the seed it writes there is restricted
   rather than inherited.** O8 was the gate on this and it is now written: `write_private`
