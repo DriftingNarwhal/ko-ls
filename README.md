@@ -102,6 +102,26 @@ State lands in `$KOLS_HOME`, else `~/.kols`. The seed written there is the only 
 your identity and there is no recovery service, so point `--home` somewhere disposable
 while you are poking at it.
 
+## The window
+
+```bash
+cargo build -p kols-app
+KOLS_HOME=/tmp/alice ./target/debug/kols-desktop
+```
+
+That is the whole launch. No `DISPLAY` or `GDK_BACKEND` to set: inside the dev container GTK
+finds the Wayland socket VS Code forwards, and on a desktop it finds whatever is there. Run it
+from a terminal you can leave occupied — it holds the terminal until you close the window.
+
+It opens the network at `$KOLS_HOME` and shows what that node's store already holds: the
+channels replay knows about, and the messages in one of them. Posting works, because writing a
+record is a local act.
+
+**It runs no node**, so it will not show you another member's messages and will not update
+while you watch. `kols serve` is what fetches and what hears gossip; the window reads what the
+store has. A shell that ran its own node would look identical and be a different piece of
+work — [`STATUS.md`](STATUS.md) §6 carries it.
+
 ## What exists
 
 Text chat's foundations, proven end to end between two live nodes: canonical record
