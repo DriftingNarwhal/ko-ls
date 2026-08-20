@@ -78,15 +78,20 @@ RUN install -m 0755 -d /etc/apt/keyrings \
     && apt-get update && apt-get install -y --no-install-recommends nodejs \
     && rm -rf /var/lib/apt/lists/*
 
-# Cross-compiling `kols` for Windows. The GNU target rather than MSVC, because
-# MSVC needs Microsoft's linker and cannot be reached from a Linux container at
-# all; mingw can, and `kols` is a console binary with no Windows-specific
-# dependency beyond `src/secret.rs`'s DACL call.
+# Cross-compiling for Windows. The GNU target rather than MSVC, because MSVC
+# needs Microsoft's linker and cannot be reached from a Linux container at all;
+# mingw can.
 #
-# **This builds the CLI and not `kols-desktop`.** Tauri wants MSVC and WebView2,
-# so the window still needs a Windows runner. The gate this target does buy is a
-# compile check of the one platform-specific path in the client, which is the
-# half that is silent when it is wrong.
+# **This builds `kols-desktop` as well as `kols`**, which was not expected — the
+# received wisdom is that Tauri on Windows wants MSVC, and the only thing that
+# actually stopped it here was a missing `icons/icon.ico`. The window links the
+# whole stack (tao, wry, webview2-com) against mingw.
+#
+# One thing the GNU target changes about the *product*: `kols-desktop.exe`
+# imports `WebView2Loader.dll` rather than linking the loader statically the way
+# an MSVC build does, so that DLL has to sit beside the binary. It is
+# Microsoft's redistributable, out of the `Microsoft.Web.WebView2` NuGet
+# package, and it is not vendored here — packaging owes this a real answer.
 RUN apt-get update && apt-get install -y --no-install-recommends mingw-w64 \
     && rm -rf /var/lib/apt/lists/* \
     && rustup target add x86_64-pc-windows-gnu

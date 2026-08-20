@@ -1,6 +1,6 @@
 # ko-ls — Implementation Status
 
-**Updated:** 2026-08-20 (`kols.exe` ran on Windows and found two bugs — home, and a refusal nobody could act on)
+**Updated:** 2026-08-20 (Windows: the seed ACL is confirmed, O8 closed, and the window cross-compiles after all)
 **Phase:** P1 — two nodes talk live and durably, a joiner reads back through sealed
 history, and the boundary carries commands in and events out
 **Design:** [`design/`](design/) — `00`–`08` at v1.0, `09` at v0.2. **`distributed-intranet/specs/07` is normative** where it and the design set overlap.
@@ -47,7 +47,7 @@ What that needs, and where it stands:
 | Relay reachability — a network designates relays, a node reserves a circuit, invites carry it | **done** |
 | One string to join — `kols invite` / `kols join` | **done** |
 | A window that creates, joins, opens and runs a node for a network | **done** |
-| **A Windows build** | **`kols.exe` builds and has been run once**, which found two bugs; `kols-desktop` still needs a Windows runner |
+| **A Windows build** | **Both binaries cross-compile**, and `kols.exe` runs — network created, seed correctly restricted. `kols-desktop.exe` is built and unrun |
 | Minting an invite from the window | not started; a founder still needs one terminal step |
 
 ### Start here tomorrow
@@ -57,11 +57,11 @@ What that needs, and where it stands:
    are not, fix that before anything else. Clippy on the Windows target is a *second* run,
    `cargo clippy -p kols-cli --target x86_64-pc-windows-gnu`, and it caught something the
    Linux one cannot see, so it is worth making when `src/secret.rs` changes.
-2. **`kols.exe` has been run once, on NTFS it has not.** The first run was from a `\\wsl$\`
-   path and refused, correctly — that filesystem has no Windows permissions to set. What is
-   still unconfirmed is the *successful* path: create a network on a local NTFS drive and
-   confirm `%USERPROFILE%\.kols\seed` grants your account and nothing else, with inheritance
-   off. That is the half of O8 no build can prove.
+2. **Run `kols-desktop.exe` on Windows.** It links but has never been started, and the
+   thing to watch is that a GNU build imports `WebView2Loader.dll` instead of linking the
+   loader statically as an MSVC build does — so that DLL must sit beside the binary or the
+   process will not start at all. `kols.exe` itself is confirmed working there: a network
+   created, and its seed restricted to one account (O8, closed).
 3. `kols-desktop` on Windows still needs a runner or a machine, because Tauri wants MSVC and
    WebView2 and neither is reachable from this container. `design/07` §2 S3 records what the
    Linux toolchain needed.
@@ -168,7 +168,7 @@ somebody forgot.
 | O5 | **The executor rebuilds an author's whole log to append one record** | `rebuild_log` replays every record this member wrote in a channel on every write, which is correct — the segment is a pure function of the sequence — and is linear in a log that only grows. It is the same work O4's projection exists to stop repeating, and wants measuring before it is optimised rather than after | `kols-cli::chat::rebuild_log` |
 | O6 | **The window has no invite control and no presence** | It can *redeem* an invite now; it cannot *mint* one, so a founder still needs a terminal to bring somebody in. Presence needs the ephemeral gossip of `design/01` §9, which nothing implements — so `design/09` §4's third question, who is here and are they around, has no answer in the interface | `design/09` §4.1, §5, §7 |
 | O7 | **No credentials and no backup.** Seeds are written to `<home>/seed` in the clear and never surfaced, so a member's only copy is a file, and anything with read access to the disk is that member | **Deliberately deferred, and it must land well before any 1.0.** The shape is decided (`design/02` §6.3): a local account whose password *wraps* a keyring of per-network seeds and never derives them, plus an export bundle of phrase, network id and relay address per network. Not needed to test between two machines you own; needed before anybody else's identity depends on it | `design/02` §6.3, `design/05` §5 |
-| O8 | **The Windows seed ACL is written but unrun.** `kols-cli::secret` now restricts a secret to this user on both platforms — a `chmod` on Unix, a protected DACL on Windows — and *refuses* rather than writing one it cannot protect. What is owed is running it | No Windows machine has been near this repository, so the DACL path is verified by cross-compilation and by its API contract, and by nothing else. Cross-compiling proves the calls exist with the shapes assumed; it proves nothing about the ACL that results. Confirm on Windows before a `.exe` reaches another person | `kols-cli::secret`, `design/02` §6.3 |
+| O8 | ~~**On Windows a seed is written with default ACLs.**~~ **Closed 2026-08-20.** `kols-cli::secret` restricts a secret to this user on both platforms — a `chmod` on Unix, a *protected* DACL on Windows — and refuses rather than writing one it cannot protect | Confirmed by running it: a seed written by `kols.exe` on NTFS shows this account and nothing else in its Security tab, with no inherited `SYSTEM` or `Administrators` entry, which is what the protected flag is for. The refusal path was confirmed the same day, from a `\\wsl$\` path that has no permissions to set | `kols-cli::secret`, `design/02` §6.3 |
 | O9 | **A suspended node can lose its claim and not know.** `NODE_CLAIM_STALE` is wall-clock, so a laptop asleep past the window can have its claim taken over while it still believes it holds one | Making it impossible needs the holder to re-check ownership as it beats. Rare rather than impossible today, because taking over requires somebody to start a second node inside that window | `kols-cli::store::NODE_CLAIM_STALE` |
 
 **Closed since this register was written:** the executor, the two checks `authorize`
@@ -210,6 +210,30 @@ design changes before anything else is built.
 ## 9. Log
 
 Newest first. One line per change that moved the state above.
+
+- **2026-08-20** — **O8 closed on a real machine, and the window cross-compiles after all.**
+  `kols.exe` created a network on NTFS and its seed's Security tab shows one account and
+  nothing else — no inherited `SYSTEM`, no `Administrators`, which is exactly what the
+  protected DACL is for and the one thing no build here could prove. Both halves of O8 are now
+  observed rather than argued: the refusal from a filesystem that has no permissions to set,
+  and the success on one that does.
+
+  **`kols-desktop` was recorded as needing a Windows runner, and that was wrong.** Tauri on
+  Windows is widely held to want MSVC, so the claim went in unexamined — twice, into `STATUS`
+  and into the Dockerfile. What actually stopped the build was a **missing `icons/icon.ico`**,
+  which `tauri-build` needs for a Windows resource file. An `.ico` generated from the 512×512
+  PNG already in the repo, and the whole stack — tao, wry, webview2-com — links against mingw.
+  A received opinion is not a finding, and this one cost nothing to check and was wrong.
+
+  **What the GNU target changes about the product, which matters for handing it to somebody.**
+  An MSVC build links the WebView2 loader statically; a GNU build **imports
+  `WebView2Loader.dll`**, and it is a plain import rather than a delay import, so the process
+  will not start at all without that DLL beside it. It is Microsoft's redistributable from the
+  `Microsoft.Web.WebView2` NuGet package, it is not vendored in this repo, and packaging owes
+  it a real answer — Tauri's own bundler does this on a Windows host, which nothing here is.
+
+  Neither binary has been *run* as a window yet. Building is not running, which is the lesson
+  of the entry above this one.
 
 - **2026-08-20** — **The first Windows run failed, and both reasons were worth having.** It
   said `kols: Incorrect function. (os error 1)` — which names neither the file it was writing,
