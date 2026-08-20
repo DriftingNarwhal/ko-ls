@@ -26,6 +26,59 @@ jobs:
     runs-on: windows-latest
 
     steps:
+      # Why this step exists: without it, a missing or under-scoped token shows up
+      # as `actions/checkout` reporting **404 Not Found** on the next step, which
+      # is GitHub declining to confirm that a private repository exists at all.
+      # That reads as "the repo is gone" and means "this token cannot see it".
+      # Naming the cause here costs one API call.
+      - name: Can we see the protocol repo?
+        shell: bash
+        env:
+          PROTOCOL_TOKEN: ${{ secrets.PROTOCOL_REPO_TOKEN }}
+          FALLBACK: ${{ github.token }}
+        run: |
+          if [ -n "$PROTOCOL_TOKEN" ]; then
+            using="PROTOCOL_REPO_TOKEN"; token="$PROTOCOL_TOKEN"
+          else
+            using="this job's own token (PROTOCOL_REPO_TOKEN is not set)"; token="$FALLBACK"
+          fi
+          # An *empty* Authorization header is a bad credential rather than no
+          # credential — GitHub answers 401 to it even for a public repository —
+          # so the header is omitted when there is no token to send.
+          auth=()
+          [ -n "$token" ] && auth=(-H "Authorization: Bearer $token")
+          code=$(curl -s -o /dev/null -w '%{http_code}' \
+            "${auth[@]}" \
+            -H "Accept: application/vnd.github+json" \
+            https://api.github.com/repos/DriftingNarwhal/distributed-intranet)
+          echo "Using $using — GitHub answered $code."
+          if [ "$code" = "200" ]; then exit 0; fi
+          echo "::error::Cannot read DriftingNarwhal/distributed-intranet using $using (HTTP $code)."
+          cat >&2 <<'WHY'
+
+          The client depends on the protocol crates by path, so this workflow has to
+          check out both repositories as siblings. A job's own token reaches only the
+          repository it runs in, so while distributed-intranet is private a PAT is
+          required:
+
+            Settings -> Secrets and variables -> Actions -> New repository secret
+              Name:  PROTOCOL_REPO_TOKEN
+              Value: a token that can read DriftingNarwhal/distributed-intranet
+
+            Fine-grained PAT: Repository access must list distributed-intranet, and
+            Repository permissions must include Contents: Read-only.
+            Classic PAT: the `repo` scope.
+
+          A 404 here means the token cannot see the repository, not that it is
+          missing — GitHub returns 404 rather than 403 for private repositories so
+          that their existence is not disclosed. A 401 means the token is invalid or
+          expired.
+
+          When distributed-intranet becomes public, delete the secret: both workflows
+          fall back to the job's own token, which can read any public repository.
+          WHY
+          exit 1
+
       - uses: actions/checkout@v4
         with:
           path: ko-ls
