@@ -26,6 +26,7 @@ mod permissions;
 mod policy;
 mod ids;
 mod live;
+mod names;
 mod record;
 mod segment;
 mod view;
@@ -37,6 +38,10 @@ pub use channel::{
 };
 pub use hlc::Hlc;
 pub use live::{LivePayload, channel_content_key};
+pub use names::{
+    MAX_NAME_BYTES, MAX_NAME_GRAPHEMES, NAME_CLAIM_DOMAIN, NAME_CLAIM_KIND, NAME_CLAIM_TAG,
+    NameClaim, NameRefusal, Names, name_key, replay_names,
+};
 pub use log::{AuthorLog, CHAT_LOG_CONTENT_TYPE, Published, publish_head_index};
 pub use ids::{
     ChannelId, MessageId, author_log_pointer, author_segment_pointer, channel_browse_collection,

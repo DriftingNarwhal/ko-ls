@@ -11,3 +11,12 @@ intranet-crypto.workspace = true
 intranet-identity.workspace = true
 intranet-governance.workspace = true
 intranet-storage.workspace = true
+
+# Unicode tables, for spec 07 §3.9.1's name key. Both are needed to compute a
+# rule every node must compute identically: NFKC has a formal stability
+# guarantee for code points that already exist, and grapheme segmentation is
+# what bounds a name by what it occupies on a screen rather than by code points,
+# which a single emoji can spend a dozen of.
+unicode-normalization = "0.1"
+unicode-segmentation = "1"
+

@@ -71,8 +71,11 @@ fn me(app: tauri::State<'_, App>) -> Result<dto::Me, String> {
         )
     };
 
+    let names = app.executor.names(&state).map_err(|e| e.to_string())?;
+
     Ok(dto::Me {
         identity: identity.id().short(),
+        name: names.of(&identity.id()).map(str::to_owned),
         network: to_hex(store.network().as_bytes()),
         label: store.label().unwrap_or_default(),
         has_key: store.epoch_key().is_ok(),
@@ -116,9 +119,15 @@ fn open_channel(app: tauri::State<'_, App>, channel: String) -> Result<dto::Open
         return Err("opening a channel produced something else".to_owned());
     };
 
+    let state = app.executor.store().state().map_err(|e| e.to_string())?;
+    let names = app.executor.names(&state).map_err(|e| e.to_string())?;
+
     Ok(dto::Opened {
         channel: to_hex(channel.as_bytes()),
-        messages: messages.iter().map(dto::Message::of).collect(),
+        messages: messages
+            .iter()
+            .map(|message| dto::Message::of(message, &names))
+            .collect(),
         authors,
         refused: rejected
             .iter()
@@ -138,6 +147,15 @@ fn send_message(app: tauri::State<'_, App>, channel: String, body: String) -> Re
             reply_to: None,
             attachments: Vec::new(),
         })
+        .map(|_| ())
+        .map_err(|err| err.to_string())
+}
+
+/// Claims a display name.
+#[tauri::command]
+fn set_name(app: tauri::State<'_, App>, name: String) -> Result<(), String> {
+    app.executor
+        .submit(Command::SetName { name })
         .map(|_| ())
         .map_err(|err| err.to_string())
 }
@@ -178,7 +196,8 @@ fn main() {
             channels,
             open_channel,
             send_message,
-            create_channel
+            create_channel,
+            set_name
         ])
         .run(tauri::generate_context!())
         .expect("the window opens");

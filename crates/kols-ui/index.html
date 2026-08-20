@@ -15,7 +15,10 @@
         <header class="network" data-kols="network">
           <h1 id="network-label">…</h1>
           <p class="mono" id="network-id"></p>
-          <p class="you">you are <span id="identity">…</span></p>
+          <p class="you">
+            you are <span id="you-name">…</span>
+            <span class="mono" id="identity"></span>
+          </p>
         </header>
 
         <!-- Question 2: what channels are here, and which am I reading? -->
@@ -56,6 +59,20 @@
         <p class="composer-denied" id="composer-denied" hidden>
           you may not post here
         </p>
+
+        <!-- Claiming a name is the member's own act, so nothing does it at
+             admission and the composer waits until they have. -->
+        <form class="namer" id="namer" data-kols="namer" hidden>
+          <label for="name">pick a name before you post</label>
+          <div class="namer-row">
+            <input id="name" type="text" autocomplete="off" placeholder="a name" />
+            <button type="submit">claim</button>
+          </div>
+          <p class="namer-note">
+            Unique here, and yours permanently — it stays bound to you even if you
+            claim another, so nobody inherits it and what you wrote with it.
+          </p>
+        </form>
       </main>
     </div>
     <script src="app.js"></script>

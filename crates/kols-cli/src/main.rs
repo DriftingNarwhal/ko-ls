@@ -63,6 +63,14 @@ enum Command {
     },
     /// Show this member's identity and what they may do.
     Whoami,
+    /// Claim a display name in this network.
+    ///
+    /// Names are unique per network and bound permanently — including after you
+    /// leave, so nobody can inherit yours and relabel what you wrote.
+    Name {
+        /// The name you want.
+        name: Vec<String>,
+    },
     /// Work with channels.
     #[command(subcommand)]
     Channel(ChannelCommand),
@@ -312,6 +320,9 @@ fn submit(root: std::path::PathBuf, command: Command) -> Result<(), String> {
                 limit: usize::MAX,
             }
         }
+        Command::Name { name } => ApiCommand::SetName {
+            name: name.join(" "),
+        },
         Command::Admit { identity } => ApiCommand::AdmitMember {
             identity: parse_identity(&identity)?,
         },
@@ -356,7 +367,13 @@ fn submit(root: std::path::PathBuf, command: Command) -> Result<(), String> {
     };
 
     let outcome = executor.submit(api).map_err(say)?;
-    render(&outcome);
+    let names = executor
+        .store()
+        .state()
+        .ok()
+        .and_then(|state| executor.names(&state).ok())
+        .unwrap_or_default();
+    render(&outcome, &names);
     Ok(())
 }
 
@@ -365,7 +382,21 @@ fn say(err: ExecuteError) -> String {
 }
 
 /// Prints what a command produced.
-fn render(outcome: &Outcome) {
+/// How an author is shown: their name where they have claimed one, and always
+/// enough of their identity to tell two similar names apart.
+///
+/// Spec 07 §8 makes that an obligation rather than a courtesy. Uniqueness is
+/// decided on a key that deliberately does not fold confusables, so `alice` and
+/// a Cyrillic lookalike can both exist — and the id beside them is what a reader
+/// checks when something feels wrong.
+fn who(identity: &intranet_identity::PerNetworkIdentityId, names: &kols_core::Names) -> String {
+    match names.of(identity) {
+        Some(name) => format!("{name} ({})", &identity.short()[..8]),
+        None => identity.short(),
+    }
+}
+
+fn render(outcome: &Outcome, names: &kols_core::Names) {
     match outcome {
         Outcome::Opened {
             messages,
@@ -401,7 +432,7 @@ fn render(outcome: &Outcome) {
                     "{}  [{}] {}  {}{}",
                     &to_hex(message.id.as_bytes())[..8],
                     stamp(message.hlc),
-                    message.author.short(),
+                    who(&message.author, names),
                     message.body,
                     suffix
                 );
@@ -444,15 +475,21 @@ fn render(outcome: &Outcome) {
                 }
             );
         }
+        Outcome::NameClaimed { name } => {
+            println!("you are {name} here");
+            println!();
+            println!("That name is yours in this network permanently — it stays bound to you");
+            println!("even if you claim another, so nobody inherits it and your history with it.");
+        }
         Outcome::ChannelUpdated { channel } => {
             println!("updated {}", &to_hex(channel.as_bytes())[..12]);
         }
         Outcome::MembershipChanged { identity, admitted } => {
             if *admitted {
-                println!("admitted {}", identity.short());
+                println!("admitted {}", who(identity, names));
                 println!("They can read and post once they have synced this log.");
             } else {
-                println!("removed {}", identity.short());
+                println!("removed {}", who(identity, names));
                 println!("They are refused service by honest nodes from now on.");
                 println!();
                 println!(
@@ -566,6 +603,16 @@ fn whoami(root: std::path::PathBuf) -> Result<(), String> {
     println!("  id     {}", to_hex(store.network().as_bytes()));
     println!("you      {}", identity.id().short());
     println!("  member {}", state.is_member(&identity.id()));
+
+    // The name, and what to do about not having one. A member without a name is
+    // an ordinary state rather than a broken one — spec 07 §3.9 makes claiming
+    // it the member's own act, so nothing can do it on their behalf at join.
+    let executor = Executor::open(store.root().to_path_buf()).map_err(|e| e.to_string())?;
+    let names = executor.names(&state).map_err(|e| e.to_string())?;
+    match names.of(&identity.id()) {
+        Some(name) => println!("  name   {name}"),
+        None => println!("  name   none yet — `kols name <name>` claims one"),
+    }
 
     // Which epoch this node is on. A fingerprint rather than the key: epoch keys
     // implement no Debug precisely so a network's content confidentiality cannot

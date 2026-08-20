@@ -95,6 +95,15 @@ pub enum Command {
         /// What about it changes.
         change: ChannelChange,
     },
+    /// Claim a display name in this network.
+    ///
+    /// Carries no identity, and that is the security property rather than an
+    /// economy: the claim binds whoever the executor is acting as, so there is
+    /// no field in which to name somebody else (spec 07 §3.9).
+    SetName {
+        /// The name, exactly as the member typed it.
+        name: String,
+    },
     /// Admit an identity to the network.
     AdmitMember {
         /// Who.
@@ -151,7 +160,8 @@ impl Command {
             | Self::EditMessage { .. }
             | Self::DeleteMessage { .. }
             | Self::React { .. }
-            | Self::CreateChannel { .. } => Sensitivity::Signs,
+            | Self::CreateChannel { .. }
+            | Self::SetName { .. } => Sensitivity::Signs,
 
             Self::Pin { .. }
             | Self::UpdateChannel { .. }
@@ -180,6 +190,7 @@ impl Command {
             | Self::React { .. } => Some("post"),
             Self::Pin { .. } => Some("moderate"),
             Self::CreateChannel { .. } => Some("create-channel"),
+            Self::SetName { .. } => Some("set-name"),
             Self::UpdateChannel { .. } => Some("manage-channel"),
             Self::AdmitMember { .. } | Self::RevokeMember { .. } => None,
         }
@@ -195,6 +206,7 @@ impl Command {
             Self::React { .. } => "react",
             Self::Pin { .. } => "pin",
             Self::CreateChannel { .. } => "create-channel",
+            Self::SetName { .. } => "set-name",
             Self::UpdateChannel { .. } => "update-channel",
             Self::AdmitMember { .. } => "admit-member",
             Self::RevokeMember { .. } => "revoke-member",

@@ -16,6 +16,10 @@ function drawMe(me) {
   state.me = me;
   el("network-label").textContent = me.label || "unnamed network";
   el("network-id").textContent = me.network.slice(0, 16);
+  el("you-name").textContent = me.name ?? "unnamed";
+  // The id is shown beside the name rather than instead of it: spec 07 §8 makes
+  // that an obligation, because uniqueness does not fold confusables and a name
+  // alone cannot tell two members apart.
   el("identity").textContent = me.identity;
 
   // `design/09` §5: controls for actions this member cannot perform are not
@@ -75,6 +79,13 @@ function drawMessages(opened) {
     const who = document.createElement("span");
     who.className = "author";
     who.textContent = message.author;
+    who.title = message.author_id;
+
+    const whoId = document.createElement("span");
+    whoId.className = "author-id";
+    // Only where a name is standing in for the id, since a member with no name
+    // is already shown as one and repeating it says nothing.
+    whoId.textContent = message.author === message.author_id ? "" : message.author_id;
 
     const at = document.createElement("span");
     at.className = "at";
@@ -91,7 +102,7 @@ function drawMessages(opened) {
         ? "(hidden by a moderator)"
         : message.body;
 
-    row.append(at, who, body);
+    row.append(at, who, whoId, body);
 
     if (message.edited && !message.withdrawn) {
       const edited = document.createElement("span");
@@ -128,9 +139,13 @@ async function openChannel(id) {
   const opened = await invoke("open_channel", { channel: id });
   drawMessages(opened);
 
+  // Three states, and they are genuinely different: you may not post here, you
+  // have not claimed a name yet, or you can write.
   const mayPost = state.me?.may_post ?? false;
-  el("composer").hidden = !mayPost;
+  const named = Boolean(state.me?.name);
+  el("composer").hidden = !mayPost || !named;
   el("composer-denied").hidden = mayPost;
+  el("namer").hidden = !mayPost || named;
 }
 
 async function refresh() {
@@ -153,6 +168,22 @@ el("composer").addEventListener("submit", async (event) => {
   } catch (err) {
     // A refusal is an answer, not a crash: too fast, too long, not permitted.
     // It belongs where the user is looking.
+    el("refused").hidden = false;
+    el("refused").textContent = String(err);
+  }
+});
+
+el("namer").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const name = el("name").value.trim();
+  if (!name) return;
+  try {
+    await invoke("set_name", { name });
+    drawMe(await invoke("me"));
+    if (state.current) await openChannel(state.current);
+  } catch (err) {
+    // "that name is held by …" is the common one, and it is an answer rather
+    // than a fault: pick another.
     el("refused").hidden = false;
     el("refused").textContent = String(err);
   }

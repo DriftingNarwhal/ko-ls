@@ -239,9 +239,37 @@ would exceed them. Two client consequences:
 A profile is per-network by necessity — there is no cross-network identity to hang a
 global one on (`00` §1).
 
-A member's display name, avatar and status live in a small mutable pointer they own
+A member's avatar and status live in a small mutable pointer they own
 (`content_type: chat-profile`, `pointer_id = H("chat-profile" ‖ identity_id)`, derived on
 the same principle as author logs). Avatars are ordinary content objects. Nickname
 overrides imposed by moderators, if wanted, are a channel-scoped record in the
 moderator's log rather than an edit to somebody else's profile — nobody writes another
 member's objects, anywhere in this design.
+
+**The display name is not in that pointer, and an earlier version of this section had it
+wrong.** A name is expected to be unique within a network, and uniqueness is a question about
+the whole network at a moment in time. A mutable pointer is single-writer by construction: it
+can say what I call myself and has no ordering relative to what anybody else published, so two
+members claiming one name produces two nodes that disagree about who is who with nothing to
+settle it. Ordering is what makes uniqueness decidable and the log is what has ordering.
+
+So **a name claim is a `chat` application entry** (spec 07 §3.9, normative), and the rest of
+the profile stays in the pointer because none of it needs ordering. The split is the same one
+`01` §2 draws for channels: what needs a total order goes in the log, and nothing else does.
+This is the third time this project has reached that conclusion — App Hosting §4.3 for app
+names, D4 for channels, and now this.
+
+Four properties worth carrying here rather than only in the spec:
+
+- **The claim carries no identity.** It binds whoever authored the entry, so claiming a name
+  for somebody else is unsayable rather than refused. `chat:set-name` is therefore ordinary and
+  granted to `everyone` at genesis without widening anything.
+- **Uniqueness compares a normalized key**, not the typed form: NFKC, whitespace collapsed,
+  lower-cased, with invisible code points refused outright. Display uses what was typed.
+- **A key binds permanently, including after its holder leaves.** History renders by author id
+  with names resolved at display time, so an inherited name would silently relabel somebody
+  else's past messages — every line honestly attributed while the conversation as a whole
+  becomes a lie.
+- **A name is never sufficient on its own.** The key deliberately does not fold confusables, so
+  an interface must render a name alongside enough of its holder's identity to tell two
+  lookalikes apart (spec 07 §8). `09` §4 owes this the same honesty it owes presence.

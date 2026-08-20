@@ -163,11 +163,13 @@ fn check(
 ) -> Result<Command, Refusal> {
     let authority = StateAuthority { state };
     let index = index();
+    let names = kols_core::Names::new();
     let actor = Actor {
         identity: who.id(),
         authority: &authority,
         state,
         channels: &index,
+        names: &names,
     };
     authorize(command, &actor).map(Authorized::into_command)
 }
@@ -479,6 +481,9 @@ fn every_command() -> Vec<Command> {
             channel: channel(1),
             change: ChannelChange::Archive,
         },
+        Command::SetName {
+            name: "ada".to_owned(),
+        },
         Command::AdmitMember {
             identity: person(3).id(),
         },
@@ -579,11 +584,82 @@ fn placement_comes_from_replay_not_from_the_caller() {
             category: Some(category()),
         },
     );
+    let names = kols_core::Names::new();
     let actor = Actor {
         identity: member.id(),
         authority: &authority,
         state: &state,
         channels: &moved,
+        names: &names,
     };
     assert!(authorize(send(channel(1), "hello"), &actor).is_ok());
+}
+
+#[test]
+fn a_name_already_held_is_refused_at_the_boundary() {
+    // The uniqueness question is answered from replay, like the channel index
+    // beside it — so an interface cannot reach past it by claiming otherwise.
+    let member = person(2);
+    let other = person(4);
+    let state = network_granting(&member, [extension("chat:set-name:*")]);
+
+    let mut names = kols_core::Names::new();
+    names.apply(other.id(), &kols_core::NameClaim::new("ada").expect("valid"));
+
+    let authority = StateAuthority { state: &state };
+    let index = index();
+    let actor = Actor {
+        identity: member.id(),
+        authority: &authority,
+        state: &state,
+        channels: &index,
+        names: &names,
+    };
+
+    let taken = authorize(
+        Command::SetName {
+            name: "ADA".to_owned(), // same key, different spelling
+        },
+        &actor,
+    );
+    assert!(
+        matches!(taken, Err(Refusal::Name(kols_core::NameRefusal::Taken { .. }))),
+        "a held name was claimable"
+    );
+
+    assert!(
+        authorize(
+            Command::SetName {
+                name: "grace".to_owned()
+            },
+            &actor
+        )
+        .is_ok()
+    );
+}
+
+#[test]
+fn claiming_a_name_needs_the_capability_everyone_is_given() {
+    let member = person(2);
+    let state = network_granting(&member, poster()); // no chat:set-name
+    let names = kols_core::Names::new();
+    let authority = StateAuthority { state: &state };
+    let index = index();
+    let actor = Actor {
+        identity: member.id(),
+        authority: &authority,
+        state: &state,
+        channels: &index,
+        names: &names,
+    };
+
+    assert!(matches!(
+        authorize(
+            Command::SetName {
+                name: "ada".to_owned()
+            },
+            &actor
+        ),
+        Err(Refusal::NotPermitted { .. })
+    ));
 }

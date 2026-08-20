@@ -60,6 +60,11 @@ pub enum Outcome {
         /// Which channel.
         channel: ChannelId,
     },
+    /// A display name was claimed.
+    NameClaimed {
+        /// The name, as it will be displayed.
+        name: String,
+    },
     /// The network's membership changed.
     MembershipChanged {
         /// Whose.

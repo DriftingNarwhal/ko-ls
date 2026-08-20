@@ -234,3 +234,57 @@ body {
   margin: 0;
   padding: var(--gap);
 }
+
+/* ---- names --------------------------------------------------------------- */
+
+.network .you .mono { color: var(--dim); }
+
+/* A name never stands alone where it could be mistaken for an identity. */
+.message .author-id {
+  color: var(--dim);
+  font-family: var(--mono);
+  font-size: 10px;
+}
+
+.namer {
+  border-top: 1px solid var(--line);
+  padding: var(--gap);
+}
+
+.namer label {
+  color: var(--dim);
+  display: block;
+  font-size: 12px;
+  margin-bottom: 6px;
+}
+
+.namer-row { display: flex; gap: 8px; }
+
+.namer input {
+  background: var(--ground);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  color: var(--text);
+  flex: 1;
+  font: inherit;
+  padding: 8px 10px;
+}
+
+.namer input:focus { border-color: var(--accent); outline: none; }
+
+.namer button {
+  background: var(--accent);
+  border: 0;
+  border-radius: var(--radius);
+  color: #0d1017;
+  cursor: pointer;
+  font: inherit;
+  font-weight: 600;
+  padding: 8px 16px;
+}
+
+.namer-note {
+  color: var(--dim);
+  font-size: 11px;
+  margin: 8px 0 0;
+}

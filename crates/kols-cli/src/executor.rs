@@ -35,8 +35,8 @@ use intranet_governance::{EntryBody, GroupId, LogEntry, MembershipAction};
 use intranet_identity::PerNetworkIdentityId;
 use kols_api::{Actor, Authorized, Command, Outcome, PlacementMap, Refusal, authorize, placement};
 use kols_core::{
-    ChannelEntry, ChannelEntryBody, ChannelId, ChannelKind, ChannelView, MessageId, Placement,
-    Record, RecordBody, StateAuthority,
+    ChannelEntry, ChannelEntryBody, ChannelId, ChannelKind, ChannelView, MessageId, NameClaim,
+    Names, Placement, Record, RecordBody, StateAuthority,
 };
 use std::path::PathBuf;
 
@@ -118,6 +118,7 @@ impl Executor {
             .map(|channel| (channel.id, placement(channel.id, channel.category)))
             .collect();
         let authority = StateAuthority { state: &state };
+        let names = self.names(&state)?;
 
         let authorized = authorize(
             command,
@@ -126,6 +127,7 @@ impl Executor {
                 authority: &authority,
                 state: &state,
                 channels: &index,
+                names: &names,
             },
         )?;
 
@@ -208,6 +210,39 @@ impl Executor {
 
             Command::UpdateChannel { channel, change } => {
                 self.update_channel(channel, change, identity, state)
+            }
+
+            Command::SetName { name } => {
+                let claim = NameClaim::new(name)
+                    .map_err(|refusal| ExecuteError::Rejected(refusal.to_string()))?;
+                let display = claim.name.clone();
+
+                // Held across reading the head and writing, like every other
+                // append: a claim landing as a sibling of something the daemon
+                // wrote would fork the log, and fork-choice would void one.
+                let _lock = self.store.lock()?;
+                let head = self.store.head()?;
+                let entry = LogEntry::create(
+                    identity,
+                    head,
+                    Timestamp::from_millis(now_millis()),
+                    claim.to_app_entry(),
+                );
+                self.store.append_entry(&entry)?;
+
+                // Replay rather than trust. Two members can claim one name
+                // concurrently, and which one binds is the log's order rather
+                // than who returned first — so success is what replay says.
+                let state = self.store.state()?;
+                let names = self.names(&state)?;
+                if names.of(&identity.id()) != Some(display.as_str()) {
+                    return Err(ExecuteError::Rejected(
+                        "the claim was written but replay did not bind it — somebody else \
+                         holds that name"
+                            .to_owned(),
+                    ));
+                }
+                Ok(Outcome::NameClaimed { name: display })
             }
 
             Command::AdmitMember { identity: who } => {
@@ -502,6 +537,23 @@ impl Executor {
             )));
         }
         Ok(())
+    }
+
+    /// Who holds which display name, folded out of the canonical chain.
+    ///
+    /// Rebuilt per submit rather than cached, for the same reason the CLI
+    /// replays the governance log on every invocation: a cache is a second
+    /// answer to a question replay already answers, and the two disagree
+    /// exactly when it matters. `STATUS` §6's projection is where this stops
+    /// being recomputed.
+    pub fn names(&self, state: &intranet_governance::GovernanceState) -> Result<Names, ExecuteError> {
+        let log = self.store.log()?;
+        let entries: Vec<_> = log
+            .canonical_chain()
+            .iter()
+            .filter_map(|hash| log.get(hash))
+            .collect();
+        Ok(kols_core::replay_names(entries, state))
     }
 
     /// Finds a channel by name, or by the leading hex of its id.

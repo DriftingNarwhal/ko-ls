@@ -61,8 +61,15 @@ pub struct Reaction {
 pub struct Message {
     /// Hex of the record id.
     pub id: String,
-    /// A short form of the author's per-network identity.
+    /// The author's display name, if they have claimed one.
     pub author: String,
+    /// A short form of the author's per-network identity.
+    ///
+    /// Always sent, never optional. Spec 07 §8 makes this an obligation:
+    /// uniqueness is decided on a key that does not fold confusables, so a name
+    /// alone cannot distinguish two members and the interface must not let it
+    /// try.
+    pub author_id: String,
     /// The author's clock reading, as a wall time.
     pub at: String,
     /// Its current text, after any edits by its author.
@@ -105,6 +112,8 @@ pub struct Opened {
 pub struct Me {
     /// A short form of this member's identity in this network.
     pub identity: String,
+    /// This member's display name here, if they have claimed one.
+    pub name: Option<String>,
     /// Hex of the network id.
     pub network: String,
     /// The local label for this network.
@@ -120,11 +129,14 @@ pub struct Me {
 }
 
 impl Message {
-    /// Converts one rendered message.
-    pub fn of(message: &RenderedMessage) -> Self {
+    /// Converts one rendered message, resolving its author's name.
+    pub fn of(message: &RenderedMessage, names: &kols_core::Names) -> Self {
         Self {
             id: to_hex(message.id.as_bytes()),
-            author: message.author.short(),
+            author: names
+                .of(&message.author)
+                .map_or_else(|| message.author.short(), str::to_owned),
+            author_id: message.author.short(),
             at: stamp(message.hlc),
             body: message.body.clone(),
             edited: message.edited,
@@ -181,6 +193,14 @@ mod tests {
             .id()
     }
 
+    /// A registry with nobody in it, so an author falls back to their id.
+    ///
+    /// Which is the case worth having as the default in these: the fallback is
+    /// what a member with no claimed name renders as, and it must stay legible.
+    fn no_names() -> kols_core::Names {
+        kols_core::Names::new()
+    }
+
     fn rendered() -> RenderedMessage {
         RenderedMessage {
             id: MessageId::from_bytes([0xab; 32]),
@@ -202,7 +222,7 @@ mod tests {
         let mut message = rendered();
         message.edited = true;
         message.pinned = true;
-        let view = Message::of(&message);
+        let view = Message::of(&message, &no_names());
 
         assert!(view.edited && view.pinned);
         assert!(!view.withdrawn && !view.redacted);
@@ -219,8 +239,8 @@ mod tests {
         let mut redacted = rendered();
         redacted.redacted = true;
 
-        let a = Message::of(&withdrawn);
-        let b = Message::of(&redacted);
+        let a = Message::of(&withdrawn, &no_names());
+        let b = Message::of(&redacted, &no_names());
         assert!(a.withdrawn && !a.redacted);
         assert!(b.redacted && !b.withdrawn);
     }
@@ -236,7 +256,7 @@ mod tests {
             .reactions
             .insert("eyes".to_owned(), BTreeSet::from([identity(5)]));
 
-        let view = Message::of(&message);
+        let view = Message::of(&message, &no_names());
         assert_eq!(view.reactions.len(), 2);
         assert_eq!(view.reactions[0].key, "+1");
         assert_eq!(view.reactions[0].count, 3);
@@ -250,12 +270,37 @@ mod tests {
         // second, quieter place for it to go wrong.
         let mut message = rendered();
         message.body = "<script>alert(1)</script> & \"quotes\"".to_owned();
-        assert_eq!(Message::of(&message).body, message.body);
+        assert_eq!(Message::of(&message, &no_names()).body, message.body);
+    }
+
+    #[test]
+    fn an_author_with_a_name_still_carries_their_id() {
+        // Spec 07 §8: uniqueness does not fold confusables, so a name alone
+        // cannot tell two members apart and the view must not let it try.
+        let message = rendered();
+        let mut names = kols_core::Names::new();
+        names.apply(
+            message.author,
+            &kols_core::NameClaim::new("ada").expect("valid"),
+        );
+
+        let view = Message::of(&message, &names);
+        assert_eq!(view.author, "ada");
+        assert_eq!(view.author_id, message.author.short());
+        assert_ne!(view.author, view.author_id);
+    }
+
+    #[test]
+    fn an_author_with_no_name_renders_as_their_id() {
+        let message = rendered();
+        let view = Message::of(&message, &no_names());
+        assert_eq!(view.author, message.author.short());
+        assert_eq!(view.author, view.author_id);
     }
 
     #[test]
     fn a_clock_reading_renders_as_a_wall_time() {
         // 3,723,000 ms is 01:02:03 past the hour.
-        assert_eq!(Message::of(&rendered()).at, "01:02:03");
+        assert_eq!(Message::of(&rendered(), &no_names()).at, "01:02:03");
     }
 }

@@ -31,10 +31,11 @@ use std::collections::BTreeMap;
 /// channel's roster. Anything that can do that is governance power however
 /// routine it feels, and tiering it correctly is what keeps `everyone` from
 /// ever holding it.
-pub const VERBS: [(&str, Tier); 7] = [
+pub const VERBS: [(&str, Tier); 8] = [
     ("create-channel", Tier::Ordinary),
     ("post", Tier::Ordinary),
     ("read", Tier::Ordinary),
+    ("set-name", Tier::Ordinary),
     ("connect-voice", Tier::Ordinary),
     ("speak-voice", Tier::Ordinary),
     ("manage-channel", Tier::Governance),

@@ -3059,6 +3059,8 @@ dependencies = [
  "intranet-governance",
  "intranet-identity",
  "intranet-storage",
+ "unicode-normalization",
+ "unicode-segmentation",
 ]
 
 [[package]]

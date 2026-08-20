@@ -59,6 +59,10 @@ pub fn genesis(founder: &PerNetworkIdentity, network: NetworkId) -> LogEntry {
                 Capability::publish(CHAT_LOG_CONTENT_TYPE),
                 Capability::extension("chat:post:*"),
                 Capability::extension("chat:read:*"),
+                // Claiming your own name is ordinary and belongs to everyone:
+                // the payload carries no identity, so however broadly this is
+                // granted it can only ever bind the claimant (spec 07 §3.9).
+                Capability::extension("chat:set-name:*"),
             ]
             .into_iter()
             .collect(),

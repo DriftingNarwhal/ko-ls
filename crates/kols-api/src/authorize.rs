@@ -5,7 +5,8 @@ use intranet_governance::{Capability, GovernanceState};
 use intranet_identity::PerNetworkIdentityId;
 use kols_core::{
     Authority, CategoryId, ChannelChange, ChannelId, ChatPolicy, MAX_CHANNEL_NAME_BYTES,
-    MAX_CHANNEL_TOPIC_BYTES, MAX_REACTION_KEY_BYTES, Placement, holds, holds_in_scope,
+    MAX_CHANNEL_TOPIC_BYTES, MAX_REACTION_KEY_BYTES, NameRefusal, Names, Placement, holds,
+    holds_in_scope,
 };
 
 /// Where replayed state says a channel sits.
@@ -47,6 +48,13 @@ pub struct Actor<'a, A: Authority, C: Channels> {
     pub state: &'a GovernanceState,
     /// Where replay says each channel sits.
     pub channels: &'a C,
+    /// Who holds which display name, as replay understands it.
+    ///
+    /// A second replay product alongside `channels`, and here for the same
+    /// reason: whether a name is free is a question about the whole network,
+    /// and letting the interface answer it would let the interface choose the
+    /// answer.
+    pub names: &'a Names,
 }
 
 /// Why a command was refused.
@@ -85,6 +93,8 @@ pub enum Refusal {
         /// The most there may be.
         limit: usize,
     },
+    /// A display name could not be claimed.
+    Name(NameRefusal),
     /// Channel structure was asked for in a network that has no channels.
     ///
     /// A `conversation`-profile network has exactly one implied channel and a
@@ -113,6 +123,7 @@ impl std::fmt::Display for Refusal {
                 actual,
                 limit,
             } => write!(f, "{actual} {field}, and the ceiling here is {limit}"),
+            Self::Name(refusal) => write!(f, "{refusal}"),
             Self::NotAServer => {
                 write!(f, "this network is a conversation, which has no channels to manage")
             }
@@ -329,6 +340,22 @@ pub fn authorize<A: Authority, C: Channels>(
                 "chat:manage-channel",
             )?;
             check_change(change, &policy)?;
+        }
+
+        Command::SetName { name } => {
+            require(
+                holds_in_scope(actor.state, &actor.identity, "set-name", None),
+                "set-name",
+                "chat:set-name, which a network grants to everyone at genesis",
+            )?;
+            // Both halves of spec 07 §3.9 in one call: whether the name can be
+            // normalized at all, and whether somebody else already holds the key
+            // it normalizes to. Refused here rather than after a log entry every
+            // node would ignore.
+            actor
+                .names
+                .claimable(&actor.identity, name)
+                .map_err(Refusal::Name)?;
         }
 
         Command::AdmitMember { .. } => require(

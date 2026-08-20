@@ -1,6 +1,6 @@
 # ko-ls — Implementation Status
 
-**Updated:** 2026-08-20 (a window — the first interface slice runs over the boundary)
+**Updated:** 2026-08-20 (display names — claimed in the log, unique per network, never released)
 **Phase:** P1 — two nodes talk live and durably, a joiner reads back through sealed
 history, and the boundary carries commands in and events out
 **Design:** [`design/`](design/) — `00`–`08` at v1.0, `09` at v0.2. **`distributed-intranet/specs/07` is normative** where it and the design set overlap.
@@ -137,9 +137,9 @@ left green.
 
 | | |
 |---|---|
-| **Working on** | P1 — a first interface slice runs; presence, invites and a network switcher are what §4 still owes |
+| **Working on** | P1 — names landed; presence, invites and a network switcher are what `design/09` §4 still owes |
 | **Blocked on** | Nothing |
-| **Runnable** | **`kols`** — init, attach, admit, revoke, serve, post, read, edit, delete, react, pin, and channel create/list/rename/topic/slowmode/archive. **`kols-desktop`** — a window listing channels, rendering one, and posting to it. `cargo test` — 139 tests here and 644 in `../distributed-intranet`, clippy clean in both; `scripts/cross-check.sh` for big-endian |
+| **Runnable** | **`kols`** — init, attach, admit, revoke, serve, post, read, edit, delete, react, pin, and channel create/list/rename/topic/slowmode/archive. **`kols-desktop`** — a window listing channels, rendering one, and posting to it. `cargo test` — 163 tests here and 644 in `../distributed-intranet`, clippy clean in both; `scripts/cross-check.sh` for big-endian |
 | **Next decision needed from the user** | Nothing blocking |
 
 ---
@@ -259,6 +259,55 @@ design changes before anything else is built.
 ## 9. Log
 
 Newest first. One line per change that moved the state above.
+
+- **2026-08-20** — **Display names, and a design document that was wrong about where they
+  live.** `design/02` §7 put a member's display name in the mutable pointer they own, next to
+  their avatar and status. That works for everything except being unique — a pointer is
+  single-writer by construction, so it says what I call myself and has no ordering relative to
+  what anybody else published. Two members claiming one name produces two nodes that disagree
+  about who is who, with nothing to settle it. **Uniqueness needs a total order, and the log is
+  what has one.** Third time this project has reached that conclusion: App Hosting §4.3 for app
+  names, D4 for channels, now this.
+
+  So a claim is a `chat` application entry — E2's generic door, no platform change — and the
+  avatar and status stay in the pointer, because neither needs ordering.
+
+  **The payload carries no identity, which is the security property rather than an economy.**
+  A claim binds whoever authored the entry, whom the protocol already verified, so claiming a
+  name for somebody else is unsayable rather than refused. That is what lets `chat:set-name` be
+  ordinary and sit on `everyone` at genesis without widening anything.
+
+  **The interesting half is normalization**, spec 07 §3.9.1: NFKC, whitespace trimmed and
+  collapsed, lower-cased, invisible code points refused outright rather than stripped — because
+  stripping would let two claims that look identical produce one holder, quietly. Every step is
+  pinned because two nodes normalizing differently would disagree about what is a duplicate,
+  which is a consensus bug wearing the clothes of a display concern.
+
+  **Confusables are deliberately not folded**, and the residual risk is written down rather
+  than hidden: `alice` and a Cyrillic lookalike are distinct keys and both may be held. The
+  tables are large, they collide names across scripts with every right to exist, and two nodes
+  on different table versions would fork. So the obligation moves to interfaces — spec 07 §8
+  now requires a name be rendered alongside enough of its holder's identity to tell two apart,
+  and both the CLI and the window do.
+
+  **A name is never released, including when its holder leaves.** History renders by author id
+  with names resolved at display time, so an inherited name silently relabels somebody else's
+  past messages: every line honestly attributed while the conversation becomes a lie.
+
+  Two corrections to the spec came from implementing it. It asked for full case folding, which
+  is the better tool and is not available identically everywhere — lowercasing is, and a rule
+  everybody applies the same way beats a better rule applied two ways. And it claimed a
+  determinism it cannot have: the character categories and the normalization are both defined
+  against a Unicode version, so two nodes on different versions can disagree about a name built
+  from newly assigned code points. Bounded, rare, resolved by upgrading — and the sharpest
+  argument for refusing confusables, whose tables move far more.
+
+  One conflict inside §3.9.1 surfaced only by running it: a tab is a control character, so step
+  1 refuses it, while step 3 says whitespace is collapsed. Refusing is the consistent answer and
+  the spec now says so — silently collapsing a character the claimant cannot see is exactly what
+  step 1 exists to prevent.
+
+  139 → 163 tests, clippy clean.
 
 - **2026-08-20** — **A window, and a build that got smaller while gaining one.** The first
   interface slice: `kols-app` is a Tauri v2 shell holding one `Executor`, `kols-ui` is HTML,
