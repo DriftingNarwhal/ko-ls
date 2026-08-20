@@ -31,7 +31,9 @@ crates/kols-core   records, canonical encoding, merge ordering, permissions, cha
                    channel structure as chat-namespace governance payloads
 crates/kols-net    publishing a channel over the transport, and reading one back
 crates/kols-api    the boundary — commands and their gate going in, outcomes and events out
-crates/kols-cli    the executor, the node daemon, and `kols` — the terminal client
+crates/kols-cli    the executor, the node loop, the workspace, and `kols` — the terminal client
+crates/kols-app    `kols-desktop` — the Tauri shell, holding a workspace and running a node
+crates/kols-ui     the interface: HTML, CSS and one script, holding no keys and no sockets
 design/            00-08 at v1.0, 09 the interface
 .devcontainer/     the environment for this repo and the protocol beside it
 scripts/           cross-check.sh — runs the encoding on a big-endian target
@@ -55,7 +57,7 @@ still landing. The dev container in `.devcontainer/` has the whole toolchain if 
 rather not assemble one.
 
 ```bash
-cargo test                                   # 134 tests; the two-node ones spawn real nodes on loopback
+cargo test                                   # 178 tests; the two-node ones spawn real nodes on loopback
 cargo clippy --workspace --all-targets       # must stay clean
 ./scripts/cross-check.sh                     # big-endian verification, see below
 ```
@@ -76,8 +78,15 @@ only there proves they are self-consistent rather than host-independent.
 cargo build -p kols-cli
 alias kols="$PWD/target/debug/kols"
 
-KOLS_HOME=/tmp/alice kols init "the workshop"     # prints the network id
-KOLS_HOME=/tmp/alice kols serve &                 # keys the network, prints an address
+# A network needs a relay before it can invite anybody: two people behind home
+# routers cannot reach each other directly (Core §5.5). Run one, on a routable
+# address — never loopback, or it grants circuits that carry no address.
+cargo run -p intranet-harness --manifest-path ../distributed-intranet/Cargo.toml -- \
+    relay --seed 1 --network 42 --listen /ip4/0.0.0.0/tcp/4001
+
+KOLS_HOME=/tmp/alice kols init "the workshop" --relay /ip4/<host>/tcp/4001/p2p/<peer-id>
+KOLS_HOME=/tmp/alice kols serve &                 # keys it, reserves a circuit
+KOLS_HOME=/tmp/alice kols name alice
 KOLS_HOME=/tmp/alice kols channel create general
 KOLS_HOME=/tmp/alice kols post general "hello"
 KOLS_HOME=/tmp/alice kols read general            # prints message ids
@@ -85,13 +94,15 @@ KOLS_HOME=/tmp/alice kols react general <id> +1
 ```
 
 `serve` must run before posting: it holds the network's MLS group, which is live state no
-one-shot command can keep. Then, in another terminal, somebody joins:
+one-shot command can keep. Then somebody joins, holding one string and nothing else:
 
 ```bash
-KOLS_HOME=/tmp/bob kols attach <network-id>       # prints their identity
-KOLS_HOME=/tmp/alice kols admit <their-identity>  # from the founder
-KOLS_HOME=/tmp/bob kols serve --peer <alice's address>
-KOLS_HOME=/tmp/bob kols read general
+KOLS_HOME=/tmp/alice kols invite                  # prints intranet-chat://join/…
+KOLS_HOME=/tmp/bob   kols join <that>             # dials the relay, lands in the waiting room
+KOLS_HOME=/tmp/alice kols waiting                 # who is asking
+KOLS_HOME=/tmp/alice kols admit <their-identity>
+KOLS_HOME=/tmp/bob   kols serve                   # no --peer: the invite carried the address
+KOLS_HOME=/tmp/bob   kols read general
 ```
 
 The joiner syncs the governance log, asks to be keyed in, receives the epoch keys
@@ -166,9 +177,15 @@ reported rather than guessed ahead of it. They are idempotent by construction: a
 over gossip is also inside the segment that follows, so a consumer merges by record id rather
 than appending — which makes the ordinary case of hearing something twice a non-event.
 
-What does not exist yet: no user interface, no private-channel keying, no voice, and no
-search. [`STATUS.md`](STATUS.md) is the honest inventory, and its §6 is the list of what this
-client owes and why.
+The window does the same, without a terminal: it creates a network or joins one by invite,
+runs a node for it, and updates as records arrive. `kols-desktop`, and [the launch
+instructions](#the-window) below.
+
+What does not exist yet: no private-channel keying, no voice, no search, no presence, and no
+credentials — seeds sit on disk in the clear with no way to back them up, which is fine while
+you are testing between machines you own and is a release gate before anything else.
+[`STATUS.md`](STATUS.md) is the honest inventory, its §0 is where to start, and its §6 is the
+list of what this client owes and why.
 
 ## The one number worth knowing
 

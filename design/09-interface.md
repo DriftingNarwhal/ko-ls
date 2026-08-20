@@ -1,8 +1,10 @@
 # Interface
 
-**Document status:** v0.2 — no interface code exists, and one half of §5 now does: the
-boundary an interface's controls will be checked against is built (`05` §3). §2 was revised
-for the protocol half of the liveness work landing (Core §5.1.1), which leaves the tiering here
+**Document status:** v0.2 — an interface now exists and is a first pass, not a settled one: it
+creates and joins networks, runs a node, renders a channel and gates its chrome on permission.
+§1's workspace, §5's enforcement half and §4's first two questions are built; §2's tiering,
+§4.1's presence and §6's theming are not, and §7's navigation question stays open by default
+rather than by decision
 **Depends on:** `05` for the crate layout and API boundary; `01` §9 for presence; `03` §4 for
 direct messages; App Hosting Spec §1.2 and §3.3 for the sandbox path
 **Consumed by:** implementation

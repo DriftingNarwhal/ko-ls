@@ -13,125 +13,72 @@ it is believed.
 
 ## 0. Resuming After a Break
 
-**Read this section, then §1. Everything else is reference.**
+**Read this section, then §1. Everything else is reference.** This section describes the
+present. What happened, and why, is §9 — do not read it to find out where things stand.
 
-Two repositories on this machine, **both pushed and current**:
+### What this is
+
+A Discord-shaped chat client on the Distributed Intranet protocol. A "server" is a network:
+its own governance log, membership, epoch key chain and DHT namespace. Read
+[`design/00`](design/00-overview.md) for why anything is the way it is; **`../distributed-intranet/specs/07` is
+normative** where it and the design set overlap.
+
+Two repositories, side by side, both on `main` and pushed:
 
 | Repo | Remote |
 |---|---|
-| `ko-ls` (this one) | `DriftingNarwhal/ko-ls` (private), branch `main` |
-| `../distributed-intranet` | `DriftingNarwhal/distributed-intranet`, branch `main` — carries spec 07, E9 (Core §2.6.2), E2 (Core §2.7.2), E5 (Real-Time §2.2.1), MLS persistence (Core §3.3.1), E4 (gossipsub, Core §5.1), E11 (Core §2.2.1) and **E12 (optional peer discovery, Core §5.1.1)** |
+| `ko-ls` (this one) | `DriftingNarwhal/ko-ls` (private) |
+| `../distributed-intranet` | `DriftingNarwhal/distributed-intranet` — spec 07 plus E2, E4, E5, E9, E11, E12, MLS persistence, invite serialization and `NetworkPolicy.bootstrap_relays` |
 
-The client builds against the sibling checkout by **path dependency**, not a published
-version, and deliberately so while the extensions are still moving. A fresh machine needs
-both repos cloned side by side.
+The client builds against the sibling checkout by **path dependency** while the extensions
+still move, so a fresh machine needs both cloned as siblings. `.devcontainer/` lives in *this*
+repo and builds both, plus the Tauri toolchain — open the `ko-ls` folder in it, not the parent.
 
-**Next task:** **the rest of the interface.** A window exists and runs over the boundary: it
-lists channels, renders one, posts to it, and hides the controls this member may not use. What
-it does not do is in §6 — no node of its own, so no live updates and no other member's
-messages; one network, so no switcher; no presence, and no invite control.
+### The current milestone
 
-**Verification of the window is incomplete and that is worth knowing.** The data path is
-tested and the process runs, but nobody has *looked* at it from here: the X forwarding that
-worked during S3 was dead when this landed, so no screenshot was taken. It launches on the
-Wayland socket cleanly. Run `kols-desktop` and look before trusting the layout.
+**A client that can be handed to somebody else, so two people on entirely separate networks
+can talk, using a bootstrap relay and no VPS.** The user's first test is two of their own
+laptops, one on a mobile hotspot.
 
-**The boundary is whole.** `Executor::submit` is the one way in — authorize, then run, with the
-`Authorized` never leaving the module because `run` is what requires one and nothing else can
-produce one. `Event` is the one way out, written from what `kols serve` actually emits rather
-than guessed ahead of it, and rendered in exactly one place.
+What that needs, and where it stands:
 
-**All three of `design/05` §3's properties are now held rather than intended.** No ambient
-authority, consent as a decorator, and events that are idempotent and re-deliverable — the
-last of which is the consumer's property, and comes down to one word: *merge, never append.*
-A record that arrives live and again inside the segment that follows is one message, which is
-the normal delivery pattern rather than an edge case.
+| | |
+|---|---|
+| Relay reachability — a network designates relays, a node reserves a circuit, invites carry it | **done** |
+| One string to join — `kols invite` / `kols join` | **done** |
+| A window that creates, joins, opens and runs a node for a network | **done** |
+| **A Windows build** | **not started** — the next thing |
+| Minting an invite from the window | not started; a founder still needs one terminal step |
 
-**Every record kind the design describes now runs**: edits, withdrawals, reactions and pins,
-plus channel rename, topic, slowmode and archive. That closes most of what `design/00` §5
-lists for P1's message model.
+### Start here tomorrow
 
-**`kols-api` is the boundary `design/05` §3 describes, and two of its three properties are
-now held rather than intended.** *No ambient authority*: every command names its target, the
-gate resolves permission by replaying governance state, and `Authorized` has no public
-constructor — so an executor takes one and "somebody forgot to check" stops being something
-a reviewer has to notice. The compiler runs that claim as a `compile_fail` doctest. *Consent
-is a decorator*: every command carries a `Sensitivity`, derived from the tier the capability
-vocabulary assigns rather than from how consequential an action feels, with a drift test
-against `capabilities::VERBS` so re-tiering a verb and forgetting the classification fails
-loudly instead of in a prompt that quietly stopped appearing.
+1. `cargo test` — **178 here, 649 in `../distributed-intranet`** — and
+   `cargo clippy --workspace --all-targets` clean in both. Both trees were left green; if they
+   are not, fix that before anything else.
+2. The **Windows build** is next. `kols` (the CLI) should cross-compile from this container
+   with mingw; `kols-desktop` realistically needs a Windows runner or machine, because Tauri
+   wants MSVC and WebView2. `design/07` §2 S3 records what the Linux toolchain needed.
+3. **One thing to fix before any binary goes to another person:** on Windows the seed is
+   written with default ACLs, because the `0o600` call in `store.rs` is `#[cfg(unix)]`. The
+   seed is the only copy of an identity. It is silent rather than refused.
 
-**The CLI crosses it, which is the only reason to believe it works.** `channel create`, `post`
-and `read` all go through `authorize` now, and the checks they used to open-code — may-post,
-the message ceiling, the network profile — are gone from `kols-cli` rather than duplicated
-beside it. The binary-driving tests still pass unchanged, which is what says the seam holds.
+### What to watch out for
 
-**S3 is done and was confirmed by running, not by installing.** A scaffolded Tauri v2 app
-compiled and linked against the system webview in 44 seconds and mapped an 800×600 window on
-the X display within a second, WebKit child process alongside. It was built in a scratch
-directory rather than this repo, because a crate here is a claim that something exists. Two
-corrections came out of it, both in `design/07` §2 now: `libappindicator3-dev` does not exist
-in Debian 12 (the Ayatana fork is what Tauri builds against), so the package list as written
-could not have been installed; and there is no `/mnt/wslg` in the container — WSLg is on the
-host, and what arrives is VS Code's forwarding of both an X server and a Wayland socket. GTK
-prefers Wayland when `WAYLAND_DISPLAY` is set, which leaves `xwininfo` nothing to observe, so
-`GDK_BACKEND=x11` is what a *script* checks a window with.
-
-**What is owed is in §6 now**, rather than scattered through this section — seven items with
-the reason each is outstanding, including the client half of E12 that used to be described
-here.
-
-**`design/09` is the interface design**, written before any interface code. It settles the
-navigation model, the hot/warm/cold liveness tiers, presence honesty, permission-gated
-chrome and the theming system with its CSP contract. Two protocol extensions came out of
-writing it — **E12** and **E13** (cross-network connection bootstrap for DMs, P2).
-
-**E12 landed narrower than it was asked for, and the narrowing is the finding.** It was
-raised as *tiered node liveness*: hot, warm and cold, a warm node holding a relay reservation
-without a full behaviour set. Only the behaviour set was ever the protocol's — a consuming
-client cannot assemble a partial one — so Core §5.1.1 now makes Kademlia and mDNS optional
-and stops there. Whether a node exists at this moment, and whether it holds a reservation
-while nothing is happening, is policy over time and belongs to whoever holds the nodes; a
-specification has no view on it. The tiers therefore stay in `design/09` §2 as client
-behaviour, built on reservations and dialability, which already existed.
-
-**Sealing, backfill, per-segment keys and the live-path bound are all in.** Both gaps the
-backfill work left open are now closed:
-
-- **Retention is per segment** (`design/01` §3.1.0). Each segment lives under its own
-  derived pointer and therefore its own DEK, so an author stops republishing and
-  re-wrapping what has aged out and keeps the rest — Storage §5.2 does the rest. This was
-  forced rather than chosen: a pointer commits to one DEK for its whole life, and a
-  wrapping only travels alongside a pointer that exists, so a separately-forgettable key
-  needs a pointer of its own. The cost is one indirection — `author_log_pointer` now names
-  a *head index* saying which segment is current, and everything else is derivable again.
-- **The live path no longer carries backlog.** A failed publish is retried only while the
-  record is inside a freshness window (`--live-window-millis`, default one minute), so a
-  record written a moment before a peer subscribed still goes out and last week's history
-  does not.
-
-The keying gaps are closed end to end: `GroupSession::save`/`restore` (Core §3.3.1) mean a
-founder survives a restart and can still key people in, and `kols revoke` now drives a real
-removal — membership entry from the command, epoch rotation from the daemon, in that order
-because Core §3.3 requires it.
-
-**Just done:** the chat side of E2. `ChannelEntry` encodes all four kinds as `chat`-namespace
-payloads (spec 07 §3.8, written for this and normative), and `ChannelEntry::read` is the
-only way to get one out of a log entry — so both checks E2's generalisation moved onto
-readers are unavoidable rather than optional:
-
-1. **The declared capability must be the one the kind requires.** The protocol verified the
-   author holds what the entry *declared*; only a reader that understands `chat` knows what
-   it *should* have declared. Without this, an author holding `chat:post:*` — the most
-   ordinary grant a network issues — could mint channel structure.
-2. **A channel entry is invalid in a `conversation`-profile network.** The protocol carries
-   `chat` payloads without decoding them, so it cannot reach this verdict.
-
-**To pick up:** `cargo test` in this repo should show 98 passing and clippy silent, and 644
-in `../distributed-intranet`. If it does not, fix that before anything else — both trees were
-left green.
-
----
+- **`kols invite` needs a relay and a circuit**, and refuses without either. Run one with
+  `cargo run -p intranet-harness -- relay --seed 1 --network 42 --listen /ip4/0.0.0.0/tcp/4001`,
+  or deploy DI-Relay. **Bind it to a routable address, never loopback** — a relay only
+  promotes non-loopback listen addresses to external ones, and libp2p builds a reservation's
+  address list from external addresses alone, so a loopback relay grants reservations that
+  carry nothing and everything downstream looks broken for the wrong reason.
+- **Only one process may run a node per network.** The window runs one now, so `kols serve`
+  on the same store is refused. The claim expires after 30 seconds without a heartbeat, so a
+  crash costs a pause rather than a stuck store.
+- **Nobody has looked hard at the interface.** The X forwarding into this container is
+  intermittent, so the layout is unreviewed beyond the user confirming the picker renders.
+  `design/09` §7's navigation question is open by default, not by decision.
+- The scratchpad note about `ko-ls/target`: the dev container now mounts a named volume there,
+  so whatever sits at `ko-ls/target` on the host is shadowed once it is rebuilt, and wants
+  deleting from outside the container.
 
 ## 1. Right Now
 
@@ -139,7 +86,7 @@ left green.
 |---|---|
 | **Working on** | Milestone: a client two people on separate networks can use. The window creates, joins and runs a node; the Windows build is next |
 | **Blocked on** | Nothing |
-| **Runnable** | **`kols`** — init (with `--relay`), relay list/set, invite, join, waiting, attach, admit, revoke, name, serve, post, read, edit, delete, react, pin, and channel create/list/rename/topic/slowmode/archive. **`kols-desktop`** — a window listing channels, rendering one, and posting to it. `cargo test` — 178 tests here and 649 in `../distributed-intranet`, clippy clean in both; `scripts/cross-check.sh` for big-endian |
+| **Runnable** | **`kols`** — init (with `--relay`), relay list/set, invite, join, waiting, attach, admit, revoke, name, serve, post, read, edit, delete, react, pin, and channel create/list/rename/topic/slowmode/archive. **`kols-desktop`** — a window that creates a network or joins one by invite, runs a node for it, lists channels, renders one and posts to it, updating as records arrive. `cargo test` — 178 tests here and 649 in `../distributed-intranet`, clippy clean in both; `scripts/cross-check.sh` for big-endian |
 | **Next decision needed from the user** | Nothing blocking |
 
 ---
@@ -219,7 +166,8 @@ somebody forgot.
 | O5 | **The executor rebuilds an author's whole log to append one record** | `rebuild_log` replays every record this member wrote in a channel on every write, which is correct — the segment is a pure function of the sequence — and is linear in a log that only grows. It is the same work O4's projection exists to stop repeating, and wants measuring before it is optimised rather than after | `kols-cli::chat::rebuild_log` |
 | O6 | **The window has no invite control and no presence** | It can *redeem* an invite now; it cannot *mint* one, so a founder still needs a terminal to bring somebody in. Presence needs the ephemeral gossip of `design/01` §9, which nothing implements — so `design/09` §4's third question, who is here and are they around, has no answer in the interface | `design/09` §4.1, §5, §7 |
 | O7 | **No credentials and no backup.** Seeds are written to `<home>/seed` in the clear and never surfaced, so a member's only copy is a file, and anything with read access to the disk is that member | **Deliberately deferred, and it must land well before any 1.0.** The shape is decided (`design/02` §6.3): a local account whose password *wraps* a keyring of per-network seeds and never derives them, plus an export bundle of phrase, network id and relay address per network. Not needed to test between two machines you own; needed before anybody else's identity depends on it | `design/02` §6.3, `design/05` §5 |
-| O8 | **A suspended node can lose its claim and not know.** `NODE_CLAIM_STALE` is wall-clock, so a laptop asleep past the window can have its claim taken over while it still believes it holds one | Making it impossible needs the holder to re-check ownership as it beats. Rare rather than impossible today, because taking over requires somebody to start a second node inside that window | `kols-cli::store::NODE_CLAIM_STALE` |
+| O8 | **On Windows a seed is written with default ACLs.** The `0o600` call in `store.rs` is `#[cfg(unix)]`, so on Windows it is skipped and the file inherits its directory's permissions | Nobody has built for Windows yet, so it has never been wrong in practice. It is silent rather than refused, which is the part that matters: a seed is the only copy of an identity, and this must be fixed before a `.exe` reaches another person | `kols-cli::store`, `design/02` §6.3 |
+| O9 | **A suspended node can lose its claim and not know.** `NODE_CLAIM_STALE` is wall-clock, so a laptop asleep past the window can have its claim taken over while it still believes it holds one | Making it impossible needs the holder to re-check ownership as it beats. Rare rather than impossible today, because taking over requires somebody to start a second node inside that window | `kols-cli::store::NODE_CLAIM_STALE` |
 
 **Closed since this register was written:** the executor, the two checks `authorize`
 deliberately could not make, and the event half of the boundary. The first two were owed
@@ -260,6 +208,72 @@ design changes before anything else is built.
 ## 9. Log
 
 Newest first. One line per change that moved the state above.
+
+- **2026-08-20** — **The window creates a network, joins one by invite, and runs a node for
+  it.** Three landings, one shape: everything the terminal could do that the window could not,
+  because the code lived in a place only a terminal could call.
+
+  **Creating** moved out of `kols init` into `kols_cli::workspace`, called by both front ends.
+  That matters more than it sounds, because genesis has three requirements that are each silent
+  when missed — `chat-log` on the content-type allowlist, the chat vocabulary registered, and
+  `everyone` granted what a member needs — so a second copy in the shell would have looked right
+  and failed at the first post. A workspace is a directory of networks, which is forced by the
+  same thing that forces a node per network: `keypair_for` derives the libp2p keypair from the
+  per-network identity, so networks cannot share a peer id without correlating identities Core
+  §1.2 keeps unlinkable. It tolerates a `$KOLS_HOME` that is *itself* a store, because that is
+  what `kols --home` means and still does.
+
+  **The node** moved into the shell by giving `serve` a sink: a terminal prints its events, the
+  window forwards them to the webview, and the loop knows about neither. The interface re-reads
+  on every event rather than patching the screen — `design/05` §3's third property in its
+  smallest form, since a record that arrived over gossip is also inside the segment that follows
+  and a consumer that appended what it was handed would show every message twice.
+
+  Only one process may run a node per network, and the store now enforces it: the MLS group is
+  live state, and two nodes would each advance it without seeing the other, after which whichever
+  saved last decides the network's key — with no symptom at the moment it happens. **The claim
+  expires rather than only releasing on drop**, which turned out to be the load-bearing half: a
+  window is closed by the window manager, which runs no destructors, so a claim released only on
+  `Drop` would leak on the *normal* way this application ends. A pid check was the obvious
+  alternative and is worse — liveness is a different answer on every platform and a reused pid
+  looks alive while belonging to somebody else. Claiming also waits a stale claim out rather than
+  refusing on sight, which two of the two-node tests found by restarting a daemon.
+
+  **Joining** got the same treatment as serving, for the same reason. The picker offers it
+  *before* creating, because those are not equally likely: somebody opening this client for the
+  first time is usually holding an invite. Landing in a waiting room is reported as the success
+  it is — under explicit intake an invite buys a connection and an identity and nothing else
+  until a member admits you, so the window says so and shows the identity to be admitted rather
+  than an empty network, which is what that state looks like when nothing explains it.
+
+  172 → 178 tests. Neither the picker nor the join button can be pressed from a test, so the
+  paths behind them are covered directly instead.
+
+- **2026-08-20** — **Seeds are per network, and a password will wrap them rather than derive
+  them.** `design/02` §6.3 said first run generates one master seed with a backup phrase. The
+  implementation had always done something else — fresh entropy per network — and on reflection
+  the implementation is right, so five documents changed instead of the code. The reasoning is
+  the one per-network derivation already rests on: a master seed is the single object whose
+  compromise correlates every membership at once, and the object a member would be told to write
+  down. Recorded as **D28**.
+
+  §6.3 now also says what restoring means, because "restore" promises more than it delivers. A
+  seed derives an identity; it is not data and it is not a network. A phrase alone restores
+  nothing, since a network's id cannot be derived from it — coming back needs the phrase, the
+  network id and an address to reach the network at. Given those three, a member returns as *the
+  same member*, and even their own messages come back, because their author log was published as
+  content other members hold. What does not come back is named too, including the one that
+  actually bites: the list of which networks they belonged to, which lives in the client's
+  workspace and in no seed.
+
+  And the shape of credentials is settled before anything builds them, because the tempting
+  version is specifically wrong. Deriving a seed from a password and the network id needs no
+  storage and is a **brainwallet with a verification oracle**: the network id is public,
+  travelling in every invite, and member ids are in the governance log, so a guessed password
+  produces a candidate identity checkable offline against a value the network publishes. A
+  random seed *wrapped* under a password-derived key has nothing public to check against. Both
+  credentials and backup are deferred deliberately and now sit in `design/00`'s roadmap as a
+  release gate rather than a phase item.
 
 - **2026-08-20** — **A network designates its relays, and §5.5 was optimistic about needing
   them.** Core §5.5 called bootstrap dependency "temporary per node" — a node caches peers on
