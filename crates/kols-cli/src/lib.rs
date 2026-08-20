@@ -31,6 +31,21 @@ pub mod serve;
 pub mod store;
 pub mod workspace;
 
+/// Reads an identity id out of the 64 hex characters that display it.
+///
+/// In the library rather than in either front end, because both need it: a
+/// terminal takes one as an argument and a window takes one from a click, and
+/// two copies of a parser for the same 32 bytes is how they end up disagreeing
+/// about what is valid.
+pub fn parse_identity(hex: &str) -> Result<intranet_identity::PerNetworkIdentityId, String> {
+    let bytes = intranet_crypto::from_hex(hex.trim())
+        .and_then(|b| <[u8; 32]>::try_from(b.as_slice()).ok())
+        .ok_or("an identity is 64 hex characters")?;
+    let key = intranet_crypto::VerifyingKey::from_bytes(bytes)
+        .map_err(|_| "those bytes are not a valid identity key".to_owned())?;
+    Ok(intranet_identity::PerNetworkIdentityId::from_verifying_key(key))
+}
+
 /// 32 bytes from the OS.
 pub fn random_32() -> Result<[u8; 32], String> {
     let mut bytes = [0u8; 32];

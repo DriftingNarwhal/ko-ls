@@ -85,8 +85,51 @@ function drawMe(me) {
   // shown. The hidden control and the refused command are independent, and the
   // second is the one that matters.
   el("new-channel").hidden = !me.may_create_channel;
+  el("doorway").hidden = !me.may_invite;
+  if (me.may_invite) drawWaiting();
 
   drawKeyState(me);
+}
+
+// Who is at the door, and letting them in.
+//
+// The waiting room is live state in the running node, which writes it down for
+// anything else to read — so this is stale by construction and says so rather
+// than presenting a stale list as the truth.
+async function drawWaiting() {
+  const waiting = await invoke("waiting");
+  const list = el("waiting-list");
+  list.replaceChildren();
+
+  const note = el("waiting-note");
+  note.hidden = waiting.length !== 0;
+  note.textContent =
+    "Nobody is waiting. A waiting room only fills while this network is open " +
+    "and running, since that is what answers an invite.";
+
+  for (const who of waiting) {
+    const row = document.createElement("li");
+    const name = document.createElement("span");
+    name.className = "mono";
+    name.textContent = who.short;
+
+    const button = document.createElement("button");
+    button.textContent = "admit";
+    button.addEventListener("click", async () => {
+      button.disabled = true;
+      try {
+        await invoke("admit", { identity: who.identity });
+        await drawWaiting();
+      } catch (err) {
+        button.disabled = false;
+        el("refused").hidden = false;
+        el("refused").textContent = String(err);
+      }
+    });
+
+    row.append(name, button);
+    list.append(row);
+  }
 }
 
 function drawChannels(channels) {
@@ -205,6 +248,10 @@ async function openChannel(id) {
 
 async function refresh() {
   drawChannels(await invoke("channels"));
+  // Somebody redeeming an invite is one of the things an event means, and a
+  // waiting room nobody redraws is a person standing at a door that never
+  // opens.
+  if (state.me?.may_invite) await drawWaiting();
   if (state.current) {
     // Re-read rather than patch: the projection is the core's, and redrawing
     // from it is what makes a duplicate delivery a non-event.
@@ -226,6 +273,35 @@ el("composer").addEventListener("submit", async (event) => {
     el("refused").hidden = false;
     el("refused").textContent = String(err);
   }
+});
+
+el("new-invite").addEventListener("click", async () => {
+  try {
+    const invite = await invoke("create_invite", { uses: 1, hours: 24 });
+    el("invite-out").hidden = false;
+    el("invite-uri").value = invite.uri;
+    // Said rather than assumed: the addresses inside it are the ones this node
+    // last reported, so an invite pointing at a node nobody is running connects
+    // to nothing.
+    el("invite-note").textContent =
+      `Good for ${invite.uses} join(s), for about ${invite.hours} more hour(s). ` +
+      "It carries this node's addresses, so keep this network open for anybody to redeem it.";
+    el("invite-uri").select();
+  } catch (err) {
+    // The common one is having no relay, which is an ordering problem rather
+    // than a fault: a network needs one before it can invite anybody.
+    el("invite-out").hidden = false;
+    el("invite-uri").value = "";
+    el("invite-note").textContent = String(err);
+  }
+});
+
+el("copy-invite").addEventListener("click", async () => {
+  const uri = el("invite-uri").value;
+  if (!uri) return;
+  await navigator.clipboard.writeText(uri);
+  el("copy-invite").textContent = "copied";
+  setTimeout(() => (el("copy-invite").textContent = "copy"), 1500);
 });
 
 el("namer").addEventListener("submit", async (event) => {

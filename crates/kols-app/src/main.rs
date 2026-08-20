@@ -202,6 +202,76 @@ fn set_name(app: tauri::State<'_, App>, name: String) -> Result<(), String> {
     })
 }
 
+/// Mints an invite and hands back the one string a joiner needs.
+///
+/// The founder's last terminal step, and the reason this exists: a client that
+/// can create a network, run a node and never bring anybody into it is not one
+/// you can hand to somebody else.
+#[tauri::command]
+fn create_invite(app: tauri::State<'_, App>, uses: u32, hours: i64) -> Result<dto::Invite, String> {
+    app.with(|executor| {
+        match executor
+            .submit(Command::CreateInvite {
+                uses,
+                valid_for_hours: hours,
+            })
+            .map_err(|err| err.to_string())?
+        {
+            Outcome::InviteCreated {
+                invite,
+                expires_at_millis,
+                uses,
+            } => Ok(dto::Invite {
+                uri: kols_cli::invite::to_uri_from_bytes(&invite),
+                hours: (expires_at_millis - kols_cli::chat::now_millis()) / 3_600_000,
+                uses,
+            }),
+            other => Err(format!("minting an invite answered with {other:?}")),
+        }
+    })
+}
+
+/// Who redeemed an invite and is waiting to be admitted.
+///
+/// A local read of what the node wrote down rather than a command, for the same
+/// reason `kols waiting` is: the waiting room is live state in the running node,
+/// so this is stale by construction and the interface says so where it shows it.
+#[tauri::command]
+fn waiting(app: tauri::State<'_, App>) -> Result<Vec<dto::Waiting>, String> {
+    app.with(|executor| {
+        let store = executor.store();
+        let identity = store.identity().map_err(|e| e.to_string())?;
+        let state = store.state().map_err(|e| e.to_string())?;
+        // The same capability admitting them needs. Seeing who is asking is not
+        // a smaller question than letting them in.
+        if !state.identity_holds(&identity.id(), &intranet_governance::Capability::ApproveNode) {
+            return Ok(Vec::new());
+        }
+        Ok(store
+            .waiting()
+            .into_iter()
+            .map(|identity| dto::Waiting {
+                short: kols_cli::parse_identity(&identity)
+                    .map(|id| id.short())
+                    .unwrap_or_else(|_| identity.clone()),
+                identity,
+            })
+            .collect())
+    })
+}
+
+/// Admits a waiting identity to the network.
+#[tauri::command]
+fn admit(app: tauri::State<'_, App>, identity: String) -> Result<(), String> {
+    let identity = kols_cli::parse_identity(&identity)?;
+    app.with(|executor| {
+        executor
+            .submit(Command::AdmitMember { identity })
+            .map(|_| ())
+            .map_err(|err| err.to_string())
+    })
+}
+
 /// Defines a channel.
 #[tauri::command]
 fn create_channel(app: tauri::State<'_, App>, name: String, topic: String) -> Result<(), String> {
@@ -437,6 +507,9 @@ fn main() {
             send_message,
             create_channel,
             set_name,
+            create_invite,
+            waiting,
+            admit,
             networks,
             create_network,
             join_network,

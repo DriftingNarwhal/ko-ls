@@ -88,6 +88,25 @@
           <ul id="channel-list"></ul>
         </nav>
 
+        <!-- Bringing somebody in. Shown only to a holder of approve-node, which
+             is the same capability admitting them needs — so a member who
+             cannot let anybody in is not shown a door. -->
+        <section class="doorway" id="doorway" data-kols="doorway" hidden>
+          <div class="channels-head">
+            <h2>people</h2>
+            <button id="new-invite" title="mint an invite">invite</button>
+          </div>
+
+          <div class="invite-out" id="invite-out" hidden>
+            <p class="dim" id="invite-note"></p>
+            <textarea id="invite-uri" readonly rows="3"></textarea>
+            <button id="copy-invite">copy</button>
+          </div>
+
+          <ul class="waiting-list" id="waiting-list"></ul>
+          <p class="dim" id="waiting-note" hidden></p>
+        </section>
+
         <footer class="state" data-kols="state">
           <p id="key-state"></p>
         </footer>

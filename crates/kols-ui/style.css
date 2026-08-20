@@ -25,6 +25,21 @@
 
 * { box-sizing: border-box; }
 
+/* `hidden` must actually hide, whatever else a rule says.
+ *
+ * The browser's own `[hidden] { display: none }` is the weakest rule there is,
+ * so any author rule setting `display` beats it — and this interface hides by
+ * setting the attribute while giving `.app`, `.picker` and the composer their
+ * own `display`. The first launch on Windows showed what that costs: the picker
+ * rendered correctly and the channel screen sat *underneath* it, reachable by
+ * scrolling, because `.app { display: grid }` won.
+ *
+ * `!important` is the right tool exactly once, and this is it: hiding is not a
+ * style choice a later rule may reasonably override. A theme (`design/09` §6)
+ * may restyle anything it likes and still must not be able to reveal a screen
+ * this client has decided you are not on. */
+[hidden] { display: none !important; }
+
 body {
   margin: 0;
   background: var(--ground);
@@ -37,6 +52,51 @@ body {
   grid-template-columns: 260px 1fr;
   height: 100vh;
 }
+
+/* ---- the doorway: inviting, and letting people in ------------------------ */
+
+.doorway {
+  border-top: 1px solid var(--line);
+  padding: var(--gap);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.invite-out {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.invite-out textarea {
+  width: 100%;
+  resize: vertical;
+  font: 12px/1.4 var(--mono);
+  color: var(--text);
+  background: var(--ground);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 6px;
+}
+
+.waiting-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.waiting-list li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.dim { color: var(--dim); font-size: 12px; margin: 0; }
 
 /* ---- the rail: which network, which channels ---------------------------- */
 

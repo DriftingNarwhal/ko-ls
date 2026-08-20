@@ -375,10 +375,10 @@ fn submit(root: std::path::PathBuf, command: Command) -> Result<(), String> {
             ApiCommand::SetBootstrapRelays { relays }
         }
         Command::Admit { identity } => ApiCommand::AdmitMember {
-            identity: parse_identity(&identity)?,
+            identity: kols_cli::parse_identity(&identity)?,
         },
         Command::Revoke { identity } => ApiCommand::RevokeMember {
-            identity: parse_identity(&identity)?,
+            identity: kols_cli::parse_identity(&identity)?,
         },
         Command::Channel(ChannelCommand::Create {
             name,
@@ -834,11 +834,4 @@ fn attach(root: std::path::PathBuf, network_hex: &str, name: &str) -> Result<(),
     Ok(())
 }
 
-fn parse_identity(hex: &str) -> Result<intranet_identity::PerNetworkIdentityId, String> {
-    let bytes = intranet_crypto::from_hex(hex.trim())
-        .and_then(|b| <[u8; 32]>::try_from(b.as_slice()).ok())
-        .ok_or("an identity is 64 hex characters")?;
-    let key = intranet_crypto::VerifyingKey::from_bytes(bytes)
-        .map_err(|_| "those bytes are not a valid identity key".to_owned())?;
-    Ok(intranet_identity::PerNetworkIdentityId::from_verifying_key(key))
-}
+

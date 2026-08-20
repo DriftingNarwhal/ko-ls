@@ -148,6 +148,30 @@ pub struct Joined {
     pub identity: String,
 }
 
+/// A freshly minted invite, ready to be handed to somebody.
+///
+/// The URI rather than the bytes, because carrying one is presentation and this
+/// is the shell — `kols-api` hands back the protocol's bytes and declines to
+/// decide whether they travel as a link, a QR code or a pasted string.
+#[derive(Debug, Serialize)]
+pub struct Invite {
+    /// `intranet-chat://join/…`, the whole of what a joiner needs.
+    pub uri: String,
+    /// Roughly how many hours it has left, for saying so out loud.
+    pub hours: i64,
+    /// How many identities may still be admitted with it.
+    pub uses: u32,
+}
+
+/// Somebody who redeemed an invite and is waiting to be let in.
+#[derive(Debug, Serialize)]
+pub struct Waiting {
+    /// The full identity, which is what admitting them names.
+    pub identity: String,
+    /// The short form, for showing.
+    pub short: String,
+}
+
 /// Who this member is here, and what they may do.
 ///
 /// The permission flags exist so the interface can hide controls it should not

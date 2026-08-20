@@ -1,6 +1,6 @@
 # ko-ls — Implementation Status
 
-**Updated:** 2026-08-20 (Windows: the seed ACL is confirmed, O8 closed, and the window cross-compiles after all)
+**Updated:** 2026-08-20 (the window mints an invite and admits a joiner — the last terminal step is gone)
 **Phase:** P1 — two nodes talk live and durably, a joiner reads back through sealed
 history, and the boundary carries commands in and events out
 **Design:** [`design/`](design/) — `00`–`08` at v1.0, `09` at v0.2. **`distributed-intranet/specs/07` is normative** where it and the design set overlap.
@@ -48,7 +48,7 @@ What that needs, and where it stands:
 | One string to join — `kols invite` / `kols join` | **done** |
 | A window that creates, joins, opens and runs a node for a network | **done** |
 | **A Windows build** | **Both binaries cross-compile**, and `kols.exe` runs — network created, seed correctly restricted. `kols-desktop.exe` is built and unrun |
-| Minting an invite from the window | not started; a founder still needs one terminal step |
+| Minting an invite from the window | **done**, with the waiting room and admitting beside it. No step of the flow now needs a terminal |
 
 ### Start here tomorrow
 
@@ -57,11 +57,12 @@ What that needs, and where it stands:
    are not, fix that before anything else. Clippy on the Windows target is a *second* run,
    `cargo clippy -p kols-cli --target x86_64-pc-windows-gnu`, and it caught something the
    Linux one cannot see, so it is worth making when `src/secret.rs` changes.
-2. **Run `kols-desktop.exe` on Windows.** It links but has never been started, and the
-   thing to watch is that a GNU build imports `WebView2Loader.dll` instead of linking the
-   loader statically as an MSVC build does — so that DLL must sit beside the binary or the
-   process will not start at all. `kols.exe` itself is confirmed working there: a network
-   created, and its seed restricted to one account (O8, closed).
+2. **The two-machine test is the only thing left, and it needs a relay nobody has deployed.**
+   Both machines are behind NAT, so they cannot reach each other directly (Core §5.5) — one
+   bootstrap relay on a routable address is a standing dependency, not a convenience.
+   DI-Relay deploys one; `intranet-harness relay` is the local equivalent and is useless
+   here, because it has to be reachable from both. Everything either end does after that is
+   built and unproven across real networks.
 3. `kols-desktop` on Windows still needs a runner or a machine, because Tauri wants MSVC and
    WebView2 and neither is reachable from this container. `design/07` §2 S3 records what the
    Linux toolchain needed.
@@ -166,7 +167,7 @@ somebody forgot.
 | O3 | **`may_moderate_at` answers from current state, ignoring the head it is given** | Checking authority *as of* a governance head needs the log rather than one replayed snapshot. The difference shows only when a moderator is demoted after acting: this retroactively invalidates their past redactions, where `design/01` §6 says they should stand. Pinning is now judged against current state deliberately (`may_moderate_now`), which is a different question rather than the same one approximated | `kols-core::permissions`, flagged in the type's own docs |
 | O4 | **`kols-store` does not exist.** `kols-cli` carries its own file-backed store instead of the SQLite projection `design/05` §5 describes | Nothing has needed a projection yet — the CLI replays the log on every invocation, which is slow and correct. The projection is worth building when something renders fast enough to notice | `design/05` §5 |
 | O5 | **The executor rebuilds an author's whole log to append one record** | `rebuild_log` replays every record this member wrote in a channel on every write, which is correct — the segment is a pure function of the sequence — and is linear in a log that only grows. It is the same work O4's projection exists to stop repeating, and wants measuring before it is optimised rather than after | `kols-cli::chat::rebuild_log` |
-| O6 | **The window has no invite control and no presence** | It can *redeem* an invite now; it cannot *mint* one, so a founder still needs a terminal to bring somebody in. Presence needs the ephemeral gossip of `design/01` §9, which nothing implements — so `design/09` §4's third question, who is here and are they around, has no answer in the interface | `design/09` §4.1, §5, §7 |
+| O6 | **The window has no presence.** It mints invites, shows the waiting room and admits from it now; what it cannot answer is `design/09` §4's third question — who is here, and are they around | Presence needs the ephemeral gossip of `design/01` §9, which nothing implements on either front end. Deliberately last: an interface that says "offline" when it means "I have not heard from them" is stating something it cannot know (§4.1), so the mechanism has to exist before the dot does | `design/09` §4.1, §7 |
 | O7 | **No credentials and no backup.** Seeds are written to `<home>/seed` in the clear and never surfaced, so a member's only copy is a file, and anything with read access to the disk is that member | **Deliberately deferred, and it must land well before any 1.0.** The shape is decided (`design/02` §6.3): a local account whose password *wraps* a keyring of per-network seeds and never derives them, plus an export bundle of phrase, network id and relay address per network. Not needed to test between two machines you own; needed before anybody else's identity depends on it | `design/02` §6.3, `design/05` §5 |
 | O8 | ~~**On Windows a seed is written with default ACLs.**~~ **Closed 2026-08-20.** `kols-cli::secret` restricts a secret to this user on both platforms — a `chmod` on Unix, a *protected* DACL on Windows — and refuses rather than writing one it cannot protect | Confirmed by running it: a seed written by `kols.exe` on NTFS shows this account and nothing else in its Security tab, with no inherited `SYSTEM` or `Administrators` entry, which is what the protected flag is for. The refusal path was confirmed the same day, from a `\\wsl$\` path that has no permissions to set | `kols-cli::secret`, `design/02` §6.3 |
 | O9 | **A suspended node can lose its claim and not know.** `NODE_CLAIM_STALE` is wall-clock, so a laptop asleep past the window can have its claim taken over while it still believes it holds one | Making it impossible needs the holder to re-check ownership as it beats. Rare rather than impossible today, because taking over requires somebody to start a second node inside that window | `kols-cli::store::NODE_CLAIM_STALE` |
@@ -210,6 +211,34 @@ design changes before anything else is built.
 ## 9. Log
 
 Newest first. One line per change that moved the state above.
+
+- **2026-08-20** — **The window brings somebody in, so no step of the flow needs a terminal.**
+  A founder could create a network in the window, run a node and never invite anybody, which
+  is not a client you can hand to somebody else — it is a client plus an instruction to go and
+  find one. `create_invite`, `waiting` and `admit` cross the boundary the same way everything
+  else does, and the rail grows a doorway that is shown only to a holder of `approve-node`.
+
+  **Seeing who is waiting needs the same capability as admitting them**, which is why it is one
+  section and one flag rather than two. The waiting room is a local read rather than a command,
+  for the reason `kols waiting` is: it is live state in the running node, which writes it down
+  for anything else to read, so it is stale by construction and the interface says so where it
+  shows it.
+
+  `parse_identity` moved into the library rather than being copied into the shell. Two parsers
+  for the same 32 bytes is how two front ends end up disagreeing about what is valid, and this
+  is the third thing to make that trip — creating a network and serving one went first.
+
+  **A first-launch bug, reported from Windows and fixed here.** The picker rendered correctly
+  and the channel screen sat *underneath* it, reachable by scrolling. `hidden` is an attribute
+  and the browser's `[hidden] { display: none }` is the weakest rule there is, so
+  `.app { display: grid }` beat it. `[hidden] { display: none !important }` is the fix, and the
+  `!important` is right exactly here: hiding is not a style choice a later rule may reasonably
+  override, and a user theme (`design/09` §6) must not be able to reveal a screen this client
+  decided you are not on. Every other `hidden` toggle in the interface had the same latent bug.
+
+  Unguarded, and said rather than implied: nothing tests that a hidden element is invisible,
+  because that needs a browser and this repo has no harness for one. The data path behind all
+  three new commands is tested; what they look like is not.
 
 - **2026-08-20** — **O8 closed on a real machine, and the window cross-compiles after all.**
   `kols.exe` created a network on NTFS and its seed's Security tab shows one account and
