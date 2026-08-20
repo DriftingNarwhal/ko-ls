@@ -26,6 +26,7 @@ pub mod executor;
 pub mod invite;
 pub mod join;
 pub mod network;
+mod secret;
 pub mod serve;
 pub mod store;
 pub mod workspace;

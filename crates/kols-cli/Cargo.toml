@@ -31,5 +31,17 @@ clap.workspace = true
 libp2p.workspace = true
 tokio = { workspace = true, features = ["rt-multi-thread", "macros", "time"] }
 
+# Only to restrict a secret to its owner on Windows (`src/secret.rs`). Unix does
+# this with a chmod and needs nothing; Windows needs a DACL, and there is no
+# safe wrapper for that in the standard library.
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = [
+    "Win32_Foundation",
+    "Win32_Security",
+    "Win32_Security_Authorization",
+    "Win32_Storage_FileSystem",
+    "Win32_System_Threading",
+] }
+
 [dev-dependencies]
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }

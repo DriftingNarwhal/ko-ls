@@ -78,6 +78,19 @@ RUN install -m 0755 -d /etc/apt/keyrings \
     && apt-get update && apt-get install -y --no-install-recommends nodejs \
     && rm -rf /var/lib/apt/lists/*
 
+# Cross-compiling `kols` for Windows. The GNU target rather than MSVC, because
+# MSVC needs Microsoft's linker and cannot be reached from a Linux container at
+# all; mingw can, and `kols` is a console binary with no Windows-specific
+# dependency beyond `src/secret.rs`'s DACL call.
+#
+# **This builds the CLI and not `kols-desktop`.** Tauri wants MSVC and WebView2,
+# so the window still needs a Windows runner. The gate this target does buy is a
+# compile check of the one platform-specific path in the client, which is the
+# half that is silent when it is wrong.
+RUN apt-get update && apt-get install -y --no-install-recommends mingw-w64 \
+    && rm -rf /var/lib/apt/lists/* \
+    && rustup target add x86_64-pc-windows-gnu
+
 # CLAUDE.md gates work on `cargo test --workspace` *and*
 # `cargo clippy --workspace --all-targets`, so clippy has to be present.
 RUN rustup component add clippy rustfmt

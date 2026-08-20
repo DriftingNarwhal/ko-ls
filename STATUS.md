@@ -1,6 +1,6 @@
 # ko-ls — Implementation Status
 
-**Updated:** 2026-08-20 (relays — a network designates them, and an invite carries a circuit)
+**Updated:** 2026-08-20 (`kols` builds for Windows, and the seed it writes there is restricted)
 **Phase:** P1 — two nodes talk live and durably, a joiner reads back through sealed
 history, and the boundary carries commands in and events out
 **Design:** [`design/`](design/) — `00`–`08` at v1.0, `09` at v0.2. **`distributed-intranet/specs/07` is normative** where it and the design set overlap.
@@ -47,20 +47,23 @@ What that needs, and where it stands:
 | Relay reachability — a network designates relays, a node reserves a circuit, invites carry it | **done** |
 | One string to join — `kols invite` / `kols join` | **done** |
 | A window that creates, joins, opens and runs a node for a network | **done** |
-| **A Windows build** | **not started** — the next thing |
+| **A Windows build** | **`kols.exe` builds**; `kols-desktop` needs a Windows runner, and nothing has *run* either |
 | Minting an invite from the window | not started; a founder still needs one terminal step |
 
 ### Start here tomorrow
 
-1. `cargo test` — **178 here, 649 in `../distributed-intranet`** — and
+1. `cargo test` — **181 here, 649 in `../distributed-intranet`** — and
    `cargo clippy --workspace --all-targets` clean in both. Both trees were left green; if they
-   are not, fix that before anything else.
-2. The **Windows build** is next. `kols` (the CLI) should cross-compile from this container
-   with mingw; `kols-desktop` realistically needs a Windows runner or machine, because Tauri
-   wants MSVC and WebView2. `design/07` §2 S3 records what the Linux toolchain needed.
-3. **One thing to fix before any binary goes to another person:** on Windows the seed is
-   written with default ACLs, because the `0o600` call in `store.rs` is `#[cfg(unix)]`. The
-   seed is the only copy of an identity. It is silent rather than refused.
+   are not, fix that before anything else. Clippy on the Windows target is a *second* run,
+   `cargo clippy -p kols-cli --target x86_64-pc-windows-gnu`, and it caught something the
+   Linux one cannot see, so it is worth making when `src/secret.rs` changes.
+2. **Run `kols.exe` on a real Windows machine.** It cross-compiles and links here, and that
+   is the whole of what is known about it — no test in this repo has executed a Windows
+   binary. The first thing to check is O8's DACL: create a network, then confirm the seed at
+   `%USERPROFILE%\.kols\seed` is readable by its owner and by nobody else.
+3. `kols-desktop` on Windows still needs a runner or a machine, because Tauri wants MSVC and
+   WebView2 and neither is reachable from this container. `design/07` §2 S3 records what the
+   Linux toolchain needed.
 
 ### What to watch out for
 
@@ -86,7 +89,7 @@ What that needs, and where it stands:
 |---|---|
 | **Working on** | Milestone: a client two people on separate networks can use. The window creates, joins and runs a node; the Windows build is next |
 | **Blocked on** | Nothing |
-| **Runnable** | **`kols`** — init (with `--relay`), relay list/set, invite, join, waiting, attach, admit, revoke, name, serve, post, read, edit, delete, react, pin, and channel create/list/rename/topic/slowmode/archive. **`kols-desktop`** — a window that creates a network or joins one by invite, runs a node for it, lists channels, renders one and posts to it, updating as records arrive. `cargo test` — 178 tests here and 649 in `../distributed-intranet`, clippy clean in both; `scripts/cross-check.sh` for big-endian |
+| **Runnable** | **`kols`** — init (with `--relay`), relay list/set, invite, join, waiting, attach, admit, revoke, name, serve, post, read, edit, delete, react, pin, and channel create/list/rename/topic/slowmode/archive. **`kols-desktop`** — a window that creates a network or joins one by invite, runs a node for it, lists channels, renders one and posts to it, updating as records arrive. `cargo test` — 181 tests here and 649 in `../distributed-intranet`, clippy clean in both; `scripts/cross-check.sh` for big-endian |
 | **Next decision needed from the user** | Nothing blocking |
 
 ---
@@ -133,16 +136,14 @@ both green.
 
 | Crate | State |
 |---|---|
-| `kols-core` | **Encoding, author logs, merge, collision recovery, chat policy, channel structure** — records/segments/ids, `AuthorLog` incl. `rebase`, `ChannelView`, permissions, capability vocabulary, `ChatPolicy`, `ChannelEntry`. 60 tests |
+| `kols-core` | **Encoding, author logs, merge, collision recovery, chat policy, channel structure** — records/segments/ids, `AuthorLog` incl. `rebase`, `ChannelView`, permissions, capability vocabulary, `ChatPolicy`, `ChannelEntry`. 88 tests |
 | `kols-net` | **Publish and fetch** — stores/announces chunks, accepts pointers, reassembles segments. Two live two-node tests |
+| `kols-api` | **The whole boundary** — `Command`, `Sensitivity`, `Refusal` and `authorize` returning an `Authorized` nothing else can construct, going in; `Outcome` and `Event` coming out. All three of `design/05` §3's properties are now held. 26 tests |
 | `kols-cli` | **`kols`, its node daemon, and the executor** — a library now, with the binary as argument parsing and rendering over it. Creates a network, admits and keys in joiners, serves and fetches content, writes every record kind, renders a merged view across authors. Tests that drive the real binaries, eight of them over a live wire between two processes |
-| `kols-store` | Not created |
-| `kols-media` | Not created |
 | `kols-app` | **The desktop shell** — a Tauri v2 window over the boundary, holding a *workspace* of networks and an `Executor` for whichever is open, with the view types the webview receives and the handlers that build commands from plain arguments. `kols-desktop`. 7 tests |
 | `kols-ui` | **The interface** — HTML, CSS and one script, holding no keys, no sockets and no files. Creates and picks networks, answers `design/09` §4's first two questions, and gates its chrome on permission |
-| `kols-api` | **The whole boundary** — `Command`, `Sensitivity`, `Refusal` and `authorize` returning an `Authorized` nothing else can construct, going in; `Outcome` and `Event` coming out. All three of `design/05` §3's properties are now held. 23 tests |
-| `kols-app` | Not created |
-| `kols-ui` | Not created |
+| `kols-store` | Not created |
+| `kols-media` | Not created |
 
 Crates are created when there is code for them, not in advance — an empty crate is a
 claim that something exists.
@@ -166,7 +167,7 @@ somebody forgot.
 | O5 | **The executor rebuilds an author's whole log to append one record** | `rebuild_log` replays every record this member wrote in a channel on every write, which is correct — the segment is a pure function of the sequence — and is linear in a log that only grows. It is the same work O4's projection exists to stop repeating, and wants measuring before it is optimised rather than after | `kols-cli::chat::rebuild_log` |
 | O6 | **The window has no invite control and no presence** | It can *redeem* an invite now; it cannot *mint* one, so a founder still needs a terminal to bring somebody in. Presence needs the ephemeral gossip of `design/01` §9, which nothing implements — so `design/09` §4's third question, who is here and are they around, has no answer in the interface | `design/09` §4.1, §5, §7 |
 | O7 | **No credentials and no backup.** Seeds are written to `<home>/seed` in the clear and never surfaced, so a member's only copy is a file, and anything with read access to the disk is that member | **Deliberately deferred, and it must land well before any 1.0.** The shape is decided (`design/02` §6.3): a local account whose password *wraps* a keyring of per-network seeds and never derives them, plus an export bundle of phrase, network id and relay address per network. Not needed to test between two machines you own; needed before anybody else's identity depends on it | `design/02` §6.3, `design/05` §5 |
-| O8 | **On Windows a seed is written with default ACLs.** The `0o600` call in `store.rs` is `#[cfg(unix)]`, so on Windows it is skipped and the file inherits its directory's permissions | Nobody has built for Windows yet, so it has never been wrong in practice. It is silent rather than refused, which is the part that matters: a seed is the only copy of an identity, and this must be fixed before a `.exe` reaches another person | `kols-cli::store`, `design/02` §6.3 |
+| O8 | **The Windows seed ACL is written but unrun.** `kols-cli::secret` now restricts a secret to this user on both platforms — a `chmod` on Unix, a protected DACL on Windows — and *refuses* rather than writing one it cannot protect. What is owed is running it | No Windows machine has been near this repository, so the DACL path is verified by cross-compilation and by its API contract, and by nothing else. Cross-compiling proves the calls exist with the shapes assumed; it proves nothing about the ACL that results. Confirm on Windows before a `.exe` reaches another person | `kols-cli::secret`, `design/02` §6.3 |
 | O9 | **A suspended node can lose its claim and not know.** `NODE_CLAIM_STALE` is wall-clock, so a laptop asleep past the window can have its claim taken over while it still believes it holds one | Making it impossible needs the holder to re-check ownership as it beats. Rare rather than impossible today, because taking over requires somebody to start a second node inside that window | `kols-cli::store::NODE_CLAIM_STALE` |
 
 **Closed since this register was written:** the executor, the two checks `authorize`
@@ -208,6 +209,40 @@ design changes before anything else is built.
 ## 9. Log
 
 Newest first. One line per change that moved the state above.
+
+- **2026-08-20** — **`kols` builds for Windows, and the seed it writes there is restricted
+  rather than inherited.** O8 was the gate on this and it is now written: `write_private`
+  moved out of `store.rs` into `kols-cli::secret`, which restricts a secret to this user on
+  every platform it supports and **refuses** on any it does not.
+
+  **The ordering changed with it, and that is the half worth keeping.** It used to write the
+  bytes and then chmod them, which leaves the secret on disk under the directory's
+  permissions for a moment — and the moment is not the problem, a crash inside it is, because
+  the file is still there afterwards. It now creates the file empty, restricts it, and only
+  then writes. Restricting nothing costs the same as restricting a seed.
+
+  On Windows the fix is a **protected** DACL, and the word is load-bearing: an unprotected one
+  still inherits what its directory hands down, and inheritance is the whole defect — a seed
+  in a profile directory picks up whatever that directory grants. Refusing when the DACL
+  cannot be applied is the same call `design/00` §2's fail-closed principle makes everywhere
+  else: a seed written where somebody else can read it is worse than a seed not written, since
+  the second is an error a user sees and the first is one nobody ever does.
+
+  **What is verified and what is not, stated because the gap is the whole risk.** The Windows
+  path compiles for `x86_64-pc-windows-gnu` and `kols.exe` links — a real PE32+ binary. It has
+  never run. Cross-compilation proves the calls exist with the shapes assumed here and proves
+  nothing about the ACL that results, so O8 stays open with its remaining half named rather
+  than being closed on a build.
+
+  **Two things this shook out.** Clippy on the Windows target found a warning the Linux run
+  cannot see, which means the gate is now two runs rather than one whenever `secret.rs`
+  changes. And the confidence in a clean first compile of hand-written FFI was worth checking
+  rather than enjoying: a deliberate type error inside the Windows branch proved it was being
+  compiled and not quietly skipped by a `cfg`.
+
+  The toolchain went into `.devcontainer/Dockerfile` rather than into this container by hand,
+  which is `design/07` §2 S3's own lesson — the environment every claim depends on was once
+  the one thing nothing recorded. 178 → 181 tests, clippy clean on both targets.
 
 - **2026-08-20** — **The window creates a network, joins one by invite, and runs a node for
   it.** Three landings, one shape: everything the terminal could do that the window could not,

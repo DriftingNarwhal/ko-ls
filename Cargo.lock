@@ -3051,6 +3051,7 @@ dependencies = [
  "libp2p",
  "tokio",
  "tracing-subscriber",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]

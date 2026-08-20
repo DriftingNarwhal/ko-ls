@@ -22,6 +22,7 @@ use intranet_crypto::{Hash, to_hex};
 use intranet_governance::{GovernanceLog, GovernanceState, LogEntry, PointerId, wire};
 use intranet_identity::{MasterSeed, NetworkId, PerNetworkIdentity, PerNetworkIdentityId};
 use intranet_storage::{Cid, Dek, EpochKey};
+use crate::secret;
 use kols_core::{ChannelId, Record};
 use std::fs;
 use std::io;
@@ -93,7 +94,7 @@ impl Store {
             return Err(StoreError::AlreadyInitialised(root));
         }
         fs::create_dir_all(root.join("entries"))?;
-        write_private(&root.join("seed"), &entropy)?;
+        secret::write_private(&root.join("seed"), &entropy)?;
         fs::write(root.join("network"), network.as_bytes())?;
         Ok(Self {
             root,
@@ -379,7 +380,10 @@ impl Store {
     /// read the network. Sealed under the same seed-derived key as the epoch
     /// keys, and written `0600`.
     pub fn set_group_state(&self, state: &[u8]) -> Result<(), StoreError> {
-        write_private(&self.root.join("group"), &self.at_rest_key().seal_chunk(state))
+        Ok(secret::write_private(
+            &self.root.join("group"),
+            &self.at_rest_key().seal_chunk(state),
+        )?)
     }
 
     /// This node's saved MLS group state, if it has one.
@@ -551,7 +555,7 @@ impl Store {
         fs::create_dir_all(&dir)?;
         for (rotation, key) in keys {
             let sealed = self.at_rest_key().seal_chunk(key.expose_for_delivery());
-            write_private(&dir.join(to_hex(rotation.as_bytes())), &sealed)?;
+            secret::write_private(&dir.join(to_hex(rotation.as_bytes())), &sealed)?;
         }
         fs::write(self.root.join("rotation"), current.as_bytes())?;
         Ok(())
@@ -654,7 +658,7 @@ impl Store {
         if let Ok(epoch) = self.epoch_key() {
             let refreshed = epoch.wrap(pointer, &dek);
             if refreshed != wrapped {
-                write_private(&path, &refreshed)?;
+                secret::write_private(&path, &refreshed)?;
             }
         }
         Ok(Some(dek))
@@ -669,7 +673,7 @@ impl Store {
     pub fn remember_dek(&self, pointer: &PointerId, dek: &Dek) -> Result<(), StoreError> {
         let epoch = self.epoch_key()?;
         fs::create_dir_all(self.root.join("deks"))?;
-        write_private(&self.dek_path(pointer), &epoch.wrap(pointer, dek))
+        Ok(secret::write_private(&self.dek_path(pointer), &epoch.wrap(pointer, dek))?)
     }
 
     /// The data-encryption key for one author log **this node owns**.
@@ -698,7 +702,7 @@ impl Store {
             .map_err(|err| StoreError::Corrupt(format!("no entropy: {err}")))?;
         let dek = Dek::from_bytes(raw);
         fs::create_dir_all(self.root.join("deks"))?;
-        write_private(&self.dek_path(pointer), &epoch.wrap(pointer, &dek))?;
+        secret::write_private(&self.dek_path(pointer), &epoch.wrap(pointer, &dek))?;
         Ok(dek)
     }
 
@@ -770,16 +774,6 @@ impl Store {
     fn dek_path(&self, pointer: &PointerId) -> PathBuf {
         self.root.join("deks").join(to_hex(pointer.as_bytes()))
     }
-}
-
-fn write_private(path: &Path, bytes: &[u8]) -> Result<(), StoreError> {
-    fs::write(path, bytes)?;
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        fs::set_permissions(path, fs::Permissions::from_mode(0o600))?;
-    }
-    Ok(())
 }
 
 fn fixed<const N: usize>(bytes: &[u8], what: &str) -> Result<[u8; N], StoreError> {
