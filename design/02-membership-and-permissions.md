@@ -238,6 +238,22 @@ Two protocol constraints the UI must respect rather than route around:
    So a backup is a *bundle the client exports* rather than something a person writes down.
    A phrase per network is unmanageable as a literal instruction once direct messages are
    networks too; what a member keeps is the set.
+
+   **A password must wrap these seeds and must never derive them.** The intended shape is a
+   local account — a username and password this installation knows and no network ever sees
+   — that unlocks the keyring the seeds live in. The tempting alternative is to *derive*
+   each seed from the password and the network id, which needs no storage at all and is
+   badly wrong: the network id is public, travelling in every invite and every address, and
+   member ids are in the governance log, so an attacker can derive a candidate identity from
+   a guessed password and **check it offline against a value the network publishes**. That
+   is a brainwallet with a verification oracle. A random seed wrapped under a
+   password-derived key has no such oracle — there is nothing public to check a guess
+   against — and it keeps the seed's full entropy regardless of how weak the password is.
+   The codebase already draws this line one level down, where epoch keys and MLS state are
+   sealed at rest under a seed-derived key rather than derived from anything public.
+
+   Losing the password then loses the seeds, which is precisely what the export bundle is
+   for, and why the two features are one piece of work rather than two.
 2. Redeem an invite, or create a network (which makes you the sole Founder).
 3. Post-connection sync: peers, governance log replay, capability ledger, epoch key.
 4. Resolve the channel list and render.

@@ -228,7 +228,9 @@ visible in settings, with a size cap the user sets, because it is their disk.
 **Keys** live in the OS keychain where one exists, with each network's seed encrypted at
 rest under a user passphrase. Per network rather than one master seed (`02` §6.3), so the
 thing a passphrase protects is a set rather than a single object that links every identity
-its holder has. `intranet-*` key types implement no `Debug` and no
+its holder has — and the passphrase **wraps** those seeds rather than deriving them, for the
+reason `02` §6.3 gives: derivation from public inputs is offline-checkable against ids the
+network publishes. `intranet-*` key types implement no `Debug` and no
 serialization deliberately — use their `fingerprint()` methods for logging and tests, and
 do not derive around it.
 

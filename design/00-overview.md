@@ -196,6 +196,14 @@ next. Estimates are deliberately absent — sequence is the useful part.
   Opus, jitter buffer, the datagram-shaped media interface over the reliable fallback.
 - **P4 — Video and stage.** Video and screen-share tracks; stage/broadcast mode on the
   live-stream path; VOD of recorded stages falls out of Real-Time §4 for free.
+- **Before any 1.0, whatever phase it lands in — credentials and backup.** Seeds are the
+  member. Today they sit on disk in the clear with no way to export them, which is tolerable
+  while the only people testing are the ones who own both machines, and not tolerable the
+  moment somebody else's identity depends on it. The shape is settled in `02` §6.3: a local
+  account whose password *wraps* a keyring of per-network seeds rather than deriving them,
+  and an export bundle carrying phrase, network id and relay per network. Listed here rather
+  than in a phase because it is a release gate, not a feature that competes with others.
+
 - **P5 — Multi-device and sandbox packaging.** Device enrollment UX, cross-device read
   state, and the app-bundle build of the same UI against a consent-decorated API.
 
