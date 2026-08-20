@@ -23,12 +23,13 @@
 //!    [`Sensitivity`], so the sandboxed build can wrap the ones that sign
 //!    something in a platform prompt (App Hosting §3.3) while the native build
 //!    prompts for nothing. Nothing else differs between the two builds.
-//! 3. **Events are idempotent and re-deliverable.** Not yet expressed here, and
-//!    deliberately: the sync engine that would emit them (`design/05` §4) is
-//!    `kols serve`, whose records do not yet cross this boundary. An `Event`
-//!    enum written before anything emits one would be a contract with no
-//!    implementation to keep it honest, which is how the two drift apart. It
-//!    lands when the engine does.
+//! 3. **Events are idempotent and re-deliverable.** [`Event`] is the vocabulary
+//!    the sync engine actually emits — it was written after the engine rather
+//!    than before it, so every variant has something producing it. The property
+//!    is the consumer's to keep: a records payload is *merged*, never appended,
+//!    because the same record legitimately arrives twice — once over gossip and
+//!    once inside a segment — and merging by record id is what makes that a
+//!    non-event.
 //!
 //! # What this crate refuses to become
 //!
@@ -43,10 +44,12 @@
 
 mod authorize;
 mod command;
+mod event;
 mod outcome;
 
 pub use authorize::{
     Actor, Authorized, Channels, PlacementMap, Refusal, authorize, placement,
 };
 pub use command::{Command, Sensitivity};
+pub use event::{Arrival, Event};
 pub use outcome::Outcome;

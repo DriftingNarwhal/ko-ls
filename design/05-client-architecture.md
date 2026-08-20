@@ -1,6 +1,6 @@
 # Client Architecture
 
-**Document status:** v1.1 — `kols-core`, `kols-net`, §3's boundary and an executor behind it exist, the boundary's command half only; the store, media and UI do not
+**Document status:** v1.1 — `kols-core`, `kols-net`, §3's boundary in both directions and an executor behind it exist; the store, media and UI do not
 **Depends on:** all preceding documents; App Hosting Spec §1–§3 for the sandbox path
 **Consumed by:** implementation; `09` for the interface built on §3's boundary
 
@@ -117,7 +117,10 @@ three and retrofitting any of them is expensive:
 3. **Events are idempotent and re-deliverable.** `Records` may arrive twice, out of order,
    or after a gap — the interface renders from the merged projection, never by appending
    what it just received. This falls straight out of `01` §7's rule that live delivery is
-   an optimization.
+   an optimization. **It is the consumer's property, not the emitter's**, and it cannot be
+   otherwise: a record pushed over gossip is *also* inside the segment that follows it, so
+   duplicate delivery is the normal case. Merge — by record id, through `ChannelView` —
+   never append.
 
 **A command produces an `Outcome`, and the thing that produces it prints nothing.** An
 executor that rendered would be one no interface could reuse, which is the whole reason this
@@ -134,11 +137,16 @@ anything is signed. Neither is *enforcement*: nobody can write into another auth
 readers refuse an over-rate record whatever the writer believed. This is the author's client
 telling them first, which is the division `01` §10.2 draws.
 
-**What is still designed rather than built.** The event half is absent and deliberately so —
-the engine that would emit events is §4's, whose records do not cross this boundary yet, and
-an event vocabulary written before anything emits one is a contract with no implementation to
-keep it honest. The commands for direct messages, search, voice and stage are likewise absent
-until there is something behind them. `STATUS.md` §6 tracks both.
+**The event vocabulary was written from the engine rather than ahead of it.** The sketch above
+has nine variants; what exists has six, and each has something producing it — §4's loop had
+been reporting all of them in words for weeks. Two categories are deliberately excluded: this
+node's transport, because a sandboxed build gets no ambient host access (App Hosting §3.2),
+and the startup report, because that is what the node *is* rather than something that happened.
+
+**What is still designed rather than built.** The commands for direct messages, search, voice
+and stage, each of which has a line above and no code behind it. `STATUS.md` §6 tracks those,
+along with the fact that events currently reach a terminal and no projection-holding client —
+which is a missing consumer rather than a missing contract.
 
 ---
 
@@ -278,6 +286,7 @@ boundary, which is worth having regardless.
 | Permissions | Table-driven cases over replayed governance states, including the tricky ones — frozen pointers after a narrowed grant, waiting-room members, voided revocations | Partial — non-member, forged signature and wrong-channel covered at the reader; both post gates, channel/category/network scope and governance tier covered at the boundary; frozen pointers and waiting-room members not |
 | API boundary (§3) | Every command against a replayed log, not a hand-built state: a grant reaches the scope it names and no further, an ordinary verb does not buy a governance-tier one, and the consent class agrees with the vocabulary's tier table | **Done** for the command half — 18 cases, plus a `compile_fail` doctest for the unforgeable token. Nothing for events, which do not exist |
 | Executor | Every record kind end to end through the real binary: the record is written, the merge renders it, and the refusals the gate cannot make — somebody else's message, the rate ceiling — happen before anything is signed | **Done** — 10 cases over a keyed node |
+| Events (§3, property 3) | A consumer that merges rather than appends: the same event twice, events out of order, a gap filled later, and the case that actually happens — a record arriving live and again inside the segment behind it | **Done** — 5 cases. The daemon's own wording is asserted by the two-node tests, which is what makes the emitter's refactor behaviour-preserving |
 | Keying | A removed member must fail to decrypt content wrapped after the rotation, and must still decrypt what they held. Assert the honest guarantee, not a stronger one | Not started (P2) |
 | Multi-node | Extend the existing Docker NAT harness with chat scenarios: partition two members over a real network, heal, assert identical history | Not started — the in-process partition test is not this |
 | Media | Loss and jitter injection against both `MediaTransport` impls; the fallback is expected to degrade badly and the test should record how badly, not skip it | Not started (P3) |

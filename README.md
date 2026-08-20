@@ -30,7 +30,7 @@ The design set (`design/00`–`09`) owns client design, rationale and sequencing
 crates/kols-core   records, canonical encoding, merge ordering, permissions, chat policy,
                    channel structure as chat-namespace governance payloads
 crates/kols-net    publishing a channel over the transport, and reading one back
-crates/kols-api    the command surface, the gate every command crosses, and its results
+crates/kols-api    the boundary — commands and their gate going in, outcomes and events out
 crates/kols-cli    the executor, the node daemon, and `kols` — the terminal client
 design/            00-08 at v1.0, 09 the interface
 .devcontainer/     the environment for this repo and the protocol beside it
@@ -55,7 +55,7 @@ still landing. The dev container in `.devcontainer/` has the whole toolchain if 
 rather not assemble one.
 
 ```bash
-cargo test                                   # 129 tests; the two-node ones spawn real nodes on loopback
+cargo test                                   # 134 tests; the two-node ones spawn real nodes on loopback
 cargo clippy --workspace --all-targets       # must stay clean
 ./scripts/cross-check.sh                     # big-endian verification, see below
 ```
@@ -141,9 +141,14 @@ requires can only come from the gate, there is no path to it that skipped the ch
 record kind the design describes goes through it: messages, edits, withdrawals, reactions and
 pins, plus channel rename, topic, slowmode and archive.
 
+Events come back the other way, and the vocabulary was written from what the node already
+reported rather than guessed ahead of it. They are idempotent by construction: a record pushed
+over gossip is also inside the segment that follows, so a consumer merges by record id rather
+than appending — which makes the ordinary case of hearing something twice a non-event.
+
 What does not exist yet: no user interface, no private-channel keying, no voice, and no
-search. The boundary has a command half and no event half. [`STATUS.md`](STATUS.md) is the
-honest inventory, and its §6 is the list of what this client owes and why.
+search. [`STATUS.md`](STATUS.md) is the honest inventory, and its §6 is the list of what this
+client owes and why.
 
 ## The one number worth knowing
 

@@ -1,8 +1,8 @@
 # ko-ls — Implementation Status
 
-**Updated:** 2026-08-20 (the executor — one submit path, and edits, reactions and pins with it)
+**Updated:** 2026-08-20 (the event half — the boundary is now whole in both directions)
 **Phase:** P1 — two nodes talk live and durably, a joiner reads back through sealed
-history, and every command runs through one gate and one executor
+history, and the boundary carries commands in and events out
 **Design:** [`design/`](design/) — `00`–`08` at v1.0, `09` at v0.2. **`distributed-intranet/specs/07` is normative** where it and the design set overlap.
 
 This file is the answer to "where are we?". It is updated in the same change that moves
@@ -26,21 +26,20 @@ The client builds against the sibling checkout by **path dependency**, not a pub
 version, and deliberately so while the extensions are still moving. A fresh machine needs
 both repos cloned side by side.
 
-**Next task:** **the event half of `kols-api`** — O1 in §6, the register of what this client
-owes and why. It waits on one thing: the engine that would emit events is `kols serve`, whose
-records do not cross the boundary yet. Making them cross it is the work, and the `Event`
-vocabulary falls out of what actually gets emitted rather than being guessed first.
+**Next task:** **the interface** — `design/09` is written, the environment builds a Tauri app,
+and the boundary it consumes is now whole in both directions. Nothing structural is in the
+way; §6 is what is owed, and none of it blocks starting.
 
-**The executor landed, and three of §6's debts closed with it.** `Executor::submit` is the one
-way in: it authorizes, then runs, and the `Authorized` never leaves the module — `run` is what
-requires one and nothing else can produce one, so the check is not something a future caller
-can be *asked* to remember. It returns typed `Outcome`s and prints nothing, because an
-executor that printed is one no interface could reuse.
+**The boundary is whole.** `Executor::submit` is the one way in — authorize, then run, with the
+`Authorized` never leaving the module because `run` is what requires one and nothing else can
+produce one. `Event` is the one way out, written from what `kols serve` actually emits rather
+than guessed ahead of it, and rendered in exactly one place.
 
-Two of those debts were owed only because nothing on the command path held a store. The
-executor does, so **an edit aimed at somebody else's message and a record past the rate
-ceiling are now refused before anything is signed** — the author's own client telling them,
-rather than every reader silently discarding what they wrote.
+**All three of `design/05` §3's properties are now held rather than intended.** No ambient
+authority, consent as a decorator, and events that are idempotent and re-deliverable — the
+last of which is the consumer's property, and comes down to one word: *merge, never append.*
+A record that arrives live and again inside the segment that follows is one message, which is
+the normal delivery pattern rather than an edge case.
 
 **Every record kind the design describes now runs**: edits, withdrawals, reactions and pins,
 plus channel rename, topic, slowmode and archive. That closes most of what `design/00` §5
@@ -132,9 +131,9 @@ left green.
 
 | | |
 |---|---|
-| **Working on** | P1 — the executor landed; the event half of the boundary (§6, O1) is next |
+| **Working on** | P1 — the boundary is whole; the interface it was built for is next |
 | **Blocked on** | Nothing |
-| **Runnable** | **`kols`** — init, attach, admit, revoke, serve, post, read, edit, delete, react, pin, and channel create/list/rename/topic/slowmode/archive. Two nodes hold a conversation. `cargo test` — 129 tests here and 644 in `../distributed-intranet`, clippy clean in both; `scripts/cross-check.sh` for big-endian |
+| **Runnable** | **`kols`** — init, attach, admit, revoke, serve, post, read, edit, delete, react, pin, and channel create/list/rename/topic/slowmode/archive. Two nodes hold a conversation. `cargo test` — 134 tests here and 644 in `../distributed-intranet`, clippy clean in both; `scripts/cross-check.sh` for big-endian |
 | **Next decision needed from the user** | Nothing blocking |
 
 ---
@@ -186,7 +185,7 @@ both green.
 | `kols-cli` | **`kols`, its node daemon, and the executor** — a library now, with the binary as argument parsing and rendering over it. Creates a network, admits and keys in joiners, serves and fetches content, writes every record kind, renders a merged view across authors. Tests that drive the real binaries, eight of them over a live wire between two processes |
 | `kols-store` | Not created |
 | `kols-media` | Not created |
-| `kols-api` | **The command surface, its gate and its results** — `Command`, `Sensitivity`, `Refusal`, `Outcome`, and `authorize` returning an `Authorized` nothing else can construct. No `Event` yet, deliberately — §6, O1. 18 tests |
+| `kols-api` | **The whole boundary** — `Command`, `Sensitivity`, `Refusal` and `authorize` returning an `Authorized` nothing else can construct, going in; `Outcome` and `Event` coming out. All three of `design/05` §3's properties are now held. 23 tests |
 | `kols-app` | Not created |
 | `kols-ui` | Not created |
 
@@ -205,18 +204,19 @@ somebody forgot.
 
 | # | Owed | Why it is not done | Where it is recorded |
 |---|---|---|---|
-| O1 | **The event half of `kols-api`, and property 3 with it.** No `Event` type exists, so "events are idempotent and re-deliverable" is designed and unheld | The engine that would emit events is `kols serve`, whose records do not cross the boundary yet. An event vocabulary written before anything emits one is a contract with no implementation to keep it honest | `kols-api`'s own crate docs; `design/05` §3 |
-| O2 | **Commands for direct messages, search, voice and stage** | Each has a line in `design/05` §3 and no code behind it. P2 for the first two, P3 and P4 for the rest | `kols-api::Command`'s own documentation |
-| O3 | **`Discovery::Off` for conversation-profile networks** — the client half of E12 | `kols init` writes no `chat:network-profile` key, so every network the CLI creates is a `server` and there is no conversation network to build the leaner node for. `kols_core::policy::conversation_genesis_values` exists for one; only a test calls it | `design/06` §12 |
-| O4 | **`may_moderate_at` answers from current state, ignoring the head it is given** | Checking authority *as of* a governance head needs the log rather than one replayed snapshot. The difference shows only when a moderator is demoted after acting: this retroactively invalidates their past redactions, where `design/01` §6 says they should stand. Pinning is now judged against current state deliberately (`may_moderate_now`), which is a different question rather than the same one approximated | `kols-core::permissions`, flagged in the type's own docs |
-| O5 | **`kols-store` does not exist.** `kols-cli` carries its own file-backed store instead of the SQLite projection `design/05` §5 describes | Nothing has needed a projection yet — the CLI replays the log on every invocation, which is slow and correct. The projection is worth building when something renders fast enough to notice | `design/05` §5 |
-| O6 | **The executor rebuilds an author's whole log to append one record** | `rebuild_log` replays every record this member wrote in a channel on every write, which is correct — the segment is a pure function of the sequence — and is linear in a log that only grows. It is the same work O5's projection exists to stop repeating, and wants measuring before it is optimised rather than after | `kols-cli::chat::rebuild_log` |
+| O1 | **Commands for direct messages, search, voice and stage** | Each has a line in `design/05` §3 and no code behind it. P2 for the first two, P3 and P4 for the rest | `kols-api::Command`'s own documentation |
+| O2 | **`Discovery::Off` for conversation-profile networks** — the client half of E12 | `kols init` writes no `chat:network-profile` key, so every network the CLI creates is a `server` and there is no conversation network to build the leaner node for. `kols_core::policy::conversation_genesis_values` exists for one; only a test calls it | `design/06` §12 |
+| O3 | **`may_moderate_at` answers from current state, ignoring the head it is given** | Checking authority *as of* a governance head needs the log rather than one replayed snapshot. The difference shows only when a moderator is demoted after acting: this retroactively invalidates their past redactions, where `design/01` §6 says they should stand. Pinning is now judged against current state deliberately (`may_moderate_now`), which is a different question rather than the same one approximated | `kols-core::permissions`, flagged in the type's own docs |
+| O4 | **`kols-store` does not exist.** `kols-cli` carries its own file-backed store instead of the SQLite projection `design/05` §5 describes | Nothing has needed a projection yet — the CLI replays the log on every invocation, which is slow and correct. The projection is worth building when something renders fast enough to notice | `design/05` §5 |
+| O5 | **The executor rebuilds an author's whole log to append one record** | `rebuild_log` replays every record this member wrote in a channel on every write, which is correct — the segment is a pure function of the sequence — and is linear in a log that only grows. It is the same work O4's projection exists to stop repeating, and wants measuring before it is optimised rather than after | `kols-cli::chat::rebuild_log` |
+| O6 | **Events reach a terminal and nothing else.** `kols serve` emits them and renders them in the same process; no consumer holds a projection across them | That consumer is the interface, which does not exist. The property they turn on — merge, never append — is held and tested against a `ChannelView`, so what is missing is a client rather than a contract | `kols-api::Event`; `crates/kols-api/tests/events.rs` |
 
-**Closed since this register was written:** the executor itself, and with it the two checks
-`authorize` deliberately could not make. Both were owed *because* nothing on the command path
-held the store; the executor does, so an edit aimed at somebody else's message and a record
-past the rate ceiling are now refused before anything is signed rather than after every
-reader has ignored them.
+**Closed since this register was written:** the executor, the two checks `authorize`
+deliberately could not make, and the event half of the boundary. The first two were owed
+*because* nothing on the command path held the store; the executor does, so an edit aimed at
+somebody else's message and a record past the rate ceiling are now refused before anything is
+signed. The third was owed because nothing emitted events — `kols serve` does now, and the
+vocabulary was written from what it actually emits.
 
 ---
 
@@ -250,6 +250,39 @@ design changes before anything else is built.
 ## 9. Log
 
 Newest first. One line per change that moved the state above.
+
+- **2026-08-20** — **The event half: the boundary now carries both directions, and the
+  vocabulary was written from what the daemon already said.** `design/05` §3 sketches an
+  `Event` enum with nine variants. What landed has six, and the difference is the method: the
+  daemon has been reporting for weeks — records learned off a head segment, records recovered
+  from behind it, a record arriving live, governance entries, an epoch rotation, a member
+  keyed in, a handful of degradations it carries on through — and every one of those is now an
+  event with something producing it. Nothing was added because a sketch listed it.
+
+  **Two things are deliberately not events.** This node's transport — which addresses it
+  listens on, which peers it is connected to — is a fact about the machine rather than about
+  the network's content, and a sandboxed build would not be told it at all (App Hosting §3.2's
+  "no ambient host access"). And the startup report, which is what this node *is* when it comes
+  up rather than something that happened while it ran. Both keep printing; neither crosses.
+
+  **Property 3 is the consumer's, and it comes down to one word.** Events are idempotent and
+  re-deliverable not because the emitter is careful but because it cannot be: the live path may
+  be lossy, and a record pushed over gossip is *also* inside the segment that follows it. So
+  the obligation is to **merge, never append** — a records payload goes through `ChannelView`,
+  which is a function of the record set and deduplicates by record id. Five tests hold a
+  consumer to it, and the one worth naming is `a_record_that_arrives_live_and_again_in_a_segment_is_one_message`:
+  that is the normal delivery pattern, not an edge case, so a consumer that appended would show
+  every message twice, every time.
+
+  `Arrival` carries how a record got here — live, off the head, or backfilled with how many
+  sealed segments the walk reached. It exists for notification and progress and never for
+  ordering, which is asserted directly, because it is the thing a client is most likely to get
+  wrong: order is computed from the merged set (`design/01` §4), so the same record renders
+  identically whichever way it came.
+
+  The refactor is behaviour-preserving by construction: the two-node tests assert on the
+  daemon's exact wording, so `render` reproducing it is what says the change moved code and not
+  behaviour. 129 → 134 tests, clippy clean.
 
 - **2026-08-20** — **The executor: one submit path, and a reader-side hole found by building
   it.** `authorize` returned an `Authorized` and each caller then took it apart and did the

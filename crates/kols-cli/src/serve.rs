@@ -29,6 +29,8 @@ use intranet_crypto::Timestamp;
 use intranet_ledger::{BandwidthCap, CapabilityAdvertisement, ComputeClass};
 use intranet_storage::ChunkSpec;
 use intranet_transport::{MemberNode, NodeEvent};
+use kols_api::{Arrival, Event};
+use kols_core::Record;
 use kols_core::{AuthorLog, Authority, ChannelId, Placement, Segment, StateAuthority};
 use kols_net::{fetch_segment, known_pointer, plan_fetch, publish_segment};
 use libp2p::multiaddr::Protocol;
@@ -249,7 +251,7 @@ async fn serve(
                     catch_up_epochs(&store, &mut node)?;
                     let excluded = exclude_removed_members(&store, &mut node, &identity, seal_bytes)?;
                     if excluded > 0 {
-                        println!("rotated the epoch to exclude {excluded} removed member(s)");
+                        render(&[Event::EpochRotated { excluded }]);
                     }
                 }
 
@@ -273,7 +275,7 @@ async fn serve(
                     node.sync_pointers_with(peer);
                 }
                 request_foreign_segments(&store, &mut node, &identity, &mut fetched, &backfill)?;
-                report(&absorb_segments(
+                render(&absorb_segments(
                     &store,
                     &mut node,
                     &identity,
@@ -309,7 +311,7 @@ async fn serve(
             NodeEvent::Synced { accepted, peer, .. } if accepted > 0 => {
                 let learned = persist_governance(&store, &node)?;
                 if learned > 0 {
-                    println!("learned {learned} governance entr(ies)");
+                    render(&[Event::Governance { learned }]);
                     // The entries that just arrived may include rotations this
                     // node was not present for.
                     catch_up_epochs(&store, &mut node)?;
@@ -327,7 +329,9 @@ async fn serve(
                         if !keyed && let Some(from) = peer_identity(peer, &store)? {
                             match node.request_epoch_key(from, &identity) {
                                 Ok(_) => println!("asked {} to key us in", from.short()),
-                                Err(err) => println!("could not ask for a key: {err}"),
+                                Err(err) => render(&[Event::Degraded {
+                                    reason: format!("could not ask for a key: {err}"),
+                                }]),
                             }
                         }
                     }
@@ -346,7 +350,7 @@ async fn serve(
             }
 
             NodeEvent::FetchComplete { .. } => {
-                report(&absorb_segments(
+                render(&absorb_segments(
                     &store,
                     &mut node,
                     &identity,
@@ -373,7 +377,9 @@ async fn serve(
                 );
                 match answered {
                     Ok(_) => {
-                        println!("keyed in {}", requester.short());
+                        render(&[Event::MemberKeyed {
+                            identity: requester,
+                        }]);
                         // Adding a member rotates the epoch, so this node now
                         // holds a key it did not before. Both the rotation entry
                         // and the new key belong in the store — and the *old*
@@ -386,7 +392,9 @@ async fn serve(
                         // a crash costs nothing that was already agreed.
                         persist_group(&store, &node)?;
                     }
-                    Err(err) => println!("could not key in {}: {err}", requester.short()),
+                    Err(err) => render(&[Event::Degraded {
+                        reason: format!("could not key in {}: {err}", requester.short()),
+                    }]),
                 }
                 drop(lock);
             }
@@ -413,7 +421,9 @@ async fn serve(
             }
 
             NodeEvent::EpochKeyUnavailable { reason, .. } => {
-                println!("not keyed in: {reason}");
+                render(&[Event::Degraded {
+                    reason: format!("not keyed in: {reason}"),
+                }]);
             }
 
             // A live payload — spec 07 §6.1. Nothing depends on this arriving:
@@ -425,12 +435,18 @@ async fn serve(
             // record that arrived live is *already stored*, so the durable
             // absorb that follows correctly reports nothing.
             NodeEvent::LiveReceived { payload, .. } => match admit_live(&store, &payload) {
-                Ok(true) => println!("learned 1 record(s) live"),
-                Ok(false) => {}
-                // Printed rather than swallowed: a refusal is either a peer
+                Ok(Some(record)) => render(&[Event::Records {
+                    channel: record.channel,
+                    records: vec![record],
+                    arrival: Arrival::Live,
+                }]),
+                Ok(None) => {}
+                // Surfaced rather than swallowed: a refusal is either a peer
                 // sending what it should not, or this node missing a key it
                 // should have. Both are worth seeing; neither is worth stopping.
-                Err(why) => println!("refused a live payload: {why}"),
+                Err(why) => render(&[Event::Degraded {
+                    reason: format!("refused a live payload: {why}"),
+                }]),
             },
 
             // A chunk this node fetched makes it a source for that chunk
@@ -733,12 +749,12 @@ fn absorb_segments(
     node: &mut MemberNode,
     identity: &intranet_identity::PerNetworkIdentity,
     backfill: &mut BTreeSet<intranet_storage::Cid>,
-) -> Result<Absorbed, String> {
+) -> Result<Vec<Event>, String> {
     let Some(state) = replayable(store) else {
-        return Ok(Absorbed::default());
+        return Ok(Vec::new());
     };
     let (channels, _) = network::channels(store, &state).map_err(|e| e.to_string())?;
-    let mut took = Absorbed::default();
+    let mut events = Vec::new();
 
     // Loaded once. This reads and opens every stored epoch key, so calling it
     // per (channel, member) meant a long-lived network paid a full directory
@@ -748,6 +764,7 @@ fn absorb_segments(
     let mut keys: Option<Vec<_>> = None;
 
     for channel in channels.keys() {
+        let mut took = Absorbed::default();
         for member in members(&state) {
             if member == identity.id() {
                 continue;
@@ -781,12 +798,11 @@ fn absorb_segments(
             };
             let one =
                 absorb_chain(store, node, channel, &member, (cid, segment), &mut keys, backfill)?;
-            took.learned += one.learned;
-            took.backfilled += one.backfilled;
-            took.segments += one.segments;
+            took.absorb(one);
         }
+        events.extend(took.into_events(*channel));
     }
-    Ok(took)
+    Ok(events)
 }
 
 /// Finds the CID and DEK of an object this node does not own.
@@ -842,20 +858,36 @@ fn resolve(
     Ok(Some((pointer.current_cid, dek)))
 }
 
-/// Says what an absorb pass took in, and stays quiet when it took in nothing.
+/// Prints what the node learned, and stays quiet when it learned nothing.
 ///
-/// The head-segment wording is load-bearing: the live path reports arrivals in
-/// these same words on purpose, so that "a record landed" reads the same however
-/// it got here and only the named path differs.
-fn report(took: &Absorbed) {
-    if took.learned > 0 {
-        println!("learned {} record(s)", took.learned);
-    }
-    if took.backfilled > 0 {
-        println!(
-            "backfilled {} record(s) from {} older segment(s)",
-            took.backfilled, took.segments
-        );
+/// The one place this daemon turns an [`Event`] into words, which is the point:
+/// a terminal renders these, and a webview would render the same values
+/// differently. The wording for records is load-bearing — every path reports an
+/// arrival in the same words with only the path named, so that "did this record
+/// arrive" does not depend on which way it came.
+fn render(events: &[Event]) {
+    for event in events {
+        match event {
+            Event::Records {
+                records, arrival, ..
+            } => match arrival {
+                Arrival::Head => println!("learned {} record(s)", records.len()),
+                Arrival::Live => println!("learned {} record(s) live", records.len()),
+                Arrival::Backfill { segments } => println!(
+                    "backfilled {} record(s) from {segments} older segment(s)",
+                    records.len()
+                ),
+            },
+            Event::Governance { learned } => println!("learned {learned} governance entr(ies)"),
+            Event::Adopted { entries } => {
+                println!("picked up {entries} locally written governance entr(ies)");
+            }
+            Event::EpochRotated { excluded } => {
+                println!("rotated the epoch to exclude {excluded} removed member(s)");
+            }
+            Event::MemberKeyed { identity } => println!("keyed in {}", identity.short()),
+            Event::Degraded { reason } => println!("{reason}"),
+        }
     }
 }
 
@@ -867,9 +899,43 @@ fn report(took: &Absorbed) {
 /// A node that has caught up reports the first and never the second.
 #[derive(Default)]
 struct Absorbed {
-    learned: usize,
-    backfilled: usize,
+    learned: Vec<Record>,
+    backfilled: Vec<Record>,
     segments: usize,
+}
+
+impl Absorbed {
+    fn absorb(&mut self, other: Self) {
+        self.learned.extend(other.learned);
+        self.backfilled.extend(other.backfilled);
+        self.segments += other.segments;
+    }
+
+    /// One channel's absorb, as the events a consumer sees.
+    ///
+    /// Two events rather than one, because the head and the chain behind it mean
+    /// different things to whoever is watching: the first is the conversation
+    /// arriving, the second is history being recovered.
+    fn into_events(self, channel: ChannelId) -> Vec<Event> {
+        let mut events = Vec::new();
+        if !self.learned.is_empty() {
+            events.push(Event::Records {
+                channel,
+                records: self.learned,
+                arrival: Arrival::Head,
+            });
+        }
+        if !self.backfilled.is_empty() {
+            events.push(Event::Records {
+                channel,
+                records: self.backfilled,
+                arrival: Arrival::Backfill {
+                    segments: self.segments,
+                },
+            });
+        }
+        events
+    }
 }
 
 /// Stores a segment, then walks its `previous` chain backwards.
@@ -911,10 +977,10 @@ fn absorb_chain(
     while let Some((cid, segment)) = current.take() {
         let stored = store_segment(store, channel, &segment)?;
         if head_segment {
-            took.learned += stored;
+            took.learned.extend(stored);
             head_segment = false;
         } else {
-            took.backfilled += stored;
+            took.backfilled.extend(stored);
             took.segments += 1;
         }
         walked.push(cid);
@@ -979,8 +1045,12 @@ fn absorb_chain(
     Ok(took)
 }
 
-fn store_segment(store: &Store, channel: &ChannelId, segment: &Segment) -> Result<usize, String> {
-    let mut learned = 0;
+fn store_segment(
+    store: &Store,
+    channel: &ChannelId,
+    segment: &Segment,
+) -> Result<Vec<Record>, String> {
+    let mut learned = Vec::new();
     for record in &segment.records {
         // A record must belong to the segment carrying it (spec 07 §3.5).
         // Without this a validly-signed record could be lifted from one author's
@@ -997,7 +1067,7 @@ fn store_segment(store: &Store, channel: &ChannelId, segment: &Segment) -> Resul
             .put_record(channel, record)
             .map_err(|e| e.to_string())?
         {
-            learned += 1;
+            learned.push(record.clone());
         }
     }
     Ok(learned)
@@ -1037,7 +1107,7 @@ fn adopt_local_changes(
         }
     }
     if adopted > 0 {
-        println!("picked up {adopted} locally written governance entr(ies)");
+        render(&[Event::Adopted { entries: adopted }]);
     }
 
     // Republished unconditionally rather than only on change: appending to an
@@ -1234,7 +1304,7 @@ fn publish_unsent_live(
 /// rotation may hold a key this one does not yet. It is refused either way,
 /// because guessing is not available, and the record will arrive on the durable
 /// path regardless.
-fn admit_live(store: &Store, payload: &[u8]) -> Result<bool, String> {
+fn admit_live(store: &Store, payload: &[u8]) -> Result<Option<Record>, String> {
     let live = kols_core::LivePayload::decode(payload)
         .map_err(|err| format!("not a live payload: {err}"))?;
 
@@ -1247,7 +1317,7 @@ fn admit_live(store: &Store, payload: &[u8]) -> Result<bool, String> {
         .ok_or("no held epoch key opens it")?;
 
     let Some(state) = replayable(store) else {
-        return Ok(false);
+        return Ok(None);
     };
     let (channels, _) = network::channels(store, &state).map_err(|e| e.to_string())?;
     let Some(channel) = channels.get(&record.channel) else {
@@ -1266,9 +1336,13 @@ fn admit_live(store: &Store, payload: &[u8]) -> Result<bool, String> {
         return Err(format!("{} may not post there", record.author.short()));
     }
 
-    store
+    // `Some` only when the record was new here. A record that arrived live and
+    // again inside a segment is one record, and saying so twice would make a
+    // duplicate look like a second message.
+    let stored = store
         .put_record(&record.channel, &record)
-        .map_err(|e| e.to_string())
+        .map_err(|e| e.to_string())?;
+    Ok(stored.then_some(record))
 }
 
 /// Derives any epoch keys this node was absent for.
