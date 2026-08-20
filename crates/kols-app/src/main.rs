@@ -17,9 +17,12 @@
 //! record is a local act; hearing from anybody else needs a node, and pretending
 //! otherwise would be a window that looks connected and is not.
 //!
-//! **It does not choose a network.** One store is one network, so this opens the
-//! one at `$KOLS_HOME`. `design/09` §1's switcher needs a store of stores, which
-//! does not exist yet.
+//! **It holds a workspace, not a store.** A person belongs to several networks
+//! and a direct message is one too, so "which network" is a question the window
+//! has to be able to ask — and answer with "none yet, make one". Each open
+//! network is a separate node with a separate peer id, forced rather than chosen
+//! (`design/09` §1), so this is a directory of networks and not a merged view of
+//! them.
 //!
 //! # The CSP is load-bearing
 //!
@@ -37,14 +40,30 @@ use intranet_crypto::to_hex;
 use kols_api::{Command, Outcome};
 use kols_cli::executor::Executor;
 use kols_cli::network;
+use kols_cli::workspace::Workspace;
 use kols_core::ChannelId;
+use std::sync::Mutex;
 
-/// What every command handler shares: one open store, and the executor over it.
+/// What every command handler shares.
+///
+/// The open network is behind a lock because the interface can change it — the
+/// window is one process holding a workspace, and which network it is showing is
+/// state that outlives any single command.
 struct App {
-    executor: Executor,
+    workspace: Workspace,
+    open: Mutex<Option<Executor>>,
 }
 
 impl App {
+    /// Runs `f` against the open network, or says none is.
+    fn with<T>(&self, f: impl FnOnce(&Executor) -> Result<T, String>) -> Result<T, String> {
+        let open = self.open.lock().map_err(|_| "the workspace lock is poisoned")?;
+        let executor = open
+            .as_ref()
+            .ok_or("no network is open — create or choose one first")?;
+        f(executor)
+    }
+
     /// Parses a channel id the interface handed back.
     ///
     /// The interface only ever returns an id this process gave it, so a
@@ -61,7 +80,11 @@ impl App {
 /// Who this member is here, and what they may do.
 #[tauri::command]
 fn me(app: tauri::State<'_, App>) -> Result<dto::Me, String> {
-    let store = app.executor.store();
+    app.with(me_of)
+}
+
+fn me_of(executor: &Executor) -> Result<dto::Me, String> {
+    let store = executor.store();
     let identity = store.identity().map_err(|e| e.to_string())?;
     let state = store.state().map_err(|e| e.to_string())?;
     let holds = |name: &str| {
@@ -71,7 +94,7 @@ fn me(app: tauri::State<'_, App>) -> Result<dto::Me, String> {
         )
     };
 
-    let names = app.executor.names(&state).map_err(|e| e.to_string())?;
+    let names = executor.names(&state).map_err(|e| e.to_string())?;
 
     Ok(dto::Me {
         identity: identity.id().short(),
@@ -88,18 +111,23 @@ fn me(app: tauri::State<'_, App>) -> Result<dto::Me, String> {
 /// The channels replay currently knows about.
 #[tauri::command]
 fn channels(app: tauri::State<'_, App>) -> Result<Vec<dto::Channel>, String> {
-    let store = app.executor.store();
-    let state = store.state().map_err(|e| e.to_string())?;
-    let (channels, _) = network::channels(store, &state).map_err(|e| e.to_string())?;
-    Ok(channels.values().map(dto::Channel::of).collect())
+    app.with(|executor| {
+        let store = executor.store();
+        let state = store.state().map_err(|e| e.to_string())?;
+        let (channels, _) = network::channels(store, &state).map_err(|e| e.to_string())?;
+        Ok(channels.values().map(dto::Channel::of).collect())
+    })
 }
 
 /// Opens a channel and renders it.
 #[tauri::command]
 fn open_channel(app: tauri::State<'_, App>, channel: String) -> Result<dto::Opened, String> {
     let channel = App::channel(&channel)?;
-    let outcome = app
-        .executor
+    app.with(|executor| open_one(executor, channel))
+}
+
+fn open_one(executor: &Executor, channel: ChannelId) -> Result<dto::Opened, String> {
+    let outcome = executor
         .submit(Command::OpenChannel {
             channel,
             before: None,
@@ -119,8 +147,8 @@ fn open_channel(app: tauri::State<'_, App>, channel: String) -> Result<dto::Open
         return Err("opening a channel produced something else".to_owned());
     };
 
-    let state = app.executor.store().state().map_err(|e| e.to_string())?;
-    let names = app.executor.names(&state).map_err(|e| e.to_string())?;
+    let state = executor.store().state().map_err(|e| e.to_string())?;
+    let names = executor.names(&state).map_err(|e| e.to_string())?;
 
     Ok(dto::Opened {
         channel: to_hex(channel.as_bytes()),
@@ -140,64 +168,137 @@ fn open_channel(app: tauri::State<'_, App>, channel: String) -> Result<dto::Open
 #[tauri::command]
 fn send_message(app: tauri::State<'_, App>, channel: String, body: String) -> Result<(), String> {
     let channel = App::channel(&channel)?;
-    app.executor
-        .submit(Command::SendMessage {
-            channel,
-            body,
-            reply_to: None,
-            attachments: Vec::new(),
-        })
-        .map(|_| ())
-        .map_err(|err| err.to_string())
+    app.with(|executor| {
+        executor
+            .submit(Command::SendMessage {
+                channel,
+                body,
+                reply_to: None,
+                attachments: Vec::new(),
+            })
+            .map(|_| ())
+            .map_err(|err| err.to_string())
+    })
 }
 
 /// Claims a display name.
 #[tauri::command]
 fn set_name(app: tauri::State<'_, App>, name: String) -> Result<(), String> {
-    app.executor
-        .submit(Command::SetName { name })
-        .map(|_| ())
-        .map_err(|err| err.to_string())
+    app.with(|executor| {
+        executor
+            .submit(Command::SetName { name })
+            .map(|_| ())
+            .map_err(|err| err.to_string())
+    })
 }
 
 /// Defines a channel.
 #[tauri::command]
 fn create_channel(app: tauri::State<'_, App>, name: String, topic: String) -> Result<(), String> {
-    app.executor
-        .submit(Command::CreateChannel {
-            name,
-            category: None,
-            privacy: kols_core::Privacy::Public,
-            topic,
-        })
-        .map(|_| ())
-        .map_err(|err| err.to_string())
+    app.with(|executor| {
+        executor
+            .submit(Command::CreateChannel {
+                name,
+                category: None,
+                privacy: kols_core::Privacy::Public,
+                topic,
+            })
+            .map(|_| ())
+            .map_err(|err| err.to_string())
+    })
+}
+
+/// Every network this client holds a store for.
+#[tauri::command]
+fn networks(app: tauri::State<'_, App>) -> Result<Vec<dto::Network>, String> {
+    let open = app
+        .open
+        .lock()
+        .map_err(|_| "the workspace lock is poisoned")?
+        .as_ref()
+        .map(|executor| to_hex(executor.store().network().as_bytes()));
+
+    Ok(app
+        .workspace
+        .list()
+        .into_iter()
+        .map(|known| dto::Network::of(&known, open.as_deref()))
+        .collect())
+}
+
+/// Creates a network, with this member as its sole Founder.
+///
+/// Outside the command vocabulary for the same reason `kols init` is: it makes
+/// the state every command needs before any exists, so there is nothing yet to
+/// check a permission against.
+#[tauri::command]
+fn create_network(
+    app: tauri::State<'_, App>,
+    name: String,
+    relay: String,
+) -> Result<dto::Network, String> {
+    if name.trim().is_empty() {
+        return Err("give the network a name".to_owned());
+    }
+    // A relay is optional here and required before inviting anybody (Core §5.5),
+    // which is the honest ordering: you can make a network alone, and you cannot
+    // hand somebody a way in until it has an entry point.
+    let relays: Vec<String> = relay
+        .split_whitespace()
+        .filter(|address| !address.is_empty())
+        .map(str::to_owned)
+        .collect();
+
+    let store = app.workspace.create(name.trim(), relays)?;
+    let path = store.root().to_path_buf();
+    drop(store);
+
+    let executor = Executor::open(path).map_err(|err| err.to_string())?;
+    let known = dto::Network {
+        id: to_hex(executor.store().network().as_bytes()),
+        label: name.trim().to_owned(),
+        keyed: false,
+        open: true,
+    };
+    *app.open.lock().map_err(|_| "the workspace lock is poisoned")? = Some(executor);
+    Ok(known)
+}
+
+/// Opens one of this client's networks.
+#[tauri::command]
+fn open_network(app: tauri::State<'_, App>, network: String) -> Result<(), String> {
+    let store = app.workspace.open(&network)?;
+    let executor = Executor::open(store.root().to_path_buf()).map_err(|err| err.to_string())?;
+    *app.open.lock().map_err(|_| "the workspace lock is poisoned")? = Some(executor);
+    Ok(())
 }
 
 fn main() {
-    let root = kols_cli::store::Store::default_root();
-    let executor = match Executor::open(root.clone()) {
-        Ok(executor) => executor,
-        Err(err) => {
-            // Said plainly rather than shown as an empty window: there is no
-            // network here yet, and the fix is a command this shell does not
-            // have. `init` and `attach` create the state every command needs
-            // before any exists, which is why they are not commands.
-            eprintln!("kols-desktop: no network at {}: {err}", root.display());
-            eprintln!("Create one with `kols init <name>`, or join one with `kols attach <id>`.");
-            std::process::exit(1);
-        }
+    let workspace = Workspace::at(Workspace::default_root());
+
+    // Whichever network is there, if exactly one is — the common case for
+    // somebody who has made or joined a single network, and the case where being
+    // asked to choose is noise. Anything else opens on the picker.
+    let open = match workspace.list().as_slice() {
+        [only] => Executor::open(only.path.clone()).ok(),
+        _ => None,
     };
 
     tauri::Builder::default()
-        .manage(App { executor })
+        .manage(App {
+            workspace,
+            open: Mutex::new(open),
+        })
         .invoke_handler(tauri::generate_handler![
             me,
             channels,
             open_channel,
             send_message,
             create_channel,
-            set_name
+            set_name,
+            networks,
+            create_network,
+            open_network
         ])
         .run(tauri::generate_context!())
         .expect("the window opens");

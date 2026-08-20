@@ -711,19 +711,26 @@ fn list_relays(root: std::path::PathBuf) -> Result<(), String> {
 }
 
 fn init(root: std::path::PathBuf, name: &str, relays: Vec<String>) -> Result<(), String> {
-    // Both are random and independent: the network id names the network, the
-    // entropy derives this member's identity in it. Deriving one from the other
-    // would make a member's identity a function of public information.
-    let network_bytes = random_32()?;
-    let entropy = random_32()?;
-    let network = intranet_identity::NetworkId::from_bytes(network_bytes);
-
-    let store = Store::create(root, network, entropy).map_err(|e| e.to_string())?;
+    // Through the workspace, which is the one place a network comes into being.
+    // It was here, which meant the desktop shell could not create one without a
+    // second copy of the genesis requirements — each of which is silent when
+    // missed.
+    //
+    // `--home` still names one network's store rather than a directory of them,
+    // so this creates it in place: a terminal is told which network to work with,
+    // and a window offers a choice.
+    if root.join("seed").is_file() {
+        return Err(format!(
+            "a network already exists at {}. Refusing to overwrite it — the seed there \
+             cannot be recovered if it is lost",
+            root.display()
+        ));
+    }
+    let workspace = kols_cli::workspace::Workspace::at(root.clone());
+    let store = workspace
+        .create_at(root, name, relays.clone())
+        .map_err(|err| err.to_string())?;
     let founder = store.identity().map_err(|e| e.to_string())?;
-    let genesis = network::genesis(&founder, network, relays.clone());
-    store.append_entry(&genesis).map_err(|e| e.to_string())?;
-    store.set_label(name).map_err(|e| e.to_string())?;
-    store.set_relays(&relays).map_err(|e| e.to_string())?;
 
     // The network's key group is deliberately *not* created here. An MLS group
     // is live cryptographic state that `GroupSession` keeps in an in-memory
@@ -732,16 +739,8 @@ fn init(root: std::path::PathBuf, name: &str, relays: Vec<String>) -> Result<(),
     // hold one, so `kols serve` creates it and this leaves the network unkeyed
     // until it runs.
 
-    // Replay immediately rather than trusting the entry we just wrote. A genesis
-    // this node cannot replay is a network nobody can join, and finding that out
-    // now costs one line.
-    let state = store.state().map_err(|e| e.to_string())?;
-    if !state.is_member(&founder.id()) {
-        return Err("genesis replayed but did not make its founder a member".to_owned());
-    }
-
     println!("created {name}");
-    println!("  network   {}", to_hex(network.as_bytes()));
+    println!("  network   {}", to_hex(store.network().as_bytes()));
     println!("  you       {}", founder.id().short());
     println!("  state     {}", store.root().display());
     println!();

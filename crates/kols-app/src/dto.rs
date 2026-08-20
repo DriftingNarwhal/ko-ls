@@ -103,6 +103,38 @@ pub struct Opened {
     pub refused: Vec<String>,
 }
 
+/// A network this client holds a store for.
+#[derive(Debug, Serialize)]
+pub struct Network {
+    /// Hex of the network id — the handle the interface passes back.
+    pub id: String,
+    /// The local label its creator or joiner gave it.
+    ///
+    /// Local, and only ever local: spec 07 defines no policy key for a network's
+    /// name, and inventing one is how two clients end up disagreeing about what a
+    /// network is called.
+    pub label: String,
+    /// Whether this node holds an epoch key for it.
+    ///
+    /// A network without one is joined and unreadable, which is the ordinary
+    /// state between being admitted and being keyed in rather than a fault.
+    pub keyed: bool,
+    /// Whether it is the one currently open.
+    pub open: bool,
+}
+
+impl Network {
+    /// Converts one known network.
+    pub fn of(known: &kols_cli::workspace::Known, open: Option<&str>) -> Self {
+        Self {
+            id: known.id.clone(),
+            label: known.label.clone(),
+            keyed: known.keyed,
+            open: open == Some(known.id.as_str()),
+        }
+    }
+}
+
 /// Who this member is here, and what they may do.
 ///
 /// The permission flags exist so the interface can hide controls it should not

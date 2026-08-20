@@ -11,6 +11,53 @@ const { invoke } = window.__TAURI__.core;
 const el = (id) => document.getElementById(id);
 const state = { channels: [], current: null, me: null };
 
+/// Which view is showing. There are only two, and no network open is not an
+/// error state — it is where somebody starts.
+function show(view) {
+  document.querySelector(".app").hidden = view !== "app";
+  el("picker").hidden = view !== "picker";
+}
+
+async function drawPicker() {
+  const networks = await invoke("networks");
+  const list = el("picker-list");
+  list.replaceChildren();
+
+  for (const network of networks) {
+    const item = document.createElement("li");
+    const button = document.createElement("button");
+    button.textContent = network.label || network.id.slice(0, 12);
+    button.addEventListener("click", () => openNetwork(network.id));
+
+    const note = document.createElement("span");
+    note.className = "picker-note";
+    // Not "broken": a network you have joined and not yet been keyed into is a
+    // normal place to be, and saying so is better than an empty channel list.
+    note.textContent = network.keyed ? "" : "not keyed in yet";
+
+    item.append(button, note);
+    list.append(item);
+  }
+
+  el("picker-list-wrap").hidden = networks.length === 0;
+  show("picker");
+}
+
+async function openNetwork(id) {
+  try {
+    await invoke("open_network", { network: id });
+    state.current = null;
+    await start();
+  } catch (err) {
+    fail(err);
+  }
+}
+
+function fail(err) {
+  el("picker-error").hidden = false;
+  el("picker-error").textContent = String(err);
+}
+
 /// Draws the network header and gates the chrome on what this member holds.
 function drawMe(me) {
   state.me = me;
@@ -201,8 +248,37 @@ el("new-channel").addEventListener("click", async () => {
   }
 });
 
+el("maker").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const name = el("new-name").value.trim();
+  const relay = el("new-relay").value.trim();
+  if (!name) return;
+  try {
+    await invoke("create_network", { name, relay });
+    el("new-name").value = "";
+    el("new-relay").value = "";
+    state.current = null;
+    await start();
+  } catch (err) {
+    fail(err);
+  }
+});
+
+el("switcher").addEventListener("click", drawPicker);
+
 async function start() {
-  drawMe(await invoke("me"));
+  let me;
+  try {
+    me = await invoke("me");
+  } catch {
+    // No network open. The first thing this client asks is which one, and with
+    // none it asks whether to make one.
+    await drawPicker();
+    return;
+  }
+
+  show("app");
+  drawMe(me);
   const channels = await invoke("channels");
   drawChannels(channels);
   if (channels.length > 0) await openChannel(channels[0].id);

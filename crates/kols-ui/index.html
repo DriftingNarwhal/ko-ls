@@ -9,10 +9,48 @@
     <!-- Every element a theme may restyle lives under `data-kols`, so a theme can
          reach a part by what it is rather than by guessing at class names that
          change. `design/09` §6 allows full restyling including layout. -->
-    <div class="app" data-kols="app">
+    <!-- Shown until a network is open. Not a modal over the app: with no network
+         there is nothing behind it, and dimming an empty room to ask which room
+         you want is theatre. -->
+    <section class="picker" id="picker" data-kols="picker" hidden>
+      <div class="picker-inner">
+        <h1>ko-ls</h1>
+
+        <div id="picker-list-wrap" hidden>
+          <h2>your networks</h2>
+          <ul class="picker-list" id="picker-list"></ul>
+        </div>
+
+        <form class="maker" id="maker">
+          <h2>make one</h2>
+          <label for="new-name">name</label>
+          <input id="new-name" type="text" autocomplete="off" placeholder="the workshop" />
+
+          <label for="new-relay">relay <span class="optional">optional for now</span></label>
+          <input
+            id="new-relay"
+            type="text"
+            autocomplete="off"
+            placeholder="/ip4/198.51.100.7/tcp/4001/p2p/12D3Koo…"
+          />
+          <p class="maker-note">
+            Two people behind home routers cannot reach each other directly, so a
+            network needs a relay before it can invite anybody. You can add one
+            later, and until then this network is yours alone.
+          </p>
+
+          <button type="submit">create</button>
+        </form>
+
+        <p class="picker-error" id="picker-error" hidden></p>
+      </div>
+    </section>
+
+    <div class="app" data-kols="app" hidden>
       <aside class="rail" data-kols="rail">
         <!-- Question 1: which network am I in? -->
         <header class="network" data-kols="network">
+          <button class="switcher" id="switcher" title="your networks">networks</button>
           <h1 id="network-label">…</h1>
           <p class="mono" id="network-id"></p>
           <p class="you">

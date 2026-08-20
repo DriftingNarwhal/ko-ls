@@ -139,7 +139,7 @@ left green.
 |---|---|
 | **Working on** | Milestone: a client two people on separate networks can use. Relay reachability done; a node in the shell is next |
 | **Blocked on** | Nothing |
-| **Runnable** | **`kols`** — init (with `--relay`), relay list/set, invite, join, waiting, attach, admit, revoke, name, serve, post, read, edit, delete, react, pin, and channel create/list/rename/topic/slowmode/archive. **`kols-desktop`** — a window listing channels, rendering one, and posting to it. `cargo test` — 172 tests here and 649 in `../distributed-intranet`, clippy clean in both; `scripts/cross-check.sh` for big-endian |
+| **Runnable** | **`kols`** — init (with `--relay`), relay list/set, invite, join, waiting, attach, admit, revoke, name, serve, post, read, edit, delete, react, pin, and channel create/list/rename/topic/slowmode/archive. **`kols-desktop`** — a window listing channels, rendering one, and posting to it. `cargo test` — 177 tests here and 649 in `../distributed-intranet`, clippy clean in both; `scripts/cross-check.sh` for big-endian |
 | **Next decision needed from the user** | Nothing blocking |
 
 ---
@@ -191,8 +191,8 @@ both green.
 | `kols-cli` | **`kols`, its node daemon, and the executor** — a library now, with the binary as argument parsing and rendering over it. Creates a network, admits and keys in joiners, serves and fetches content, writes every record kind, renders a merged view across authors. Tests that drive the real binaries, eight of them over a live wire between two processes |
 | `kols-store` | Not created |
 | `kols-media` | Not created |
-| `kols-app` | **The desktop shell** — a Tauri v2 window over the boundary, owning one `Executor`, with the view types the webview receives and the handlers that build commands from plain arguments. `kols-desktop`. 5 tests |
-| `kols-ui` | **The interface** — HTML, CSS and one script, holding no keys, no sockets and no files. Answers `design/09` §4's first two questions and gates its chrome on permission |
+| `kols-app` | **The desktop shell** — a Tauri v2 window over the boundary, holding a *workspace* of networks and an `Executor` for whichever is open, with the view types the webview receives and the handlers that build commands from plain arguments. `kols-desktop`. 7 tests |
+| `kols-ui` | **The interface** — HTML, CSS and one script, holding no keys, no sockets and no files. Creates and picks networks, answers `design/09` §4's first two questions, and gates its chrome on permission |
 | `kols-api` | **The whole boundary** — `Command`, `Sensitivity`, `Refusal` and `authorize` returning an `Authorized` nothing else can construct, going in; `Outcome` and `Event` coming out. All three of `design/05` §3's properties are now held. 23 tests |
 | `kols-app` | Not created |
 | `kols-ui` | Not created |

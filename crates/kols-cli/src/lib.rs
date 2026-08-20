@@ -28,6 +28,7 @@ pub mod join;
 pub mod network;
 pub mod serve;
 pub mod store;
+pub mod workspace;
 
 /// 32 bytes from the OS.
 pub fn random_32() -> Result<[u8; 32], String> {

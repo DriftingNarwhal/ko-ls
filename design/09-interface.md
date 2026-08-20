@@ -48,6 +48,18 @@ rediscovers it later as a performance idea.
 sender as sole Founder. So the node count is `servers + conversations`, not `servers`, and a
 user who messages thirty people is running thirty-odd nodes. §2 is the answer to that.
 
+**So the client holds a workspace rather than a store.** A directory of networks, each its own
+store, listed and chosen before anything else can happen — which also means *creating* one is
+something the interface does rather than something a terminal must have done first. That was
+the shape of the gap: creating a network lived in `kols init`, so a window could not offer it
+without a second copy of the genesis requirements, and each of those is silent when missed —
+the network looks fine until the first post is refused by its own author's node. One path, two
+front ends.
+
+**Having no network open is where somebody starts, not a failure.** The interface opens on a
+picker; with exactly one network it opens that one, because being asked to choose between one
+thing is noise.
+
 **Honest limit, stated because the interface should not oversell it.** Unlinkability holds
 at the *identity* layer. Two of a user's identities connecting from one IP address remain
 correlatable by any peer that is in both networks, and by any relay that sees both. The
