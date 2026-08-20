@@ -151,6 +151,13 @@ fallback.
 exchanging bytes, and IP correlation likely tells it who they are. This is the §1 honest
 limit showing up concretely rather than a new weakness.*
 
+**Scope, recorded because it bounds what relay work is ever worth doing: there are no shared
+relays and none are planned.** A relay here is a member of the network it serves, volunteered
+under Core §4.3's opt-in, and the project does not intend to build third-party or pooled
+relaying at any point. That is why the friction question above matters so much — with no pool
+to fall back on, "two people cannot be asked to stand up infrastructure to talk" has to be
+answered by the design rather than by an operator, and §3 is that answer.
+
 ---
 
 ## 4. Information Architecture
@@ -271,11 +278,17 @@ rearranges the interface is something a user should choose deliberately.
 
 1. **Navigation shape.** §4 fixes what must be answerable; the arrangement that answers it
    is not decided. Explicitly not assumed to be Discord's three columns.
-2. **How a warm network surfaces activity.** A message arriving on a network that is not in
+2. **The invite flow itself.** §5 settles that the control is hidden from a member who
+   cannot create invites, and nothing settles what the control *does* — how a URI is
+   presented, whether use-count and expiry are offered or defaulted, and what a joiner sees
+   between redeeming one and being admitted, which under explicit intake (`02` §6.2) is a
+   waiting room that must be built out of the invite alone because a waiting member is
+   served nothing.
+3. **How a warm network surfaces activity.** A message arriving on a network that is not in
    view has to be noticeable without every warm network demanding attention.
-3. **What "recent" means for warm tier membership.** §2 says recent networks stay warm;
+4. **What "recent" means for warm tier membership.** §2 says recent networks stay warm;
    the rule that decides which is not written.
-4. **Attachment and media presentation**, including whether a theme may restyle inline media.
-5. **Search surface** — `05` §3 has the command; where results live is undecided.
-6. **Multi-device** (`05` §6) is designed and unbuilt; read state becomes shared when it
+5. **Attachment and media presentation**, including whether a theme may restyle inline media.
+6. **Search surface** — `05` §3 has the command; where results live is undecided.
+7. **Multi-device** (`05` §6) is designed and unbuilt; read state becomes shared when it
    lands, and the interface should not assume it is local forever.

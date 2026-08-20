@@ -1,6 +1,6 @@
 # Client Architecture
 
-**Document status:** v1.1 — `kols-core`, `kols-net`, §3's boundary in both directions and an executor behind it exist; the store, media and UI do not
+**Document status:** v1.1 — `kols-core`, `kols-net`, §3's boundary in both directions, an executor behind it and a first `kols-app`/`kols-ui` slice exist; the store and media do not
 **Depends on:** all preceding documents; App Hosting Spec §1–§3 for the sandbox path
 **Consumed by:** implementation; `09` for the interface built on §3's boundary
 
@@ -53,8 +53,22 @@ than Electron's ecosystem advantage.
 | `kols-net` | The `MemberNode` event loop, gossip subscriptions, publish/fetch scheduling, sync back-off | Domain rules, UI state |
 | `kols-media` | Capture, encode, jitter buffer, playback, `MediaTransport` impls (`04` §5) | Signalling policy |
 | `kols-api` | The command/event surface (§3) and its consent decorators | Anything else |
-| `kols-app` | Tauri shell, window/tray/notifications, OS keychain | Domain rules |
+| `kols-app` | Tauri shell, window/tray/notifications, OS keychain, and the view shapes the webview receives | Domain rules |
 | `kols-ui` | The interface | Everything above |
+
+**`kols-app` converts rather than deriving.** The domain's records have exactly one
+serialization and it is normative — spec 07 §3's canonical encoding, hand-written because a
+record's id is the hash of those bytes. Putting `Serialize` on the same types would create a
+second serialization living beside the first, and what that invites is not hypothetical:
+somebody eventually sends the convenient one over a wire and finds that ids no longer match.
+So the shell owns a set of view types, free to change whenever the interface wants something
+different, because nothing verifies against them.
+
+**The webview never builds a command.** It names an intent with plain arguments — a channel
+id, a body — and the shell constructs the `Command`. That is not a weakening of §3's first
+property, since the command still names its target and the gate still resolves permission by
+replay; it is one fewer place where a front end can hand the core a shape it did not expect,
+and it keeps `kols-api` free of `serde` entirely.
 
 `kols-core` must stay I/O-free and deterministic. Merge ordering, permission resolution
 and retention decisions are exactly the code that has to produce identical answers on

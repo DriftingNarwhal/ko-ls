@@ -1,0 +1,236 @@
+/* The default theme.
+ *
+ * Every colour, space and font here is a custom property on :root, because
+ * `design/09` §6 lets a user restyle this client completely and a theme that
+ * had to override rules rather than values would break on the next change to
+ * this file. A theme sets properties; the rules stay ours.
+ *
+ * Layout is fair game too — §6.1 allows a user to rearrange or break their own
+ * client — which is why "reset to default" is mandatory and must be reachable
+ * without the theme's cooperation. */
+
+:root {
+  --ground: #12141a;
+  --raised: #171a21;
+  --line: #232734;
+  --text: #d7dae3;
+  --dim: #8b91a3;
+  --accent: #7aa2f7;
+  --warn: #e0af68;
+  --gap: 12px;
+  --radius: 6px;
+  --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  --face: system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: var(--ground);
+  color: var(--text);
+  font: 14px/1.5 var(--face);
+}
+
+.app {
+  display: grid;
+  grid-template-columns: 260px 1fr;
+  height: 100vh;
+}
+
+/* ---- the rail: which network, which channels ---------------------------- */
+
+.rail {
+  display: flex;
+  flex-direction: column;
+  background: var(--raised);
+  border-right: 1px solid var(--line);
+  min-height: 0;
+}
+
+.network {
+  padding: var(--gap);
+  border-bottom: 1px solid var(--line);
+}
+
+.network h1 {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.mono { font-family: var(--mono); }
+
+.network .mono,
+.network .you {
+  margin: 2px 0 0;
+  color: var(--dim);
+  font-size: 11px;
+}
+
+.channels {
+  flex: 1;
+  overflow-y: auto;
+  padding: var(--gap) 6px;
+  min-height: 0;
+}
+
+.channels-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 6px 6px;
+}
+
+.channels-head h2 {
+  margin: 0;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--dim);
+}
+
+.channels-head button {
+  background: none;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  color: var(--dim);
+  cursor: pointer;
+  line-height: 1;
+  padding: 2px 7px;
+}
+
+.channels-head button:hover { color: var(--text); border-color: var(--accent); }
+
+.channels ul { list-style: none; margin: 0; padding: 0; }
+
+.channels li button {
+  background: none;
+  border: 0;
+  border-radius: var(--radius);
+  color: var(--dim);
+  cursor: pointer;
+  display: block;
+  font: inherit;
+  padding: 5px 8px;
+  text-align: left;
+  width: 100%;
+}
+
+.channels li button:hover { background: #1d212b; color: var(--text); }
+.channels li button.current { background: #222735; color: var(--text); }
+.channels li button.archived { opacity: 0.55; }
+.channels li.empty { color: var(--dim); font-size: 12px; padding: 5px 8px; }
+
+.state {
+  border-top: 1px solid var(--line);
+  color: var(--warn);
+  font-size: 11px;
+  padding: var(--gap);
+}
+.state p { margin: 0; }
+.state p:empty { display: none; }
+
+/* ---- the channel -------------------------------------------------------- */
+
+.channel {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.channel-head {
+  border-bottom: 1px solid var(--line);
+  padding: var(--gap);
+}
+
+.channel-head h2 { margin: 0; font-size: 15px; }
+.channel-head p { margin: 2px 0 0; color: var(--dim); font-size: 12px; }
+
+.messages {
+  flex: 1;
+  list-style: none;
+  margin: 0;
+  overflow-y: auto;
+  padding: var(--gap);
+  min-height: 0;
+}
+
+.message {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 3px 4px;
+  border-radius: var(--radius);
+}
+
+.message:hover { background: #161922; }
+
+.message .at { color: var(--dim); font-family: var(--mono); font-size: 11px; }
+.message .author { color: var(--accent); font-weight: 600; }
+.message .body { flex: 1 1 auto; min-width: 0; overflow-wrap: anywhere; }
+
+/* Hidden, never unsent — the interface must not imply the bytes came back. */
+.message.withdrawn .body,
+.message.redacted .body { color: var(--dim); font-style: italic; }
+.message.pinned { box-shadow: inset 2px 0 0 var(--warn); }
+
+.message .flag {
+  color: var(--dim);
+  font-size: 11px;
+}
+
+.message .reaction {
+  background: #1d212b;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  font-size: 11px;
+  padding: 1px 7px;
+}
+
+.refused {
+  border-top: 1px solid var(--line);
+  color: var(--warn);
+  font-size: 12px;
+  padding: 8px var(--gap);
+}
+
+.composer {
+  border-top: 1px solid var(--line);
+  display: flex;
+  gap: 8px;
+  padding: var(--gap);
+}
+
+.composer input {
+  background: var(--ground);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  color: var(--text);
+  flex: 1;
+  font: inherit;
+  padding: 8px 10px;
+}
+
+.composer input:focus { border-color: var(--accent); outline: none; }
+
+.composer button {
+  background: var(--accent);
+  border: 0;
+  border-radius: var(--radius);
+  color: #0d1017;
+  cursor: pointer;
+  font: inherit;
+  font-weight: 600;
+  padding: 8px 16px;
+}
+
+.composer-denied {
+  border-top: 1px solid var(--line);
+  color: var(--dim);
+  font-size: 12px;
+  margin: 0;
+  padding: var(--gap);
+}

@@ -1,0 +1,63 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>ko-ls</title>
+    <link rel="stylesheet" href="style.css" />
+  </head>
+  <body>
+    <!-- Every element a theme may restyle lives under `data-kols`, so a theme can
+         reach a part by what it is rather than by guessing at class names that
+         change. `design/09` §6 allows full restyling including layout. -->
+    <div class="app" data-kols="app">
+      <aside class="rail" data-kols="rail">
+        <!-- Question 1: which network am I in? -->
+        <header class="network" data-kols="network">
+          <h1 id="network-label">…</h1>
+          <p class="mono" id="network-id"></p>
+          <p class="you">you are <span id="identity">…</span></p>
+        </header>
+
+        <!-- Question 2: what channels are here, and which am I reading? -->
+        <nav class="channels" data-kols="channels">
+          <div class="channels-head">
+            <h2>channels</h2>
+            <!-- Question 4: shown only where the capability is held. Hiding is
+                 presentation; the command is re-checked on receipt regardless. -->
+            <button id="new-channel" hidden title="define a channel">+</button>
+          </div>
+          <ul id="channel-list"></ul>
+        </nav>
+
+        <footer class="state" data-kols="state">
+          <p id="key-state"></p>
+        </footer>
+      </aside>
+
+      <main class="channel" data-kys="channel" data-kols="channel">
+        <header class="channel-head" data-kols="channel-head">
+          <h2 id="channel-name">no channel</h2>
+          <p id="channel-topic"></p>
+        </header>
+
+        <ol class="messages" id="messages" data-kols="messages"></ol>
+
+        <div class="refused" id="refused" hidden data-kols="refused"></div>
+
+        <form class="composer" id="composer" data-kols="composer" hidden>
+          <input
+            id="body"
+            type="text"
+            autocomplete="off"
+            placeholder="write something"
+          />
+          <button type="submit">send</button>
+        </form>
+        <p class="composer-denied" id="composer-denied" hidden>
+          you may not post here
+        </p>
+      </main>
+    </div>
+    <script src="app.js"></script>
+  </body>
+</html>

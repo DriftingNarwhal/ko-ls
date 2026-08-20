@@ -1,6 +1,6 @@
 # ko-ls — Implementation Status
 
-**Updated:** 2026-08-20 (the event half — the boundary is now whole in both directions)
+**Updated:** 2026-08-20 (a window — the first interface slice runs over the boundary)
 **Phase:** P1 — two nodes talk live and durably, a joiner reads back through sealed
 history, and the boundary carries commands in and events out
 **Design:** [`design/`](design/) — `00`–`08` at v1.0, `09` at v0.2. **`distributed-intranet/specs/07` is normative** where it and the design set overlap.
@@ -26,9 +26,15 @@ The client builds against the sibling checkout by **path dependency**, not a pub
 version, and deliberately so while the extensions are still moving. A fresh machine needs
 both repos cloned side by side.
 
-**Next task:** **the interface** — `design/09` is written, the environment builds a Tauri app,
-and the boundary it consumes is now whole in both directions. Nothing structural is in the
-way; §6 is what is owed, and none of it blocks starting.
+**Next task:** **the rest of the interface.** A window exists and runs over the boundary: it
+lists channels, renders one, posts to it, and hides the controls this member may not use. What
+it does not do is in §6 — no node of its own, so no live updates and no other member's
+messages; one network, so no switcher; no presence, and no invite control.
+
+**Verification of the window is incomplete and that is worth knowing.** The data path is
+tested and the process runs, but nobody has *looked* at it from here: the X forwarding that
+worked during S3 was dead when this landed, so no screenshot was taken. It launches on the
+Wayland socket cleanly. Run `kols-desktop` and look before trusting the layout.
 
 **The boundary is whole.** `Executor::submit` is the one way in — authorize, then run, with the
 `Authorized` never leaving the module because `run` is what requires one and nothing else can
@@ -131,9 +137,9 @@ left green.
 
 | | |
 |---|---|
-| **Working on** | P1 — the boundary is whole; the interface it was built for is next |
+| **Working on** | P1 — a first interface slice runs; presence, invites and a network switcher are what §4 still owes |
 | **Blocked on** | Nothing |
-| **Runnable** | **`kols`** — init, attach, admit, revoke, serve, post, read, edit, delete, react, pin, and channel create/list/rename/topic/slowmode/archive. Two nodes hold a conversation. `cargo test` — 134 tests here and 644 in `../distributed-intranet`, clippy clean in both; `scripts/cross-check.sh` for big-endian |
+| **Runnable** | **`kols`** — init, attach, admit, revoke, serve, post, read, edit, delete, react, pin, and channel create/list/rename/topic/slowmode/archive. **`kols-desktop`** — a window listing channels, rendering one, and posting to it. `cargo test` — 139 tests here and 644 in `../distributed-intranet`, clippy clean in both; `scripts/cross-check.sh` for big-endian |
 | **Next decision needed from the user** | Nothing blocking |
 
 ---
@@ -185,6 +191,8 @@ both green.
 | `kols-cli` | **`kols`, its node daemon, and the executor** — a library now, with the binary as argument parsing and rendering over it. Creates a network, admits and keys in joiners, serves and fetches content, writes every record kind, renders a merged view across authors. Tests that drive the real binaries, eight of them over a live wire between two processes |
 | `kols-store` | Not created |
 | `kols-media` | Not created |
+| `kols-app` | **The desktop shell** — a Tauri v2 window over the boundary, owning one `Executor`, with the view types the webview receives and the handlers that build commands from plain arguments. `kols-desktop`. 5 tests |
+| `kols-ui` | **The interface** — HTML, CSS and one script, holding no keys, no sockets and no files. Answers `design/09` §4's first two questions and gates its chrome on permission |
 | `kols-api` | **The whole boundary** — `Command`, `Sensitivity`, `Refusal` and `authorize` returning an `Authorized` nothing else can construct, going in; `Outcome` and `Event` coming out. All three of `design/05` §3's properties are now held. 23 tests |
 | `kols-app` | Not created |
 | `kols-ui` | Not created |
@@ -209,7 +217,8 @@ somebody forgot.
 | O3 | **`may_moderate_at` answers from current state, ignoring the head it is given** | Checking authority *as of* a governance head needs the log rather than one replayed snapshot. The difference shows only when a moderator is demoted after acting: this retroactively invalidates their past redactions, where `design/01` §6 says they should stand. Pinning is now judged against current state deliberately (`may_moderate_now`), which is a different question rather than the same one approximated | `kols-core::permissions`, flagged in the type's own docs |
 | O4 | **`kols-store` does not exist.** `kols-cli` carries its own file-backed store instead of the SQLite projection `design/05` §5 describes | Nothing has needed a projection yet — the CLI replays the log on every invocation, which is slow and correct. The projection is worth building when something renders fast enough to notice | `design/05` §5 |
 | O5 | **The executor rebuilds an author's whole log to append one record** | `rebuild_log` replays every record this member wrote in a channel on every write, which is correct — the segment is a pure function of the sequence — and is linear in a log that only grows. It is the same work O4's projection exists to stop repeating, and wants measuring before it is optimised rather than after | `kols-cli::chat::rebuild_log` |
-| O6 | **Events reach a terminal and nothing else.** `kols serve` emits them and renders them in the same process; no consumer holds a projection across them | That consumer is the interface, which does not exist. The property they turn on — merge, never append — is held and tested against a `ChannelView`, so what is missing is a client rather than a contract | `kols-api::Event`; `crates/kols-api/tests/events.rs` |
+| O6 | **The interface does not receive events.** `kols serve` emits them and renders them in its own process; the window re-reads on demand instead | The shell runs no node yet, so there is nothing in *its* process emitting. It re-reads a channel after every write, which is correct and is what "merge, never append" degenerates to when the projection is fetched whole. A node in the shell is what turns that into live updates | `kols-api::Event`; `crates/kols-app/src/main.rs` |
+| O7 | **The window shows one network and runs no node.** No switcher, no presence, no invite control — `design/09` §1 and §4's third question | A switcher needs a store of stores, presence needs the ephemeral gossip of `design/01` §9, and an invite control needs the flow `design/09` §7 now carries as an open question. Each is real work rather than a missing wire | `design/09` §1, §4.1, §7 |
 
 **Closed since this register was written:** the executor, the two checks `authorize`
 deliberately could not make, and the event half of the boundary. The first two were owed
@@ -250,6 +259,38 @@ design changes before anything else is built.
 ## 9. Log
 
 Newest first. One line per change that moved the state above.
+
+- **2026-08-20** — **A window, and a build that got smaller while gaining one.** The first
+  interface slice: `kols-app` is a Tauri v2 shell holding one `Executor`, `kols-ui` is HTML,
+  CSS and one script holding no keys, no sockets and no files. It lists channels, renders one,
+  posts to it, and hides the controls this member cannot use — `design/09` §4's first two
+  questions and §5's permission-gated chrome.
+
+  **The shell converts rather than deriving, and that is the decision worth keeping.** The
+  domain's records have exactly one serialization and it is normative: spec 07 §3's canonical
+  encoding, hand-written because a record's id is the hash of those bytes. Putting `Serialize`
+  on the same types would have created a second serialization beside the first, and what that
+  invites is not hypothetical — somebody eventually sends the convenient one over a wire and
+  finds ids no longer match. So `kols-app` owns view types, and `kols-api` has no `serde`
+  dependency at all. The webview also never *builds* a command: it names an intent with plain
+  arguments and the shell constructs it, which is one fewer place a front end can hand the core
+  a shape it did not expect.
+
+  **Adding Tauri made `target/` 7.0 GB, so the profile changed and it is now 2.4 GB.**
+  Dependencies get no debug information at all — `[profile.dev.package."*"] debug = false` —
+  which is the same cut this workspace already made once for its own crates, made again where
+  it now costs the most: webkit, wry, tao, gtk and their bindings dwarf the code. Our crates
+  keep line tables, so a backtrace still points at a file and line in this repo, which is what
+  a failing test is read through. The build is *smaller than before Tauri arrived*, on a clean
+  rebuild with everything green.
+
+  **What could not be verified, stated rather than implied.** The data path is tested and the
+  process starts, but the window was not looked at: the X display that S3 proved a Tauri window
+  on was dead by the time this landed, and the Wayland path it does run on cannot be
+  screenshotted from here. So the layout is unreviewed, and `design/09` §7's first open
+  question — the navigation shape — is answered by a first guess rather than a decision.
+
+  139 tests, clippy clean.
 
 - **2026-08-20** — **The event half: the boundary now carries both directions, and the
   vocabulary was written from what the daemon already said.** `design/05` §3 sketches an

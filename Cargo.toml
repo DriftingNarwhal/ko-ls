@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["crates/kols-core", "crates/kols-net", "crates/kols-api", "crates/kols-cli"]
+members = ["crates/kols-core", "crates/kols-net", "crates/kols-api", "crates/kols-cli", "crates/kols-app"]
 
 [workspace.package]
 version = "0.1.0"
@@ -20,6 +20,7 @@ libp2p = "0.56"
 kols-core = { path = "crates/kols-core" }
 kols-net = { path = "crates/kols-net" }
 kols-api = { path = "crates/kols-api" }
+kols-cli = { path = "crates/kols-cli" }
 clap = { version = "4", features = ["derive"] }
 tokio = { version = "1", default-features = false }
 
@@ -36,3 +37,13 @@ tokio = { version = "1", default-features = false }
 [profile.dev]
 debug = "line-tables-only"
 split-debuginfo = "unpacked"
+
+# Dependencies get no debug information at all, which is a second cut at the
+# same problem and became worth making when `kols-app` arrived: Tauri pulls
+# webkit, wry, tao, gtk and their bindings, and the debug information for that
+# tree dwarfs the code. Our own crates keep line tables, so a backtrace still
+# points at a file and line in this repo — which is what a failing test is read
+# through. A line number inside a GTK binding has never been the thing that
+# explained a failure here.
+[profile.dev.package."*"]
+debug = false

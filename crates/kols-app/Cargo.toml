@@ -1,0 +1,25 @@
+[package]
+name = "kols-app"
+description = "The desktop shell — a window over the ko-ls API boundary"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "kols-desktop"
+path = "src/main.rs"
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+kols-api.workspace = true
+kols-cli.workspace = true
+kols-core.workspace = true
+intranet-crypto.workspace = true
+intranet-governance.workspace = true
+intranet-identity.workspace = true
+
+tauri = { version = "2", features = [] }
+serde = { version = "1", features = ["derive"] }
