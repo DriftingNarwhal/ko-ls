@@ -65,6 +65,18 @@ pub enum Outcome {
         /// The name, as it will be displayed.
         name: String,
     },
+    /// An invite was minted.
+    InviteCreated {
+        /// Its canonical bytes, which are the protocol's and are what travels.
+        ///
+        /// Not a URI: how an invite is *carried* — a link, a QR code, a pasted
+        /// string — is presentation, and the shell that renders it decides.
+        invite: Vec<u8>,
+        /// When it stops being valid, in milliseconds since the epoch.
+        expires_at_millis: i64,
+        /// How many identities may be admitted with it.
+        uses: u32,
+    },
     /// The network's membership changed.
     MembershipChanged {
         /// Whose.

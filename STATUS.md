@@ -1,6 +1,6 @@
 # ko-ls — Implementation Status
 
-**Updated:** 2026-08-20 (display names — claimed in the log, unique per network, never released)
+**Updated:** 2026-08-20 (invites — one string replaces the hex-string dance)
 **Phase:** P1 — two nodes talk live and durably, a joiner reads back through sealed
 history, and the boundary carries commands in and events out
 **Design:** [`design/`](design/) — `00`–`08` at v1.0, `09` at v0.2. **`distributed-intranet/specs/07` is normative** where it and the design set overlap.
@@ -137,9 +137,9 @@ left green.
 
 | | |
 |---|---|
-| **Working on** | P1 — names landed; presence, invites and a network switcher are what `design/09` §4 still owes |
+| **Working on** | P1 — invites landed; roles and groups are the largest thing with no code at all |
 | **Blocked on** | Nothing |
-| **Runnable** | **`kols`** — init, attach, admit, revoke, serve, post, read, edit, delete, react, pin, and channel create/list/rename/topic/slowmode/archive. **`kols-desktop`** — a window listing channels, rendering one, and posting to it. `cargo test` — 163 tests here and 644 in `../distributed-intranet`, clippy clean in both; `scripts/cross-check.sh` for big-endian |
+| **Runnable** | **`kols`** — init, invite, join, waiting, attach, admit, revoke, name, serve, post, read, edit, delete, react, pin, and channel create/list/rename/topic/slowmode/archive. **`kols-desktop`** — a window listing channels, rendering one, and posting to it. `cargo test` — 171 tests here and 647 in `../distributed-intranet`, clippy clean in both; `scripts/cross-check.sh` for big-endian |
 | **Next decision needed from the user** | Nothing blocking |
 
 ---
@@ -259,6 +259,43 @@ design changes before anything else is built.
 ## 9. Log
 
 Newest first. One line per change that moved the state above.
+
+- **2026-08-20** — **Invites: one string instead of three hex exchanges, and a protocol gap
+  that nothing had hit.** Adding a second person used to mean `attach` with a 64-character
+  network id, copying the joiner's 64-character identity back, `admit`, and then being told a
+  multiaddr by hand. Now it is `kols invite` on one side and `kols join <that>` on the other.
+
+  **The protocol could not serialize an invite.** Core §5.6 defines it as a credential carried
+  out of band — pasted into a message, put behind a link — and the only place its bytes
+  appeared was inside a `JoinRequest`, which is the *far end* of that journey. You could issue
+  one and have no way to give it to anybody. Nothing had noticed because nothing had yet tried
+  to invite a person. `encode_invite`/`decode_invite` landed upstream under their own domain
+  tag, with the spec now saying an implementation owes this, since the omission was in the
+  specification as much as in the code.
+
+  **Decoding establishes framing and nothing else**, which is tested directly: a tampered
+  invite still decodes and fails later at `validate`, where "does this issuer hold
+  `approve-node` *now*" can actually be answered. A decoder that verified the signature would
+  invite the reading that decoding had already settled something.
+
+  **An invite needs an address and only a running node knows one.** So the daemon writes down
+  what it is reachable on and `kols invite` reads that, refusing to mint rather than producing
+  a credential that connects to nothing. In reverse, whoever redeems one keeps the addresses it
+  carried — so `kols serve` needs no `--peer` afterwards, which was the last piece of manual
+  address-passing in the flow.
+
+  **The URI is a container, not a format.** The bytes are the protocol's; the scheme and the
+  unpadded base32 are this client's, picked so an invite survives being pasted into a chat
+  message and copied back out — tested against leading whitespace, a stripped scheme, wrapped
+  lines and lower-casing, because an invite that only works when typed carefully has failed at
+  its one job. A truncated one is refused where it was truncated rather than decoding into
+  something that fails a signature check somewhere else.
+
+  The waiting room needed the same treatment as the addresses: it is live state in the running
+  node, so the daemon writes down who is in it and `kols waiting` reads that — stale by
+  construction, and said so where it is shown.
+
+  163 → 171 tests here, 644 → 647 upstream. Both gates green.
 
 - **2026-08-20** — **Display names, and a design document that was wrong about where they
   live.** `design/02` §7 put a member's display name in the mutable pointer they own, next to

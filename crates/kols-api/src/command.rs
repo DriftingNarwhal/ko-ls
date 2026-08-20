@@ -104,6 +104,17 @@ pub enum Command {
         /// The name, exactly as the member typed it.
         name: String,
     },
+    /// Mint an invite somebody can redeem to join this network.
+    ///
+    /// Signs a credential rather than writing to the log, which is why it is
+    /// still a signed action: what it produces travels on its own and is
+    /// verified by whoever receives it (Core §5.6).
+    CreateInvite {
+        /// How many identities may be admitted with it.
+        uses: u32,
+        /// How long it stays valid.
+        valid_for_hours: i64,
+    },
     /// Admit an identity to the network.
     AdmitMember {
         /// Who.
@@ -164,6 +175,7 @@ impl Command {
             | Self::SetName { .. } => Sensitivity::Signs,
 
             Self::Pin { .. }
+            | Self::CreateInvite { .. }
             | Self::UpdateChannel { .. }
             | Self::AdmitMember { .. }
             | Self::RevokeMember { .. } => Sensitivity::Governs,
@@ -192,7 +204,9 @@ impl Command {
             Self::CreateChannel { .. } => Some("create-channel"),
             Self::SetName { .. } => Some("set-name"),
             Self::UpdateChannel { .. } => Some("manage-channel"),
-            Self::AdmitMember { .. } | Self::RevokeMember { .. } => None,
+            Self::CreateInvite { .. } | Self::AdmitMember { .. } | Self::RevokeMember { .. } => {
+                None
+            }
         }
     }
 
@@ -208,6 +222,7 @@ impl Command {
             Self::CreateChannel { .. } => "create-channel",
             Self::SetName { .. } => "set-name",
             Self::UpdateChannel { .. } => "update-channel",
+            Self::CreateInvite { .. } => "create-invite",
             Self::AdmitMember { .. } => "admit-member",
             Self::RevokeMember { .. } => "revoke-member",
         }

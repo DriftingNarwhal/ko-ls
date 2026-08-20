@@ -278,12 +278,12 @@ rearranges the interface is something a user should choose deliberately.
 
 1. **Navigation shape.** §4 fixes what must be answerable; the arrangement that answers it
    is not decided. Explicitly not assumed to be Discord's three columns.
-2. **The invite flow itself.** §5 settles that the control is hidden from a member who
-   cannot create invites, and nothing settles what the control *does* — how a URI is
-   presented, whether use-count and expiry are offered or defaulted, and what a joiner sees
-   between redeeming one and being admitted, which under explicit intake (`02` §6.2) is a
-   waiting room that must be built out of the invite alone because a waiting member is
-   served nothing.
+2. **The invite flow, in the window.** The mechanism exists and the terminal drives it
+   (`02` §6.1): mint, hand over one string, redeem, wait, be admitted. What is undecided is
+   the *interface* — how a URI is offered for copying, whether use-count and expiry are
+   surfaced or defaulted, and what a joiner sees between redeeming and admission. Under
+   explicit intake that last one is a waiting room which must be built out of the invite
+   alone, because a waiting member is served nothing (`02` §6.2).
 3. **How a warm network surfaces activity.** A message arriving on a network that is not in
    view has to be noticeable without every warm network demanding attention.
 4. **What "recent" means for warm tier membership.** §2 says recent networks stay warm;

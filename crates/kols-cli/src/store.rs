@@ -342,6 +342,86 @@ impl Store {
         fs::read_to_string(self.root.join("label")).ok()
     }
 
+    /// Records the addresses this node is reachable on.
+    ///
+    /// Written by the daemon because only a running node knows them, and read by
+    /// one-shot commands because only they need to hand them out. An invite that
+    /// carries no bootstrap address cannot establish a connection, which is the
+    /// one job it exists to do — so `kols invite` has to get them from
+    /// somewhere, and a node that never wrote them down is that somewhere not
+    /// existing.
+    ///
+    /// Last writer wins, which is right: these change when the daemon restarts
+    /// on a new port, and the newest run is the one somebody can actually dial.
+    pub fn set_addresses(&self, addresses: &[String]) -> Result<(), StoreError> {
+        fs::write(self.root.join("addresses"), addresses.join("\n"))?;
+        Ok(())
+    }
+
+    /// The addresses the daemon last reported being reachable on.
+    ///
+    /// Stale by construction — the daemon may not be running, or may be running
+    /// somewhere else. A caller handing these to somebody should say when they
+    /// were last written rather than implying they are live.
+    pub fn addresses(&self) -> Vec<String> {
+        fs::read_to_string(self.root.join("addresses"))
+            .map(|text| {
+                text.lines()
+                    .map(str::trim)
+                    .filter(|line| !line.is_empty())
+                    .map(str::to_owned)
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
+    /// Remembers addresses worth dialling — the ones an invite carried.
+    ///
+    /// Written by `kols join`, read by `kols serve`. Without this a joiner is
+    /// handed everything they need to connect and must then be told an address
+    /// by hand anyway, which is the friction the invite exists to remove.
+    pub fn set_peers(&self, addresses: &[String]) -> Result<(), StoreError> {
+        fs::write(self.root.join("peers"), addresses.join("\n"))?;
+        Ok(())
+    }
+
+    /// Addresses this node should dial on startup.
+    pub fn peers(&self) -> Vec<String> {
+        fs::read_to_string(self.root.join("peers"))
+            .map(|text| {
+                text.lines()
+                    .map(str::trim)
+                    .filter(|line| !line.is_empty())
+                    .map(str::to_owned)
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
+    /// Records who is in the waiting room, as the daemon last saw it.
+    ///
+    /// The waiting room is live state in the running node (Core §2.4), so a
+    /// one-shot command cannot ask it anything. This is the daemon writing down
+    /// what it knows so `kols waiting` can read it — stale by construction, and
+    /// worth saying so where it is displayed rather than pretending otherwise.
+    pub fn set_waiting(&self, identities: &[String]) -> Result<(), StoreError> {
+        fs::write(self.root.join("waiting"), identities.join("\n"))?;
+        Ok(())
+    }
+
+    /// Who the daemon last saw waiting to be admitted.
+    pub fn waiting(&self) -> Vec<String> {
+        fs::read_to_string(self.root.join("waiting"))
+            .map(|text| {
+                text.lines()
+                    .map(str::trim)
+                    .filter(|line| !line.is_empty())
+                    .map(str::to_owned)
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
     fn channel_dir(&self, channel: &ChannelId) -> PathBuf {
         self.root.join("channels").join(to_hex(channel.as_bytes()))
     }

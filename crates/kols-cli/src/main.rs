@@ -148,6 +148,25 @@ enum Command {
         #[arg(long, default_value_t = serve::LIVE_WINDOW_MILLIS)]
         live_window_millis: i64,
     },
+    /// Mint an invite somebody can redeem to join this network.
+    Invite {
+        /// How many people may join with it.
+        #[arg(long, default_value_t = 1)]
+        uses: u32,
+        /// How long it stays valid, in hours.
+        #[arg(long, default_value_t = 24)]
+        hours: i64,
+    },
+    /// Redeem an invite and join the network it names.
+    Join {
+        /// The invite, as given to you.
+        invite: String,
+        /// How long to wait for an answer, in seconds.
+        #[arg(long, default_value_t = 30)]
+        timeout: u64,
+    },
+    /// Show who has redeemed an invite and is waiting to be admitted.
+    Waiting,
     /// Admit an identity to this network.
     Admit {
         /// The joiner's identity in this network, as hex.
@@ -234,6 +253,8 @@ fn main() -> std::process::ExitCode {
             live_window_millis,
         ),
         Command::Channel(ChannelCommand::List) => list_channels(root),
+        Command::Join { invite, timeout } => kols_cli::join::run(root, &invite, timeout),
+        Command::Waiting => waiting(root),
         other => submit(root, other),
     };
 
@@ -323,6 +344,10 @@ fn submit(root: std::path::PathBuf, command: Command) -> Result<(), String> {
         Command::Name { name } => ApiCommand::SetName {
             name: name.join(" "),
         },
+        Command::Invite { uses, hours } => ApiCommand::CreateInvite {
+            uses,
+            valid_for_hours: hours,
+        },
         Command::Admit { identity } => ApiCommand::AdmitMember {
             identity: parse_identity(&identity)?,
         },
@@ -363,6 +388,8 @@ fn submit(root: std::path::PathBuf, command: Command) -> Result<(), String> {
         Command::Init { .. }
         | Command::Whoami
         | Command::Attach { .. }
+        | Command::Waiting
+        | Command::Join { .. }
         | Command::Serve { .. } => unreachable!("handled outside the boundary"),
     };
 
@@ -481,6 +508,23 @@ fn render(outcome: &Outcome, names: &kols_core::Names) {
             println!("That name is yours in this network permanently — it stays bound to you");
             println!("even if you claim another, so nobody inherits it and your history with it.");
         }
+        Outcome::InviteCreated {
+            invite,
+            expires_at_millis,
+            uses,
+        } => {
+            println!("{}", kols_cli::invite::to_uri_from_bytes(invite));
+            println!();
+            let hours = (expires_at_millis - kols_cli::chat::now_millis()) / 3_600_000;
+            println!("Good for {uses} join(s), for about {hours} more hour(s).");
+            println!("Whoever has it runs `kols join <that>`.");
+            println!();
+            // Said rather than assumed: the addresses inside it are the ones
+            // this node last reported, and an invite pointing at a node nobody
+            // is running connects to nothing.
+            println!("It carries this node's addresses, so `kols serve` has to be running");
+            println!("for anybody to redeem it.");
+        }
         Outcome::ChannelUpdated { channel } => {
             println!("updated {}", &to_hex(channel.as_bytes())[..12]);
         }
@@ -505,6 +549,41 @@ fn stamp(hlc: Hlc) -> String {
     let secs = hlc.wall_millis / 1000;
     let (h, m, s) = ((secs / 3600) % 24, (secs / 60) % 60, secs % 60);
     format!("{h:02}:{m:02}:{s:02}")
+}
+
+/// Shows who redeemed an invite and is waiting for somebody to admit them.
+///
+/// Outside the command vocabulary because it is a local read of live node
+/// state rather than an action — and because the waiting room lives in the
+/// running daemon, which is why this reads what that daemon wrote down rather
+/// than asking it.
+fn waiting(root: std::path::PathBuf) -> Result<(), String> {
+    let store = Store::open(root).map_err(|e| e.to_string())?;
+    let state = store.state().map_err(|e| e.to_string())?;
+    let identity = store.identity().map_err(|e| e.to_string())?;
+
+    if !state.identity_holds(&identity.id(), &intranet_governance::Capability::ApproveNode) {
+        return Err(
+            "seeing who is waiting needs approve-node — the same capability admitting them does"
+                .to_owned(),
+        );
+    }
+
+    let waiting = store.waiting();
+    if waiting.is_empty() {
+        println!("nobody is waiting");
+        println!();
+        println!("A waiting room only fills while `kols serve` is running, since that is");
+        println!("what answers an invite. `kols invite` mints one to hand out.");
+        return Ok(());
+    }
+
+    println!("waiting to be admitted:");
+    for who in &waiting {
+        println!("  {who}");
+        println!("    kols admit {who}");
+    }
+    Ok(())
 }
 
 /// Lists channels as replay understands them.

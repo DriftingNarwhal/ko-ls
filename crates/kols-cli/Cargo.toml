@@ -24,6 +24,7 @@ intranet-governance.workspace = true
 intranet-ledger.workspace = true
 intranet-storage.workspace = true
 intranet-epoch.workspace = true
+intranet-invite.workspace = true
 intranet-transport.workspace = true
 
 clap.workspace = true

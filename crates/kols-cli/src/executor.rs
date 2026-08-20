@@ -245,6 +245,44 @@ impl Executor {
                 Ok(Outcome::NameClaimed { name: display })
             }
 
+            Command::CreateInvite {
+                uses,
+                valid_for_hours,
+            } => {
+                // An invite with no bootstrap address cannot establish a
+                // connection, which is the one job it exists to do — so this
+                // refuses rather than minting a credential that goes nowhere.
+                let addresses = self.store.addresses();
+                if addresses.is_empty() {
+                    return Err(ExecuteError::Rejected(
+                        "this node has never recorded an address to be reached on. \
+                         Run `kols serve` once, which is also what makes the network \
+                         reachable for whoever redeems this"
+                            .to_owned(),
+                    ));
+                }
+
+                let issued = now_millis();
+                let expires = issued.saturating_add(valid_for_hours.saturating_mul(3_600_000));
+                let invite = intranet_invite::Invite::issue(
+                    identity,
+                    addresses,
+                    // Bearer rather than a named identity: whoever is being
+                    // invited does not have a per-network identity yet, since
+                    // it is derived from the network id they are about to learn.
+                    intranet_invite::InviteSubject::Bearer,
+                    Timestamp::from_millis(issued),
+                    Timestamp::from_millis(expires),
+                    uses,
+                );
+
+                Ok(Outcome::InviteCreated {
+                    invite: intranet_invite::encode_invite(&invite),
+                    expires_at_millis: expires,
+                    uses,
+                })
+            }
+
             Command::AdmitMember { identity: who } => {
                 self.change_membership(who, true, identity)
             }

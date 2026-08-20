@@ -3041,6 +3041,7 @@ dependencies = [
  "intranet-epoch",
  "intranet-governance",
  "intranet-identity",
+ "intranet-invite",
  "intranet-ledger",
  "intranet-storage",
  "intranet-transport",

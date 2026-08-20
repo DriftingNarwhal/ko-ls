@@ -176,6 +176,22 @@ bootstrap addresses, network id and issuer. The client's job is to make one shar
 a single URI (`intranet-chat://join/<encoded-invite>`) that opens the app and starts the
 join handshake.
 
+**Built, and two things about it were not obvious until it was.** The protocol had no way to
+serialize an invite on its own — its bytes existed only inside the join request that presents
+it, which is the far end of the journey — so issuing one and having no way to hand it to
+anybody was possible right up until something tried. That is now Core §5.6's obligation and
+`encode_invite`/`decode_invite` upstream.
+
+And **an invite needs an address, which only a running node knows.** A one-shot command
+cannot invent one, so the daemon writes down what it is reachable on and `kols invite` reads
+that — refusing to mint rather than producing a credential that connects to nothing. The
+same applies in reverse: the addresses an invite carried are kept by whoever redeems it, so
+a joiner never has to be told an address by hand after being handed one inside the invite.
+
+The URI is a container, not a format: the bytes are the protocol's and normative, the scheme
+and its base32 are the client's, chosen so an invite survives being pasted into a chat
+message and copied back out.
+
 The invite carries **nothing** beyond what the first authenticated connection needs
 (Core §5.7). Channel lists, roles, history and keys all arrive afterward as ordinary
 post-connection sync. A client that tried to stuff a server preview into an invite would

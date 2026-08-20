@@ -358,6 +358,19 @@ pub fn authorize<A: Authority, C: Channels>(
                 .map_err(Refusal::Name)?;
         }
 
+        Command::CreateInvite { uses, .. } => {
+            require(
+                actor
+                    .state
+                    .identity_holds(&actor.identity, &Capability::ApproveNode),
+                name,
+                "approve-node",
+            )?;
+            if *uses == 0 {
+                return Err(Refusal::Empty("uses"));
+            }
+        }
+
         Command::AdmitMember { .. } => require(
             actor
                 .state

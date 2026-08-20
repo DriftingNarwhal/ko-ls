@@ -99,6 +99,19 @@ pub enum Event {
         /// Who.
         identity: PerNetworkIdentityId,
     },
+    /// Somebody presented an invite and this node answered.
+    ///
+    /// `accepted` covers both outcomes an invite can legitimately have: admitted
+    /// outright under auto-admit, or given a waiting-room place under explicit
+    /// intake. Both are successful joins (Core §2.4), and a client that treated
+    /// the second as a failure would be reporting the network working as
+    /// configured as though something had gone wrong.
+    JoinAnswered {
+        /// Who asked.
+        joiner: PerNetworkIdentityId,
+        /// Whether the invite was good.
+        accepted: bool,
+    },
     /// Something did not work, and the node carried on.
     ///
     /// Not an error return: every one of these is a state the node is expected

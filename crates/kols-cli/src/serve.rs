@@ -197,7 +197,17 @@ async fn serve(
         Err(_) => println!("  not a member of this network yet — syncing will settle it"),
     }
 
-    for peer in peers {
+    // What `--peer` named, plus what an invite left in the store. A joiner
+    // should not have to be told an address by hand when the invite already
+    // carried one.
+    let mut dialling: Vec<String> = peers.to_vec();
+    for remembered in store.peers() {
+        if !dialling.contains(&remembered) {
+            dialling.push(remembered);
+        }
+    }
+
+    for peer in &dialling {
         let address: Multiaddr = peer
             .parse()
             .map_err(|err| format!("{peer:?} is not a multiaddr: {err}"))?;
@@ -293,6 +303,16 @@ async fn serve(
                 if listening.iter().all(|seen| seen != &full) {
                     println!("  listening {full}");
                     listening.push(full);
+                    // Written down so a one-shot `kols invite` can carry them.
+                    // Only a running node knows what it is reachable on, and an
+                    // invite with no bootstrap address cannot connect anybody.
+                    let addresses: Vec<String> =
+                        listening.iter().map(ToString::to_string).collect();
+                    if let Err(err) = store.set_addresses(&addresses) {
+                        render(&[Event::Degraded {
+                            reason: format!("could not record this node's addresses: {err}"),
+                        }]);
+                    }
                 }
             }
 
@@ -417,6 +437,41 @@ async fn serve(
                         "keyed into this network ({historical_keys} historical key(s) came with it)"
                     );
                     request_foreign_segments(&store, &mut node, &identity, &mut fetched, &backfill)?;
+                }
+            }
+
+            // Somebody presented an invite. Surfaced rather than answered
+            // automatically by the transport because validating one needs a
+            // clock and admitting needs a signature, neither of which that
+            // layer holds.
+            NodeEvent::JoinRequested {
+                joiner, request, ..
+            } => {
+                // Held across the answer because under auto-admit this appends
+                // a membership entry, and an append racing the daemon's own
+                // would fork the log.
+                let lock = store.lock().map_err(|e| e.to_string())?;
+                let answered =
+                    node.answer_join(request, &identity, Timestamp::from_millis(crate::chat::now_millis()));
+                drop(lock);
+
+                match answered {
+                    Ok(response) => {
+                        // The membership entry, if the network auto-admits, is
+                        // in the node's log and not yet in the store.
+                        persist_governance(&store, &node)?;
+                        record_waiting(&store, &node, &identity);
+                        render(&[Event::JoinAnswered {
+                            joiner,
+                            accepted: !matches!(
+                                response,
+                                intranet_invite::JoinResponse::Refused { .. }
+                            ),
+                        }]);
+                    }
+                    Err(err) => render(&[Event::Degraded {
+                        reason: format!("could not answer a join from {}: {err}", joiner.short()),
+                    }]),
                 }
             }
 
@@ -858,6 +913,28 @@ fn resolve(
     Ok(Some((pointer.current_cid, dek)))
 }
 
+/// Writes down who is waiting, so a one-shot command can see it.
+///
+/// The waiting room is live state in the running node (Core §2.4) — a valid
+/// identity holding no capabilities and no key until somebody admits it. Nothing
+/// outside this process can ask about it, so the daemon writes what it sees and
+/// `kols waiting` reads that. Best-effort: failing to write it should not stop a
+/// node from having let somebody in.
+fn record_waiting(store: &Store, node: &MemberNode, identity: &intranet_identity::PerNetworkIdentity) {
+    let Some(occupants) = node.waiting_room_for(&identity.id()) else {
+        return;
+    };
+    let identities: Vec<String> = occupants
+        .iter()
+        .map(|entry| intranet_crypto::to_hex(entry.identity.verifying_key().as_bytes()))
+        .collect();
+    if let Err(err) = store.set_waiting(&identities) {
+        render(&[Event::Degraded {
+            reason: format!("could not record the waiting room: {err}"),
+        }]);
+    }
+}
+
 /// Prints what the node learned, and stays quiet when it learned nothing.
 ///
 /// The one place this daemon turns an [`Event`] into words, which is the point:
@@ -886,6 +963,13 @@ fn render(events: &[Event]) {
                 println!("rotated the epoch to exclude {excluded} removed member(s)");
             }
             Event::MemberKeyed { identity } => println!("keyed in {}", identity.short()),
+            Event::JoinAnswered { joiner, accepted } => {
+                if *accepted {
+                    println!("let {} in — `kols waiting` shows who is waiting", joiner.short());
+                } else {
+                    println!("refused a join from {}", joiner.short());
+                }
+            }
             Event::Degraded { reason } => println!("{reason}"),
         }
     }

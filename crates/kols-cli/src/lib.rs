@@ -23,6 +23,8 @@
 
 pub mod chat;
 pub mod executor;
+pub mod invite;
+pub mod join;
 pub mod network;
 pub mod serve;
 pub mod store;
