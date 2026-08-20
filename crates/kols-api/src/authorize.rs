@@ -371,6 +371,33 @@ pub fn authorize<A: Authority, C: Channels>(
             }
         }
 
+        Command::SetBootstrapRelays { relays } => {
+            require(
+                actor
+                    .state
+                    .identity_holds(&actor.identity, &Capability::DefinePolicy),
+                name,
+                "define-policy",
+            )?;
+            if relays.len() > intranet_governance::MAX_BOOTSTRAP_RELAYS {
+                return Err(Refusal::TooMany {
+                    field: "relays",
+                    actual: relays.len(),
+                    limit: intranet_governance::MAX_BOOTSTRAP_RELAYS,
+                });
+            }
+            for relay in relays {
+                if relay.trim().is_empty() {
+                    return Err(Refusal::Empty("relay address"));
+                }
+                bound(
+                    "relay address",
+                    relay.len(),
+                    intranet_governance::MAX_RELAY_ADDRESS_BYTES,
+                )?;
+            }
+        }
+
         Command::AdmitMember { .. } => require(
             actor
                 .state

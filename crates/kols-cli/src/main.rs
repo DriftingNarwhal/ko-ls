@@ -60,6 +60,14 @@ enum Command {
     Init {
         /// What to call it locally.
         name: String,
+        /// A relay this network uses as an entry point. Repeatable.
+        ///
+        /// Two members behind NAT cannot reach each other directly, so a network
+        /// needs at least one (Core §5.5). `intranet-harness relay` runs one
+        /// locally; DI-Relay deploys one. It can be replaced later with
+        /// `kols relay set`.
+        #[arg(long = "relay")]
+        relays: Vec<String>,
     },
     /// Show this member's identity and what they may do.
     Whoami,
@@ -167,6 +175,9 @@ enum Command {
     },
     /// Show who has redeemed an invite and is waiting to be admitted.
     Waiting,
+    /// Work with this network's relays.
+    #[command(subcommand)]
+    Relay(RelayCommand),
     /// Admit an identity to this network.
     Admit {
         /// The joiner's identity in this network, as hex.
@@ -184,6 +195,17 @@ enum Command {
         /// What to call it locally.
         #[arg(long, default_value = "attached")]
         name: String,
+    },
+}
+
+#[derive(Subcommand)]
+enum RelayCommand {
+    /// Show the relays this network designates.
+    List,
+    /// Replace them. Needs define-policy.
+    Set {
+        /// The multiaddrs, replacing the current set outright.
+        relays: Vec<String>,
     },
 }
 
@@ -235,7 +257,7 @@ fn main() -> std::process::ExitCode {
     let root = cli.home.unwrap_or_else(Store::default_root);
 
     let result = match cli.command {
-        Command::Init { name } => init(root, &name),
+        Command::Init { name, relays } => init(root, &name, relays),
         Command::Whoami => whoami(root),
         Command::Attach { network, name } => attach(root, &network, &name),
         Command::Serve {
@@ -255,6 +277,7 @@ fn main() -> std::process::ExitCode {
         Command::Channel(ChannelCommand::List) => list_channels(root),
         Command::Join { invite, timeout } => kols_cli::join::run(root, &invite, timeout),
         Command::Waiting => waiting(root),
+        Command::Relay(RelayCommand::List) => list_relays(root),
         other => submit(root, other),
     };
 
@@ -348,6 +371,9 @@ fn submit(root: std::path::PathBuf, command: Command) -> Result<(), String> {
             uses,
             valid_for_hours: hours,
         },
+        Command::Relay(RelayCommand::Set { relays }) => {
+            ApiCommand::SetBootstrapRelays { relays }
+        }
         Command::Admit { identity } => ApiCommand::AdmitMember {
             identity: parse_identity(&identity)?,
         },
@@ -388,6 +414,7 @@ fn submit(root: std::path::PathBuf, command: Command) -> Result<(), String> {
         Command::Init { .. }
         | Command::Whoami
         | Command::Attach { .. }
+        | Command::Relay(RelayCommand::List)
         | Command::Waiting
         | Command::Join { .. }
         | Command::Serve { .. } => unreachable!("handled outside the boundary"),
@@ -525,6 +552,22 @@ fn render(outcome: &Outcome, names: &kols_core::Names) {
             println!("It carries this node's addresses, so `kols serve` has to be running");
             println!("for anybody to redeem it.");
         }
+        Outcome::BootstrapRelaysSet { relays } => {
+            if relays.is_empty() {
+                println!("this network now designates no relays");
+                println!();
+                println!("Members who cannot already dial each other will not be able to");
+                println!("reconnect. Core §5.5 covers why.");
+            } else {
+                println!("this network's relays:");
+                for relay in relays {
+                    println!("  {relay}");
+                }
+                println!();
+                println!("Every member learns these by syncing, so a newly deployed relay");
+                println!("reaches people who joined long ago.");
+            }
+        }
         Outcome::ChannelUpdated { channel } => {
             println!("updated {}", &to_hex(channel.as_bytes())[..12]);
         }
@@ -632,7 +675,42 @@ fn list_channels(root: std::path::PathBuf) -> Result<(), String> {
     Ok(())
 }
 
-fn init(root: std::path::PathBuf, name: &str) -> Result<(), String> {
+/// Shows the relays replay currently names, and what this node has cached.
+///
+/// Both, because they answer different questions: replayed state is what the
+/// network says now, and the cache is what this node could actually dial before
+/// it has synced anything.
+fn list_relays(root: std::path::PathBuf) -> Result<(), String> {
+    let store = Store::open(root).map_err(|e| e.to_string())?;
+    let designated = store
+        .state()
+        .map(|state| state.policy.bootstrap_relays.clone())
+        .unwrap_or_default();
+    let cached = store.relays();
+
+    if designated.is_empty() {
+        println!("this network designates no relays");
+        println!();
+        println!("Two members behind NAT cannot reach each other without one. Run one with");
+        println!("`intranet-harness relay`, or deploy DI-Relay, then `kols relay set <addr>`.");
+    } else {
+        println!("designated by this network:");
+        for relay in &designated {
+            println!("  {relay}");
+        }
+    }
+
+    if !cached.is_empty() && cached != designated {
+        println!();
+        println!("cached locally, and dialable before this node has synced:");
+        for relay in &cached {
+            println!("  {relay}");
+        }
+    }
+    Ok(())
+}
+
+fn init(root: std::path::PathBuf, name: &str, relays: Vec<String>) -> Result<(), String> {
     // Both are random and independent: the network id names the network, the
     // entropy derives this member's identity in it. Deriving one from the other
     // would make a member's identity a function of public information.
@@ -642,9 +720,10 @@ fn init(root: std::path::PathBuf, name: &str) -> Result<(), String> {
 
     let store = Store::create(root, network, entropy).map_err(|e| e.to_string())?;
     let founder = store.identity().map_err(|e| e.to_string())?;
-    let genesis = network::genesis(&founder, network);
+    let genesis = network::genesis(&founder, network, relays.clone());
     store.append_entry(&genesis).map_err(|e| e.to_string())?;
     store.set_label(name).map_err(|e| e.to_string())?;
+    store.set_relays(&relays).map_err(|e| e.to_string())?;
 
     // The network's key group is deliberately *not* created here. An MLS group
     // is live cryptographic state that `GroupSession` keeps in an in-memory
@@ -669,6 +748,12 @@ fn init(root: std::path::PathBuf, name: &str) -> Result<(), String> {
     println!("The seed in {}/seed is the only copy.", store.root().display());
     println!("Losing it loses this identity, and there is no recovery service.");
     println!();
+    if relays.is_empty() {
+        println!("No relay designated. Two members behind NAT cannot reach each other");
+        println!("without one, and `kols invite` will refuse until this network has one:");
+        println!("  kols relay set /ip4/<host>/tcp/<port>/p2p/<peer-id>");
+        println!();
+    }
     println!("Next: `kols serve` keys this network, and must run before posting.");
     Ok(())
 }

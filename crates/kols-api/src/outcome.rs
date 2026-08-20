@@ -77,6 +77,11 @@ pub enum Outcome {
         /// How many identities may be admitted with it.
         uses: u32,
     },
+    /// The network's designated relays changed.
+    BootstrapRelaysSet {
+        /// The set now in force.
+        relays: Vec<String>,
+    },
     /// The network's membership changed.
     MembershipChanged {
         /// Whose.

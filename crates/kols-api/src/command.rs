@@ -115,6 +115,19 @@ pub enum Command {
         /// How long it stays valid.
         valid_for_hours: i64,
     },
+    /// Replace the relays this network designates as entry points.
+    ///
+    /// Core §5.5: a hosted relay is not a member and cannot advertise itself,
+    /// so replayed policy is the only thing that carries a newly deployed one to
+    /// members who already joined.
+    SetBootstrapRelays {
+        /// Multiaddrs, replacing the current set outright.
+        ///
+        /// Replacing rather than appending, because "which relays does this
+        /// network use" is one answer and a command that only ever added would
+        /// have no way to retire a relay that is gone.
+        relays: Vec<String>,
+    },
     /// Admit an identity to the network.
     AdmitMember {
         /// Who.
@@ -176,6 +189,7 @@ impl Command {
 
             Self::Pin { .. }
             | Self::CreateInvite { .. }
+            | Self::SetBootstrapRelays { .. }
             | Self::UpdateChannel { .. }
             | Self::AdmitMember { .. }
             | Self::RevokeMember { .. } => Sensitivity::Governs,
@@ -204,9 +218,10 @@ impl Command {
             Self::CreateChannel { .. } => Some("create-channel"),
             Self::SetName { .. } => Some("set-name"),
             Self::UpdateChannel { .. } => Some("manage-channel"),
-            Self::CreateInvite { .. } | Self::AdmitMember { .. } | Self::RevokeMember { .. } => {
-                None
-            }
+            Self::CreateInvite { .. }
+            | Self::SetBootstrapRelays { .. }
+            | Self::AdmitMember { .. }
+            | Self::RevokeMember { .. } => None,
         }
     }
 
@@ -223,6 +238,7 @@ impl Command {
             Self::SetName { .. } => "set-name",
             Self::UpdateChannel { .. } => "update-channel",
             Self::CreateInvite { .. } => "create-invite",
+            Self::SetBootstrapRelays { .. } => "set-bootstrap-relays",
             Self::AdmitMember { .. } => "admit-member",
             Self::RevokeMember { .. } => "revoke-member",
         }

@@ -8,6 +8,8 @@
 //! this stops where the invite's responsibility does — a joiner who went from a
 //! pasted string to a place in the network, and an admin who can see them.
 
+use intranet_identity::{MasterSeed, NetworkId};
+use intranet_transport::{NodeEvent, RelayNode};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Output, Stdio};
 use std::time::{Duration, Instant};
@@ -31,6 +33,48 @@ impl Drop for Home {
     }
 }
 
+/// A relay the test hosts itself, on a routable address.
+///
+/// Routable rather than loopback, and that is not incidental: a relay promotes
+/// only non-loopback listen addresses to external ones, and libp2p builds the
+/// address list it returns in a reservation from external addresses alone. A
+/// loopback relay grants reservations carrying no address, so `kols serve` would
+/// reserve nothing and `kols invite` would correctly refuse — the tests would
+/// fail for a reason that has nothing to do with invites.
+fn hosted_relay() -> String {
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("a runtime");
+        runtime.block_on(async move {
+            let identity = MasterSeed::from_entropy([77u8; 32])
+                .identity_for(&NetworkId::from_bytes([42u8; 32]))
+                .expect("derives");
+            let mut relay = RelayNode::new(&identity).expect("a relay");
+            relay
+                .listen_on("/ip4/0.0.0.0/tcp/0".parse().expect("a multiaddr"))
+                .expect("listens");
+
+            let mut announced = false;
+            loop {
+                let event = relay.next_event().await;
+                if let NodeEvent::Listening(address) = event
+                    && !announced
+                    && !address.to_string().contains("127.0.0.1")
+                {
+                    announced = true;
+                    let full = format!("{address}/p2p/{}", identity.peer_id());
+                    let _ = tx.send(full);
+                }
+            }
+        });
+    });
+    rx.recv_timeout(Duration::from_secs(10))
+        .expect("the relay reports a routable address")
+}
+
 struct Daemon(Child);
 
 impl Drop for Daemon {
@@ -51,12 +95,22 @@ fn serving(home: &Home, port: u16) -> Daemon {
         .spawn()
         .expect("serve starts");
 
-    // The addresses file is what `kols invite` reads, so waiting for it is
-    // waiting for the thing under test to be possible at all.
-    let deadline = Instant::now() + Duration::from_secs(20);
-    while !home.path().join("addresses").exists() || !home.path().join("rotation").exists() {
-        assert!(Instant::now() < deadline, "the node never became reachable");
-        std::thread::sleep(Duration::from_millis(100));
+    // A circuit, not merely an address: an invite that carried only this
+    // machine's own addresses would reach nobody off it, which is what the
+    // relay requirement exists to prevent.
+    let deadline = Instant::now() + Duration::from_secs(40);
+    loop {
+        let reserved = std::fs::read_to_string(home.path().join("addresses"))
+            .map(|text| text.contains("p2p-circuit"))
+            .unwrap_or(false);
+        if reserved && home.path().join("rotation").exists() {
+            break;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "the node never reserved a circuit"
+        );
+        std::thread::sleep(Duration::from_millis(200));
     }
     Daemon(child)
 }
@@ -89,8 +143,9 @@ fn fails(home: &Home, args: &[&str]) -> String {
 
 #[test]
 fn one_string_takes_a_stranger_from_nothing_to_a_place_in_the_network() {
+    let relay = hosted_relay();
     let alice = Home::new("inv-alice");
-    ok(&alice, &["init", "the workshop"]);
+    ok(&alice, &["init", "the workshop", "--relay", &relay]);
     let _node = serving(&alice, 45501);
 
     let minted = ok(&alice, &["invite", "--uses", "3", "--hours", "12"]);
@@ -103,10 +158,11 @@ fn one_string_takes_a_stranger_from_nothing_to_a_place_in_the_network() {
     let joined = ok(&bob, &["join", &uri]);
     assert!(joined.contains("waiting to be admitted"), "{joined}");
 
-    // The invite carried the address, so Bob keeps it rather than being told
-    // one by hand later.
+    // The invite carried the relay circuit, so Bob keeps it rather than being
+    // told an address by hand later — and it is the circuit that matters, since
+    // that is the one address that works from another network.
     let peers = std::fs::read_to_string(bob.path().join("peers")).expect("peers were kept");
-    assert!(peers.contains("/ip4/127.0.0.1/tcp/45501"), "{peers}");
+    assert!(peers.contains("p2p-circuit"), "no circuit in the invite:\n{peers}");
 
     // And the admin can see him without being sent his identity out of band.
     let waiting = ok(&alice, &["waiting"]);
@@ -126,15 +182,17 @@ fn one_string_takes_a_stranger_from_nothing_to_a_place_in_the_network() {
 }
 
 #[test]
-fn an_invite_cannot_be_minted_before_the_node_has_an_address() {
-    // An invite with no bootstrap address cannot establish a connection, which
-    // is its only job — so this refuses rather than minting a credential that
-    // goes nowhere.
-    let home = Home::new("inv-noaddr");
+fn a_network_with_no_relay_cannot_invite_anybody() {
+    // Core §5.5: two members behind NAT cannot reach each other directly, so an
+    // invite from a network with no relay would only work for somebody already
+    // able to dial this machine. Refused rather than minting a credential whose
+    // failure lands on the joiner as an unexplained timeout.
+    let home = Home::new("inv-norelay");
     ok(&home, &["init", "unreachable"]);
 
     let complaint = fails(&home, &["invite"]);
-    assert!(complaint.contains("kols serve"), "{complaint}");
+    assert!(complaint.contains("designates no relay"), "{complaint}");
+    assert!(complaint.contains("relay set"), "{complaint}");
 }
 
 #[test]
@@ -153,8 +211,9 @@ fn minting_an_invite_needs_approve_node() {
     // Which the founder holds and an ordinary member does not. Proven here by
     // the refusal's wording rather than by standing up a second member, since
     // the capability check is `kols-api`'s and is tested directly there.
+    let relay = hosted_relay();
     let home = Home::new("inv-cap");
-    ok(&home, &["init", "capability"]);
+    ok(&home, &["init", "capability", "--relay", &relay]);
     let _node = serving(&home, 45502);
     assert!(ok(&home, &["invite"]).starts_with("intranet-chat://join/"));
 }

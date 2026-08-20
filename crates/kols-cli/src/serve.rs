@@ -197,6 +197,73 @@ async fn serve(
         Err(_) => println!("  not a member of this network yet — syncing will settle it"),
     }
 
+    // A circuit on one of the network's relays, before anything else needs an
+    // address to hand out. Core §5.5: two members behind NAT cannot reach each
+    // other directly, so this is what makes this node reachable at all — and
+    // what `kols invite` will carry.
+    //
+    // The ordering matters and `reserve_via_relay` documents why: a wildcard
+    // bind registers its listeners asynchronously, so reserving in the same
+    // breath as binding finds nothing to reuse and produces an observed address
+    // pointing at a port with no listener. Nothing else surfaces that. So the
+    // listen above has already happened, and this waits for the grant before
+    // treating the circuit as usable.
+    let designated = {
+        let replayed = store
+            .state()
+            .map(|state| state.policy.bootstrap_relays.clone())
+            .unwrap_or_default();
+        if replayed.is_empty() {
+            // Nothing replayed yet — a node that has never synced still has to
+            // reach a relay to sync at all, which is what the cache is for.
+            store.relays()
+        } else {
+            // Refreshed, so a relay deployed since this node last ran is
+            // dialable next time before it has synced.
+            let _ = store.set_relays(&replayed);
+            replayed
+        }
+    };
+
+    for relay in &designated {
+        let address: Multiaddr = match relay.parse() {
+            Ok(address) => address,
+            Err(err) => {
+                render(&[Event::Degraded {
+                    reason: format!("this network names an unusable relay {relay:?}: {err}"),
+                }]);
+                continue;
+            }
+        };
+        match node.reserve_via_relay(address).await {
+            Ok(()) => {
+                if node.await_reservation().await {
+                    println!("  relay     reserved a circuit on {relay}");
+                    break;
+                }
+                // The likely cause, named, because every other vantage point
+                // says this worked: the relay accepted the reservation and
+                // reports healthy, and only the missing address here shows it
+                // did nothing. A relay bound to loopback has no external address
+                // to hand back, and libp2p builds a reservation's address list
+                // from external addresses alone.
+                render(&[Event::Degraded {
+                    reason: format!(
+                        "{relay} granted no usable circuit. If that relay is bound to \
+                         127.0.0.1 it has no address to hand out — bind it to a routable \
+                         interface. Trying the next"
+                    ),
+                }]);
+            }
+            Err(err) => render(&[Event::Degraded {
+                reason: format!("could not reach the relay {relay}: {err}"),
+            }]),
+        }
+    }
+    if designated.is_empty() {
+        println!("  relay     none designated — this node is reachable only on its own addresses");
+    }
+
     // What `--peer` named, plus what an invite left in the store. A joiner
     // should not have to be told an address by hand when the invite already
     // carried one.
@@ -299,7 +366,19 @@ async fn serve(
                 // Printed with the peer id appended, because that is the form
                 // another node can actually dial — an address without it names a
                 // machine rather than a member.
-                let full = address.clone().with(Protocol::P2p(identity.peer_id()));
+                // Appended only when it is missing. A direct listen address
+                // names a machine until the peer id makes it name a member — but
+                // a circuit address already ends in one, and appending a second
+                // produces `/p2p-circuit/p2p/<id>/p2p/<id>`, which is not what
+                // anybody dials.
+                let full = if address
+                    .iter()
+                    .any(|part| matches!(part, Protocol::P2p(_)))
+                {
+                    address.clone()
+                } else {
+                    address.clone().with(Protocol::P2p(identity.peer_id()))
+                };
                 if listening.iter().all(|seen| seen != &full) {
                     println!("  listening {full}");
                     listening.push(full);

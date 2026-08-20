@@ -1,6 +1,6 @@
 # ko-ls — Implementation Status
 
-**Updated:** 2026-08-20 (invites — one string replaces the hex-string dance)
+**Updated:** 2026-08-20 (relays — a network designates them, and an invite carries a circuit)
 **Phase:** P1 — two nodes talk live and durably, a joiner reads back through sealed
 history, and the boundary carries commands in and events out
 **Design:** [`design/`](design/) — `00`–`08` at v1.0, `09` at v0.2. **`distributed-intranet/specs/07` is normative** where it and the design set overlap.
@@ -137,9 +137,9 @@ left green.
 
 | | |
 |---|---|
-| **Working on** | P1 — invites landed; roles and groups are the largest thing with no code at all |
+| **Working on** | Milestone: a client two people on separate networks can use. Relay reachability done; a node in the shell is next |
 | **Blocked on** | Nothing |
-| **Runnable** | **`kols`** — init, invite, join, waiting, attach, admit, revoke, name, serve, post, read, edit, delete, react, pin, and channel create/list/rename/topic/slowmode/archive. **`kols-desktop`** — a window listing channels, rendering one, and posting to it. `cargo test` — 171 tests here and 647 in `../distributed-intranet`, clippy clean in both; `scripts/cross-check.sh` for big-endian |
+| **Runnable** | **`kols`** — init (with `--relay`), relay list/set, invite, join, waiting, attach, admit, revoke, name, serve, post, read, edit, delete, react, pin, and channel create/list/rename/topic/slowmode/archive. **`kols-desktop`** — a window listing channels, rendering one, and posting to it. `cargo test` — 172 tests here and 649 in `../distributed-intranet`, clippy clean in both; `scripts/cross-check.sh` for big-endian |
 | **Next decision needed from the user** | Nothing blocking |
 
 ---
@@ -259,6 +259,47 @@ design changes before anything else is built.
 ## 9. Log
 
 Newest first. One line per change that moved the state above.
+
+- **2026-08-20** — **A network designates its relays, and §5.5 was optimistic about needing
+  them.** Core §5.5 called bootstrap dependency "temporary per node" — a node caches peers on
+  first join and reconnects without the bootstrap "as long as at least one previously-known peer
+  is reachable". That clause assumes a reachable peer, and two members behind residential NAT
+  are not reachable by each other. For an all-NAT network with no member relay, a bootstrap relay
+  is a **standing dependency**, and the spec now says so.
+
+  Underneath it was a structural gap. A hosted relay is **not a member** of the network it
+  serves: `RelayNode` runs a restricted behaviour set and does not speak the ledger protocols, so
+  it can never advertise itself the way a `relay_bootstrap_willing` member does. Nothing carried
+  a newly deployed relay to members who had already joined — their invite is spent, their cache
+  names a relay that may be gone. `NetworkPolicy.bootstrap_relays` is that carrier: replayed, and
+  changed by `define-policy`. §5.5 now sets out all four carriers and why none replaces the
+  others — invite, policy, local cache, ledger.
+
+  Client side: `kols init --relay`, `kols relay list/set`, and `kols serve` reserving a circuit
+  and recording it, so an invite carries the one address that works from another network.
+  **`kols invite` refuses without a relay**, which is the honest ordering: a network needs one
+  before it can invite anybody.
+
+  **A wrong call of mine, corrected, and recorded because the misreading is easy to repeat.** A
+  reservation the relay logged as *granted* left the member with no circuit listener, and I read
+  that as a transport bug. It is not. A relay promotes listen addresses to external addresses
+  only when they are **not loopback** — correct, since 127.0.0.1 is useless to another host — and
+  libp2p builds a reservation's address list from external addresses alone. So a loopback relay
+  grants every reservation, logs that it did, reports healthy, and hands back nothing. My test
+  relay was on loopback.
+
+  Two things worth keeping came out of it. `crates/kols-cli/tests/relay.rs` asserts what nothing
+  asserted: that a reservation ends in a *usable* circuit. The protocol's own relay tests count
+  grants on the relay side and its wildcard tests filter circuit addresses out to compare source
+  ports, so "granted" was covered and "reachable" was not. And `kols serve` now names loopback as
+  the likely cause when a circuit does not arrive, because every other vantage point says it
+  worked.
+
+  One real bug in the new code alongside it: `serve` appended this node's peer id to every listen
+  address, and a circuit address already ends in one — producing `/p2p-circuit/p2p/<id>/p2p/<id>`,
+  which nothing dials.
+
+  171 → 172 tests here, 647 → 649 upstream.
 
 - **2026-08-20** — **Invites: one string instead of three hex exchanges, and a protocol gap
   that nothing had hit.** Adding a second person used to mean `attach` with a 64-character

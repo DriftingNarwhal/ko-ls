@@ -30,3 +30,6 @@ intranet-transport.workspace = true
 clap.workspace = true
 libp2p.workspace = true
 tokio = { workspace = true, features = ["rt-multi-thread", "macros", "time"] }
+
+[dev-dependencies]
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }

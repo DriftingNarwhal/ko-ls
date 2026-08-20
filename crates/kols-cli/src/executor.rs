@@ -252,12 +252,39 @@ impl Executor {
                 // An invite with no bootstrap address cannot establish a
                 // connection, which is the one job it exists to do — so this
                 // refuses rather than minting a credential that goes nowhere.
+                // A network needs a relay before it can invite anybody, because
+                // an invite's addresses are what a joiner dials and two people
+                // behind NAT cannot dial each other (Core §5.5). Refused here
+                // rather than producing a credential that works only for
+                // somebody already on the same LAN.
+                if state.policy.bootstrap_relays.is_empty() {
+                    return Err(ExecuteError::Rejected(
+                        "this network designates no relay, so an invite would only reach \
+                         somebody who can already dial this machine. Run one with \
+                         `intranet-harness relay`, or deploy DI-Relay, then \
+                         `kols relay set <its address>`"
+                            .to_owned(),
+                    ));
+                }
+
                 let addresses = self.store.addresses();
                 if addresses.is_empty() {
                     return Err(ExecuteError::Rejected(
                         "this node has never recorded an address to be reached on. \
                          Run `kols serve` once, which is also what makes the network \
                          reachable for whoever redeems this"
+                            .to_owned(),
+                    ));
+                }
+
+                // Said rather than silently shipped: without a circuit the
+                // invite carries only addresses that work on this LAN, and the
+                // failure lands on the joiner as a timeout they cannot diagnose.
+                if !addresses.iter().any(|address| address.contains("p2p-circuit")) {
+                    return Err(ExecuteError::Rejected(
+                        "this node holds no relay circuit, so an invite would carry only \
+                         addresses reachable from this network. Check `kols serve`'s output \
+                         for whether it reserved one"
                             .to_owned(),
                     ));
                 }
@@ -281,6 +308,39 @@ impl Executor {
                     expires_at_millis: expires,
                     uses,
                 })
+            }
+
+            Command::SetBootstrapRelays { relays } => {
+                let mut policy = state.policy.clone();
+                policy.bootstrap_relays = relays.clone();
+
+                let _lock = self.store.lock()?;
+                let head = self
+                    .store
+                    .head()?
+                    .ok_or_else(|| ExecuteError::Rejected("this network has no genesis".to_owned()))?;
+                let entry = LogEntry::create(
+                    identity,
+                    Some(head),
+                    Timestamp::from_millis(now_millis()),
+                    EntryBody::PolicyChange { policy },
+                );
+                self.store.append_entry(&entry)?;
+
+                // Replay rather than trust: a policy change the log accepts
+                // structurally is still refused by replay if the author did not
+                // hold `define-policy`.
+                let after = self.store.state()?;
+                if after.policy.bootstrap_relays != relays {
+                    return Err(ExecuteError::Rejected(
+                        "the change was written but replay did not apply it".to_owned(),
+                    ));
+                }
+                // Cached immediately, because reading policy needs a synced log
+                // and syncing needs a connection — which is what these are for.
+                self.store.set_relays(&relays)?;
+
+                Ok(Outcome::BootstrapRelaysSet { relays })
             }
 
             Command::AdmitMember { identity: who } => {

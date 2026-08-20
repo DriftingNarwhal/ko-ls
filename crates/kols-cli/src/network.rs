@@ -30,8 +30,16 @@ use std::collections::BTreeMap;
 /// name is likewise not a policy value — spec 07 defines no key for one, and
 /// inventing vocabulary the normative document does not have is how two clients
 /// end up disagreeing about what a network is called. The CLI keeps it locally.
-pub fn genesis(founder: &PerNetworkIdentity, network: NetworkId) -> LogEntry {
+pub fn genesis(
+    founder: &PerNetworkIdentity,
+    network: NetworkId,
+    relays: Vec<String>,
+) -> LogEntry {
     let mut policy = NetworkPolicy::conservative_default();
+    // Core §5.5: a network with no designated relay is reachable only by members
+    // who can already dial each other, which two people behind NAT cannot. The
+    // set is chosen at creation and replaced later by `define-policy`.
+    policy.bootstrap_relays = relays;
     policy
         .content_type_allowlist
         .insert(ContentType::new(CHAT_LOG_CONTENT_TYPE));

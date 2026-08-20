@@ -398,6 +398,30 @@ impl Store {
             .unwrap_or_default()
     }
 
+    /// Caches the relays replay last named — Core §5.5.
+    ///
+    /// The carrier that exists because the others cannot reach a node before it
+    /// connects: reading `NetworkPolicy.bootstrap_relays` needs a synced log,
+    /// syncing needs a connection, and connecting is what a relay is for. A node
+    /// that consulted only replayed state could never use it after a restart.
+    pub fn set_relays(&self, relays: &[String]) -> Result<(), StoreError> {
+        fs::write(self.root.join("relays"), relays.join("\n"))?;
+        Ok(())
+    }
+
+    /// The relays this node last knew the network to designate.
+    pub fn relays(&self) -> Vec<String> {
+        fs::read_to_string(self.root.join("relays"))
+            .map(|text| {
+                text.lines()
+                    .map(str::trim)
+                    .filter(|line| !line.is_empty())
+                    .map(str::to_owned)
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
     /// Records who is in the waiting room, as the daemon last saw it.
     ///
     /// The waiting room is live state in the running node (Core §2.4), so a
