@@ -1,6 +1,6 @@
 # ko-ls — Implementation Status
 
-**Updated:** 2026-08-20 (the Windows gate's real cost is Defender scanning a 76 MB binary a hundred times)
+**Updated:** 2026-08-20 (CI found a real bug: the key request is sent once and nothing retries it)
 **Phase:** P1 — two nodes talk live and durably, a joiner reads back through sealed
 history, and the boundary carries commands in and events out
 **Design:** [`design/`](design/) — `00`–`08` at v1.0, `09` at v0.2. **`distributed-intranet/specs/07` is normative** where it and the design set overlap.
@@ -193,6 +193,7 @@ somebody forgot.
 | O6 | **The window has no presence.** It mints invites, shows the waiting room and admits from it now; what it cannot answer is `design/09` §4's third question — who is here, and are they around | Presence needs the ephemeral gossip of `design/01` §9, which nothing implements on either front end. Deliberately last: an interface that says "offline" when it means "I have not heard from them" is stating something it cannot know (§4.1), so the mechanism has to exist before the dot does | `design/09` §4.1, §7 |
 | O7 | **No credentials and no backup.** Seeds are written to `<home>/seed` in the clear and never surfaced, so a member's only copy is a file, and anything with read access to the disk is that member | **Deliberately deferred, and it must land well before any 1.0.** The shape is decided (`design/02` §6.3): a local account whose password *wraps* a keyring of per-network seeds and never derives them, plus an export bundle of phrase, network id and relay address per network. Not needed to test between two machines you own; needed before anybody else's identity depends on it | `design/02` §6.3, `design/05` §5 |
 | O8 | ~~**On Windows a seed is written with default ACLs.**~~ **Closed 2026-08-20.** `kols-cli::secret` restricts a secret to this user on both platforms — a `chmod` on Unix, a *protected* DACL on Windows — and refuses rather than writing one it cannot protect | Confirmed by running it: a seed written by `kols.exe` on NTFS shows this account and nothing else in its Security tab, with no inherited `SYSTEM` or `Administrators` entry, which is what the protected flag is for. The refusal path was confirmed the same day, from a `\\wsl$\` path that has no permissions to set | `kols-cli::secret`, `design/02` §6.3 |
+| O10 | **Asking to be keyed in is a one-shot request that nothing retries, and it cannot safely be retried.** The joiner sends it on the `Synced` event that first learns it was admitted — an event that need never recur. A founder has ordinary reasons not to answer at that instant, since answering appends a rotation and takes the store's append lock that every one-shot command also takes, and a lost race tells the asker nothing | **Found by CI on a loaded Windows runner**, as four tests stopping dead at `asked X to key us in`. Retrying is the obvious fix and is unsafe today: `answer_epoch_key` calls `add_member` unconditionally, so a second request re-adds an existing member and appends a second rotation, which forks the log against the entry that admitted them — tried, and it voided a member's grant. The fix belongs upstream: answering must re-deliver to an existing member rather than add them again. Until then the node says it is stalled rather than hiding it | `kols-cli::serve`, `intranet-transport::answer_epoch_key` |
 | O9 | **A suspended node can lose its claim and not know.** `NODE_CLAIM_STALE` is wall-clock, so a laptop asleep past the window can have its claim taken over while it still believes it holds one | Making it impossible needs the holder to re-check ownership as it beats. Rare rather than impossible today, because taking over requires somebody to start a second node inside that window | `kols-cli::store::NODE_CLAIM_STALE` |
 
 **Closed since this register was written:** the executor, the two checks `authorize`
@@ -235,6 +236,35 @@ design changes before anything else is built.
 ## 9. Log
 
 Newest first. One line per change that moved the state above.
+
+- **2026-08-20** — **The Windows gate found a real bug, and it is not about Windows.** Four of
+  six failures stop at the same line — `asked X to key us in`, then nothing for 135 seconds. On
+  loopback that is not slow, it is stuck, and it is the one thing in the node loop that cannot
+  recover on its own.
+
+  **The request is sent once**, on the `Synced` event that first learns this node has been
+  admitted, and that event need never recur. Everything else in the tick is re-asked every two
+  seconds with a comment over it explaining why — a pull-based stack has no other way to learn
+  that a peer changed its mind — and the key request is the one exception. A founder has
+  ordinary reasons not to answer at that instant: answering appends a rotation, so it takes the
+  store's append lock that every one-shot command also takes, and losing that race reports a
+  degradation to *its* terminal and tells the asker nothing.
+
+  **Retrying is the obvious fix and it is unsafe, which is worth knowing before somebody tries
+  it again.** `answer_epoch_key` calls `add_member` unconditionally — there is no idempotence
+  check — so a second request adds an existing member a second time and appends a second
+  rotation, forking the log against the entry that admitted them. Implemented, and it voided a
+  member's grant: a keyed member could no longer post, in a test that had passed for days. The
+  retry is reverted and the finding kept.
+
+  So the node **says it is stalled** rather than hiding it, after sixty seconds, naming why
+  nothing will retry and what to do. The real fix is upstream, where the group is: answering a
+  request from a member already in the group must re-deliver rather than re-add. Recorded as
+  **O10**.
+
+  This is why the Windows gate earns its cost even though the bug is not Windows-specific. A
+  loaded runner loses a race a quiet development machine wins every time, and the two-machine
+  test over a relay — the actual next milestone — is a far worse place to meet it than CI.
 
 - **2026-08-20** — **Tripling the timeouts doubled the failures, which ruled out the diagnosis
   it was meant to fix.** Six tests failed where three had, and the suite took 335s where it took

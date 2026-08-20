@@ -36,6 +36,7 @@ use kols_net::{fetch_segment, known_pointer, plan_fetch, publish_segment};
 use libp2p::multiaddr::Protocol;
 use libp2p::{Multiaddr, PeerId};
 use std::collections::BTreeSet;
+use std::time::Instant;
 
 /// How much this node offers other members.
 ///
@@ -128,6 +129,12 @@ pub fn run(
     ))
 }
 
+/// How long an unkeyed node waits before saying so.
+///
+/// Well past a normal answer on any link, because this reports a stall rather
+/// than a delay and crying early would train somebody to ignore it.
+const UNKEYED_WARNING: std::time::Duration = std::time::Duration::from_secs(60);
+
 /// The node loop.
 ///
 /// Runs until the future is dropped, which is how a caller stops it: there is no
@@ -187,6 +194,9 @@ pub async fn serve(
     // a second group would produce a different epoch key and orphan every DEK
     // wrapped under the first.
     let mut keyed = store.epoch_key().is_ok();
+    // When this node started waiting for a key, so a stall can say so.
+    let mut unkeyed_since: Option<Instant> = None;
+    let mut said_unkeyed = false;
 
     // A group saved by a previous run comes back first. Core §3.3.1: holding the
     // epoch key is not the same as holding the group — a node with only the key
@@ -387,6 +397,40 @@ pub async fn serve(
                 // it without running a destructor.
                 _claim.beat();
 
+                // A stall here is silent otherwise, and it is the one place in
+                // this loop that cannot recover on its own.
+                //
+                // **The request is sent once**, on the `Synced` event that first
+                // learned this node had been admitted, and that event need never
+                // recur. A founder has ordinary reasons not to answer at that
+                // instant — answering appends a rotation and so takes the store's
+                // append lock, which every one-shot command also takes — and a
+                // lost race reports a degradation to *its* terminal and tells the
+                // asker nothing.
+                //
+                // Retrying is the obvious fix and is **not safe today**:
+                // `answer_epoch_key` calls `add_member` unconditionally, so a
+                // second request adds an existing member again and appends a
+                // second rotation, which forks the log against the entry that
+                // admitted them. Tried, and it voided a member's grant — see
+                // `STATUS` §6. So this says what happened instead of papering
+                // over it, and the fix belongs upstream where the group is.
+                if !keyed
+                    && !said_unkeyed
+                    && unkeyed_since.is_some_and(|at: Instant| at.elapsed() >= UNKEYED_WARNING)
+                {
+                    said_unkeyed = true;
+                    sink(&[Event::Degraded {
+                        reason: format!(
+                            "still waiting for a key {}s after asking. Nothing will retry: the \
+                             request is sent once, and the answer is not idempotent so this node \
+                             must not ask again. Restart this node to ask afresh, and check the \
+                             other side's log for a refusal",
+                            UNKEYED_WARNING.as_secs()
+                        ),
+                    }]);
+                }
+
                 for peer in connected.iter().copied() {
                     node.sync_with(peer);
                     node.sync_ledger_with(peer);
@@ -468,7 +512,10 @@ pub async fn serve(
                         // one is the first thing worth doing after admission.
                         if !keyed && let Some(from) = peer_identity(peer, &store)? {
                             match node.request_epoch_key(from, &identity) {
-                                Ok(_) => println!("asked {} to key us in", from.short()),
+                                Ok(_) => {
+                                    println!("asked {} to key us in", from.short());
+                                    unkeyed_since.get_or_insert_with(Instant::now);
+                                }
                                 Err(err) => sink(&[Event::Degraded {
                                     reason: format!("could not ask for a key: {err}"),
                                 }]),
