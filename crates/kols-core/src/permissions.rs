@@ -116,6 +116,16 @@ pub trait Authority {
         placement: &Placement,
         head: &Hash,
     ) -> bool;
+
+    /// Whether this identity may moderate here **now**.
+    ///
+    /// Separate from [`Authority::may_moderate_at`] because the two answer
+    /// different questions. A redaction cites the governance head its author
+    /// observed, so it is judged as of that moment and keeps standing when its
+    /// author is later demoted (`design/01` §6). A pin cites nothing — it is a
+    /// claim about the present, and a demoted moderator's pins should stop
+    /// holding when their authority does.
+    fn may_moderate_now(&self, identity: &PerNetworkIdentityId, placement: &Placement) -> bool;
 }
 
 /// [`Authority`] over one replayed state.
@@ -152,6 +162,10 @@ impl Authority for StateAuthority<'_> {
         placement: &Placement,
         _head: &Hash,
     ) -> bool {
+        self.may_moderate_now(identity, placement)
+    }
+
+    fn may_moderate_now(&self, identity: &PerNetworkIdentityId, placement: &Placement) -> bool {
         self.state
             .identity_holds(identity, &Capability::ModerateContent)
             || holds(self.state, identity, "moderate", placement)

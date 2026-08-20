@@ -1,6 +1,6 @@
 # Client Architecture
 
-**Document status:** v1.1 — `kols-core`, `kols-net` and §3's boundary exist, the boundary's command half only; the store, media and UI do not
+**Document status:** v1.1 — `kols-core`, `kols-net`, §3's boundary and an executor behind it exist, the boundary's command half only; the store, media and UI do not
 **Depends on:** all preceding documents; App Hosting Spec §1–§3 for the sandbox path
 **Consumed by:** implementation; `09` for the interface built on §3's boundary
 
@@ -119,15 +119,26 @@ three and retrofitting any of them is expensive:
    what it just received. This falls straight out of `01` §7's rule that live delivery is
    an optimization.
 
-**What exists, and what the surface above is still describing.** The command half is built
-and the CLI crosses it; the event half is not, and that is deliberate rather than pending —
+**A command produces an `Outcome`, and the thing that produces it prints nothing.** An
+executor that rendered would be one no interface could reuse, which is the whole reason this
+boundary exists; `kols` renders the same values a webview would render differently. There is
+one submit path — authorize, then run — and the `Authorized` never escapes it, because the
+run step is what requires one and nothing else can produce one. So the check is not something
+a future caller can be *asked* to remember.
+
+**What the executor can answer that the gate cannot.** The gate reaches no store, on purpose,
+which leaves two questions to the layer that does: whether an edit targets a message this
+member wrote (a fact about the record set, not about replayed state), and the rate ceiling
+(computed over the author's own HLC readings — §10.2 of `01`). Both are refused before
+anything is signed. Neither is *enforcement*: nobody can write into another author's log, and
+readers refuse an over-rate record whatever the writer believed. This is the author's client
+telling them first, which is the division `01` §10.2 draws.
+
+**What is still designed rather than built.** The event half is absent and deliberately so —
 the engine that would emit events is §4's, whose records do not cross this boundary yet, and
-an event vocabulary written before anything emits one is a contract with no implementation
-to keep it honest. The commands for direct messages, search, voice and stage are likewise
-absent until there is something behind them. `STATUS.md` §6 tracks both, along with the two
-questions the gate deliberately does not answer — whether an edit targets a message you
-wrote, and the message rate ceiling — because both are facts about the record set rather
-than about replayed state, and answering them would mean handing the boundary the store.
+an event vocabulary written before anything emits one is a contract with no implementation to
+keep it honest. The commands for direct messages, search, voice and stage are likewise absent
+until there is something behind them. `STATUS.md` §6 tracks both.
 
 ---
 
@@ -266,6 +277,7 @@ boundary, which is worth having regardless.
 | Wire | Two live nodes: publish, pointer sync, fetch, reassemble, render identically | **Done** — plus the delta measurement between fetch rounds |
 | Permissions | Table-driven cases over replayed governance states, including the tricky ones — frozen pointers after a narrowed grant, waiting-room members, voided revocations | Partial — non-member, forged signature and wrong-channel covered at the reader; both post gates, channel/category/network scope and governance tier covered at the boundary; frozen pointers and waiting-room members not |
 | API boundary (§3) | Every command against a replayed log, not a hand-built state: a grant reaches the scope it names and no further, an ordinary verb does not buy a governance-tier one, and the consent class agrees with the vocabulary's tier table | **Done** for the command half — 18 cases, plus a `compile_fail` doctest for the unforgeable token. Nothing for events, which do not exist |
+| Executor | Every record kind end to end through the real binary: the record is written, the merge renders it, and the refusals the gate cannot make — somebody else's message, the rate ceiling — happen before anything is signed | **Done** — 10 cases over a keyed node |
 | Keying | A removed member must fail to decrypt content wrapped after the rotation, and must still decrypt what they held. Assert the honest guarantee, not a stronger one | Not started (P2) |
 | Multi-node | Extend the existing Docker NAT harness with chat scenarios: partition two members over a real network, heal, assert identical history | Not started — the in-process partition test is not this |
 | Media | Loss and jitter injection against both `MediaTransport` impls; the fallback is expected to degrade badly and the test should record how badly, not skip it | Not started (P3) |

@@ -142,6 +142,20 @@ impl ChannelView {
                     return Err(Rejection::NotAModerator);
                 }
             }
+            // A pin is an assertion about somebody else's message, so it needs
+            // the same authority redaction does — `design/02` §2.2 puts pinning
+            // under `chat:moderate`. Admitting one under `chat:post` was the
+            // reader half disagreeing with the writer half, which makes the
+            // writer's check decorative: a modified client holding only posting
+            // rights could pin, and every conformant reader would honour it.
+            //
+            // Judged against current state rather than a cited head, because a
+            // pin cites none — see `Authority::may_moderate_now`.
+            RecordBody::Pin { .. } => {
+                if !authority.may_moderate_now(&record.author, &self.placement) {
+                    return Err(Rejection::NotAModerator);
+                }
+            }
             _ => {
                 if !authority.may_post(&record.author, &self.placement) {
                     return Err(Rejection::NotPermitted);

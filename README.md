@@ -30,8 +30,8 @@ The design set (`design/00`–`09`) owns client design, rationale and sequencing
 crates/kols-core   records, canonical encoding, merge ordering, permissions, chat policy,
                    channel structure as chat-namespace governance payloads
 crates/kols-net    publishing a channel over the transport, and reading one back
-crates/kols-api    the command surface, and the gate every command crosses
-crates/kols-cli    `kols` — the terminal client and its node daemon
+crates/kols-api    the command surface, the gate every command crosses, and its results
+crates/kols-cli    the executor, the node daemon, and `kols` — the terminal client
 design/            00-08 at v1.0, 09 the interface
 .devcontainer/     the environment for this repo and the protocol beside it
 scripts/           cross-check.sh — runs the encoding on a big-endian target
@@ -55,7 +55,7 @@ still landing. The dev container in `.devcontainer/` has the whole toolchain if 
 rather not assemble one.
 
 ```bash
-cargo test                                   # 117 tests; the two-node ones spawn real nodes on loopback
+cargo test                                   # 129 tests; the two-node ones spawn real nodes on loopback
 cargo clippy --workspace --all-targets       # must stay clean
 ./scripts/cross-check.sh                     # big-endian verification, see below
 ```
@@ -80,6 +80,8 @@ KOLS_HOME=/tmp/alice kols init "the workshop"     # prints the network id
 KOLS_HOME=/tmp/alice kols serve &                 # keys the network, prints an address
 KOLS_HOME=/tmp/alice kols channel create general
 KOLS_HOME=/tmp/alice kols post general "hello"
+KOLS_HOME=/tmp/alice kols read general            # prints message ids
+KOLS_HOME=/tmp/alice kols react general <id> +1
 ```
 
 `serve` must run before posting: it holds the network's MLS group, which is live state no
@@ -134,10 +136,14 @@ permission resolved by replaying the log, never by trusting that the interface o
 buttons you were allowed to press, and a consent class on each command derived from the tier
 its capability carries rather than from how consequential it looks.
 
+Behind that boundary is one executor. It authorizes, then runs — and because the value it
+requires can only come from the gate, there is no path to it that skipped the check. Every
+record kind the design describes goes through it: messages, edits, withdrawals, reactions and
+pins, plus channel rename, topic, slowmode and archive.
+
 What does not exist yet: no user interface, no private-channel keying, no voice, and no
-search. The boundary has a command half and no event half, and a gate with no dispatcher
-behind it yet. [`STATUS.md`](STATUS.md) is the honest inventory, and its §6 is the list of
-what this client owes and why.
+search. The boundary has a command half and no event half. [`STATUS.md`](STATUS.md) is the
+honest inventory, and its §6 is the list of what this client owes and why.
 
 ## The one number worth knowing
 

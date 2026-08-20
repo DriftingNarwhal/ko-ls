@@ -6,6 +6,10 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 
+[lib]
+name = "kols_cli"
+path = "src/lib.rs"
+
 [[bin]]
 name = "kols"
 path = "src/main.rs"

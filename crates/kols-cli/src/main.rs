@@ -14,27 +14,34 @@
 //! encoding and the same storage layer a desktop client would use, with nothing
 //! stubbed on the path a message actually takes.
 //!
-//! # What it deliberately is not
+//! # What it is now
 //!
-//! Not the product. `design/05` describes a Tauri client with a capability-shaped
-//! API boundary, and this is not a step toward it — it is a way to exercise the
-//! layers underneath it from a terminal. Where it takes a shortcut, the shortcut
-//! is named where it is taken rather than hidden behind a plausible surface. The
-//! one that matters now is that nothing here ever retires a superseded epoch key
-//! ([`store::Store::channel_dek`]) — a retention decision rather than an
-//! oversight, because dropping a key makes anything still wrapped under it
+//! Argument parsing and rendering, over `kols_cli::executor`. Every command a
+//! user types becomes a `kols_api::Command`, crosses the same gate a webview's
+//! would, and comes back as an `Outcome` this file prints. That division is the
+//! point: the desktop client is expected to be a different front end over the
+//! same submit path rather than a second copy of it.
+//!
+//! Three things stay outside the command vocabulary, deliberately. `init` and
+//! `attach` create the state a command needs before any exists, and `whoami`
+//! reads local state and asks the network nothing.
+//!
+//! # Where it takes a shortcut, it says so
+//!
+//! Nothing here ever retires a superseded epoch key
+//! ([`kols_cli::store::Store::channel_dek`]) — a retention decision rather than
+//! an oversight, because dropping a key makes anything still wrapped under it
 //! unreadable forever.
 
 #![deny(missing_docs)]
 
-mod chat;
-mod network;
-mod serve;
-mod store;
-
 use clap::{Parser, Subcommand};
 use intranet_crypto::to_hex;
-use store::Store;
+use kols_api::{Command as ApiCommand, Outcome};
+use kols_cli::executor::{ExecuteError, Executor};
+use kols_cli::store::Store;
+use kols_cli::{network, random_32, serve};
+use kols_core::{ChannelChange, Hlc, Privacy};
 
 /// A terminal client for ko-ls.
 #[derive(Parser)]
@@ -66,6 +73,44 @@ enum Command {
         /// What to say.
         message: Vec<String>,
     },
+    /// Revise one of your own messages.
+    Edit {
+        /// The channel, by name or by the start of its id.
+        channel: String,
+        /// The message, by the start of its id — `kols read` prints them.
+        message: String,
+        /// What it should say instead.
+        body: Vec<String>,
+    },
+    /// Withdraw one of your own messages.
+    Delete {
+        /// The channel, by name or by the start of its id.
+        channel: String,
+        /// The message, by the start of its id.
+        message: String,
+    },
+    /// React to a message, or take a reaction back.
+    React {
+        /// The channel, by name or by the start of its id.
+        channel: String,
+        /// The message, by the start of its id.
+        message: String,
+        /// The reaction itself.
+        key: String,
+        /// Remove this reaction rather than add it.
+        #[arg(long)]
+        remove: bool,
+    },
+    /// Pin a message, or unpin it. Needs chat:moderate.
+    Pin {
+        /// The channel, by name or by the start of its id.
+        channel: String,
+        /// The message, by the start of its id.
+        message: String,
+        /// Unpin rather than pin.
+        #[arg(long)]
+        remove: bool,
+    },
     /// Render a channel.
     Read {
         /// The channel, by name or by the start of its id.
@@ -92,10 +137,6 @@ enum Command {
         #[arg(long)]
         no_live: bool,
         /// How recent a record must be for the live path to still carry it.
-        ///
-        /// A failed publish is retried, which is right for a record written just
-        /// before a peer arrived and wrong for one written last week. Without
-        /// this the retry set is everything the node ever wrote.
         #[arg(long, default_value_t = serve::LIVE_WINDOW_MILLIS)]
         live_window_millis: i64,
     },
@@ -134,6 +175,32 @@ enum ChannelCommand {
     },
     /// List the channels replay currently knows about.
     List,
+    /// Rename a channel. Needs chat:manage-channel.
+    Rename {
+        /// The channel, by name or by the start of its id.
+        channel: String,
+        /// Its new name.
+        name: String,
+    },
+    /// Set a channel's topic. Needs chat:manage-channel.
+    Topic {
+        /// The channel, by name or by the start of its id.
+        channel: String,
+        /// The new topic.
+        topic: Vec<String>,
+    },
+    /// Set a channel's slowmode, in seconds. Zero is off.
+    Slowmode {
+        /// The channel, by name or by the start of its id.
+        channel: String,
+        /// Seconds between one author's messages.
+        seconds: u32,
+    },
+    /// Archive a channel: readable, not writable.
+    Archive {
+        /// The channel, by name or by the start of its id.
+        channel: String,
+    },
 }
 
 fn main() -> std::process::ExitCode {
@@ -143,14 +210,7 @@ fn main() -> std::process::ExitCode {
     let result = match cli.command {
         Command::Init { name } => init(root, &name),
         Command::Whoami => whoami(root),
-        Command::Channel(ChannelCommand::Create {
-            name,
-            private,
-            topic,
-        }) => chat::create_channel(root, &name, private, &topic),
-        Command::Channel(ChannelCommand::List) => chat::list_channels(root),
-        Command::Post { channel, message } => chat::post(root, &channel, &message.join(" ")),
-        Command::Read { channel } => chat::read(root, &channel),
+        Command::Attach { network, name } => attach(root, &network, &name),
         Command::Serve {
             listen,
             peers,
@@ -165,9 +225,8 @@ fn main() -> std::process::ExitCode {
             !no_live,
             live_window_millis,
         ),
-        Command::Admit { identity } => admit(root, &identity),
-        Command::Revoke { identity } => revoke(root, &identity),
-        Command::Attach { network, name } => attach(root, &network, &name),
+        Command::Channel(ChannelCommand::List) => list_channels(root),
+        other => submit(root, other),
     };
 
     match result {
@@ -177,6 +236,284 @@ fn main() -> std::process::ExitCode {
             std::process::ExitCode::FAILURE
         }
     }
+}
+
+/// Turns a typed subcommand into an API command, submits it, and renders it.
+///
+/// Everything that changes anything goes through here, which is what makes the
+/// terminal an ordinary consumer of the boundary rather than a privileged one.
+fn submit(root: std::path::PathBuf, command: Command) -> Result<(), String> {
+    let executor = Executor::open(root).map_err(|e| e.to_string())?;
+
+    let api = match command {
+        Command::Post { channel, message } => {
+            let channel = executor.resolve_channel(&channel).map_err(say)?;
+            ApiCommand::SendMessage {
+                channel,
+                body: message.join(" "),
+                reply_to: None,
+                attachments: Vec::new(),
+            }
+        }
+        Command::Edit {
+            channel,
+            message,
+            body,
+        } => {
+            let channel = executor.resolve_channel(&channel).map_err(say)?;
+            let target = executor.resolve_message(&channel, &message).map_err(say)?;
+            ApiCommand::EditMessage {
+                channel,
+                target,
+                body: body.join(" "),
+            }
+        }
+        Command::Delete { channel, message } => {
+            let channel = executor.resolve_channel(&channel).map_err(say)?;
+            let target = executor.resolve_message(&channel, &message).map_err(say)?;
+            ApiCommand::DeleteMessage { channel, target }
+        }
+        Command::React {
+            channel,
+            message,
+            key,
+            remove,
+        } => {
+            let channel = executor.resolve_channel(&channel).map_err(say)?;
+            let target = executor.resolve_message(&channel, &message).map_err(say)?;
+            ApiCommand::React {
+                channel,
+                target,
+                key,
+                remove,
+            }
+        }
+        Command::Pin {
+            channel,
+            message,
+            remove,
+        } => {
+            let channel = executor.resolve_channel(&channel).map_err(say)?;
+            let target = executor.resolve_message(&channel, &message).map_err(say)?;
+            ApiCommand::Pin {
+                channel,
+                target,
+                remove,
+            }
+        }
+        Command::Read { channel } => {
+            let channel = executor.resolve_channel(&channel).map_err(say)?;
+            ApiCommand::OpenChannel {
+                channel,
+                before: None,
+                // A terminal has no scroll position to page from, the same
+                // reason `kols serve` walks to the start of history. A UI bounds
+                // this by pages (`design/01` §5).
+                limit: usize::MAX,
+            }
+        }
+        Command::Admit { identity } => ApiCommand::AdmitMember {
+            identity: parse_identity(&identity)?,
+        },
+        Command::Revoke { identity } => ApiCommand::RevokeMember {
+            identity: parse_identity(&identity)?,
+        },
+        Command::Channel(ChannelCommand::Create {
+            name,
+            private,
+            topic,
+        }) => ApiCommand::CreateChannel {
+            name,
+            category: None,
+            privacy: if private {
+                Privacy::Private
+            } else {
+                Privacy::Public
+            },
+            topic,
+        },
+        Command::Channel(channel_command) => {
+            let (needle, change) = match channel_command {
+                ChannelCommand::Rename { channel, name } => (channel, ChannelChange::Rename(name)),
+                ChannelCommand::Topic { channel, topic } => {
+                    (channel, ChannelChange::SetTopic(topic.join(" ")))
+                }
+                ChannelCommand::Slowmode { channel, seconds } => {
+                    (channel, ChannelChange::SetSlowmode(seconds))
+                }
+                ChannelCommand::Archive { channel } => (channel, ChannelChange::Archive),
+                ChannelCommand::Create { .. } | ChannelCommand::List => {
+                    unreachable!("handled above")
+                }
+            };
+            let channel = executor.resolve_channel(&needle).map_err(say)?;
+            ApiCommand::UpdateChannel { channel, change }
+        }
+        Command::Init { .. }
+        | Command::Whoami
+        | Command::Attach { .. }
+        | Command::Serve { .. } => unreachable!("handled outside the boundary"),
+    };
+
+    let outcome = executor.submit(api).map_err(say)?;
+    render(&outcome);
+    Ok(())
+}
+
+fn say(err: ExecuteError) -> String {
+    err.to_string()
+}
+
+/// Prints what a command produced.
+fn render(outcome: &Outcome) {
+    match outcome {
+        Outcome::Opened {
+            messages,
+            rejected,
+            authors,
+            ..
+        } => {
+            if messages.is_empty() {
+                println!("nothing here yet");
+            }
+            for message in messages {
+                let mut flags = Vec::new();
+                if message.edited {
+                    flags.push("edited");
+                }
+                if message.withdrawn {
+                    flags.push("withdrawn");
+                }
+                if message.redacted {
+                    flags.push("redacted");
+                }
+                if message.pinned {
+                    flags.push("pinned");
+                }
+                let suffix = if flags.is_empty() {
+                    String::new()
+                } else {
+                    format!("  [{}]", flags.join(", "))
+                };
+                // The id is printed because every other command that acts on a
+                // message needs one, and a user who cannot see it cannot act.
+                println!(
+                    "{}  [{}] {}  {}{}",
+                    &to_hex(message.id.as_bytes())[..8],
+                    stamp(message.hlc),
+                    message.author.short(),
+                    message.body,
+                    suffix
+                );
+                for (key, who) in &message.reactions {
+                    println!("          {key} ×{}", who.len());
+                }
+            }
+
+            for (id, rejection) in rejected {
+                eprintln!("refused {}: {rejection:?}", &to_hex(id.as_bytes())[..8]);
+            }
+            println!();
+            println!(
+                "{} message(s) from {authors} author(s). `kols serve` brings in what other \
+                 members wrote.",
+                messages.len()
+            );
+        }
+        Outcome::Wrote {
+            record,
+            moved,
+            total,
+        } => {
+            println!("wrote {}", &to_hex(record.as_bytes())[..8]);
+            println!("  moved {moved} of {total} bytes");
+        }
+        Outcome::ChannelCreated {
+            channel,
+            name,
+            privacy,
+        } => {
+            println!("created #{name}");
+            println!("  id       {}", to_hex(channel.as_bytes()));
+            println!(
+                "  privacy  {}",
+                if *privacy == Privacy::Private {
+                    "private (roster keying is not implemented yet — see design/03 §3)"
+                } else {
+                    "public"
+                }
+            );
+        }
+        Outcome::ChannelUpdated { channel } => {
+            println!("updated {}", &to_hex(channel.as_bytes())[..12]);
+        }
+        Outcome::MembershipChanged { identity, admitted } => {
+            if *admitted {
+                println!("admitted {}", identity.short());
+                println!("They can read and post once they have synced this log.");
+            } else {
+                println!("removed {}", identity.short());
+                println!("They are refused service by honest nodes from now on.");
+                println!();
+                println!(
+                    "`kols serve` rotates the epoch to exclude them — until it runs, they can"
+                );
+                println!("still decrypt newly published content with the key they already hold.");
+            }
+        }
+    }
+}
+
+fn stamp(hlc: Hlc) -> String {
+    let secs = hlc.wall_millis / 1000;
+    let (h, m, s) = ((secs / 3600) % 24, (secs / 60) % 60, secs % 60);
+    format!("{h:02}:{m:02}:{s:02}")
+}
+
+/// Lists channels as replay understands them.
+///
+/// Outside the command vocabulary because there is no event surface yet for
+/// channel state to arrive on (`STATUS` §6). It reads replayed state and
+/// signs nothing, so it is a local question like `whoami`.
+fn list_channels(root: std::path::PathBuf) -> Result<(), String> {
+    let store = Store::open(root).map_err(|e| e.to_string())?;
+    let state = store.state().map_err(|e| e.to_string())?;
+    let (channels, refused) = network::channels(&store, &state).map_err(|e| e.to_string())?;
+
+    if channels.is_empty() {
+        println!("no channels yet. `kols channel create <name>`");
+    }
+    for channel in channels.values() {
+        let mut flags = Vec::new();
+        if channel.privacy == Privacy::Private {
+            flags.push("private");
+        }
+        if channel.archived {
+            flags.push("archived");
+        }
+        let suffix = if flags.is_empty() {
+            String::new()
+        } else {
+            format!("  [{}]", flags.join(", "))
+        };
+        println!(
+            "#{:<20} {}{}",
+            channel.name,
+            &to_hex(channel.id.as_bytes())[..12],
+            suffix
+        );
+        if !channel.topic.is_empty() {
+            println!("  {}", channel.topic);
+        }
+    }
+
+    // Surfaced rather than swallowed: a channel entry this build refuses is one
+    // some other client may be showing, and silence would make the two look
+    // like they agree.
+    for refusal in refused {
+        eprintln!("skipped an entry: {refusal}");
+    }
+    Ok(())
 }
 
 fn init(root: std::path::PathBuf, name: &str) -> Result<(), String> {
@@ -249,6 +586,7 @@ fn whoami(root: std::path::PathBuf) -> Result<(), String> {
         ("read", "chat:read:*"),
         ("create channels", "chat:create-channel:*"),
         ("manage channels", "chat:manage-channel:*"),
+        ("moderate", "chat:moderate:*"),
     ];
     println!("may:");
     for (label, capability) in verbs {
@@ -258,120 +596,6 @@ fn whoami(root: std::path::PathBuf) -> Result<(), String> {
         );
         println!("  {:<16} {}", label, if holds { "yes" } else { "no" });
     }
-    Ok(())
-}
-
-/// Admits an identity to this network.
-///
-/// The explicit-intake half of `design/02` §6.2: a joiner reaching this network
-/// holds connectivity and an identity, and nothing else, until somebody with the
-/// authority puts them in a group. Adding them to `everyone` is what grants the
-/// capabilities genesis handed that group.
-fn admit(root: std::path::PathBuf, identity_hex: &str) -> Result<(), String> {
-    let store = Store::open(root).map_err(|e| e.to_string())?;
-    let admitter = store.identity().map_err(|e| e.to_string())?;
-    let joiner = parse_identity(identity_hex)?;
-
-    // Held across reading the head and writing the entry, so this cannot land
-    // as a sibling of something the daemon appended in between.
-    let _lock = store.lock().map_err(|e| e.to_string())?;
-    let head = store
-        .head()
-        .map_err(|e| e.to_string())?
-        .ok_or("this network has no genesis to build on")?;
-    let entry = intranet_governance::LogEntry::create(
-        &admitter,
-        Some(head),
-        intranet_crypto::Timestamp::from_millis(chat::now_millis()),
-        intranet_governance::EntryBody::MembershipChange {
-            group: intranet_governance::GroupId::everyone(),
-            identity: joiner,
-            action: intranet_governance::MembershipAction::Add { via_invite: None },
-        },
-    );
-    store.append_entry(&entry).map_err(|e| e.to_string())?;
-
-    // Replay rather than trust: admission is gated on `approve-node`, and an
-    // entry the log accepts structurally is still refused by replay if the
-    // admitter did not hold it. Reporting success without checking would tell
-    // somebody they had let a person in when they had not.
-    let state = store.state().map_err(|err| {
-        format!("{err}\n\nAdmission needs approve-node, which the founder holds by default.")
-    })?;
-    if !state.is_member(&joiner) {
-        return Err("the entry was written but replay did not admit them".to_owned());
-    }
-
-    println!("admitted {}", joiner.short());
-    println!("They can read and post once they have synced this log.");
-    Ok(())
-}
-
-/// Removes an identity from this network.
-///
-/// Writes only the membership removal. The **epoch rotation that excludes them
-/// is `kols serve`'s job**, and the split is not an implementation convenience:
-/// rotating needs the live MLS group, which only the daemon holds, and Core §3.3
-/// requires the removal to be in the log *before* the rotation — a rotation
-/// minted while somebody is still a current member produces a key they remain
-/// entitled to, and a key cannot be un-known afterwards (§3.1).
-///
-/// So this is half of a revocation and says so. Until a node with the group runs,
-/// the removed member is refused service by honest nodes and can still decrypt
-/// anything newly published, which is the honest state rather than a hidden one.
-fn revoke(root: std::path::PathBuf, identity_hex: &str) -> Result<(), String> {
-    let store = Store::open(root).map_err(|e| e.to_string())?;
-    let remover = store.identity().map_err(|e| e.to_string())?;
-    let target = parse_identity(identity_hex)?;
-
-    if target == remover.id() {
-        return Err("that is you. Removing yourself would leave the network unmanaged \
-                    by the only node that can rotate its key"
-            .to_owned());
-    }
-
-    let before = store.state().map_err(|e| e.to_string())?;
-    if !before.is_member(&target) {
-        return Err(format!("{} is not a member of this network", target.short()));
-    }
-
-    let _lock = store.lock().map_err(|e| e.to_string())?;
-    let head = store
-        .head()
-        .map_err(|e| e.to_string())?
-        .ok_or("this network has no genesis to build on")?;
-    let entry = intranet_governance::LogEntry::create(
-        &remover,
-        Some(head),
-        intranet_crypto::Timestamp::from_millis(chat::now_millis()),
-        intranet_governance::EntryBody::MembershipChange {
-            group: intranet_governance::GroupId::everyone(),
-            identity: target,
-            // Non-cascading, which is the protocol's default and the right one:
-            // anyone this member admitted was validly admitted at the time, and
-            // cascading is a deliberate visible choice rather than something a
-            // command does on your behalf (Core §2.5).
-            action: intranet_governance::MembershipAction::Remove { cascade: None },
-        },
-    );
-    store.append_entry(&entry).map_err(|e| e.to_string())?;
-
-    // Replay rather than trust. Removal is gated on `revoke-node`, and an entry
-    // the log accepts structurally is refused by replay if the remover did not
-    // hold it — reporting success there would tell somebody they had removed a
-    // member who is still present.
-    let after = store.state().map_err(|err| {
-        format!("{err}\n\nRemoval needs revoke-node, which the founder holds by default.")
-    })?;
-    if after.is_member(&target) {
-        return Err("the entry was written but replay did not remove them".to_owned());
-    }
-
-    println!("removed {}", target.short());
-    println!("They are refused service by honest nodes from now on.");
-    println!();
-    println!("`kols serve` rotates the epoch to exclude them — until it runs, they can");
-    println!("still decrypt newly published content with the key they already hold.");
     Ok(())
 }
 
@@ -407,12 +631,4 @@ fn parse_identity(hex: &str) -> Result<intranet_identity::PerNetworkIdentityId, 
     let key = intranet_crypto::VerifyingKey::from_bytes(bytes)
         .map_err(|_| "those bytes are not a valid identity key".to_owned())?;
     Ok(intranet_identity::PerNetworkIdentityId::from_verifying_key(key))
-}
-
-/// 32 bytes from the OS.
-fn random_32() -> Result<[u8; 32], String> {
-    let mut bytes = [0u8; 32];
-    intranet_crypto::random_bytes(&mut bytes)
-        .map_err(|err| format!("could not read entropy: {err}"))?;
-    Ok(bytes)
 }

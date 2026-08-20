@@ -347,8 +347,10 @@ fn edits_tombstones_reactions_and_redactions_are_order_independent() {
                 remove: false,
             },
         ),
+        // The moderator pins, not the author: pinning is `chat:moderate`
+        // (`design/02` §2.2), and the reader enforces that now.
         Record::create(
-            &author,
+            &moderator,
             channel(),
             Hlc::new(15, 0),
             RecordBody::Pin {
@@ -458,4 +460,69 @@ fn a_non_moderator_cannot_redact() {
 
     assert!(view.render()[0].is_visible());
     assert_eq!(view.rejected()[0].1, Rejection::NotAModerator);
+}
+
+#[test]
+fn a_non_moderator_cannot_pin() {
+    // Found wiring `kols-api`'s gate to an executor. The boundary requires
+    // `chat:moderate` to issue a pin, per `design/02` §2.2 — and this reader
+    // admitted one under `chat:post`, so a modified client holding only posting
+    // rights could pin and every conformant reader would honour it. A check the
+    // writer makes and the reader does not is a check that does not exist.
+    let (author, pretender) = (identity(2), identity(3));
+    let state = state(&[&author, &pretender], &[]);
+    let authority = StateAuthority { state: &state };
+
+    let original = Record::create(&author, channel(), Hlc::new(10, 0), message("ordinary"));
+    let target = original.id();
+
+    let mut view = ChannelView::new(placement());
+    view.admit(
+        vec![
+            original,
+            Record::create(
+                &pretender,
+                channel(),
+                Hlc::new(11, 0),
+                RecordBody::Pin {
+                    target,
+                    remove: false,
+                },
+            ),
+        ],
+        &authority,
+    );
+
+    assert!(!view.render()[0].pinned, "a pin from a non-moderator holds");
+    assert_eq!(view.rejected()[0].1, Rejection::NotAModerator);
+}
+
+#[test]
+fn a_moderator_can_pin() {
+    let (author, moderator) = (identity(2), identity(3));
+    let state = state(&[&author, &moderator], &[&moderator]);
+    let authority = StateAuthority { state: &state };
+
+    let original = Record::create(&author, channel(), Hlc::new(10, 0), message("worth keeping"));
+    let target = original.id();
+
+    let mut view = ChannelView::new(placement());
+    view.admit(
+        vec![
+            original,
+            Record::create(
+                &moderator,
+                channel(),
+                Hlc::new(11, 0),
+                RecordBody::Pin {
+                    target,
+                    remove: false,
+                },
+            ),
+        ],
+        &authority,
+    );
+
+    assert!(view.rejected().is_empty(), "{:?}", view.rejected());
+    assert!(view.render()[0].pinned);
 }

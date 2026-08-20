@@ -1,8 +1,8 @@
 # ko-ls — Implementation Status
 
-**Updated:** 2026-08-19 (`kols-api` — the boundary exists and the CLI crosses it)
+**Updated:** 2026-08-20 (the executor — one submit path, and edits, reactions and pins with it)
 **Phase:** P1 — two nodes talk live and durably, a joiner reads back through sealed
-history, and every command the client runs now crosses the API boundary
+history, and every command runs through one gate and one executor
 **Design:** [`design/`](design/) — `00`–`08` at v1.0, `09` at v0.2. **`distributed-intranet/specs/07` is normative** where it and the design set overlap.
 
 This file is the answer to "where are we?". It is updated in the same change that moves
@@ -26,15 +26,25 @@ The client builds against the sibling checkout by **path dependency**, not a pub
 version, and deliberately so while the extensions are still moving. A fresh machine needs
 both repos cloned side by side.
 
-**Next task:** **the executor, and then the event half of `kols-api`** — O1 and O2 in §6,
-which is the register of everything this client owes and why. The boundary now exists and
-refuses, but each caller still takes its `Authorized` apart and does the work inline, so
-there is a gate and no dispatcher behind it. `Event` waits on the same thing: the engine that
-would emit events is `kols serve`, whose records do not cross the boundary yet.
+**Next task:** **the event half of `kols-api`** — O1 in §6, the register of what this client
+owes and why. It waits on one thing: the engine that would emit events is `kols serve`, whose
+records do not cross the boundary yet. Making them cross it is the work, and the `Event`
+vocabulary falls out of what actually gets emitted rather than being guessed first.
 
-**§6 is new and worth reading once.** Seven debts, each with the reason it is outstanding and
-where it was incurred. None of them blocks anything else, which is exactly why they need
-writing down — an owed item nobody records is one somebody rediscovers as a surprise.
+**The executor landed, and three of §6's debts closed with it.** `Executor::submit` is the one
+way in: it authorizes, then runs, and the `Authorized` never leaves the module — `run` is what
+requires one and nothing else can produce one, so the check is not something a future caller
+can be *asked* to remember. It returns typed `Outcome`s and prints nothing, because an
+executor that printed is one no interface could reuse.
+
+Two of those debts were owed only because nothing on the command path held a store. The
+executor does, so **an edit aimed at somebody else's message and a record past the rate
+ceiling are now refused before anything is signed** — the author's own client telling them,
+rather than every reader silently discarding what they wrote.
+
+**Every record kind the design describes now runs**: edits, withdrawals, reactions and pins,
+plus channel rename, topic, slowmode and archive. That closes most of what `design/00` §5
+lists for P1's message model.
 
 **`kols-api` is the boundary `design/05` §3 describes, and two of its three properties are
 now held rather than intended.** *No ambient authority*: every command names its target, the
@@ -122,9 +132,9 @@ left green.
 
 | | |
 |---|---|
-| **Working on** | P1 — `kols-api` landed; the executor behind it (§6, O1) is next |
+| **Working on** | P1 — the executor landed; the event half of the boundary (§6, O1) is next |
 | **Blocked on** | Nothing |
-| **Runnable** | **`kols`** — init, attach, admit, revoke, serve, channel create/list, post, read. Two nodes hold a conversation. `cargo test` — 117 tests here and 644 in `../distributed-intranet`, clippy clean in both; `scripts/cross-check.sh` for big-endian |
+| **Runnable** | **`kols`** — init, attach, admit, revoke, serve, post, read, edit, delete, react, pin, and channel create/list/rename/topic/slowmode/archive. Two nodes hold a conversation. `cargo test` — 129 tests here and 644 in `../distributed-intranet`, clippy clean in both; `scripts/cross-check.sh` for big-endian |
 | **Next decision needed from the user** | Nothing blocking |
 
 ---
@@ -173,10 +183,10 @@ both green.
 |---|---|
 | `kols-core` | **Encoding, author logs, merge, collision recovery, chat policy, channel structure** — records/segments/ids, `AuthorLog` incl. `rebase`, `ChannelView`, permissions, capability vocabulary, `ChatPolicy`, `ChannelEntry`. 60 tests |
 | `kols-net` | **Publish and fetch** — stores/announces chunks, accepts pointers, reassembles segments. Two live two-node tests |
-| `kols-cli` | **`kols`, and its node daemon** — creates a network, admits and keys in joiners, serves and fetches content, renders a merged view across authors. 119 tests that drive the real binaries, eight of them over a live wire between two processes |
+| `kols-cli` | **`kols`, its node daemon, and the executor** — a library now, with the binary as argument parsing and rendering over it. Creates a network, admits and keys in joiners, serves and fetches content, writes every record kind, renders a merged view across authors. Tests that drive the real binaries, eight of them over a live wire between two processes |
 | `kols-store` | Not created |
 | `kols-media` | Not created |
-| `kols-api` | **The command surface and its gate** — `Command`, `Sensitivity`, `Refusal`, and `authorize` returning an `Authorized` nothing else can construct. `kols-cli` crosses it for create, post and read. No `Event` yet, deliberately — §1. 18 tests |
+| `kols-api` | **The command surface, its gate and its results** — `Command`, `Sensitivity`, `Refusal`, `Outcome`, and `authorize` returning an `Authorized` nothing else can construct. No `Event` yet, deliberately — §6, O1. 18 tests |
 | `kols-app` | Not created |
 | `kols-ui` | Not created |
 
@@ -195,13 +205,18 @@ somebody forgot.
 
 | # | Owed | Why it is not done | Where it is recorded |
 |---|---|---|---|
-| O1 | **An executor behind the gate.** `authorize` returns an `Authorized` and each caller then takes it apart and does the work inline, so there is a gate with no dispatcher behind it | The gate was worth landing before the thing it guards; a dispatcher that consumed an `Authorized` and was the only thing that could is the natural next piece | `design/05` §3 |
-| O2 | **The event half of `kols-api`, and property 3 with it.** No `Event` type exists, so "events are idempotent and re-deliverable" is designed and unheld | The engine that would emit events is `kols serve`, whose records do not cross the boundary yet. An event vocabulary written before anything emits one is a contract with no implementation to keep it honest | `kols-api`'s own crate docs; `design/05` §3 |
-| O3 | **Two checks `authorize` does not make**: that an edit or withdrawal targets a message the actor wrote, and the message rate ceiling | Both are facts about the record set rather than about replayed state, so both need the store the boundary deliberately cannot reach. Enforced meanwhile where the design puts them — authorship on read by `ChannelView`, the ceiling by readers | `authorize`'s own documentation |
-| O4 | **Commands for direct messages, search, voice and stage** | Each has a line in `design/05` §3 and no code behind it. P2 for the first two, P3 and P4 for the rest | `kols-api::Command`'s own documentation |
-| O5 | **`Discovery::Off` for conversation-profile networks** — the client half of E12 | `kols init` writes no `chat:network-profile` key, so every network the CLI creates is a `server` and there is no conversation network to build the leaner node for. `kols_core::policy::conversation_genesis_values` exists for one; only a test calls it | `design/06` §12 |
-| O6 | **`may_moderate_at` answers from current state, ignoring the head it is given** | Checking authority *as of* a governance head needs the log rather than one replayed snapshot. The difference shows only when a moderator is demoted after acting: this retroactively invalidates their past redactions, where `design/01` §6 says they should stand | `kols-core::permissions`, flagged in the type's own docs |
-| O7 | **`kols-store` does not exist.** `kols-cli` carries its own file-backed store instead of the SQLite projection `design/05` §5 describes | Nothing has needed a projection yet — the CLI replays the log on every invocation, which is slow and correct. The projection is worth building when something renders fast enough to notice | `design/05` §5 |
+| O1 | **The event half of `kols-api`, and property 3 with it.** No `Event` type exists, so "events are idempotent and re-deliverable" is designed and unheld | The engine that would emit events is `kols serve`, whose records do not cross the boundary yet. An event vocabulary written before anything emits one is a contract with no implementation to keep it honest | `kols-api`'s own crate docs; `design/05` §3 |
+| O2 | **Commands for direct messages, search, voice and stage** | Each has a line in `design/05` §3 and no code behind it. P2 for the first two, P3 and P4 for the rest | `kols-api::Command`'s own documentation |
+| O3 | **`Discovery::Off` for conversation-profile networks** — the client half of E12 | `kols init` writes no `chat:network-profile` key, so every network the CLI creates is a `server` and there is no conversation network to build the leaner node for. `kols_core::policy::conversation_genesis_values` exists for one; only a test calls it | `design/06` §12 |
+| O4 | **`may_moderate_at` answers from current state, ignoring the head it is given** | Checking authority *as of* a governance head needs the log rather than one replayed snapshot. The difference shows only when a moderator is demoted after acting: this retroactively invalidates their past redactions, where `design/01` §6 says they should stand. Pinning is now judged against current state deliberately (`may_moderate_now`), which is a different question rather than the same one approximated | `kols-core::permissions`, flagged in the type's own docs |
+| O5 | **`kols-store` does not exist.** `kols-cli` carries its own file-backed store instead of the SQLite projection `design/05` §5 describes | Nothing has needed a projection yet — the CLI replays the log on every invocation, which is slow and correct. The projection is worth building when something renders fast enough to notice | `design/05` §5 |
+| O6 | **The executor rebuilds an author's whole log to append one record** | `rebuild_log` replays every record this member wrote in a channel on every write, which is correct — the segment is a pure function of the sequence — and is linear in a log that only grows. It is the same work O5's projection exists to stop repeating, and wants measuring before it is optimised rather than after | `kols-cli::chat::rebuild_log` |
+
+**Closed since this register was written:** the executor itself, and with it the two checks
+`authorize` deliberately could not make. Both were owed *because* nothing on the command path
+held the store; the executor does, so an edit aimed at somebody else's message and a record
+past the rate ceiling are now refused before anything is signed rather than after every
+reader has ignored them.
 
 ---
 
@@ -235,6 +250,46 @@ design changes before anything else is built.
 ## 9. Log
 
 Newest first. One line per change that moved the state above.
+
+- **2026-08-20** — **The executor: one submit path, and a reader-side hole found by building
+  it.** `authorize` returned an `Authorized` and each caller then took it apart and did the
+  work inline — a gate with no dispatcher behind it, and a sequence a second caller would have
+  copied slightly differently. `Executor::submit` is now the one way in: authorize, then run.
+  The `Authorized` never leaves the module, because `run` is what requires one and nothing
+  else can produce one, so the check is not something a future caller can be *asked* to
+  remember. It returns typed `Outcome`s and prints nothing — an executor that printed is one
+  no interface could reuse, which is the whole reason there is a boundary.
+
+  **The finding is a pin.** `design/02` §2.2 puts pinning under `chat:moderate`, and the
+  boundary requires it — but `ChannelView` admitted a `Pin` record under `chat:post`, like any
+  ordinary record. So a modified client holding only posting rights could pin, and every
+  conformant reader would have honoured it. **A check the writer makes and the reader does not
+  is a check that does not exist**, and this one was decorative from the moment the boundary
+  started requiring it. The reader now asks for moderation authority, through a new
+  `Authority::may_moderate_now` — deliberately separate from `may_moderate_at`, because the two
+  answer different questions: a redaction cites the governance head its author observed and
+  keeps standing when that author is later demoted, while a pin cites nothing and should stop
+  holding when its author's authority does. An existing test had to change with it, which is
+  the honest signal that the behaviour did.
+
+  **Two of §6's debts closed because the executor holds a store and the boundary deliberately
+  does not.** An edit or withdrawal aimed at somebody else's message is refused before a record
+  is signed, rather than after every reader has ignored it — structurally it was never possible
+  to *succeed*, since nobody writes into another author's log, so what this adds is being told.
+  And the rate ceiling is enforced over the author's own HLC readings, which is what makes it
+  the same verdict on every node: a user typing too fast is told they are, and reader-side
+  refusal stays the backstop against a modified client rather than the primary experience.
+
+  **`kols-cli` is a library with a binary on top.** The executor was worth testing without
+  spawning a process — a test that had to run `kols` to reach it would be testing argument
+  parsing at the same time, and vague about which half failed. The binary is now argument
+  parsing and rendering, which is also the shape the desktop client needs: a different front
+  end over the same submit path rather than a second copy of it.
+
+  **Every record kind the design describes now runs.** Edits, withdrawals, reactions and pins,
+  plus channel rename, topic, slowmode and archive — with `read` printing message ids, because
+  every command that acts on a message needs one and a user who cannot see it cannot act. Ten
+  new tests drive them through the real binary. 117 → 129, clippy clean.
 
 - **2026-08-19** — **A documentation pass, and it found three stale claims rather than
   none.** The point of reading all of it after a landing is that some of it is wrong, and it
