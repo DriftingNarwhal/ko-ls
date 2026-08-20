@@ -302,8 +302,10 @@ refuses to depend on.*
 
 ### 4.6 What this means for the DM list
 
-The client holds the master seed, so it knows locally that these networks are all yours
-and can present them as one inbox. That is **local knowledge only** — no other party can
+The client holds the workspace — the set of networks this installation belongs to — so it
+knows locally that these are all yours and can present them as one inbox. Note that the
+knowledge comes from the directory rather than from a shared secret: seeds are per network
+(`02` §6.3), so there is no master key whose compromise would correlate them either. That is **local knowledge only** — no other party can
 correlate your identity in a DM network with your identity in the server you met through
 unless you sent them the §4.3 link. Unlinkability is preserved exactly as Core §1.2
 intends; the convenience is entirely client-side.

@@ -216,9 +216,28 @@ Two protocol constraints the UI must respect rather than route around:
 
 ### 6.3 First-run
 
-1. Generate or restore a master seed. Backup phrase is presented once, and the client
-   refuses to proceed until it is confirmed — losing it means losing every identity, and
-   there is no recovery service to fall back on.
+1. Generate a seed **for this network**, not one master seed for all of them. Each network
+   a member joins gets its own, so no single secret is the thing that links every identity
+   they hold — the same reasoning per-network derivation exists for (`00` §1), applied one
+   level up. One phrase leaked exposes one network rather than all of them and every
+   conversation.
+
+   **What a backup is, stated precisely, because "restore" promises more than it delivers.**
+   A seed derives an identity; it is not data and it is not a network. A phrase alone
+   restores nothing, because a network's id cannot be derived from it. Coming back needs
+   three things — the phrase, the network id, and an address to reach the network at, which
+   is to say a relay. Given those, a member returns as *the same member*: the governance log
+   already names them, their capabilities resolve, their display name is still bound to
+   them, and their own messages come back like any other history, because their author log
+   was published as content other members hold.
+
+   What does not come back: anything written and never published, local-only state such as
+   read watermarks, and — the one that actually bites — **the list of which networks they
+   belonged to**, which lives in the client's workspace and in no seed.
+
+   So a backup is a *bundle the client exports* rather than something a person writes down.
+   A phrase per network is unmanageable as a literal instruction once direct messages are
+   networks too; what a member keeps is the set.
 2. Redeem an invite, or create a network (which makes you the sole Founder).
 3. Post-connection sync: peers, governance log replay, capability ledger, epoch key.
 4. Resolve the channel list and render.

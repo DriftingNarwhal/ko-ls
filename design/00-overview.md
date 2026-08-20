@@ -68,8 +68,10 @@ to a **network**, and almost everything else follows from that.
 
 - **There is no cross-server identity, and there cannot be.** Per-network derivation
   (Core §1.2) exists specifically so two of your memberships cannot be correlated. A
-  user has one master seed and one account *from their own point of view*, but no other
-  member can tell that your identity here and your identity there are the same person
+  user has one client and one account *from their own point of view* — holding a seed per
+  network rather than one master seed, so not even their own backup is a single object
+  linking their memberships — but no other member can tell that your identity here and your
+  identity there are the same person
   unless you deliberately prove it. There is no global username and no global profile.
   Messaging someone you met in a server works by *deliberately* proving it, once, to that
   one person (`03` §4.3) — which is the mechanism Core §1.2 provides for exactly this.
@@ -139,6 +141,7 @@ the document named.
 | D24 | A **losing pointer version republishes the union** of both record sets, discarding nothing — the content-merge semantics Storage §2.2 defers to the application layer | `01` §3.1.1 |
 | D25 | Authorization at the API boundary is a **type, not a call**: what the gate returns has no public constructor, so an executor cannot be handed a command nobody checked. A check a caller can route around eventually is | `05` §3 |
 | D26 | A command's **consent class follows the tier of the capability it needs**, not how consequential the action looks — so pinning prompts harder than posting, because `chat:moderate` is governance-tier and `chat:post` is not | `05` §3 |
+| D28 | **One seed per network, not one master seed** — so no single secret links every identity a member holds, and one phrase leaked exposes one network rather than all of them. The cost is that a backup is a set the client exports rather than a phrase somebody writes down | `02` §6.3 |
 | D27 | A **display name is a governance-log claim, not part of the profile object** — uniqueness needs a total order and a single-writer pointer has none. It binds the entry's author, compares on a normalized key, and is **never released**, because history resolves names at display time and an inherited name relabels somebody else's past | `02` §7, spec 07 §3.9 |
 
 ---

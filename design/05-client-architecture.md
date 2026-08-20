@@ -225,8 +225,10 @@ for private channels). It can be deleted and rebuilt from the network.
 swarm serving (Storage §4.2): anything fetched makes this node a source. That should be
 visible in settings, with a size cap the user sets, because it is their disk.
 
-**Keys** live in the OS keychain where one exists, with the master seed encrypted at rest
-under a user passphrase. `intranet-*` key types implement no `Debug` and no
+**Keys** live in the OS keychain where one exists, with each network's seed encrypted at
+rest under a user passphrase. Per network rather than one master seed (`02` §6.3), so the
+thing a passphrase protects is a set rather than a single object that links every identity
+its holder has. `intranet-*` key types implement no `Debug` and no
 serialization deliberately — use their `fingerprint()` methods for logging and tests, and
 do not derive around it.
 
@@ -255,9 +257,11 @@ identity. The client ships single-device but must not make choices that block th
    lower record hash wins, loser retries at an incremented version (Storage §2.2) — but
    the loser's records must be re-published, not dropped. Build the publish path with
    that retry from the start; discovering it during a P5 rewrite is the expensive way.
-4. **The master seed stays on as few devices as possible.** Additional devices get
-   certificates, not the seed. Enrollment is per-network (Core §1.3 point 7), so the UX
-   is "add this device to these servers", not one global action.
+4. **A network's seed stays on as few devices as possible.** Additional devices get
+   certificates, not the seed. Enrollment is per-network (Core §1.3 point 7) — which is now
+   the shape of the secret as well as the shape of the enrolment, so the UX is "add this
+   device to these servers" rather than one global action, and there is no single object
+   that would grant all of them at once.
 
 ---
 
