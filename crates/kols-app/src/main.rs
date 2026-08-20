@@ -11,11 +11,14 @@
 //!
 //! # What it deliberately does not do
 //!
-//! **It does not run a node.** `kols serve` does that, and until this shell
-//! grows its own the window shows what this node's store already holds: its own
-//! messages, and anything a daemon fetched. Posting works, because writing a
-//! record is a local act; hearing from anybody else needs a node, and pretending
-//! otherwise would be a window that looks connected and is not.
+//! **It runs a node for whichever network is open.** The same loop `kols serve`
+//! runs — one implementation, two front ends, differing only in where its events
+//! go: a terminal prints them, this forwards them to the webview.
+//!
+//! Only one process may run a node for a network, and the store enforces that:
+//! the key group is live state, and two nodes would each advance it without
+//! seeing the other. So the window refuses to open a network `kols serve` is
+//! already serving, and says which.
 //!
 //! **It holds a workspace, not a store.** A person belongs to several networks
 //! and a direct message is one too, so "which network" is a question the window
@@ -43,6 +46,7 @@ use kols_cli::network;
 use kols_cli::workspace::Workspace;
 use kols_core::ChannelId;
 use std::sync::Mutex;
+use tauri::{Emitter, Manager};
 
 /// What every command handler shares.
 ///
@@ -52,6 +56,12 @@ use std::sync::Mutex;
 struct App {
     workspace: Workspace,
     open: Mutex<Option<Executor>>,
+    /// The node running for the open network.
+    ///
+    /// Dropping the handle aborts it, which is the whole shutdown protocol:
+    /// there is no signal to forget to send, and switching networks drops the
+    /// task for the one being left.
+    node: Mutex<Option<tauri::async_runtime::JoinHandle<()>>>,
 }
 
 impl App {
@@ -233,6 +243,7 @@ fn networks(app: tauri::State<'_, App>) -> Result<Vec<dto::Network>, String> {
 /// check a permission against.
 #[tauri::command]
 fn create_network(
+    handle: tauri::AppHandle,
     app: tauri::State<'_, App>,
     name: String,
     relay: String,
@@ -253,7 +264,7 @@ fn create_network(
     let path = store.root().to_path_buf();
     drop(store);
 
-    let executor = Executor::open(path).map_err(|err| err.to_string())?;
+    let executor = Executor::open(path.clone()).map_err(|err| err.to_string())?;
     let known = dto::Network {
         id: to_hex(executor.store().network().as_bytes()),
         label: name.trim().to_owned(),
@@ -261,16 +272,89 @@ fn create_network(
         open: true,
     };
     *app.open.lock().map_err(|_| "the workspace lock is poisoned")? = Some(executor);
+    start_node(&handle, app, path);
     Ok(known)
 }
 
-/// Opens one of this client's networks.
+/// Opens one of this client's networks, and starts a node for it.
 #[tauri::command]
-fn open_network(app: tauri::State<'_, App>, network: String) -> Result<(), String> {
+fn open_network(
+    handle: tauri::AppHandle,
+    app: tauri::State<'_, App>,
+    network: String,
+) -> Result<(), String> {
     let store = app.workspace.open(&network)?;
-    let executor = Executor::open(store.root().to_path_buf()).map_err(|err| err.to_string())?;
+    let root = store.root().to_path_buf();
+    drop(store);
+    let executor = Executor::open(root.clone()).map_err(|err| err.to_string())?;
     *app.open.lock().map_err(|_| "the workspace lock is poisoned")? = Some(executor);
+    start_node(&handle, app, root);
     Ok(())
+}
+
+/// Runs a node for one network, forwarding what it learns to the interface.
+///
+/// Replaces whatever was running, because the window shows one network at a
+/// time and the node for the one being left has nothing to do. `design/09` §2's
+/// hot/warm/cold tiering is what turns this into several at once, and is not
+/// this.
+fn start_node(handle: &tauri::AppHandle, app: tauri::State<'_, App>, root: std::path::PathBuf) {
+    let mut node = match app.node.lock() {
+        Ok(node) => node,
+        Err(_) => return,
+    };
+    if let Some(previous) = node.take() {
+        previous.abort();
+    }
+
+    let emitter = handle.clone();
+    let sink: kols_cli::serve::Sink = std::sync::Arc::new(move |events: &[kols_api::Event]| {
+        for event in events {
+            // Named for what happened rather than carrying the payload: the
+            // interface re-reads the channel, because `design/05` §3's third
+            // property is that a consumer merges rather than appends, and the
+            // cheapest way to hold to that is to render from the projection
+            // every time.
+            let name = match event {
+                kols_api::Event::Records { channel, .. } => {
+                    let _ = emitter.emit("kols://records", to_hex(channel.as_bytes()));
+                    continue;
+                }
+                kols_api::Event::Governance { .. } | kols_api::Event::Adopted { .. } => {
+                    "kols://governance"
+                }
+                kols_api::Event::MemberKeyed { .. } | kols_api::Event::EpochRotated { .. } => {
+                    "kols://keys"
+                }
+                kols_api::Event::JoinAnswered { .. } => "kols://joins",
+                kols_api::Event::Degraded { reason } => {
+                    let _ = emitter.emit("kols://degraded", reason.clone());
+                    continue;
+                }
+            };
+            let _ = emitter.emit(name, ());
+        }
+    });
+
+    let failed = handle.clone();
+    *node = Some(tauri::async_runtime::spawn(async move {
+        let outcome = kols_cli::serve::serve(
+            root,
+            "/ip4/0.0.0.0/tcp/0",
+            &[],
+            kols_cli::serve::SEAL_TARGET_BYTES,
+            true,
+            kols_cli::serve::LIVE_WINDOW_MILLIS,
+            &sink,
+        )
+        .await;
+        if let Err(why) = outcome {
+            // The one that matters here is another process already serving this
+            // network, which is a thing to say rather than a window that quietly
+            // never syncs.
+            let _ = failed.emit("kols://degraded", why);
+        }
+    }));
 }
 
 fn main() {
@@ -284,10 +368,23 @@ fn main() {
         _ => None,
     };
 
+    let opened_at = open.as_ref().map(|executor| executor.store().root().to_path_buf());
+
     tauri::Builder::default()
+        .setup(move |app| {
+            // The node for a network opened at startup. In `setup` rather than
+            // before the builder, because spawning needs a handle to emit
+            // through, and there is nothing to emit to until there is an app.
+            if let Some(root) = opened_at.clone() {
+                let handle = app.handle().clone();
+                start_node(&handle, handle.state::<App>(), root);
+            }
+            Ok(())
+        })
         .manage(App {
             workspace,
             open: Mutex::new(open),
+            node: Mutex::new(None),
         })
         .invoke_handler(tauri::generate_handler![
             me,

@@ -176,6 +176,72 @@ impl Store {
         }
     }
 
+    /// Claims the right to run a node for this network.
+    ///
+    /// # Why this is separate from the append lock
+    ///
+    /// The append lock is held for a moment, around a read-head-then-write. This
+    /// is held for as long as a node runs, and it guards something that lock
+    /// cannot: **the MLS group is live state only one process can hold**. Two
+    /// nodes on one store both restore the group, both advance it, and each
+    /// saves a version the other has not seen — after which whichever wrote last
+    /// decides what the network's key is, and anybody keyed in by the other is
+    /// keyed into an epoch nobody agrees on.
+    ///
+    /// That has no symptom at the moment it happens, which is why this refuses
+    /// up front rather than letting both run.
+    ///
+    /// # A claim has to expire, because processes do not always get to clean up
+    ///
+    /// A desktop window is usually closed by the window manager, which is not an
+    /// exit that runs destructors — so a claim released only on `Drop` would
+    /// leak on the *normal* way this application ends, and the next run would
+    /// refuse to start a node for a network nothing is serving.
+    ///
+    /// So the holder writes a heartbeat and a claim older than
+    /// [`NODE_CLAIM_STALE`] is taken over. Not a pid check: liveness is a
+    /// different answer on every platform, and pids are reused, so a pid that
+    /// looks alive may be somebody else's. A timestamp the holder must keep
+    /// refreshing is the same question asked in a way that cannot be wrong for
+    /// long.
+    ///
+    /// The cost is stated rather than hidden: after a crash, the next node waits
+    /// out the window before it can start.
+    pub fn hold_node(&self) -> Result<NodeClaim, StoreError> {
+        let path = self.root.join("serving");
+        let beat = path.join("heartbeat");
+
+        // Waits a stale claim out rather than refusing on sight. Restarting a
+        // node is ordinary — a window closed and reopened, a daemon stopped and
+        // started — and the previous holder rarely got to clean up, so refusing
+        // instantly would make the common case look like the failure case.
+        let deadline = std::time::Instant::now()
+            + std::time::Duration::from_millis(NODE_CLAIM_STALE as u64 + 2_000);
+        loop {
+            let held_since = fs::read_to_string(&beat)
+                .ok()
+                .and_then(|text| text.trim().parse::<i64>().ok());
+            let fresh = held_since
+                .is_some_and(|when| now_millis().saturating_sub(when) < NODE_CLAIM_STALE);
+
+            if !fresh {
+                fs::create_dir_all(&path)?;
+                let claim = NodeClaim { path };
+                claim.beat();
+                return Ok(claim);
+            }
+            if std::time::Instant::now() > deadline {
+                return Err(StoreError::Corrupt(format!(
+                    "another kols process is already running a node for this network. \
+                     Only one can: the network's key group is live state, and two would each \
+                     advance it without seeing the other. If nothing is running, remove {}",
+                    path.display()
+                )));
+            }
+            std::thread::sleep(std::time::Duration::from_millis(250));
+        }
+    }
+
     /// Appends an entry to the stored governance log.
     ///
     /// Entries are files named by their position, so replay reads them back in
@@ -724,6 +790,55 @@ fn fixed<const N: usize>(bytes: &[u8], what: &str) -> Result<[u8; N], StoreError
 
 /// Held while a process is appending to the governance log.
 ///
+/// How long a node claim survives without a heartbeat.
+///
+/// Long enough that a slow tick does not hand the network's key group to a
+/// second process, and short enough that reopening a window after a crash is a
+/// pause rather than a support question. The node beats every tick, so this is
+/// several missed beats rather than one.
+///
+/// **The case this does not cover, stated because it is real:** a holder
+/// suspended for longer than this — a laptop asleep — can have its claim taken
+/// over while it still believes it holds one, and on waking both would run. What
+/// keeps that rare rather than impossible is that taking over requires somebody
+/// to actually start a second node in that window. Making it impossible needs
+/// the holder to re-check ownership as it beats, which is worth doing when
+/// anything depends on it.
+pub const NODE_CLAIM_STALE: i64 = 6_000;
+
+/// The right to run a node for one network.
+///
+/// Released on drop, and expiring on its own if the holder never gets to drop
+/// it — see [`Store::hold_node`] for why both are needed.
+pub struct NodeClaim {
+    path: PathBuf,
+}
+
+impl NodeClaim {
+    /// Says the holder is still running.
+    ///
+    /// Called from the node's own loop, so a claim outlives the process holding
+    /// it by at most [`NODE_CLAIM_STALE`].
+    pub fn beat(&self) {
+        let _ = fs::write(self.path.join("heartbeat"), now_millis().to_string());
+    }
+}
+
+impl Drop for NodeClaim {
+    fn drop(&mut self) {
+        let _ = fs::remove_file(self.path.join("heartbeat"));
+        let _ = fs::remove_dir(&self.path);
+    }
+}
+
+/// Wall-clock now, in milliseconds.
+fn now_millis() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as i64)
+        .unwrap_or(0)
+}
+
 /// Released on drop, including on a panic — a lock that survived a crash would
 /// need a human to clear it, and the failure it guards against is rarer than
 /// the crashes it would cause.

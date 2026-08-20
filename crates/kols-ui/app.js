@@ -7,6 +7,7 @@
 // then inside a segment — is one message rather than two.
 
 const { invoke } = window.__TAURI__.core;
+const { listen } = window.__TAURI__.event;
 
 const el = (id) => document.getElementById(id);
 const state = { channels: [], current: null, me: null };
@@ -266,6 +267,39 @@ el("maker").addEventListener("submit", async (event) => {
 
 el("switcher").addEventListener("click", drawPicker);
 
+/// What the node learns, while it runs.
+///
+/// Every one of these re-reads rather than patching what is on screen. That is
+/// `design/05` §3's third property in the smallest form it takes: a record that
+/// arrived over gossip is also inside the segment that follows it, so a consumer
+/// that appended what it was handed would show every message twice. Re-reading
+/// makes a duplicate a non-event, with no bookkeeping to get wrong.
+async function watch() {
+  await listen("kols://records", async (event) => {
+    if (event.payload === state.current) await openChannel(state.current);
+  });
+
+  // Channels, permissions and names all come out of replay, so anything that
+  // moved the log may have made the sidebar and the header stale.
+  await listen("kols://governance", async () => {
+    drawMe(await invoke("me"));
+    drawChannels(await invoke("channels"));
+    if (state.current) await openChannel(state.current);
+  });
+
+  await listen("kols://keys", async () => {
+    drawMe(await invoke("me"));
+  });
+
+  await listen("kols://degraded", (event) => {
+    // A node carrying on after something did not work. Shown where the user is
+    // looking rather than swallowed: a node quietly failing at one thing looks
+    // exactly like a node with nothing to do.
+    el("refused").hidden = false;
+    el("refused").textContent = String(event.payload);
+  });
+}
+
 async function start() {
   let me;
   try {
@@ -284,4 +318,5 @@ async function start() {
   if (channels.length > 0) await openChannel(channels[0].id);
 }
 
+watch();
 start();

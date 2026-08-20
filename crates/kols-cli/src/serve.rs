@@ -86,7 +86,25 @@ const SEAL_TARGET_SPAN_MILLIS: i64 = 24 * 60 * 60 * 1000;
 /// reach the far side of the window without waiting out a minute of wall clock.
 pub const LIVE_WINDOW_MILLIS: i64 = 60 * 1000;
 
-/// Runs the node until interrupted.
+/// Where a node's events go.
+///
+/// A terminal prints them and a window forwards them to a webview, and the loop
+/// below knows about neither. This is the same division the command side
+/// already draws: the executor returns `Outcome`s and prints nothing, because a
+/// layer that decides how something looks is a layer no second interface can
+/// reuse.
+pub type Sink = std::sync::Arc<dyn Fn(&[Event]) + Send + Sync>;
+
+/// A sink that prints, for `kols serve`.
+pub fn printing() -> Sink {
+    std::sync::Arc::new(render)
+}
+
+/// Runs the node until interrupted, on a runtime of its own.
+///
+/// What `kols serve` calls. A caller that already has a runtime — the desktop
+/// shell, which must keep a window responsive while this runs — spawns
+/// [`serve`] instead.
 pub fn run(
     root: std::path::PathBuf,
     listen: &str,
@@ -99,18 +117,36 @@ pub fn run(
         .enable_all()
         .build()
         .map_err(|err| format!("could not start a runtime: {err}"))?;
-    runtime.block_on(serve(root, listen, peers, seal_bytes, live, live_window))
+    runtime.block_on(serve(
+        root,
+        listen,
+        peers,
+        seal_bytes,
+        live,
+        live_window,
+        &printing(),
+    ))
 }
 
-async fn serve(
+/// The node loop.
+///
+/// Runs until the future is dropped, which is how a caller stops it: there is no
+/// shutdown signal to forget to send, and a shell switching networks drops the
+/// task for the one it is leaving.
+pub async fn serve(
     root: std::path::PathBuf,
     listen: &str,
     peers: &[String],
     seal_bytes: usize,
     live: bool,
     live_window: i64,
+    sink: &Sink,
 ) -> Result<(), String> {
     let store = Store::open(root).map_err(|e| e.to_string())?;
+    // Claimed before anything else, and held for the whole loop: only one
+    // process may run a node for a network, because the key group is live state
+    // and two would each advance it without seeing the other.
+    let _claim = store.hold_node().map_err(|e| e.to_string())?;
     let identity = store.identity().map_err(|e| e.to_string())?;
 
     let mut node = MemberNode::new(&identity).map_err(|err| format!("could not start: {err}"))?;
@@ -229,7 +265,7 @@ async fn serve(
         let address: Multiaddr = match relay.parse() {
             Ok(address) => address,
             Err(err) => {
-                render(&[Event::Degraded {
+                sink(&[Event::Degraded {
                     reason: format!("this network names an unusable relay {relay:?}: {err}"),
                 }]);
                 continue;
@@ -247,7 +283,7 @@ async fn serve(
                 // did nothing. A relay bound to loopback has no external address
                 // to hand back, and libp2p builds a reservation's address list
                 // from external addresses alone.
-                render(&[Event::Degraded {
+                sink(&[Event::Degraded {
                     reason: format!(
                         "{relay} granted no usable circuit. If that relay is bound to \
                          127.0.0.1 it has no address to hand out — bind it to a routable \
@@ -255,7 +291,7 @@ async fn serve(
                     ),
                 }]);
             }
-            Err(err) => render(&[Event::Degraded {
+            Err(err) => sink(&[Event::Degraded {
                 reason: format!("could not reach the relay {relay}: {err}"),
             }]),
         }
@@ -308,7 +344,7 @@ async fn serve(
         let event = tokio::select! {
             event = node.next_event() => event,
             _ = refresh.tick() => {
-                adopt_local_changes(&store, &mut node, &identity, seal_bytes)?;
+                adopt_local_changes(&store, &mut node, &identity, seal_bytes, sink)?;
                 // Both halves of the live path, together. Spec 07 §6.1 requires
                 // conformance be testable with gossip disabled — "a client with
                 // gossip disabled is slower and completely correct" — and a node
@@ -326,9 +362,9 @@ async fn serve(
                 }
                 if holds_group {
                     catch_up_epochs(&store, &mut node)?;
-                    let excluded = exclude_removed_members(&store, &mut node, &identity, seal_bytes)?;
+                    let excluded = exclude_removed_members(&store, &mut node, &identity, seal_bytes, sink)?;
                     if excluded > 0 {
-                        render(&[Event::EpochRotated { excluded }]);
+                        sink(&[Event::EpochRotated { excluded }]);
                     }
                 }
 
@@ -346,13 +382,18 @@ async fn serve(
                 // chunk simply never arriving. The crate's own guidance says a
                 // fetch that mysteriously finds nothing is usually this, and it
                 // was.
+                // Said every tick, so the claim outlives this process by at
+                // most its staleness window even when the window manager ends
+                // it without running a destructor.
+                _claim.beat();
+
                 for peer in connected.iter().copied() {
                     node.sync_with(peer);
                     node.sync_ledger_with(peer);
                     node.sync_pointers_with(peer);
                 }
                 request_foreign_segments(&store, &mut node, &identity, &mut fetched, &backfill)?;
-                render(&absorb_segments(
+                sink(&absorb_segments(
                     &store,
                     &mut node,
                     &identity,
@@ -388,7 +429,7 @@ async fn serve(
                     let addresses: Vec<String> =
                         listening.iter().map(ToString::to_string).collect();
                     if let Err(err) = store.set_addresses(&addresses) {
-                        render(&[Event::Degraded {
+                        sink(&[Event::Degraded {
                             reason: format!("could not record this node's addresses: {err}"),
                         }]);
                     }
@@ -410,7 +451,7 @@ async fn serve(
             NodeEvent::Synced { accepted, peer, .. } if accepted > 0 => {
                 let learned = persist_governance(&store, &node)?;
                 if learned > 0 {
-                    render(&[Event::Governance { learned }]);
+                    sink(&[Event::Governance { learned }]);
                     // The entries that just arrived may include rotations this
                     // node was not present for.
                     catch_up_epochs(&store, &mut node)?;
@@ -428,7 +469,7 @@ async fn serve(
                         if !keyed && let Some(from) = peer_identity(peer, &store)? {
                             match node.request_epoch_key(from, &identity) {
                                 Ok(_) => println!("asked {} to key us in", from.short()),
-                                Err(err) => render(&[Event::Degraded {
+                                Err(err) => sink(&[Event::Degraded {
                                     reason: format!("could not ask for a key: {err}"),
                                 }]),
                             }
@@ -449,7 +490,7 @@ async fn serve(
             }
 
             NodeEvent::FetchComplete { .. } => {
-                render(&absorb_segments(
+                sink(&absorb_segments(
                     &store,
                     &mut node,
                     &identity,
@@ -468,7 +509,7 @@ async fn serve(
                 // nothing else may append in between. Adopt under the lock, then
                 // rotate, then write back.
                 let lock = store.lock().map_err(|e| e.to_string())?;
-                adopt_local_changes(&store, &mut node, &identity, seal_bytes)?;
+                adopt_local_changes(&store, &mut node, &identity, seal_bytes, sink)?;
                 let answered = node.answer_epoch_key(
                     request,
                     &identity,
@@ -476,7 +517,7 @@ async fn serve(
                 );
                 match answered {
                     Ok(_) => {
-                        render(&[Event::MemberKeyed {
+                        sink(&[Event::MemberKeyed {
                             identity: requester,
                         }]);
                         // Adding a member rotates the epoch, so this node now
@@ -491,7 +532,7 @@ async fn serve(
                         // a crash costs nothing that was already agreed.
                         persist_group(&store, &node)?;
                     }
-                    Err(err) => render(&[Event::Degraded {
+                    Err(err) => sink(&[Event::Degraded {
                         reason: format!("could not key in {}: {err}", requester.short()),
                     }]),
                 }
@@ -539,8 +580,8 @@ async fn serve(
                         // The membership entry, if the network auto-admits, is
                         // in the node's log and not yet in the store.
                         persist_governance(&store, &node)?;
-                        record_waiting(&store, &node, &identity);
-                        render(&[Event::JoinAnswered {
+                        record_waiting(&store, &node, &identity, sink);
+                        sink(&[Event::JoinAnswered {
                             joiner,
                             accepted: !matches!(
                                 response,
@@ -548,14 +589,14 @@ async fn serve(
                             ),
                         }]);
                     }
-                    Err(err) => render(&[Event::Degraded {
+                    Err(err) => sink(&[Event::Degraded {
                         reason: format!("could not answer a join from {}: {err}", joiner.short()),
                     }]),
                 }
             }
 
             NodeEvent::EpochKeyUnavailable { reason, .. } => {
-                render(&[Event::Degraded {
+                sink(&[Event::Degraded {
                     reason: format!("not keyed in: {reason}"),
                 }]);
             }
@@ -569,7 +610,7 @@ async fn serve(
             // record that arrived live is *already stored*, so the durable
             // absorb that follows correctly reports nothing.
             NodeEvent::LiveReceived { payload, .. } => match admit_live(&store, &payload) {
-                Ok(Some(record)) => render(&[Event::Records {
+                Ok(Some(record)) => sink(&[Event::Records {
                     channel: record.channel,
                     records: vec![record],
                     arrival: Arrival::Live,
@@ -578,7 +619,7 @@ async fn serve(
                 // Surfaced rather than swallowed: a refusal is either a peer
                 // sending what it should not, or this node missing a key it
                 // should have. Both are worth seeing; neither is worth stopping.
-                Err(why) => render(&[Event::Degraded {
+                Err(why) => sink(&[Event::Degraded {
                     reason: format!("refused a live payload: {why}"),
                 }]),
             },
@@ -999,7 +1040,12 @@ fn resolve(
 /// outside this process can ask about it, so the daemon writes what it sees and
 /// `kols waiting` reads that. Best-effort: failing to write it should not stop a
 /// node from having let somebody in.
-fn record_waiting(store: &Store, node: &MemberNode, identity: &intranet_identity::PerNetworkIdentity) {
+fn record_waiting(
+    store: &Store,
+    node: &MemberNode,
+    identity: &intranet_identity::PerNetworkIdentity,
+    sink: &Sink,
+) {
     let Some(occupants) = node.waiting_room_for(&identity.id()) else {
         return;
     };
@@ -1008,7 +1054,7 @@ fn record_waiting(store: &Store, node: &MemberNode, identity: &intranet_identity
         .map(|entry| intranet_crypto::to_hex(entry.identity.verifying_key().as_bytes()))
         .collect();
     if let Err(err) = store.set_waiting(&identities) {
-        render(&[Event::Degraded {
+        sink(&[Event::Degraded {
             reason: format!("could not record the waiting room: {err}"),
         }]);
     }
@@ -1255,6 +1301,7 @@ fn adopt_local_changes(
     node: &mut MemberNode,
     identity: &intranet_identity::PerNetworkIdentity,
     seal_bytes: usize,
+    sink: &Sink,
 ) -> Result<Option<()>, String> {
     let held: BTreeSet<_> = node.governance_log().canonical_chain().into_iter().collect();
     let stored = store.log().map_err(|e| e.to_string())?;
@@ -1270,7 +1317,7 @@ fn adopt_local_changes(
         }
     }
     if adopted > 0 {
-        render(&[Event::Adopted { entries: adopted }]);
+        sink(&[Event::Adopted { entries: adopted }]);
     }
 
     // Republished unconditionally rather than only on change: appending to an
@@ -1304,6 +1351,7 @@ fn exclude_removed_members(
     node: &mut MemberNode,
     identity: &intranet_identity::PerNetworkIdentity,
     seal_bytes: usize,
+    sink: &Sink,
 ) -> Result<usize, String> {
     // **Checked before locking, and that order matters.** This runs on every
     // tick, while one-shot commands need the same lock to append at all — so
@@ -1340,7 +1388,7 @@ fn exclude_removed_members(
     // a rotation parented on the node's head, so the store's head has to *be*
     // the node's head and nothing else may append in between.
     let _lock = store.lock().map_err(|e| e.to_string())?;
-    adopt_local_changes(store, node, identity, seal_bytes)?;
+    adopt_local_changes(store, node, identity, seal_bytes, sink)?;
 
     let mut excluded = 0;
     for who in departed {
