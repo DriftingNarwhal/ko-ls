@@ -3009,7 +3009,7 @@ dependencies = [
 
 [[package]]
 name = "kols-api"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "intranet-crypto",
  "intranet-governance",
@@ -3019,7 +3019,7 @@ dependencies = [
 
 [[package]]
 name = "kols-app"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "intranet-crypto",
  "intranet-governance",
@@ -3034,7 +3034,7 @@ dependencies = [
 
 [[package]]
 name = "kols-cli"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "clap",
  "intranet-crypto",
@@ -3056,7 +3056,7 @@ dependencies = [
 
 [[package]]
 name = "kols-core"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "intranet-crypto",
  "intranet-governance",
@@ -3068,7 +3068,7 @@ dependencies = [
 
 [[package]]
 name = "kols-net"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "intranet-crypto",
  "intranet-governance",
