@@ -46,10 +46,73 @@ pub fn parse_identity(hex: &str) -> Result<intranet_identity::PerNetworkIdentity
     Ok(intranet_identity::PerNetworkIdentityId::from_verifying_key(key))
 }
 
+/// Checks a relay address before it becomes policy.
+///
+/// In the library for the same reason [`parse_identity`] is, and with a sharper
+/// edge: designating a relay writes a governance entry **every member replays**,
+/// so an address that is merely wrong does not fail for the person who typed it
+/// — it is carried by everybody, and the symptom appears later on somebody
+/// else's machine as a network that cannot introduce two peers.
+///
+/// Two things are checked. That it parses at all, and that it names a peer id:
+/// a relay address without `/p2p/…` is dialable and unverifiable, so a node
+/// reaching it has no way to know whether what answered is the relay the
+/// network designated (Core §5.5).
+pub fn parse_relay(address: &str) -> Result<String, String> {
+    let address = address.trim();
+    address
+        .parse::<libp2p::Multiaddr>()
+        .map_err(|_| format!("{address} is not an address — a relay looks like /dns4/host/tcp/443/p2p/12D3Koo…"))?;
+    if !address.contains("/p2p/") {
+        return Err(format!(
+            "{address} names no peer id — without the /p2p/… part nothing can \
+             verify that what answers there is the relay this network means"
+        ));
+    }
+    Ok(address.to_owned())
+}
+
 /// 32 bytes from the OS.
 pub fn random_32() -> Result<[u8; 32], String> {
     let mut bytes = [0u8; 32];
     intranet_crypto::random_bytes(&mut bytes)
         .map_err(|err| format!("could not read entropy: {err}"))?;
     Ok(bytes)
+}
+
+#[cfg(test)]
+mod relay_tests {
+    use super::parse_relay;
+
+    const GOOD: &str = "/dns4/monorail.proxy.rlwy.net/tcp/54321/p2p/12D3KooWKiD4mNjfhqTJrfnhCPTVy8N8gCLjTZs3fMLZ4kkFMBBu";
+
+    #[test]
+    fn a_relay_address_with_a_peer_id_is_accepted() {
+        assert_eq!(parse_relay(GOOD).as_deref(), Ok(GOOD));
+        assert_eq!(parse_relay(&format!("  {GOOD}  ")).as_deref(), Ok(GOOD));
+    }
+
+    #[test]
+    fn an_address_without_a_peer_id_is_refused() {
+        // The one that matters. It parses, it dials, and nothing can tell
+        // whether what answered is the relay this network designated — so it
+        // has to be caught here rather than at the point of use, where it looks
+        // like an ordinary connection.
+        let refused = parse_relay("/dns4/monorail.proxy.rlwy.net/tcp/54321")
+            .expect_err("an address naming no peer id is not a relay");
+        assert!(
+            refused.contains("peer id"),
+            "the refusal should say what is missing, said {refused:?}"
+        );
+    }
+
+    #[test]
+    fn something_that_is_not_an_address_is_refused() {
+        for wrong in ["monorail.proxy.rlwy.net:54321", "https://example.com", ""] {
+            assert!(
+                parse_relay(wrong).is_err(),
+                "{wrong:?} is not a multiaddr and should be refused"
+            );
+        }
+    }
 }

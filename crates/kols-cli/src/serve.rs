@@ -283,6 +283,7 @@ pub async fn serve(
         }
     };
 
+    let mut reserved: Option<String> = None;
     for relay in &designated {
         let address: Multiaddr = match relay.parse() {
             Ok(address) => address,
@@ -297,6 +298,7 @@ pub async fn serve(
             Ok(()) => {
                 if node.await_reservation().await {
                     println!("  relay     reserved a circuit on {relay}");
+                    reserved = Some(relay.clone());
                     break;
                 }
                 // The likely cause, named, because every other vantage point
@@ -321,6 +323,12 @@ pub async fn serve(
     if designated.is_empty() {
         println!("  relay     none designated — this node is reachable only on its own addresses");
     }
+    // Emitted in every case, including the good one. A terminal has had this all
+    // along as a `println!`; a window had only the failures, through `Degraded`.
+    sink(&[Event::Relay {
+        reserved,
+        designated: designated.len(),
+    }]);
 
     // What `--peer` named, plus what an invite left in the store. A joiner
     // should not have to be told an address by hand when the invite already
@@ -1199,6 +1207,10 @@ fn render(events: &[Event]) {
                 }
             }
             Event::Degraded { reason } => println!("{reason}"),
+            // Nothing: the terminal already printed the relay's standing where
+            // it was settled, in the startup block with the rest of the header.
+            // This event exists for consumers that had no equivalent.
+            Event::Relay { .. } => {}
         }
     }
 }

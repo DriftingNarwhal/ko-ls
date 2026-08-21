@@ -44,7 +44,7 @@
           <label for="new-name">name</label>
           <input id="new-name" type="text" autocomplete="off" placeholder="the workshop" />
 
-          <label for="new-relay">relay <span class="optional">optional for now</span></label>
+          <label for="new-relay">relay <span class="optional">can wait</span></label>
           <input
             id="new-relay"
             type="text"
@@ -53,8 +53,10 @@
           />
           <p class="maker-note">
             Two people behind home routers cannot reach each other directly, so a
-            network needs a relay before it can invite anybody. You can add one
-            later, and until then this network is yours alone.
+            network needs a relay before it can invite anybody. Leave this empty
+            and the network is yours alone until you set one under
+            <strong>relay</strong> in the sidebar — which is also where to find
+            the network id a relay needs in order to start.
           </p>
 
           <button type="submit">create</button>
@@ -105,6 +107,51 @@
 
           <ul class="waiting-list" id="waiting-list"></ul>
           <p class="dim" id="waiting-note" hidden></p>
+        </section>
+
+        <!-- The relay, which is the one part of setting a network up that has an
+             order you cannot guess: the relay will not boot without this
+             network's id, and this network cannot invite anybody before it has
+             a relay. So the id is here, next to where you paste the address
+             back. Shown to everybody, because "is the relay working" is a
+             question any member can have; only the form is gated. -->
+        <section class="relay" id="relay" data-kols="relay" hidden>
+          <div class="channels-head">
+            <h2>relay</h2>
+          </div>
+
+          <p class="relay-state" id="relay-state">…</p>
+          <ul class="relay-list" id="relay-list"></ul>
+
+          <details class="relay-set" id="relay-set" hidden>
+            <summary>set the relay</summary>
+
+            <p class="dim">
+              A relay needs this network's id before it will start — it is
+              <code>RELAY_NETWORK</code> in DI-Relay's configuration.
+            </p>
+            <div class="relay-id-row">
+              <code class="mono" id="relay-network-id"></code>
+              <button type="button" id="copy-network">copy</button>
+            </div>
+
+            <p class="dim">Then paste back the address it answers on:</p>
+            <form id="relay-form">
+              <input
+                id="relay-input"
+                type="text"
+                autocomplete="off"
+                placeholder="/dns4/host.proxy.rlwy.net/tcp/54321/p2p/12D3Koo…"
+              />
+              <button type="submit">designate</button>
+            </form>
+            <p class="dim">
+              This replaces whatever the network names now, for every member —
+              it is the set rather than an addition to it. Several may be given,
+              separated by spaces.
+            </p>
+            <p class="relay-error" id="relay-error" hidden></p>
+          </details>
         </section>
 
         <footer class="state" data-kols="state">

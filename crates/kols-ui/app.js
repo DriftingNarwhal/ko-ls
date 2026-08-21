@@ -10,7 +10,7 @@ const { invoke } = window.__TAURI__.core;
 const { listen } = window.__TAURI__.event;
 
 const el = (id) => document.getElementById(id);
-const state = { channels: [], current: null, me: null };
+const state = { channels: [], current: null, me: null, relay: null };
 
 /// Which view is showing. There are only two, and no network open is not an
 /// error state — it is where somebody starts.
@@ -88,7 +88,91 @@ function drawMe(me) {
   el("doorway").hidden = !me.may_invite;
   if (me.may_invite) drawWaiting();
 
+  // Shown to every member, unlike the door: whether this node has a way through
+  // NAT is not a privileged question, and a member who cannot fix it still
+  // benefits from knowing that is what is wrong.
+  el("relay").hidden = false;
+  el("relay-set").hidden = !me.may_set_relays;
+  el("relay-network-id").textContent = me.network;
+  drawRelays();
+
   drawKeyState(me);
+}
+
+// What this network designates, and what this node made of it.
+//
+// Two lists rather than one, because they disagree in exactly the case that is
+// hard to debug: a node whose cache names a relay that is gone behaves
+// differently from one that never had a relay, and the difference is invisible
+// if only the designated set is shown.
+async function drawRelays() {
+  let relays;
+  try {
+    relays = await invoke("relays");
+  } catch {
+    return;
+  }
+
+  const list = el("relay-list");
+  list.replaceChildren();
+  for (const address of relays.designated) {
+    const row = document.createElement("li");
+    row.className = "mono";
+    row.textContent = address;
+    row.title = address;
+    list.append(row);
+  }
+  for (const address of relays.cached) {
+    if (relays.designated.includes(address)) continue;
+    const row = document.createElement("li");
+    row.className = "mono cached";
+    row.textContent = address;
+    row.title = "cached locally, and not what replay designates";
+    list.append(row);
+  }
+
+  drawRelayState(relays);
+}
+
+/// One line saying whether this node has a way through NAT.
+///
+/// The four states `kols serve` distinguishes, kept distinct here. Until now the
+/// window had only the bad ones, because relay failures crossed as `Degraded`
+/// and success was a `println!` a window never sees — so it could report relay
+/// trouble and never relay health.
+function drawRelayState(relays) {
+  const line = el("relay-state");
+  const standing = state.relay;
+
+  if (standing?.reserved) {
+    line.className = "relay-state good";
+    line.textContent = `reserved a circuit on ${short(standing.reserved)}`;
+    return;
+  }
+  if (relays.designated.length === 0) {
+    line.className = "relay-state none";
+    line.textContent =
+      "none designated — you are reachable only on your own addresses, and " +
+      "cannot invite anybody yet";
+    return;
+  }
+  if (standing && standing.designated > 0) {
+    line.className = "relay-state bad";
+    line.textContent =
+      "designated, but none of them granted a circuit — nobody behind a router " +
+      "can reach you";
+    return;
+  }
+  // No standing yet: the node reports once, at startup, so this is the gap
+  // before it has. Not "broken", which is the wrong thing to say for a second.
+  line.className = "relay-state";
+  line.textContent = "designated — waiting for this node to report";
+}
+
+/// Enough of an address to recognise, since a full one wraps three lines.
+function short(address) {
+  const parts = address.split("/p2p/");
+  return parts.length === 2 ? `${parts[0]}/…${parts[1].slice(-6)}` : address;
 }
 
 // Who is at the door, and letting them in.
@@ -304,6 +388,47 @@ el("copy-invite").addEventListener("click", async () => {
   setTimeout(() => (el("copy-invite").textContent = "copy"), 1500);
 });
 
+el("copy-network").addEventListener("click", async () => {
+  const id = el("relay-network-id").textContent;
+  if (!id) return;
+  await navigator.clipboard.writeText(id);
+  el("copy-network").textContent = "copied";
+  setTimeout(() => (el("copy-network").textContent = "copy"), 1500);
+});
+
+el("relay-form").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const relays = el("relay-input").value.trim();
+  if (!relays) return;
+
+  const button = event.target.querySelector("button");
+  const error = el("relay-error");
+  button.disabled = true;
+  error.hidden = true;
+  try {
+    await invoke("set_relays", { relays });
+    el("relay-input").value = "";
+    await drawRelays();
+    // Said plainly, because it is the one part of this that is not immediate: a
+    // relay is dialled when a node starts, so the circuit this designates is not
+    // reserved until the network is reopened.
+    error.hidden = false;
+    error.className = "relay-error good";
+    error.textContent =
+      "designated. Every member learns it by replay. A relay is dialled when a " +
+      "node starts, so this one is not in use until you reopen this network — " +
+      "networks, then pick it again.";
+  } catch (err) {
+    // A refusal is an answer: a malformed address, or a member without
+    // define-policy. Both belong here rather than in the channel's refusals.
+    error.hidden = false;
+    error.className = "relay-error";
+    error.textContent = String(err);
+  } finally {
+    button.disabled = false;
+  }
+});
+
 el("namer").addEventListener("submit", async (event) => {
   event.preventDefault();
   const name = el("name").value.trim();
@@ -399,11 +524,22 @@ async function watch() {
   await listen("kols://governance", async () => {
     drawMe(await invoke("me"));
     drawChannels(await invoke("channels"));
+    // Relays are policy, so an entry that moved the log may have changed them —
+    // which is how a member learns of a relay designated after they joined.
+    await drawRelays();
     if (state.current) await openChannel(state.current);
   });
 
   await listen("kols://keys", async () => {
     drawMe(await invoke("me"));
+  });
+
+  // The node's standing with the relay, reported once at startup — and
+  // reported on success, which is the half a window never used to get.
+  await listen("kols://relay", async (event) => {
+    const [reserved, designated] = event.payload;
+    state.relay = { reserved, designated };
+    await drawRelays();
   });
 
   await listen("kols://degraded", (event) => {

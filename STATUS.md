@@ -115,9 +115,9 @@ complete and a failure can be reproduced in the same minute it appears.
 
 | | |
 |---|---|
-| **Working on** | Milestone: a client two people on separate networks can use. E14 landed, so a joiner that goes unanswered now keeps asking instead of stranding. Both binaries build for Windows and macOS in CI, and the window needs no terminal for any step. What is left is a relay reachable from both machines |
+| **Working on** | Milestone: a client two people on separate networks can use. E14 landed, so a joiner that goes unanswered now keeps asking instead of stranding. Both binaries build for Windows and macOS in CI and v0.1.0 publishes them. The window now does relay setup too (O12/O13 closed 2026-08-21), so no step of the flow needs a terminal — with the standing caveat that the window has still never been launched, so that is true of the code and unverified by a person. What is left is a relay reachable from both machines |
 | **Blocked on** | Nothing |
-| **Runnable** | **`kols`** — init (with `--relay`), relay list/set, invite, join, waiting, attach, admit, revoke, name, serve, post, read, edit, delete, react, pin, and channel create/list/rename/topic/slowmode/archive. **`kols-desktop`** — a window that creates a network or joins one by invite, runs a node for it, lists channels, renders one and posts to it, mints an invite and admits from the waiting room, updating as records arrive. `cargo test` — 189 tests here and 649 in `../distributed-intranet`, clippy clean in both; `scripts/cross-check.sh` for big-endian, `taskset -c 0,1` for the starved case |
+| **Runnable** | **`kols`** — init (with `--relay`), relay list/set, invite, join, waiting, attach, admit, revoke, name, serve, post, read, edit, delete, react, pin, and channel create/list/rename/topic/slowmode/archive. **`kols-desktop`** — a window that creates a network or joins one by invite, runs a node for it, designates relays and reports whether one granted a circuit, lists channels, renders one and posts to it, mints an invite and admits from the waiting room, updating as records arrive. **Never launched as a window on either platform.** `cargo test` — 189 tests here and 649 in `../distributed-intranet`, clippy clean in both; `scripts/cross-check.sh` for big-endian, `taskset -c 0,1` for the starved case |
 | **Next decision needed from the user** | Nothing blocking |
 
 ---
@@ -201,8 +201,8 @@ somebody forgot.
 | O9 | **A suspended node can lose its claim and not know.** `NODE_CLAIM_STALE` is wall-clock, so a laptop asleep past the window can have its claim taken over while it still believes it holds one | Making it impossible needs the holder to re-check ownership as it beats. Rare rather than impossible today, because taking over requires somebody to start a second node inside that window | `kols-cli::store::NODE_CLAIM_STALE` |
 | O10 | ~~**Answering a key request is not idempotent, so the one request a joiner sends can never be repeated.**~~ **Closed 2026-08-21.** `kols serve` now re-asks every 30 seconds while unkeyed | Landed as **E14**, Core §3.5.1 — but not in the shape it was written. Re-delivering keys would have restored read access and no group state, so the member would fall out at the next rotation; and re-adding is worse than "a lie in the log", since revocation resolves an identity to its *first* leaf and would remove the abandoned one while handing the new key to the member it excluded. Answering now **replaces** the leaf in one commit | `kols-cli::serve`, `intranet-transport::answer_epoch_key` |
 | O11 | **A relay may not be shared between networks, and nothing enforces it.** Decided 2026-08-21: reusing one relay across two of a member's networks breaks the unlinkability Core §1.2 exists to provide, so it is not permitted. Today it is merely *not done* — a founder can paste one address into two networks and nothing objects | A relay checks no membership by design (Core §5.5 — it replays no log and holds no capabilities), so it cannot refuse a peer for being in the wrong network. Underneath that, **the separation is not structural**: `kad::Behaviour::new` takes the default protocol name and `PROTOCOL_VERSION` is `/intranet/0.1.0` for every network, so two networks sharing a relay share a routing table and their members become mutually discoverable. Enforcing it means network-scoping the protocol names, which is a wire change and a protocol extension, not a client fix. Until then the client should at least refuse to designate a relay another of its own networks already uses — it holds the workspace, so it is the one party that can tell | `design/09` §1, §3; Core §5.5 |
-| O12 | **The window cannot finish setting up a relay, and its own text says it can.** Two dead ends: it never shows the network id, which DI-Relay requires as `RELAY_NETWORK` before it will boot; and the relay field at creation says "You can add one later" when nothing anywhere adds one later — `SetBootstrapRelays` exists only in `kols`. A founder who creates a network in the window without a relay cannot invite, cannot add a relay, and is not told the one string a relay needs | The command and its gate exist and are correct (`define-policy`, `Sensitivity::Governs`); what is missing is a handler and a surface. Also missing is the ordering, which `kols init` prints and the window does not: the relay needs the network id, the network needs a relay before it can invite, so it goes create → deploy → designate → invite. This is the gap between §0's "no step of the flow needs a terminal" and what is actually true | `crates/kols-ui/index.html`, `crates/kols-app/src/main.rs` |
-| O13 | **In the window a working relay is invisible; only a broken one reports.** `kols serve` distinguishes reserved, granted-but-unusable, unreachable and none-designated, and says which — but success is a `println!` while the failures go through `Event::Degraded`. So the window shows relay trouble and never relay health | One line's difference, and it matters at exactly the moment it is hard to debug: "is my relay working" is the question two people on separate machines will actually have, and the window can only answer it in the negative | `crates/kols-cli/src/serve.rs` |
+| ~~O12~~ | ~~**The window cannot finish setting up a relay, and its own text says it can.**~~ **Closed 2026-08-21.** The window submits `SetBootstrapRelays` through a relay panel in the rail, shows the **full** network id with a copy button beside it — labelled as the `RELAY_NETWORK` a relay needs to boot — and the creation form no longer promises a "later" that did not exist. Address validation moved to `kols_cli::parse_relay` and is shared with the terminal, so `kols relay set` and `kols init --relay` refuse a relay naming no peer id too | Was: a command and gate that existed with no handler and no surface | `crates/kols-ui/*`, `crates/kols-app/src/main.rs` |
+| ~~O13~~ | ~~**In the window a working relay is invisible; only a broken one reports.**~~ **Closed 2026-08-21.** New `Event::Relay { reserved, designated }`, emitted at startup in every case including success. It carries the count as well as the address so that "designates none" stays distinguishable from "designates some, none usable" — both leave a node reachable only on its own addresses, and only the second is a fault | The terminal keeps its `println!` and ignores the event, since it already said this where it happened | `crates/kols-api/src/event.rs`, `crates/kols-cli/src/serve.rs` |
 
 **Closed since this register was written:** the executor, the two checks `authorize`
 deliberately could not make, and the event half of the boundary. The first two were owed
@@ -257,6 +257,30 @@ design changes before anything else is built.
 ## 9. Log
 
 Newest first. One line per change that moved the state above.
+
+- **2026-08-21** — **O12 and O13 closed: the window can set up a relay, and says when one
+  works.** Found by a question worth recording — "why am I using the CLI at all if there is a
+  window?" — which §1 had answered wrongly. It claimed no step needed a terminal while O12, three
+  sections down, said relay setup was exactly the step that did.
+
+  The window now submits `SetBootstrapRelays`, which had existed with a correct gate and a
+  working executor and no handler on this side. Alongside it: the **full** network id with a
+  copy button, labelled as the `RELAY_NETWORK` a relay will not boot without — it was rendered
+  `slice(0, 16)`, which is worse than showing nothing because it looks copyable — and a
+  creation form that no longer says "you can add one later" about a path that did not exist.
+
+  O13 is `Event::Relay { reserved, designated }`, emitted at startup in **every** case. Relay
+  failures already crossed the boundary as `Degraded` while success was a `println!`, so the
+  window could report relay trouble and never relay health, which is the wrong half to have when
+  the question is "is my relay working". The count rides along so that "designates none" and
+  "designates some, none usable" stay distinguishable — both leave you reachable only on your
+  own addresses, only the second is a fault.
+
+  Address validation went to `kols_cli::parse_relay` rather than into the window, so the
+  terminal gained it too: an address naming no peer id is refused by `kols relay set` and
+  `kols init --relay` as well. That check earns its place — designating a relay writes a
+  governance entry **every member replays**, so a bad address is carried by everybody and fails
+  later on somebody else's machine. 3 tests; 192 green, clippy clean.
 
 - **2026-08-21** — **Dropped the Intel macOS build leg, and bumped the actions off the
   deprecated Node 20 runtime.** The `macos-13` leg never produced a build that went through,

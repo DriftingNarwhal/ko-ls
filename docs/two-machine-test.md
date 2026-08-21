@@ -17,6 +17,39 @@ neither — it is a routable address both can reach.
 
 ---
 
+## Terminal or window
+
+**Every step below can now be done in the window instead**, since O12 and O13 closed on
+2026-08-21 and relay setup was the last thing that needed a terminal. The steps are written as
+`kols` commands anyway, and that is a deliberate choice rather than a limitation:
+
+- **The terminal says more when it fails.** `kols serve` prints the relay's standing, every
+  governance entry it learns and every key request it answers. The window shows the same
+  information in less of it.
+- **The window has never been launched.** Not on Windows, not on macOS, not once
+  (`STATUS.md` §0). Running the test through it means two unproven things at the same time, and
+  a failure that could be either.
+
+So: **run it in the terminal the first time**, then repeat it in the window, where a failure is
+unambiguously the window's. If you would rather start in the window, this is the mapping:
+
+| Step | In the window |
+|---|---|
+| 2 — create | **or make one** on the picker. Leave the relay field empty |
+| 3 — the relay's `RELAY_NETWORK` | **relay** in the sidebar → *set the relay* → **copy** |
+| 4 — designate it | Paste the address into the same panel → **designate**, then reopen the network from **networks** — a relay is dialled when a node starts |
+| 5 — serve | Nothing. The window runs a node for whichever network is open |
+| 6 — name, channel, post | The composer asks for a name before it lets you post; **+** beside *channels* |
+| 7 — invite | **invite** under *people*, then **copy** |
+| 8 — join | Paste into **join a network** on B's picker |
+| 9 — admit | The waiting list under *people*, **admit** |
+| 11 — confirm | Both messages render in both windows |
+
+Step 3 itself — deploying on Railway — is a web dashboard either way, and the relay's identity
+phrase comes from `intranet-harness`, which is a protocol-repo tool with no window at all.
+
+---
+
 ## 1. Get `kols` onto both machines
 
 Take a published build. `.github/workflows/release.yml` builds Windows x64 and Apple Silicon

@@ -177,6 +177,22 @@ pub struct Waiting {
 /// The permission flags exist so the interface can hide controls it should not
 /// offer (`design/09` §5) — and hiding is presentation, never enforcement. Every
 /// command is re-checked on receipt regardless of what this said.
+/// What this network designates as relays, and what this node cached.
+///
+/// Both, because they answer different questions and disagree in exactly the
+/// case that is hard to debug: a node whose cache names a relay that is gone
+/// behaves differently from one that never had a relay, and only the pair shows
+/// which you have (`STATUS.md` O13).
+#[derive(Debug, Serialize)]
+pub struct Relays {
+    /// What replay says this network uses, in order.
+    pub designated: Vec<String>,
+    /// What this node wrote down locally and will dial before it has synced.
+    pub cached: Vec<String>,
+    /// Whether this member may change them — `define-policy`.
+    pub may_set: bool,
+}
+
 #[derive(Debug, Serialize)]
 pub struct Me {
     /// A short form of this member's identity in this network.
@@ -195,6 +211,12 @@ pub struct Me {
     pub may_create_channel: bool,
     /// Whether this member may create invites.
     pub may_invite: bool,
+    /// Whether this member may designate relays — `define-policy`.
+    ///
+    /// Separate from [`Me::may_invite`] even though a founder holds both, because
+    /// they come apart for everybody else: `approve-node` can be delegated to a
+    /// moderator who has no business rewriting policy.
+    pub may_set_relays: bool,
 }
 
 impl Message {

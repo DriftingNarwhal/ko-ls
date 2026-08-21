@@ -112,6 +112,25 @@ pub enum Event {
         /// Whether the invite was good.
         accepted: bool,
     },
+    /// This node's standing with the network's relays, settled at startup.
+    ///
+    /// Reported on **success as well as failure**, which is the point of it.
+    /// Relay trouble already reached a consumer through [`Event::Degraded`]
+    /// while success was only ever a `println!`, so a window could show relay
+    /// problems and never relay health — and "is my relay working" is the
+    /// question two people on separate machines actually have.
+    Relay {
+        /// The relay a circuit was reserved on, when one was.
+        reserved: Option<String>,
+        /// How many this network designates.
+        ///
+        /// Carried so that "designates none" stays distinguishable from
+        /// "designates some and none of them worked". Both leave this node
+        /// reachable only on its own addresses; only the second is a fault, and
+        /// a consumer that could not tell them apart would have to guess which
+        /// to say.
+        designated: usize,
+    },
     /// Something did not work, and the node carried on.
     ///
     /// Not an error return: every one of these is a state the node is expected

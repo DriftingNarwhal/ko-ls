@@ -371,9 +371,12 @@ fn submit(root: std::path::PathBuf, command: Command) -> Result<(), String> {
             uses,
             valid_for_hours: hours,
         },
-        Command::Relay(RelayCommand::Set { relays }) => {
-            ApiCommand::SetBootstrapRelays { relays }
-        }
+        Command::Relay(RelayCommand::Set { relays }) => ApiCommand::SetBootstrapRelays {
+            relays: relays
+                .iter()
+                .map(|relay| kols_cli::parse_relay(relay))
+                .collect::<Result<Vec<_>, _>>()?,
+        },
         Command::Admit { identity } => ApiCommand::AdmitMember {
             identity: kols_cli::parse_identity(&identity)?,
         },
@@ -726,6 +729,13 @@ fn init(root: std::path::PathBuf, name: &str, relays: Vec<String>) -> Result<(),
             root.display()
         ));
     }
+    // Checked before the network exists rather than after: `--relay` goes
+    // straight into the genesis policy, and a bad one there is replayed by
+    // everybody who ever joins.
+    let relays = relays
+        .iter()
+        .map(|relay| kols_cli::parse_relay(relay))
+        .collect::<Result<Vec<_>, _>>()?;
     let workspace = kols_cli::workspace::Workspace::at(root.clone());
     let store = workspace
         .create_at(root, name, relays.clone())

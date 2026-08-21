@@ -115,6 +115,62 @@ fn me_of(executor: &Executor) -> Result<dto::Me, String> {
         may_post: holds("chat:post:*"),
         may_create_channel: holds("chat:create-channel:*"),
         may_invite: state.identity_holds(&identity.id(), &intranet_governance::Capability::ApproveNode),
+        may_set_relays: state
+            .identity_holds(&identity.id(), &intranet_governance::Capability::DefinePolicy),
+    })
+}
+
+/// What this network designates as relays, and what this node cached.
+///
+/// A local read rather than a command, like [`waiting`]: replay is the authority
+/// and asking it costs nothing.
+#[tauri::command]
+fn relays(app: tauri::State<'_, App>) -> Result<dto::Relays, String> {
+    app.with(|executor| {
+        let store = executor.store();
+        let identity = store.identity().map_err(|e| e.to_string())?;
+        let state = store.state().map_err(|e| e.to_string())?;
+        Ok(dto::Relays {
+            designated: state.policy.bootstrap_relays.clone(),
+            cached: store.relays(),
+            may_set: state
+                .identity_holds(&identity.id(), &intranet_governance::Capability::DefinePolicy),
+        })
+    })
+}
+
+/// Designates this network's relays, replacing whatever it named before.
+///
+/// The gap this closes: the command, its gate and its executor have existed
+/// since the terminal had them, and the window simply never submitted it — so a
+/// founder who made a network here could not invite anybody and could not fix
+/// it without a terminal (`STATUS.md` O12).
+///
+/// Replaces rather than appends, which is what `SetBootstrapRelays` means and
+/// what the interface has to say plainly: this is the set, not an addition to
+/// it.
+#[tauri::command]
+fn set_relays(app: tauri::State<'_, App>, relays: String) -> Result<(), String> {
+    let relays: Vec<String> = relays
+        .split_whitespace()
+        .filter(|address| !address.is_empty())
+        .map(str::to_owned)
+        .collect();
+    if relays.is_empty() {
+        return Err("give at least one relay address".to_owned());
+    }
+    // Checked here rather than only where it is dialled: this becomes a
+    // governance entry every member replays, so a bad address is carried by
+    // everybody and fails later, on somebody else's machine.
+    let relays = relays
+        .iter()
+        .map(|relay| kols_cli::parse_relay(relay))
+        .collect::<Result<Vec<_>, _>>()?;
+    app.with(|executor| {
+        executor
+            .submit(Command::SetBootstrapRelays { relays })
+            .map(|_| ())
+            .map_err(|err| err.to_string())
     })
 }
 
@@ -445,6 +501,19 @@ fn start_node(handle: &tauri::AppHandle, app: tauri::State<'_, App>, root: std::
                     let _ = emitter.emit("kols://degraded", reason.clone());
                     continue;
                 }
+                // The good news as well as the bad, which is the whole point:
+                // before this, relay trouble reached the window and relay health
+                // never did.
+                kols_api::Event::Relay {
+                    reserved,
+                    designated,
+                } => {
+                    let _ = emitter.emit(
+                        "kols://relay",
+                        (reserved.clone(), *designated),
+                    );
+                    continue;
+                }
             };
             let _ = emitter.emit(name, ());
         }
@@ -513,7 +582,9 @@ fn main() {
             networks,
             create_network,
             join_network,
-            open_network
+            open_network,
+            relays,
+            set_relays
         ])
         .run(tauri::generate_context!())
         .expect("the window opens");

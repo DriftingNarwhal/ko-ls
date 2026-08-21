@@ -17,6 +17,10 @@
   --dim: #8b91a3;
   --accent: #7aa2f7;
   --warn: #e0af68;
+  /* Relay standing has three answers and they must not look alike at a glance:
+     working, nothing designated, designated and not working. */
+  --good: #9ece6a;
+  --bad: #f7768e;
   --gap: 12px;
   --radius: 6px;
   --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
@@ -97,6 +101,98 @@ body {
 }
 
 .dim { color: var(--dim); font-size: 12px; margin: 0; }
+
+/* ---- the relay --------------------------------------------------------- */
+
+.relay {
+  border-top: 1px solid var(--line);
+  padding: var(--gap);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+/* The one line answering "does this work". Left border rather than coloured
+   text alone, so the three states are distinguishable without relying on hue —
+   the same reason the words differ and are not just tinted. */
+.relay-state {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--dim);
+  border-left: 2px solid var(--line);
+  padding-left: 8px;
+}
+.relay-state.good { color: var(--good); border-left-color: var(--good); }
+.relay-state.none { color: var(--warn); border-left-color: var(--warn); }
+.relay-state.bad { color: var(--bad); border-left-color: var(--bad); }
+
+.relay-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.relay-list li {
+  font-size: 11px;
+  color: var(--dim);
+  overflow-wrap: anywhere;
+}
+/* Cached but not designated: dialable now, and not what replay says. Worth
+   showing and worth distinguishing — a stale cache and no relay at all are
+   different faults. */
+.relay-list li.cached { opacity: 0.65; font-style: italic; }
+
+.relay-set summary {
+  cursor: pointer;
+  font-size: 12px;
+  color: var(--accent);
+}
+.relay-set[open] summary { margin-bottom: 8px; }
+.relay-set > *:not(summary) { margin-top: 8px; }
+
+/* The network id, which is the thing a relay will not start without. Wrapped
+   rather than truncated: a partial id is worse than none, because it looks
+   copyable. */
+.relay-id-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+}
+.relay-id-row code {
+  flex: 1;
+  font-size: 10px;
+  line-height: 1.35;
+  color: var(--text);
+  background: var(--ground);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 6px;
+  overflow-wrap: anywhere;
+}
+
+#relay-form {
+  display: flex;
+  gap: 6px;
+}
+#relay-form input {
+  flex: 1;
+  min-width: 0;
+  font: 11px/1.4 var(--mono);
+  color: var(--text);
+  background: var(--ground);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 6px;
+}
+.relay-error {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--bad);
+}
+.relay-error.good { color: var(--good); }
 
 /* ---- the rail: which network, which channels ---------------------------- */
 
