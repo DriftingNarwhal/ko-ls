@@ -1,6 +1,6 @@
 # Interface
 
-**Document status:** v0.3 — an interface now exists and is a first pass, not a settled one: it
+**Document status:** v0.4 — D29 (a relay is never shared between networks) and what it does and does not mean for §3's direct-message bootstrap;  an interface now exists and is a first pass, not a settled one: it
 creates and joins networks, runs a node, renders a channel, brings the next member in, and gates
 its chrome on permission. §1's workspace, **both halves of §5**, §4's first two questions and
 most of §7's second are built; §2's tiering, §4.1's presence and §6's theming are not, and §7's
@@ -171,6 +171,48 @@ fallback.
 *Flagged: that fallback lets the shared network's relay observe that two DM identities are
 exchanging bytes, and IP correlation likely tells it who they are. This is the §1 honest
 limit showing up concretely rather than a new weakness.*
+
+**A relay is never shared between two of a member's networks (D29), and that is a different
+statement from the one below.** Reuse is technically possible — a bootstrap relay checks no
+membership by design (Core §5.5: it replays no log and holds no capabilities), so it will serve
+anyone who dials it. It is refused anyway: `kad` runs under libp2p's default protocol name and
+`PROTOCOL_VERSION` is one string for every network, so two networks on one relay share a routing
+table and their members become mutually discoverable. Two of one person's identities meeting
+there is exactly the correlation Core §1.2 exists to prevent, and §1's honest limit — "any relay
+that sees both" — would stop being incidental and become the normal case.
+
+**Not currently enforced, which is worth saying plainly.** Nothing stops a founder designating
+one address in two networks. The relay cannot refuse, having no way to know; enforcing it means
+network-scoping the protocol names, which is a wire change rather than a client fix. What the
+client *can* do meanwhile is refuse to designate a relay another of its own networks already
+uses — it holds the workspace (§1), so it is the only party in a position to notice.
+
+**None of that forbids the bootstrap above, and the distinction is the interesting part.** What
+D29 refuses is a relay *designated by two networks*, carrying both as standing infrastructure.
+The mechanism in this section is not that: it exchanges the DM network's addresses over a
+connection that already exists between two people who have already identified themselves to each
+other, and then opens a direct connection. **No relay is involved at all on the primary path**,
+and nothing is disclosed that either party did not already hold.
+
+**The fallback is where it gets subtle, and it is bounded rather than free.** When hole-punching
+fails and the shared network's bootstrap relay carries the circuit, that relay does briefly serve
+two networks. Two things bound it. A conversation-profile network runs `Discovery::Off` (§2), so
+it has no routing table and joins nobody else's — the structural half of D29's problem, mutual
+discoverability through a shared DHT, cannot arise. And the peer ids it sees are the DM network's,
+which are unlinkable by key from the shared network's.
+
+What remains is IP correlation, and it is real: the relay's operator sees one address holding a
+reservation as a member of the shared network and as a party to a conversation, and can infer that
+two of its members are talking. **That weakens a claim `03` §4.2 makes** — that a separate network
+reveals nothing about the conversation to the server — against exactly one party, in exactly the
+case where hole-punching failed. Worth keeping the fallback for, since the alternative is that
+symmetric-NAT users have no direct messages at all, and worth stating rather than leaving inside
+the earlier flag.
+
+**One dependency follows, and it is easy to miss: `Discovery::Off` for conversation networks stops
+being a resource optimisation and becomes a privacy requirement.** It is what keeps the fallback
+from putting a DM node into the shared relay's routing table. `STATUS` carries it as O2, filed as
+an efficiency item; it is load-bearing for this.
 
 **Scope, recorded because it bounds what relay work is ever worth doing: there are no shared
 relays and none are planned.** A relay here is a member of the network it serves, volunteered

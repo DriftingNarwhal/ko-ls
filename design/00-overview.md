@@ -143,6 +143,7 @@ the document named.
 | D26 | A command's **consent class follows the tier of the capability it needs**, not how consequential the action looks — so pinning prompts harder than posting, because `chat:moderate` is governance-tier and `chat:post` is not | `05` §3 |
 | D28 | **One seed per network, not one master seed** — so no single secret links every identity a member holds, and one phrase leaked exposes one network rather than all of them. The cost is that a backup is a set the client exports rather than a phrase somebody writes down | `02` §6.3 |
 | D27 | A **display name is a governance-log claim, not part of the profile object** — uniqueness needs a total order and a single-writer pointer has none. It binds the entry's author, compares on a normalized key, and is **never released**, because history resolves names at display time and an inherited name relabels somebody else's past | `02` §7, spec 07 §3.9 |
+| D29 | **A relay is never shared between two networks.** Reuse puts two of a member's identities on one relay and — since `kad` runs under the default protocol name and `PROTOCOL_VERSION` is one string for every network — in one routing table, which is the correlation Core §1.2 exists to prevent. Not currently enforced: the separation would have to be structural, in the protocol names. The DM bootstrap is **not** an exception to this, for the reasons `09` §3 sets out | `09` §3, `STATUS` O11 |
 
 ---
 

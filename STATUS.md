@@ -189,7 +189,7 @@ somebody forgot.
 | # | Owed | Why it is not done | Where it is recorded |
 |---|---|---|---|
 | O1 | **Commands for direct messages, search, voice and stage** | Each has a line in `design/05` §3 and no code behind it. P2 for the first two, P3 and P4 for the rest | `kols-api::Command`'s own documentation |
-| O2 | **`Discovery::Off` for conversation-profile networks** — the client half of E12 | `kols init` writes no `chat:network-profile` key, so every network the CLI creates is a `server` and there is no conversation network to build the leaner node for. `kols_core::policy::conversation_genesis_values` exists for one; only a test calls it | `design/06` §12 |
+| O2 | **`Discovery::Off` for conversation-profile networks** — the client half of E12, and **load-bearing for privacy rather than merely leaner since D29** | `kols init` writes no `chat:network-profile` key, so every network the CLI creates is a `server` and there is no conversation network to build the leaner node for. `kols_core::policy::conversation_genesis_values` exists for one; only a test calls it. The escalation: E13's relay fallback has the shared network's relay briefly carry a conversation, and it is `Discovery::Off` that keeps that DM node out of the relay's routing table. With discovery on, the fallback would create exactly the shared-routing-table correlation D29 forbids | `design/06` §12, `design/09` §3 |
 | O3 | **`may_moderate_at` answers from current state, ignoring the head it is given** | Checking authority *as of* a governance head needs the log rather than one replayed snapshot. The difference shows only when a moderator is demoted after acting: this retroactively invalidates their past redactions, where `design/01` §6 says they should stand. Pinning is now judged against current state deliberately (`may_moderate_now`), which is a different question rather than the same one approximated | `kols-core::permissions`, flagged in the type's own docs |
 | O4 | **`kols-store` does not exist.** `kols-cli` carries its own file-backed store instead of the SQLite projection `design/05` §5 describes | Nothing has needed a projection yet — the CLI replays the log on every invocation, which is slow and correct. The projection is worth building when something renders fast enough to notice | `design/05` §5 |
 | O5 | **The executor rebuilds an author's whole log to append one record** | `rebuild_log` replays every record this member wrote in a channel on every write, which is correct — the segment is a pure function of the sequence — and is linear in a log that only grows. It is the same work O4's projection exists to stop repeating, and wants measuring before it is optimised rather than after | `kols-cli::chat::rebuild_log` |
@@ -255,6 +255,38 @@ design changes before anything else is built.
 ## 9. Log
 
 Newest first. One line per change that moved the state above.
+
+- **2026-08-21** — **D29 recorded, and the direct-message bootstrap is not an exception to it.**
+  O11's decision now lives in `design/00`'s register and its reasoning in `design/09` §3, rather
+  than only in a status log where it would have been lost.
+
+  **The distinction that resolves the apparent conflict.** D29 refuses a relay *designated by two
+  networks*, carrying both as standing infrastructure. E13 is not that: it exchanges the DM
+  network's addresses over a connection that already exists between two people who have already
+  identified themselves to each other, then opens directly. **No relay is involved on the primary
+  path at all**, and nothing is disclosed that either party did not already hold.
+
+  **The fallback is bounded rather than free**, and the bound is a dependency nobody had noticed.
+  When hole-punching fails, the shared network's bootstrap relay carries the circuit and does
+  briefly serve two networks. It does not create D29's structural problem, because a
+  conversation-profile network runs `Discovery::Off` and so has no routing table and joins nobody
+  else's — **which turns O2 from a resource optimisation into a privacy requirement**, since with
+  discovery on that fallback would put a DM node straight into the shared relay's routing table.
+  O2's row says so now.
+
+  What remains is IP correlation, which is real: the relay's operator sees one address as a member
+  and as a party to a conversation, and can infer that two of its members are talking. That
+  **weakens a claim `design/03` §4.2 makes** — that a separate network reveals nothing about the
+  conversation to the server — against one party, in the case where hole-punching failed. Kept
+  anyway, because the alternative is that symmetric-NAT users have no direct messages, and now
+  stated in `09` §3 rather than left inside an earlier flag.
+
+  **One correction worth recording, because it was nearly reasoned from.** A participant's identity
+  in a DM network is *not* their identity in the shared network — it is a separate per-network
+  derivation, which is precisely why `design/03` §4.3 step 4 carries a **voluntary identity link**
+  binding the two. That the identities differ is the property making a conversation unlinkable from
+  the server to everybody except the person a participant chose to prove it to. If they were the
+  same, the DM network would be linked to the shared one by construction.
 
 - **2026-08-21** — **Reviewed how a relay is actually reached, and one finding turned into a
   decision that changes what direct messages need.** No code moved; this is the review the
