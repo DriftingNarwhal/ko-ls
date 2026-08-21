@@ -1,6 +1,6 @@
 # ko-ls — Implementation Status
 
-**Updated:** 2026-08-21 (the joiner that never asked for a key, found by reproducing rather than reading; macOS builds)
+**Updated:** 2026-08-21 (tests run here, GitHub builds — and only when a build is wanted)
 **Phase:** P1 — two nodes talk live and durably, a joiner reads back through sealed
 history, and the boundary carries commands in and events out
 **Design:** [`design/`](design/) — `00`–`08` at v1.0, `09` at v0.2. **`distributed-intranet/specs/07` is normative** where it and the design set overlap.
@@ -67,29 +67,29 @@ What that needs, and where it stands:
    WebView2 and neither is reachable from this container. `design/07` §2 S3 records what the
    Linux toolchain needed.
 
-### Building for Windows and macOS
+### Building, and where tests run
 
-**In CI, not here.** `.github/workflows/release.yml` builds both binaries on `windows-latest`,
-`macos-latest` (Apple Silicon) and `macos-13` (Intel), and attaches them to a release on a `v*`
-tag; `workflow_dispatch` runs it
-without publishing, which is how to test the workflow itself. `gate.yml` runs the tests and
-clippy on Linux *and* Windows for every push, which is the only reason the platform-specific
-half of `kols-cli::secret` is ever exercised by anything but a person.
+**Tests run here. GitHub builds.** `cargo test --workspace` and
+`cargo clippy --workspace --all-targets` in this container before every commit, plus
+`taskset -c 0,1 cargo test -p kols-cli --test two_nodes` when timing is in question — a starved
+machine loses races a 24-core one wins every time, and that is how the keying bug surfaced.
+**Clean up afterwards**: the container's storage is the host's, and a day of cross-compiles took
+`target/` to 11 GB.
 
-One thing it needs from a human: **a tag**, to publish — `git tag v0.1.0 && git push origin
-v0.1.0`. A `workflow_dispatch` run builds the same artifacts without releasing them.
+`.github/workflows/release.yml` is the only workflow, and it runs **only when a build is
+wanted** — a `v*` tag publishes one, a `workflow_dispatch` produces the artifacts without
+publishing. Not on every push: nothing in it belongs on the path of an ordinary commit.
 
-**No token is needed any more.** CI checks out both repos as siblings, because the client
-depends on the protocol by path, and that used to require a PAT in `PROTOCOL_REPO_TOKEN`
-because a job's own token reaches only its own repository. All three repos are public now, so
-the job token can read the protocol repo and the workflows' `secrets.PROTOCOL_REPO_TOKEN ||
-github.token` falls through to it. If that secret was ever created it can be deleted.
+It builds `windows-latest`, `macos-latest` (Apple Silicon) and `macos-13` (Intel), and each leg
+runs the narrow set of tests that can only run there — `cargo test -p kols-cli --lib`, the store
+and the seed — followed by a check on the **artifact itself** that the seed it writes is
+readable by nobody else. That last one exists because the Rust tests for it are
+`#[cfg(all(test, unix))]`: the Windows DACL path compiles out of them, so a `cargo test` leg on
+Windows would prove nothing about the one function written specifically for Windows.
 
-The cross-compile that produced the first `.exe` is gone from `.devcontainer/`, deliberately.
-It worked, and it cost something at the far end: a mingw build *imports* `WebView2Loader.dll`
-instead of linking it in, so the window would not start unless that DLL travelled beside it.
-An MSVC build on a Windows runner has no such tail, and it puts the binary somewhere both
-people can reach — which a container never was.
+Deliberately not in CI: the `two_nodes` daemon suite. It tests merge, gossip and backfill —
+none of it platform-specific, all of it timing-sensitive — and it belongs where its output is
+complete and a failure can be reproduced in the same minute it appears.
 
 ### What to watch out for
 
@@ -237,6 +237,29 @@ design changes before anything else is built.
 ## 9. Log
 
 Newest first. One line per change that moved the state above.
+
+- **2026-08-21** — **The gate is gone: tests run here, GitHub builds.** A CI gate on every push
+  was never asked for — builds were — and it turned three rounds of debugging into somebody
+  copy-pasting log fragments for failures that one local `taskset -c 0,1` run reproduced with
+  complete output. CI could say *that* tests failed; the container said *why*.
+
+  What CI genuinely adds is the one thing this container cannot do: execute on Windows and
+  macOS. So that is all it does now, and only when a build is wanted — a `v*` tag, or a manual
+  dispatch. Each platform leg runs `cargo test -p kols-cli --lib`, which is the store and the
+  seed, and then checks the **artifact** it just built: create a network, look at the seed's
+  permissions, refuse the build if anybody else can read it.
+
+  **That artifact check exists because the obvious thing does not work.** `secret::tests` is
+  `#[cfg(all(test, unix))]`, so the Windows DACL path compiles out of the Rust tests entirely —
+  a `cargo test` leg on Windows would have run the pure-function store tests and reported
+  success while proving nothing about the one function written specifically for Windows. A test
+  that looks complete and is not is worse than none.
+
+  Also: **the test suite now cleans up after itself**, because this container's storage is the
+  host's. `Home` already removed its directory on `Drop`; the `secret` tests added yesterday did
+  not, and a day of Windows cross-compiles had taken `target/` to 11 GB. `Drop` rather than a
+  line at the end of a test, because `Drop` runs on an unwind and a failing test is exactly when
+  the scratch is left behind.
 
 - **2026-08-21** — **The joiner never asked, and reading the code had said otherwise twice.** The
   round before this reported a stall after sixty seconds, which was useful and was not the

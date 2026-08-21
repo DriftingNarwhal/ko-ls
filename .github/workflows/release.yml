@@ -16,6 +16,9 @@
 # a normal one. `kols` is the terminal client and `kols-desktop` the window.
 name: release
 
+# Only when a build is wanted: a `v*` tag publishes one, and a manual dispatch
+# produces the artifacts without publishing. Deliberately not on every push —
+# nothing here belongs on the path of an ordinary commit.
 on:
   push:
     tags: ["v*"]
@@ -72,9 +75,71 @@ jobs:
             Add-MpPreference -ExclusionProcess $proc -ErrorAction SilentlyContinue
           }
 
+      # The tests that can only run here, run here — and only as part of a
+      # build.
+      #
+      # **Not a gate.** The suite runs in the development container, where the
+      # output is complete and a failure can be reproduced in the same minute it
+      # appears. What that container cannot do is execute on Windows or macOS,
+      # and the client has real platform-specific code: `kols-cli::secret`
+      # restricts a seed with a chmod on Unix and a protected DACL on Windows,
+      # and `Store::default_root` reads `USERPROFILE` on one and `HOME` on the
+      # other. Both of those were wrong, and both were invisible from Linux.
+      #
+      # So this is the narrow set: the store, the seed's permissions, and the
+      # paths. Deliberately **not** the `two_nodes` daemon suite, which tests
+      # merge, gossip and backfill — none of it platform-specific, all of it
+      # timing-sensitive, and all of it already proven in the container on a
+      # deliberately starved machine.
+      - name: Platform tests
+        working-directory: ko-ls
+        run: cargo test -p kols-cli --lib
+
       - name: Build
         working-directory: ko-ls
         run: cargo build --release --bin kols --bin kols-desktop
+
+      # The one thing that can only be checked where it runs: that a seed the
+      # built binary writes is readable by its owner and by nobody else.
+      #
+      # This checks the **artifact**, not the source, and it has to: the Rust
+      # tests for this are `#[cfg(all(test, unix))]`, so the Windows DACL path
+      # compiles out of them entirely and a `cargo test` leg on Windows would
+      # prove nothing about the one function written specifically for Windows.
+      # It was written blind against an API contract and confirmed once, by hand,
+      # by a person looking at a Properties dialog. This is that check, kept.
+      - name: A seed is readable by nobody else (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $home_dir = Join-Path $env:RUNNER_TEMP "kols-smoke"
+          $env:KOLS_HOME = $home_dir
+          & "ko-ls\target\release\kols.exe" init smoke
+          $seed = Join-Path $home_dir "seed"
+          if (-not (Test-Path $seed)) { throw "no seed was written at $seed" }
+          $acl = Get-Acl $seed
+          if (-not $acl.AreAccessRulesProtected) {
+            throw "the seed's DACL is not protected, so it inherits from its directory"
+          }
+          $me = [System.Security.Principal.WindowsIdentity]::GetCurrent().Name
+          foreach ($rule in $acl.Access) {
+            if ($rule.IdentityReference.Value -ne $me) {
+              throw "the seed grants $($rule.IdentityReference.Value), not just $me"
+            }
+          }
+          Write-Host "seed grants only $me, inheritance off"
+          Remove-Item -Recurse -Force $home_dir
+
+      - name: A seed is readable by nobody else (macOS)
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          export KOLS_HOME="$RUNNER_TEMP/kols-smoke"
+          ko-ls/target/release/kols init smoke
+          mode=$(stat -f "%Lp" "$KOLS_HOME/seed")
+          echo "seed mode: $mode"
+          [ "$mode" = "600" ] || { echo "a seed at mode $mode is readable beyond its owner"; exit 1; }
+          rm -rf "$KOLS_HOME"
 
       # The npm package installs a `tauri` binary. `cargo tauri` is the other
       # distribution of the same CLI and is not this one.

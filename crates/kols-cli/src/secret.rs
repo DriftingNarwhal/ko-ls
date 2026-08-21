@@ -243,16 +243,37 @@ mod tests {
     use std::fs;
     use std::os::unix::fs::PermissionsExt;
 
-    fn scratch(name: &str) -> std::path::PathBuf {
-        let dir = std::env::temp_dir().join(format!("kols-secret-{name}"));
-        let _ = fs::remove_dir_all(&dir);
-        fs::create_dir_all(&dir).unwrap();
-        dir.join("secret")
+    /// A directory that removes itself, however the test ends.
+    ///
+    /// Not a nicety: this dev container's storage is the host's, so a test that
+    /// leaves its scratch behind spends somebody's disk every run. `Drop` runs on
+    /// an unwind too, which a bare `remove_dir_all` at the end of a test does not.
+    struct Scratch(std::path::PathBuf);
+
+    impl Scratch {
+        fn new(name: &str) -> Self {
+            let dir = std::env::temp_dir()
+                .join(format!("kols-secret-{name}-{}", std::process::id()));
+            let _ = fs::remove_dir_all(&dir);
+            fs::create_dir_all(&dir).unwrap();
+            Self(dir)
+        }
+
+        fn file(&self) -> std::path::PathBuf {
+            self.0.join("secret")
+        }
+    }
+
+    impl Drop for Scratch {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.0);
+        }
     }
 
     #[test]
     fn a_secret_is_unreadable_to_anybody_else() {
-        let path = scratch("fresh");
+        let scratch = Scratch::new("fresh");
+        let path = scratch.file();
         write_private(&path, b"seed").unwrap();
 
         let mode = fs::metadata(&path).unwrap().permissions().mode();
@@ -266,7 +287,8 @@ mod tests {
         // directory already made world-readable must not inherit that, and the
         // permissions of the file that was there say nothing about the one that
         // replaces it.
-        let path = scratch("overwrite");
+        let scratch = Scratch::new("overwrite");
+        let path = scratch.file();
         fs::write(&path, b"public").unwrap();
         fs::set_permissions(&path, fs::Permissions::from_mode(0o644)).unwrap();
 
@@ -298,7 +320,8 @@ mod tests {
         // Not the refusal path itself — that needs a filesystem this cannot
         // restrict on — but the property the refusal depends on: a failed write
         // must not leave a file a later reader would treat as a secret.
-        let path = scratch("missing").join("no-such-directory").join("secret");
+        let scratch = Scratch::new("missing");
+        let path = scratch.file().join("no-such-directory").join("secret");
         assert!(write_private(&path, b"seed").is_err());
         assert!(!path.exists());
     }
