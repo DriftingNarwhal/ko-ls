@@ -45,8 +45,10 @@ jobs:
     runs-on: ${{ matrix.os }}
 
     steps:
-      # See gate.yml for why both repos: the client depends on the protocol by
-      # path, so a checkout of this one alone cannot build.
+      # Both repos, because the client depends on the protocol by path — a
+      # checkout of this one alone cannot build. Both are public, so the default
+      # token reaches them and PROTOCOL_REPO_TOKEN is a leftover for the case
+      # where either goes private again.
       - uses: actions/checkout@v4
         with:
           path: ko-ls
