@@ -19,20 +19,48 @@ neither — it is a routable address both can reach.
 
 ## 1. Get `kols` onto both machines
 
-Build it where there is a toolchain, or take what CI produces —
-`.github/workflows/release.yml` builds Windows and Apple Silicon macOS on a `v*` tag or a
-manual dispatch.
+Take a published build. `.github/workflows/release.yml` builds Windows x64 and Apple Silicon
+macOS on a `v*` tag, and the tag is what publishes them — a manual dispatch builds the same
+binaries and leaves them as artifacts, which download as a **zip** and lose the executable bit
+on the way. Releases attach each file on its own:
+
+**<https://github.com/DriftingNarwhal/ko-ls/releases>**
+
+| Take | For |
+|---|---|
+| `windows-x64-kols.exe`, `macos-arm64-kols` | **This runbook.** Every step below is a `kols` command |
+| `…-setup.exe`, `….dmg` | The window. Optional here, and it installs *only* the window |
+| `…-kols-desktop.exe`, `macos-arm64-kols-desktop` | The window, portable — no installer |
+
+**The installer does not give you `kols`.** It installs the desktop application, and nothing
+below is reachable from it. Download the CLI separately even if you install.
+
+Both platforms object to an unsigned download the first time, in ways that read as a broken
+build:
+
+```bash
+# macOS — the release asset is prefixed, and arrives quarantined and non-executable
+mv macos-arm64-kols kols
+chmod +x kols
+xattr -d com.apple.quarantine kols      # else: "cannot be opened because the developer…"
+```
+
+On Windows, rename `windows-x64-kols.exe` to `kols.exe` and put it somewhere on `PATH`.
+SmartScreen warns about the installer and leaves the portable `.exe` files alone. There is no
+signing certificate on this project, so both objections are expected rather than symptoms.
+
+Building instead, where there is a toolchain:
 
 ```bash
 cargo build -p kols-cli      # target/debug/kols
+export PATH="$PWD/target/debug:$PATH"
 ```
 
-Give each machine its own state directory:
+Then give each machine its own state directory:
 
 ```bash
 # A, macOS/Linux
 export KOLS_HOME=~/kols-alice
-export PATH="$PWD/target/debug:$PATH"
 
 # B, macOS/Linux
 export KOLS_HOME=~/kols-bob
@@ -40,6 +68,9 @@ export KOLS_HOME=~/kols-bob
 # Windows PowerShell, either machine
 $env:KOLS_HOME = "C:\kols\alice"
 ```
+
+`--home <path>` does the same thing per-command, which is easier than exporting when two
+terminals on one machine need different identities.
 
 The seed written there is the only copy of that identity and there is no recovery service, so
 for a test point it somewhere disposable.
@@ -257,8 +288,10 @@ It establishes that the path works across real networks: relay reachability, adm
 epoch-key delivery, pointer sync, segment fetch and a merged view between two nodes that have
 never been on the same machine.
 
-It does not exercise the desktop window, which is built for Windows and macOS and has never been
-run as a window on either (`STATUS.md` §0). It does not exercise private channels, direct
+It does not exercise the desktop window. That is now a separate and much cheaper check than it
+was — v0.1.0 publishes an installer for both platforms — but the window has still never been
+launched as a window on either (`STATUS.md` §0), so opening it once is worth doing on its own
+rather than folding into this test, where a failure would be ambiguous between the two. It does not exercise private channels, direct
 messages, voice or search, none of which exist. And it says nothing about behaviour over days —
 retention, key retirement and segment sealing thresholds are all unmeasured beyond a single
 spike.
