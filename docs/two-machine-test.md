@@ -20,7 +20,7 @@ neither — it is a routable address both can reach.
 ## 1. Get `kols` onto both machines
 
 Build it where there is a toolchain, or take what CI produces —
-`.github/workflows/release.yml` builds Windows and both macOS architectures on a `v*` tag or a
+`.github/workflows/release.yml` builds Windows and Apple Silicon macOS on a `v*` tag or a
 manual dispatch.
 
 ```bash

@@ -53,11 +53,11 @@ jobs:
           - os: windows-latest
             name: windows-x64
             bundle: nsis
+          # Apple Silicon only. There is no Intel leg: the `macos-13` runner
+          # never produced a build that went through, and this is not being
+          # shipped to Macs that predate Apple Silicon.
           - os: macos-latest
             name: macos-arm64
-            bundle: dmg
-          - os: macos-13
-            name: macos-x64
             bundle: dmg
     runs-on: ${{ matrix.os }}
 
@@ -224,4 +224,4 @@ jobs:
 
           **Windows** needs the WebView2 runtime, which ships with Windows 11 and current Windows 10.
 
-          **macOS** builds are unsigned, so Gatekeeper will refuse them on first run: open the app from the right-click menu once, or \`xattr -d com.apple.quarantine <file>\`. Signing needs a developer certificate this project does not have."
+          **macOS** builds are for Apple Silicon and are unsigned, so Gatekeeper will refuse them on first run: open the app from the right-click menu once, or \`xattr -d com.apple.quarantine <file>\`. Signing needs a developer certificate this project does not have."

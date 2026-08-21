@@ -82,7 +82,7 @@ machine loses races a 24-core one wins every time, and that is how the keying bu
 wanted** — a `v*` tag publishes one, a `workflow_dispatch` produces the artifacts without
 publishing. Not on every push: nothing in it belongs on the path of an ordinary commit.
 
-It builds `windows-latest`, `macos-latest` (Apple Silicon) and `macos-13` (Intel), and each leg
+It builds `windows-latest` and `macos-latest` (Apple Silicon), and each leg
 runs the narrow set of tests that can only run there — `cargo test -p kols-cli --lib`, the store
 and the seed — followed by a check on the **artifact itself** that the seed it writes is
 readable by nobody else. That last one exists because the Rust tests for it are
@@ -257,6 +257,17 @@ design changes before anything else is built.
 ## 9. Log
 
 Newest first. One line per change that moved the state above.
+
+- **2026-08-21** — **Dropped the Intel macOS build leg, and bumped the actions off the
+  deprecated Node 20 runtime.** The `macos-13` leg never produced a build that went through,
+  and the Mac this is built for is Apple Silicon, so the matrix is now Windows and
+  `macos-latest` only. Separately, every run warned that Node 20 is deprecated: `checkout` to
+  v5, `upload-artifact` to **v6** and `download-artifact` to **v7**. Those are the *lowest*
+  major of each that runs Node 24, deliberately — `upload-artifact@v5` is still Node 20, so
+  the obvious one-major bump would have looked like a fix and changed nothing, and
+  `download-artifact@v8` stops unzipping unconditionally, which would silently change what
+  `find artifacts -type f` hands to `gh release create`. The reasoning is a header comment in
+  the workflow, where the next person to see a deprecation warning will read it.
 
 - **2026-08-21** — **Made every unlinkability claim say the same thing, and wrote the two-machine
   runbook down.**
