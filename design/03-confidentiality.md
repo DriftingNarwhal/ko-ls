@@ -195,7 +195,13 @@ what is said afterward. A conversation is minimal in *surface*, not in guarantee
   jobs, and networks are deliberately cheap to create. A DM is simply the smallest case.
 - **Metadata isolation comes free.** In a private channel, every member of the server can
   see that a private channel exists between two identities and roughly how active it is
-  (§3.4). A separate network reveals none of that to the server.
+  (§3.4). A separate network reveals none of that to the server *in its own content or its
+  own log*. One qualification, because the earlier flat statement was too strong: where a
+  conversation cannot hole-punch and falls back to the shared network's bootstrap relay
+  (`09` §3), that relay's operator sees one address acting both as a member and as a party
+  to a conversation, and can infer that two of its members are talking. Nothing about *what*
+  they say is exposed, and no other member learns anything — but the isolation is from the
+  server's members and its log, not from an operator watching addresses.
 
 **What it costs:** each conversation carries its own genesis, governance log, MLS group
 and DHT namespace. That is more fixed state per conversation than a channel would be —
@@ -233,7 +239,8 @@ arrives.
 **Decision (D21): a group conversation is its own `conversation`-profile network,
 distinct from every pairwise conversation among the same people.** Alice–Bob, Alice–Carol
 and Alice–Bob–Carol are three separate networks with three separate histories, and each
-participant holds a different, uncorrelatable identity in each. That is not overhead to
+participant holds a different identity in each, uncorrelatable **by key** (the standing
+qualification — `00` §1, `09` §1). That is not overhead to
 apologise for — it is the reason a group chat cannot leak into a private one.
 
 **Creating one must not feel like founding a server**, and does not: the client flow is
@@ -314,8 +321,10 @@ knows locally that these are all yours and can present them as one inbox. Note t
 knowledge comes from the directory rather than from a shared secret: seeds are per network
 (`02` §6.3), so there is no master key whose compromise would correlate them either. That is **local knowledge only** — no other party can
 correlate your identity in a DM network with your identity in the server you met through
-unless you sent them the §4.3 link. Unlinkability is preserved exactly as Core §1.2
-intends; the convenience is entirely client-side.
+*from the keys alone*, unless you sent them the §4.3 link. Unlinkability is preserved exactly
+as Core §1.2 intends, including its limit: an observer positioned to see both — a peer in both
+networks, or a relay carrying both — can still correlate by address, which §1.2 places out of
+scope rather than solving. The convenience is entirely client-side; so is the exposure.
 
 This is why the DM surface is presented as a **friends list and an instant-messaging
 pane**, not as a channel list: it behaves like an IM service, one conversation per
@@ -400,3 +409,8 @@ Restating what this design delivers, in the style Core §3.1 and Storage §5.5 u
   processes (§5) — convergently, not instantly.
 - **Retention (`01` §8) is not deletion.** Dropping old segments makes them unavailable to
   those who did not already hold them.
+- **Unlinkability between your identities is a property of keys, not of traffic.** Nobody can
+  tell your identity in one network from your identity in another by the keys, and anyone
+  positioned to see both addresses — a peer in both networks, a relay carrying both — can
+  correlate them anyway. Core §1.2 places that explicitly out of scope; `09` §1 carries the
+  statement in full, and every unlinkability claim in this document is bounded by it.

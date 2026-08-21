@@ -69,8 +69,9 @@ which is not founding a network of their own. And a joiner who lands in a waitin
 else until a member admits them (`02` §6.2), so the interface says that rather than showing an
 empty network, which is what the same state looks like when nothing explains it.
 
-**Honest limit, stated because the interface should not oversell it.** Unlinkability holds
-at the *identity* layer. Two of a user's identities connecting from one IP address remain
+**Honest limit, stated because the interface should not oversell it — and this is the
+canonical statement the rest of the set defers to** (`00` §1, `03` §4.2/§4.6/§7, D29).
+Unlinkability holds at the *identity* layer. Two of a user's identities connecting from one IP address remain
 correlatable by any peer that is in both networks, and by any relay that sees both. The
 protocol never claimed otherwise, and the interface must not imply it did.
 

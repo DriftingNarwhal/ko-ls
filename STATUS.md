@@ -58,6 +58,8 @@ What that needs, and where it stands:
    `cargo clippy -p kols-cli --target x86_64-pc-windows-gnu`, and it caught something the
    Linux one cannot see, so it is worth making when `src/secret.rs` changes.
 2. **The two-machine test is the only thing left, and it needs a relay nobody has deployed.**
+   [`docs/two-machine-test.md`](docs/two-machine-test.md) is the step-by-step, written to be
+   followed on two machines and deleted once it is either routine or wrong.
    Both machines are behind NAT, so they cannot reach each other directly (Core §5.5) — one
    bootstrap relay on a routable address is a standing dependency, not a convenience.
    DI-Relay deploys one; `intranet-harness relay` is the local equivalent and is useless
@@ -255,6 +257,37 @@ design changes before anything else is built.
 ## 9. Log
 
 Newest first. One line per change that moved the state above.
+
+- **2026-08-21** — **Made every unlinkability claim say the same thing, and wrote the two-machine
+  runbook down.**
+
+  Core §1.2 has always been honest — two per-network public keys cannot be tied together, and
+  IP-level and timing correlation are explicitly out of scope — and the documents restating that
+  guarantee had been dropping the second half. A reader met the strong version in `design/00` §1,
+  `design/03` §4.2, §4.4 and §4.6, and spec 07 §0, §1.5 and §8, and the honest version once, in
+  `design/09` §1. **§1 is now named as the canonical statement and the others defer to it**, with
+  Core §6 and spec 07's own summary carrying the limit too, since those are the sections
+  consuming work is told to assume from.
+
+  **Two of them were overclaims rather than omissions.** `design/03` §4.2 and spec 07 §1.5 both
+  said a separate network reveals nothing about a conversation to the server. That is right about
+  its log and its storage and wrong about E13's relay fallback, where the operator carrying the
+  circuit sees one address acting as a member and as a party to a conversation and can infer that
+  two members are talking. Both now say which of the two they mean.
+
+  Nothing was weakened. Three documents stopped describing a narrower guarantee as a broader one,
+  which is the failure this project objects to everywhere else.
+
+  **`docs/two-machine-test.md` is new**, and is written to be thrown away: it exists because the
+  test has not been run, and once the path is either routine or wrong it should be deleted or
+  folded into the README rather than kept as a second thing to disagree with this file. It carries
+  the three traps in the places they bite — never bind a relay to loopback, the Railway domain and
+  TCP proxy are both required, and `relay reserved a circuit on …` is the line that means steps 3
+  and 4 worked.
+
+  Also refreshed the protocol repo's `CLAUDE.md`, which still said five amendments were
+  implemented and E10 was the only one outstanding — stale since E14 landed and E13 and E15 were
+  recorded.
 
 - **2026-08-21** — **D29 recorded, and the direct-message bootstrap is not an exception to it.**
   O11's decision now lives in `design/00`'s register and its reasoning in `design/09` §3, rather

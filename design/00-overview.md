@@ -67,7 +67,8 @@ to a **network**, and almost everything else follows from that.
 ### What this mapping costs, stated up front
 
 - **There is no cross-server identity, and there cannot be.** Per-network derivation
-  (Core §1.2) exists specifically so two of your memberships cannot be correlated. A
+  (Core §1.2) exists specifically so two of your memberships cannot be correlated **by their
+  keys** — the qualifier is load-bearing and is carried in full in `09` §1. A
   user has one client and one account *from their own point of view* — holding a seed per
   network rather than one master seed, so not even their own backup is a single object
   linking their memberships — but no other member can tell that your identity here and your
@@ -76,6 +77,13 @@ to a **network**, and almost everything else follows from that.
   Messaging someone you met in a server works by *deliberately* proving it, once, to that
   one person (`03` §4.3) — which is the mechanism Core §1.2 provides for exactly this.
   This is the protocol working as designed, not a gap to close.
+
+  **What it does not cover, said here rather than only where it becomes concrete.**
+  Unlinkability is a property of *keys*. Two of your identities reaching the network from one
+  address are still correlatable by anyone positioned to see both — a peer in both networks, a
+  relay carrying both, or an observer of the traffic. Core §1.2 places IP-level and timing
+  correlation explicitly out of scope, so this is the protocol being honest rather than falling
+  short, and every claim about unlinkability in this set is bounded by it (`09` §1, D29).
 - **There is no server list to browse.** No cross-network discovery exists (Core §0).
   Joining is invite-driven, always.
 - **There is no operator.** Every moderation and administration action is a governance

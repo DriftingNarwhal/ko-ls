@@ -63,6 +63,7 @@ None of this is a plan. What is built, and what is not, is [below](#what-exists)
 | If you want | Read |
 |---|---|
 | Where the work stands and what is next | [`STATUS.md`](STATUS.md) |
+| To actually run it across two machines | [`docs/two-machine-test.md`](docs/two-machine-test.md) |
 | Why anything is the way it is | [`design/00-overview.md`](design/00-overview.md) |
 | The normative wire contract | [`specs/07-chat-application-spec.md`](https://github.com/DriftingNarwhal/distributed-intranet/blob/main/specs/07-chat-application-spec.md) in the protocol repo |
 
