@@ -41,9 +41,9 @@ mod dto;
 
 use intranet_crypto::to_hex;
 use kols_api::{Command, Outcome};
-use kols_cli::executor::Executor;
-use kols_cli::network;
-use kols_cli::workspace::Workspace;
+use kols_node::executor::Executor;
+use kols_node::network;
+use kols_node::workspace::Workspace;
 use kols_core::ChannelId;
 use std::sync::Mutex;
 use tauri::{Emitter, Manager};
@@ -168,7 +168,7 @@ fn set_relays(
     // everybody and fails later, on somebody else's machine.
     let relays = relays
         .iter()
-        .map(|relay| kols_cli::parse_relay(relay))
+        .map(|relay| kols_node::parse_relay(relay))
         .collect::<Result<Vec<_>, _>>()?;
     let root = app.with(|executor| {
         executor
@@ -306,8 +306,8 @@ fn create_invite(app: tauri::State<'_, App>, uses: u32, hours: i64) -> Result<dt
                 expires_at_millis,
                 uses,
             } => Ok(dto::Invite {
-                uri: kols_cli::invite::to_uri_from_bytes(&invite),
-                hours: (expires_at_millis - kols_cli::chat::now_millis()) / 3_600_000,
+                uri: kols_node::invite::to_uri_from_bytes(&invite),
+                hours: (expires_at_millis - kols_node::chat::now_millis()) / 3_600_000,
                 uses,
             }),
             other => Err(format!("minting an invite answered with {other:?}")),
@@ -335,7 +335,7 @@ fn waiting(app: tauri::State<'_, App>) -> Result<Vec<dto::Waiting>, String> {
             .waiting()
             .into_iter()
             .map(|identity| dto::Waiting {
-                short: kols_cli::parse_identity(&identity)
+                short: kols_node::parse_identity(&identity)
                     .map(|id| id.short())
                     .unwrap_or_else(|_| identity.clone()),
                 identity,
@@ -347,7 +347,7 @@ fn waiting(app: tauri::State<'_, App>) -> Result<Vec<dto::Waiting>, String> {
 /// Admits a waiting identity to the network.
 #[tauri::command]
 fn admit(app: tauri::State<'_, App>, identity: String) -> Result<(), String> {
-    let identity = kols_cli::parse_identity(&identity)?;
+    let identity = kols_node::parse_identity(&identity)?;
     app.with(|executor| {
         executor
             .submit(Command::AdmitMember { identity })
@@ -441,14 +441,14 @@ async fn join_network(
     handle: tauri::AppHandle,
     invite: String,
 ) -> Result<dto::Joined, String> {
-    let credential = kols_cli::invite::from_uri(&invite)?;
+    let credential = kols_node::invite::from_uri(&invite)?;
     let workspace = {
         let app = handle.state::<App>();
         Workspace::at(app.workspace.root().to_path_buf())
     };
     let path = workspace.path_for(&credential.network);
 
-    let landed = kols_cli::join::redeem(path.clone(), credential, 30, false).await?;
+    let landed = kols_node::join::redeem(path.clone(), credential, 30, false).await?;
 
     // Open it either way. A waiting-room member holds an identity and nothing
     // else, and showing them that — rather than nothing — is the difference
@@ -463,11 +463,11 @@ async fn join_network(
     start_node(&handle, handle.state::<App>(), path);
 
     Ok(match landed {
-        kols_cli::join::Landed::Admitted => dto::Joined {
+        kols_node::join::Landed::Admitted => dto::Joined {
             admitted: true,
             identity: String::new(),
         },
-        kols_cli::join::Landed::Waiting { identity } => dto::Joined {
+        kols_node::join::Landed::Waiting { identity } => dto::Joined {
             admitted: false,
             identity,
         },
@@ -504,7 +504,7 @@ fn start_node(handle: &tauri::AppHandle, app: tauri::State<'_, App>, root: std::
     let previous = node.take();
 
     let emitter = handle.clone();
-    let sink: kols_cli::serve::Sink = std::sync::Arc::new(move |events: &[kols_api::Event]| {
+    let sink: kols_node::serve::Sink = std::sync::Arc::new(move |events: &[kols_api::Event]| {
         for event in events {
             // Named for what happened rather than carrying the payload: the
             // interface re-reads the channel, because `design/05` §3's third
@@ -565,13 +565,13 @@ fn start_node(handle: &tauri::AppHandle, app: tauri::State<'_, App>, root: std::
             let _ = previous.await;
         }
 
-        let outcome = kols_cli::serve::serve(
+        let outcome = kols_node::serve::serve(
             root,
             "/ip4/0.0.0.0/tcp/0",
             &[],
-            kols_cli::serve::SEAL_TARGET_BYTES,
+            kols_node::serve::SEAL_TARGET_BYTES,
             true,
-            kols_cli::serve::LIVE_WINDOW_MILLIS,
+            kols_node::serve::LIVE_WINDOW_MILLIS,
             &sink,
         )
         .await;

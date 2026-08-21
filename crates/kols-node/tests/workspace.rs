@@ -5,7 +5,7 @@
 //! when missed. These cover the moved path directly, because the interface that
 //! calls it cannot be driven from a test.
 
-use kols_cli::workspace::Workspace;
+use kols_node::workspace::Workspace;
 
 struct Dir(std::path::PathBuf);
 

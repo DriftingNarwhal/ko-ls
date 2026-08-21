@@ -94,7 +94,7 @@ signing certificate on this project, so both objections are expected rather than
 Building instead, where there is a toolchain:
 
 ```bash
-cargo build -p kols-cli      # target/debug/kols
+cargo build -p kols-node      # target/debug/kols
 export PATH="$PWD/target/debug:$PATH"
 ```
 

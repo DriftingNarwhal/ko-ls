@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["crates/kols-core", "crates/kols-net", "crates/kols-api", "crates/kols-cli", "crates/kols-app"]
+members = ["crates/kols-core", "crates/kols-net", "crates/kols-api", "crates/kols-node", "crates/kols-app"]
 
 [workspace.package]
 version = "0.2.1"
@@ -21,7 +21,7 @@ libp2p = "0.56"
 kols-core = { path = "crates/kols-core" }
 kols-net = { path = "crates/kols-net" }
 kols-api = { path = "crates/kols-api" }
-kols-cli = { path = "crates/kols-cli" }
+kols-node = { path = "crates/kols-node" }
 clap = { version = "4", features = ["derive"] }
 tokio = { version = "1", default-features = false }
 

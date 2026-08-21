@@ -1,13 +1,13 @@
 [package]
-name = "kols-cli"
-description = "A terminal client for ko-ls — the first thing in this repo you can actually run"
+name = "kols-node"
+description = "The node, store and command executor behind ko-ls — plus `kols`, a development client over the same boundary"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 
 [lib]
-name = "kols_cli"
+name = "kols_node"
 path = "src/lib.rs"
 
 [[bin]]

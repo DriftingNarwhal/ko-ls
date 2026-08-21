@@ -15,7 +15,7 @@ tauri-build = { version = "2", features = [] }
 
 [dependencies]
 kols-api.workspace = true
-kols-cli.workspace = true
+kols-node.workspace = true
 kols-core.workspace = true
 intranet-crypto.workspace = true
 intranet-governance.workspace = true

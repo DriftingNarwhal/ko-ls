@@ -3025,33 +3025,11 @@ dependencies = [
  "intranet-governance",
  "intranet-identity",
  "kols-api",
- "kols-cli",
  "kols-core",
+ "kols-node",
  "serde",
  "tauri",
  "tauri-build",
-]
-
-[[package]]
-name = "kols-cli"
-version = "0.2.1"
-dependencies = [
- "clap",
- "intranet-crypto",
- "intranet-epoch",
- "intranet-governance",
- "intranet-identity",
- "intranet-invite",
- "intranet-ledger",
- "intranet-storage",
- "intranet-transport",
- "kols-api",
- "kols-core",
- "kols-net",
- "libp2p",
- "tokio",
- "tracing-subscriber",
- "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -3079,6 +3057,28 @@ dependencies = [
  "kols-core",
  "libp2p",
  "tokio",
+]
+
+[[package]]
+name = "kols-node"
+version = "0.2.1"
+dependencies = [
+ "clap",
+ "intranet-crypto",
+ "intranet-epoch",
+ "intranet-governance",
+ "intranet-identity",
+ "intranet-invite",
+ "intranet-ledger",
+ "intranet-storage",
+ "intranet-transport",
+ "kols-api",
+ "kols-core",
+ "kols-net",
+ "libp2p",
+ "tokio",
+ "tracing-subscriber",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]

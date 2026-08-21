@@ -100,7 +100,7 @@ jobs:
       # **Not a gate.** The suite runs in the development container, where the
       # output is complete and a failure can be reproduced in the same minute it
       # appears. What that container cannot do is execute on Windows or macOS,
-      # and the client has real platform-specific code: `kols-cli::secret`
+      # and the client has real platform-specific code: `kols-node::secret`
       # restricts a seed with a chmod on Unix and a protected DACL on Windows,
       # and `Store::default_root` reads `USERPROFILE` on one and `HOME` on the
       # other. Both of those were wrong, and both were invisible from Linux.
@@ -112,7 +112,7 @@ jobs:
       # deliberately starved machine.
       - name: Platform tests
         working-directory: ko-ls
-        run: cargo test -p kols-cli --lib
+        run: cargo test -p kols-node --lib
 
       - name: Build
         working-directory: ko-ls

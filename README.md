@@ -77,9 +77,9 @@ crates/kols-core   records, canonical encoding, merge ordering, permissions, cha
                    channel structure as chat-namespace governance payloads
 crates/kols-net    publishing a channel over the transport, and reading one back
 crates/kols-api    the boundary — commands and their gate going in, outcomes and events out
-crates/kols-cli    the executor, the node loop, the workspace — and `kols`, a development
-                   client over the same boundary. Misnamed: the window depends on this crate
-                   for everything but its own window
+crates/kols-node   the executor, the node loop, the store, the workspace — what the window
+                   depends on for everything except its own window. Also `kols`, a
+                   development client over the same boundary (D30), not a product
 crates/kols-app    `kols-desktop` — the Tauri shell, holding a workspace and running a node
 crates/kols-ui     the interface: HTML, CSS and one script, holding no keys and no sockets
 design/            00-08 at v1.0, 09 the interface
@@ -139,7 +139,7 @@ and it stays because it is the reference path when the window misbehaves. It owe
 feature parity and nobody is expected to chat from a command line.
 
 ```bash
-cargo build -p kols-cli
+cargo build -p kols-node
 alias kols="$PWD/target/debug/kols"
 
 # A network needs a relay before it can invite anybody: two people behind home

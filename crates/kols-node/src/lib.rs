@@ -1,5 +1,14 @@
 //! The client's composition layer — the store, the node, and the executor.
 //!
+//! # Why the name changed
+//!
+//! This was `kols-cli`, which described 853 of its lines and misdescribed the
+//! rest. The window depends on this crate for everything except its own window:
+//! [`serve::serve`] is the node loop it runs, [`store::Store`] is where its
+//! state lives, [`executor::Executor`] is what its every command crosses. The
+//! terminal is one *consumer* of this crate and not what it is (`design/00`
+//! D30).
+//!
 //! # Why this is a library and not only a binary
 //!
 //! It was a binary alone until there was something worth testing that was not a

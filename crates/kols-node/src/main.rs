@@ -25,7 +25,7 @@
 //!
 //! # What it is now
 //!
-//! Argument parsing and rendering, over `kols_cli::executor`. Every command a
+//! Argument parsing and rendering, over `kols_node::executor`. Every command a
 //! user types becomes a `kols_api::Command`, crosses the same gate a webview's
 //! would, and comes back as an `Outcome` this file prints. That division is the
 //! point: the desktop client is expected to be a different front end over the
@@ -38,7 +38,7 @@
 //! # Where it takes a shortcut, it says so
 //!
 //! Nothing here ever retires a superseded epoch key
-//! ([`kols_cli::store::Store::channel_dek`]) — a retention decision rather than
+//! ([`kols_node::store::Store::channel_dek`]) — a retention decision rather than
 //! an oversight, because dropping a key makes anything still wrapped under it
 //! unreadable forever.
 
@@ -47,9 +47,9 @@
 use clap::{Parser, Subcommand};
 use intranet_crypto::to_hex;
 use kols_api::{Command as ApiCommand, Outcome};
-use kols_cli::executor::{ExecuteError, Executor};
-use kols_cli::store::Store;
-use kols_cli::{network, random_32, serve};
+use kols_node::executor::{ExecuteError, Executor};
+use kols_node::store::Store;
+use kols_node::{network, random_32, serve};
 use kols_core::{ChannelChange, Hlc, Privacy};
 
 /// A terminal client for ko-ls.
@@ -284,7 +284,7 @@ fn main() -> std::process::ExitCode {
             live_window_millis,
         ),
         Command::Channel(ChannelCommand::List) => list_channels(root),
-        Command::Join { invite, timeout } => kols_cli::join::run(root, &invite, timeout),
+        Command::Join { invite, timeout } => kols_node::join::run(root, &invite, timeout),
         Command::Waiting => waiting(root),
         Command::Relay(RelayCommand::List) => list_relays(root),
         other => submit(root, other),
@@ -383,14 +383,14 @@ fn submit(root: std::path::PathBuf, command: Command) -> Result<(), String> {
         Command::Relay(RelayCommand::Set { relays }) => ApiCommand::SetBootstrapRelays {
             relays: relays
                 .iter()
-                .map(|relay| kols_cli::parse_relay(relay))
+                .map(|relay| kols_node::parse_relay(relay))
                 .collect::<Result<Vec<_>, _>>()?,
         },
         Command::Admit { identity } => ApiCommand::AdmitMember {
-            identity: kols_cli::parse_identity(&identity)?,
+            identity: kols_node::parse_identity(&identity)?,
         },
         Command::Revoke { identity } => ApiCommand::RevokeMember {
-            identity: kols_cli::parse_identity(&identity)?,
+            identity: kols_node::parse_identity(&identity)?,
         },
         Command::Channel(ChannelCommand::Create {
             name,
@@ -552,9 +552,9 @@ fn render(outcome: &Outcome, names: &kols_core::Names) {
             expires_at_millis,
             uses,
         } => {
-            println!("{}", kols_cli::invite::to_uri_from_bytes(invite));
+            println!("{}", kols_node::invite::to_uri_from_bytes(invite));
             println!();
-            let hours = (expires_at_millis - kols_cli::chat::now_millis()) / 3_600_000;
+            let hours = (expires_at_millis - kols_node::chat::now_millis()) / 3_600_000;
             println!("Good for {uses} join(s), for about {hours} more hour(s).");
             println!("Whoever has it runs `kols join <that>`.");
             println!();
@@ -749,9 +749,9 @@ fn init(root: std::path::PathBuf, name: &str, relays: Vec<String>) -> Result<(),
     // everybody who ever joins.
     let relays = relays
         .iter()
-        .map(|relay| kols_cli::parse_relay(relay))
+        .map(|relay| kols_node::parse_relay(relay))
         .collect::<Result<Vec<_>, _>>()?;
-    let workspace = kols_cli::workspace::Workspace::at(root.clone());
+    let workspace = kols_node::workspace::Workspace::at(root.clone());
     let store = workspace
         .create_at(root, name, relays.clone())
         .map_err(|err| err.to_string())?;

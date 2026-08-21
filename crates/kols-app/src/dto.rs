@@ -125,7 +125,7 @@ pub struct Network {
 
 impl Network {
     /// Converts one known network.
-    pub fn of(known: &kols_cli::workspace::Known, open: Option<&str>) -> Self {
+    pub fn of(known: &kols_node::workspace::Known, open: Option<&str>) -> Self {
         Self {
             id: known.id.clone(),
             label: known.label.clone(),
@@ -248,7 +248,7 @@ impl Message {
 
 impl Channel {
     /// Converts one channel as replay understands it.
-    pub fn of(channel: &kols_cli::network::Channel) -> Self {
+    pub fn of(channel: &kols_node::network::Channel) -> Self {
         Self {
             id: to_hex(channel.id.as_bytes()),
             name: channel.name.clone(),
