@@ -261,6 +261,18 @@ design changes before anything else is built.
 
 Newest first. One line per change that moved the state above.
 
+- **2026-08-21** — **Runbook brought level with the window, and one asymmetry the restart
+  created.** `kols relay set` now says what it cannot do: a node dials relays when it starts, and
+  a terminal cannot restart a daemon in another process the way the window restarts its own. A
+  running `kols serve` designating a relay it never dialled was previously silent. The runbook
+  gains that caveat at step 4, the window's four relay states in the troubleshooting list, rows
+  for steps 10 and 12 in the front-end mapping, and a note that the two machines need not use the
+  same front end — A in the window and B in a terminal exercises both and leaves the detailed log
+  on the side more likely to be waiting.
+
+  Also: the relay panel no longer shows a permanent "…" to a member in the waiting room, who has
+  no readable policy to draw and is exactly the person most likely to be looking at it.
+
 - **2026-08-21** — **Designating a relay now restarts the node itself, and a latent restart race
   is gone.** Asked as "why would we not build it into the flow" — and the honest answer was that
   naming the next step is worse than taking it. `set_relays` restarts the node it just made

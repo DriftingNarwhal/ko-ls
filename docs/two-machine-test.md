@@ -44,10 +44,18 @@ unambiguously the window's. If you would rather start in the window, this is the
 | 7 — invite | **invite** under *people*, then **copy** |
 | 8 — join | Paste into **join a network** on B's picker |
 | 9 — admit | The waiting list under *people*, **admit** |
+| 10 — the joiner's node | Nothing. Redeeming the invite opens the network and starts its node |
 | 11 — confirm | Both messages render in both windows |
+| 12 — clean up | Same, plus what the window itself leaves — see step 12 |
 
 Step 3 itself — deploying on Railway — is a web dashboard either way, and the relay's identity
 phrase comes from `intranet-harness`, which is a protocol-repo tool with no window at all.
+
+**The two machines need not match**, and there is a reason to make them differ: A in the window
+and B in a terminal exercises both front ends over one network, and leaves B printing the
+detailed log on the side most likely to be the one waiting. Only one *process* per store is the
+real constraint — the window and `kols serve` refuse each other on the same machine, and a claim
+goes stale 30 seconds after its last heartbeat.
 
 ---
 
@@ -181,6 +189,16 @@ kols relay list
 A governance action needing `define-policy`, which the founder holds. Every member learns the
 relay by replaying the log, which is what carries a newly deployed relay to people who already
 joined — their invite is spent and their cache may name a relay that is gone (Core §5.5).
+
+The address is checked before it becomes policy: one that parses but names no peer id is
+refused here, because a relay nothing can verify is worse than none, and this entry is replayed
+by everybody.
+
+**A node dials relays when it starts.** Nothing is running yet at this point in the order, which
+is why the relay comes before `kols serve` — but if you ever designate one *later*, on a network
+already being served, restart that `kols serve` or it will keep running without the relay it now
+designates. `relay set` says so. The window has no such step: it restarts its own node, being
+the same process.
 
 ## 5. Start the founder's node — **A, terminal 1**
 
@@ -328,12 +346,13 @@ any `kols` command run from a fresh shell. On Windows it is `%USERPROFILE%\.kols
 ls -la ~/.kols 2>/dev/null && echo "^ this exists too"
 ```
 
-### If you opened the window
+### If you used the window for any of it
 
-**The window almost certainly used a different directory than your test did.** It resolves the
-same `$KOLS_HOME`-else-`~/.kols` rule, but an application launched from Finder or the Start menu
-does not inherit a `KOLS_HOME` you exported in a terminal — so it will have made its own
-`~/.kols` regardless of which store the CLI steps used. Delete that too.
+**Then there is a second store, in a place the terminal steps never touched.** The window
+resolves the same `$KOLS_HOME`-else-`~/.kols` rule — but an application launched from Finder or
+the Start menu inherits no `KOLS_HOME` you exported in a shell, so it lands in `~/.kols` while
+your terminal ran in `~/kols-alice`. Deleting only the one you remember leaves a whole store
+behind, seed included.
 
 The webview keeps its own data under the bundle identifier `dev.kols.desktop`, separately from
 anything ko-ls writes. Nothing secret is in it, but it is what is left after an uninstall:
@@ -393,16 +412,27 @@ changed to print every daemon's log for exactly this reason.
 - **Whether `relay reserved a circuit on …` appeared**, on each machine. Its absence is the most
   common single cause and is reported clearly enough that guessing is unnecessary.
 
+In the window, the first and last of those are one place: the **relay** panel in the sidebar
+says which of the four states this node is in — a circuit reserved, none designated, designated
+and none usable, or not yet reported — and lists what replay designates above what this node
+cached, italicised where they differ. Anything that went wrong and was survivable appears in the
+same red strip a refused message uses.
+
+The window's blind spot is the *other* machine, exactly as the terminal's is: it can tell you
+that nobody answered, and not why. If one side is a window and the other a terminal, the
+terminal's output is the one to keep.
+
 ## What this test does and does not establish
 
 It establishes that the path works across real networks: relay reachability, admission,
 epoch-key delivery, pointer sync, segment fetch and a merged view between two nodes that have
 never been on the same machine.
 
-It does not exercise the desktop window, unless you take the mapping above. The window has been
+It does not exercise the desktop window unless you take the mapping above. The window has been
 opened once and rendered, but nothing was wired to it then (`STATUS.md` §0), so every path
-through it is unexercised — which is why running it as a second pass, after the terminal has
-proved the network path, keeps a failure attributable to one thing. It does not exercise private channels, direct
-messages, voice or search, none of which exist. And it says nothing about behaviour over days —
-retention, key retirement and segment sealing thresholds are all unmeasured beyond a single
-spike.
+through it is unexercised — which is why a second pass, after the terminal has proved the
+network path, keeps a failure attributable to one thing.
+
+It does not exercise private channels, direct messages, voice or search, none of which exist.
+And it says nothing about behaviour over days — retention, key retirement and segment sealing
+thresholds are all unmeasured beyond a single spike.

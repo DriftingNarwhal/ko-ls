@@ -569,6 +569,12 @@ fn render(outcome: &Outcome, names: &kols_core::Names) {
                 println!();
                 println!("Every member learns these by syncing, so a newly deployed relay");
                 println!("reaches people who joined long ago.");
+                println!();
+                // The window restarts its own node here, being the same process.
+                // A terminal cannot, so it says what it cannot do rather than
+                // leaving a running daemon designating a relay it never dialled.
+                println!("A node dials relays when it starts. Restart any `kols serve`");
+                println!("running for this network to use these.");
             }
         }
         Outcome::ChannelUpdated { channel } => {

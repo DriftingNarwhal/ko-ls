@@ -127,7 +127,15 @@ async function drawRelays({ act = false } = {}) {
   let relays;
   try {
     relays = await invoke("relays");
-  } catch {
+  } catch (err) {
+    // Reached by a member who has joined and not been admitted: they hold an
+    // identity and are served no state to read a policy out of. The refusal is
+    // written in words already, and saying it beats leaving the "…" this starts
+    // as, which reads as a request still in flight and never resolves.
+    const line = el("relay-state");
+    line.className = "relay-state";
+    line.textContent = String(err);
+    el("relay-list").replaceChildren();
     return;
   }
 
