@@ -54,6 +54,13 @@ pub struct Reaction {
     pub key: String,
     /// How many members hold it.
     pub count: usize,
+    /// Whether this member is one of them.
+    ///
+    /// Carried rather than inferred, because reacting is a toggle and the
+    /// interface has to know which way it is about to go. A client that guessed
+    /// would add a reaction the member already holds, which is a no-op the
+    /// member reads as a broken button.
+    pub mine: bool,
 }
 
 /// A message, rendered.
@@ -84,6 +91,13 @@ pub struct Message {
     pub pinned: bool,
     /// Its reactions.
     pub reactions: Vec<Reaction>,
+    /// Whether this member wrote it.
+    ///
+    /// What gates revising and withdrawing in the interface. The command is
+    /// authorized on receipt regardless — spec 07 §5.2 lets only an author
+    /// revise their own — so this decides what is *offered*, not what is
+    /// allowed.
+    pub mine: bool,
 }
 
 /// A channel, opened.
@@ -211,6 +225,14 @@ pub struct Me {
     pub may_create_channel: bool,
     /// Whether this member may create invites.
     pub may_invite: bool,
+    /// Whether this member may pin — network-wide `moderate-content`.
+    ///
+    /// An approximation, deliberately. `chat:moderate` is also grantable per
+    /// channel, and this does not see that — so a channel moderator is offered
+    /// no pin button and the command would still succeed if they used one. The
+    /// error runs the safe way: this hides a control somebody may in fact hold,
+    /// rather than offering one that will be refused.
+    pub may_moderate: bool,
     /// Whether this member may designate relays — `define-policy`.
     ///
     /// Separate from [`Me::may_invite`] even though a founder holds both, because
@@ -221,7 +243,14 @@ pub struct Me {
 
 impl Message {
     /// Converts one rendered message, resolving its author's name.
-    pub fn of(message: &RenderedMessage, names: &kols_core::Names) -> Self {
+    ///
+    /// `me` is the viewer, which decides what the interface offers on this
+    /// message rather than what it says about it.
+    pub fn of(
+        message: &RenderedMessage,
+        names: &kols_core::Names,
+        me: &intranet_identity::PerNetworkIdentityId,
+    ) -> Self {
         Self {
             id: to_hex(message.id.as_bytes()),
             author: names
@@ -240,8 +269,10 @@ impl Message {
                 .map(|(key, who)| Reaction {
                     key: key.clone(),
                     count: who.len(),
+                    mine: who.contains(me),
                 })
                 .collect(),
+            mine: &message.author == me,
         }
     }
 }
@@ -313,7 +344,7 @@ mod tests {
         let mut message = rendered();
         message.edited = true;
         message.pinned = true;
-        let view = Message::of(&message, &no_names());
+        let view = Message::of(&message, &no_names(), &identity(9));
 
         assert!(view.edited && view.pinned);
         assert!(!view.withdrawn && !view.redacted);
@@ -330,8 +361,8 @@ mod tests {
         let mut redacted = rendered();
         redacted.redacted = true;
 
-        let a = Message::of(&withdrawn, &no_names());
-        let b = Message::of(&redacted, &no_names());
+        let a = Message::of(&withdrawn, &no_names(), &identity(9));
+        let b = Message::of(&redacted, &no_names(), &identity(9));
         assert!(a.withdrawn && !a.redacted);
         assert!(b.redacted && !b.withdrawn);
     }
@@ -347,7 +378,7 @@ mod tests {
             .reactions
             .insert("eyes".to_owned(), BTreeSet::from([identity(5)]));
 
-        let view = Message::of(&message, &no_names());
+        let view = Message::of(&message, &no_names(), &identity(9));
         assert_eq!(view.reactions.len(), 2);
         assert_eq!(view.reactions[0].key, "+1");
         assert_eq!(view.reactions[0].count, 3);
@@ -361,7 +392,7 @@ mod tests {
         // second, quieter place for it to go wrong.
         let mut message = rendered();
         message.body = "<script>alert(1)</script> & \"quotes\"".to_owned();
-        assert_eq!(Message::of(&message, &no_names()).body, message.body);
+        assert_eq!(Message::of(&message, &no_names(), &identity(9)).body, message.body);
     }
 
     #[test]
@@ -375,7 +406,7 @@ mod tests {
             &kols_core::NameClaim::new("ada").expect("valid"),
         );
 
-        let view = Message::of(&message, &names);
+        let view = Message::of(&message, &names, &identity(9));
         assert_eq!(view.author, "ada");
         assert_eq!(view.author_id, message.author.short());
         assert_ne!(view.author, view.author_id);
@@ -384,7 +415,7 @@ mod tests {
     #[test]
     fn an_author_with_no_name_renders_as_their_id() {
         let message = rendered();
-        let view = Message::of(&message, &no_names());
+        let view = Message::of(&message, &no_names(), &identity(9));
         assert_eq!(view.author, message.author.short());
         assert_eq!(view.author, view.author_id);
     }
@@ -392,6 +423,6 @@ mod tests {
     #[test]
     fn a_clock_reading_renders_as_a_wall_time() {
         // 3,723,000 ms is 01:02:03 past the hour.
-        assert_eq!(Message::of(&rendered(), &no_names()).at, "01:02:03");
+        assert_eq!(Message::of(&rendered(), &no_names(), &identity(9)).at, "01:02:03");
     }
 }

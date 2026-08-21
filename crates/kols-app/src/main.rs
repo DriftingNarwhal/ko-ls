@@ -115,6 +115,8 @@ fn me_of(executor: &Executor) -> Result<dto::Me, String> {
         may_post: holds("chat:post:*"),
         may_create_channel: holds("chat:create-channel:*"),
         may_invite: state.identity_holds(&identity.id(), &intranet_governance::Capability::ApproveNode),
+        may_moderate: state
+            .identity_holds(&identity.id(), &intranet_governance::Capability::ModerateContent),
         may_set_relays: state
             .identity_holds(&identity.id(), &intranet_governance::Capability::DefinePolicy),
     })
@@ -190,6 +192,29 @@ fn set_relays(
     Ok(())
 }
 
+/// Generates an identity for a relay, and hands back its backup phrase.
+///
+/// # Why this is in the window at all
+///
+/// It is the last thing in setting a network up that needed a terminal. A relay
+/// will not start without an identity, `intranet-harness identity new` is how
+/// one was made, and that is a tool in the protocol repository — so "no step
+/// needs a terminal" was false for the one step a founder cannot skip.
+///
+/// # It is not this member's identity, and the interface must not let that blur
+///
+/// This is a *master seed*, for a machine, in a phrase the user will paste into
+/// a hosting provider's configuration. The member's own seed is never shown,
+/// never leaves the store, and has no interface at all. Anyone holding this
+/// phrase can answer as this relay, which is why it is shown once and stored
+/// nowhere: writing it down here would put a private key in the workspace for a
+/// convenience nobody asked for.
+#[tauri::command]
+fn new_relay_identity() -> Result<String, String> {
+    let master = intranet_identity::MasterSeed::generate().map_err(|err| err.to_string())?;
+    master.to_backup_phrase().map_err(|err| err.to_string())
+}
+
 /// Restarts the node for the open network.
 ///
 /// For the case [`set_relays`] cannot reach: a member learns of a relay
@@ -243,12 +268,13 @@ fn open_one(executor: &Executor, channel: ChannelId) -> Result<dto::Opened, Stri
 
     let state = executor.store().state().map_err(|e| e.to_string())?;
     let names = executor.names(&state).map_err(|e| e.to_string())?;
+    let me = executor.store().identity().map_err(|e| e.to_string())?.id();
 
     Ok(dto::Opened {
         channel: to_hex(channel.as_bytes()),
         messages: messages
             .iter()
-            .map(|message| dto::Message::of(message, &names))
+            .map(|message| dto::Message::of(message, &names, &me))
             .collect(),
         authors,
         refused: rejected
@@ -269,6 +295,107 @@ fn send_message(app: tauri::State<'_, App>, channel: String, body: String) -> Re
                 body,
                 reply_to: None,
                 attachments: Vec::new(),
+            })
+            .map(|_| ())
+            .map_err(|err| err.to_string())
+    })
+}
+
+/// Revises one of this member's own messages.
+///
+/// Only an author may (spec 07 §5.2). The interface offers it only on a
+/// member's own messages, and the gate refuses it regardless — the first is
+/// presentation, the second is the rule.
+#[tauri::command]
+fn edit_message(
+    app: tauri::State<'_, App>,
+    channel: String,
+    message: String,
+    body: String,
+) -> Result<(), String> {
+    let channel = App::channel(&channel)?;
+    app.with(|executor| {
+        let target = executor
+            .resolve_message(&channel, &message)
+            .map_err(|err| err.to_string())?;
+        executor
+            .submit(Command::EditMessage {
+                channel,
+                target,
+                body: body.clone(),
+            })
+            .map(|_| ())
+            .map_err(|err| err.to_string())
+    })
+}
+
+/// Withdraws one of this member's own messages.
+///
+/// **Hidden, never unsent** (`design/01` §6). Withdrawal retracts no bytes
+/// anybody already holds, and the interface says so where it renders one rather
+/// than implying the message is gone.
+#[tauri::command]
+fn delete_message(
+    app: tauri::State<'_, App>,
+    channel: String,
+    message: String,
+) -> Result<(), String> {
+    let channel = App::channel(&channel)?;
+    app.with(|executor| {
+        let target = executor
+            .resolve_message(&channel, &message)
+            .map_err(|err| err.to_string())?;
+        executor
+            .submit(Command::DeleteMessage { channel, target })
+            .map(|_| ())
+            .map_err(|err| err.to_string())
+    })
+}
+
+/// Adds a reaction, or takes one back.
+#[tauri::command]
+fn react(
+    app: tauri::State<'_, App>,
+    channel: String,
+    message: String,
+    key: String,
+    remove: bool,
+) -> Result<(), String> {
+    let channel = App::channel(&channel)?;
+    app.with(|executor| {
+        let target = executor
+            .resolve_message(&channel, &message)
+            .map_err(|err| err.to_string())?;
+        executor
+            .submit(Command::React {
+                channel,
+                target,
+                key: key.clone(),
+                remove,
+            })
+            .map(|_| ())
+            .map_err(|err| err.to_string())
+    })
+}
+
+/// Pins a message, or unpins it. Needs `chat:moderate`.
+#[tauri::command]
+fn pin(
+    app: tauri::State<'_, App>,
+    channel: String,
+    message: String,
+    remove: bool,
+) -> Result<(), String> {
+    let channel = App::channel(&channel)?;
+    app.with(|executor| {
+        let target = executor
+            .resolve_message(&channel, &message)
+            .map_err(|err| err.to_string())?;
+        executor
+            .submit(Command::Pin {
+                channel,
+                target,
+                remove,
             })
             .map(|_| ())
             .map_err(|err| err.to_string())
@@ -629,7 +756,12 @@ fn main() {
             open_network,
             relays,
             set_relays,
-            restart_node
+            restart_node,
+            edit_message,
+            delete_message,
+            react,
+            pin,
+            new_relay_identity
         ])
         .run(tauri::generate_context!())
         .expect("the window opens");

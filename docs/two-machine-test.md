@@ -8,6 +8,10 @@ network.
 path it describes is either routine or wrong, delete it or fold what survived into the README —
 a runbook kept past its usefulness is another thing to disagree with `STATUS.md`.
 
+**The window does all of it.** No terminal, at any step — including making the relay's identity,
+which used to need one. Deploying the relay happens in a browser. The `kols` binaries in the
+release are a development tool (`design/00` D30) and nothing here uses them.
+
 **Run it in order.** The ordering is not presentation: the relay needs the network id before it
 will boot, and the network needs a relay before it can invite anybody. That circularity is the
 reason the steps are numbered.
@@ -17,148 +21,64 @@ neither — it is a routable address both can reach.
 
 ---
 
-## Terminal or window
+## 1. Get the window onto both machines
 
-**Every step below can now be done in the window instead**, since O12 and O13 closed on
-2026-08-21 and relay setup was the last thing that needed a terminal. The steps are written as
-`kols` commands anyway, and that is a deliberate choice rather than a limitation:
+**<https://github.com/DriftingNarwhal/ko-ls/releases>** — take the newest.
 
-- **The terminal says more when it fails.** `kols serve` prints the relay's standing, every
-  governance entry it learns and every key request it answers. The window shows the same
-  information in less of it.
-- **No flow has been run through the window.** It has been opened once and rendered roughly
-  correctly, but that was before anything was wired to it (`STATUS.md` §0) — so every path it
-  now has is unexercised. Running the test through it means two unproven things at the same
-  time, and a failure that could be either.
-
-So: **run it in the terminal the first time**, then repeat it in the window, where a failure is
-unambiguously the window's. If you would rather start in the window, this is the mapping:
-
-| Step | In the window |
+| Machine | Take |
 |---|---|
-| 2 — create | **or make one** on the picker. Leave the relay field empty |
-| 3 — the relay's `RELAY_NETWORK` | **relay** in the sidebar → *set the relay* → **copy** |
-| 4 — designate it | Paste the address into the same panel → **designate**. The node restarts itself onto the new relay; the line above the panel says when it has a circuit |
-| 5 — serve | Nothing. The window runs a node for whichever network is open |
-| 6 — name, channel, post | The composer asks for a name before it lets you post; **+** beside *channels* |
-| 7 — invite | **invite** under *people*, then **copy** |
-| 8 — join | Paste into **join a network** on B's picker |
-| 9 — admit | The waiting list under *people*, **admit** |
-| 10 — the joiner's node | Nothing. Redeeming the invite opens the network and starts its node |
-| 11 — confirm | Both messages render in both windows |
-| 12 — clean up | Same, plus what the window itself leaves — see step 12 |
-
-Step 3 itself — deploying on Railway — is a web dashboard either way, and the relay's identity
-phrase comes from `intranet-harness`, which is a protocol-repo tool with no window at all.
-
-**The two machines need not match**, and there is a reason to make them differ: A in the window
-and B in a terminal exercises both front ends over one network, and leaves B printing the
-detailed log on the side most likely to be the one waiting. Only one *process* per store is the
-real constraint — the window and `kols serve` refuse each other on the same machine, and a claim
-goes stale 30 seconds after its last heartbeat.
-
----
-
-## 1. Get `kols` onto both machines
-
-Take a published build. `.github/workflows/release.yml` builds Windows x64 and Apple Silicon
-macOS on a `v*` tag, and the tag is what publishes them — a manual dispatch builds the same
-binaries and leaves them as artifacts, which download as a **zip** and lose the executable bit
-on the way. Releases attach each file on its own:
-
-**<https://github.com/DriftingNarwhal/ko-ls/releases>**
-
-| Take | For |
-|---|---|
-| `windows-x64-kols.exe`, `macos-arm64-kols` | **This runbook.** Every step below is a `kols` command |
-| `…-setup.exe`, `….dmg` | The window. Optional here, and it installs *only* the window |
-| `…-kols-desktop.exe`, `macos-arm64-kols-desktop` | The window, portable — no installer |
-
-**The installer does not give you `kols`.** It installs the desktop application, and nothing
-below is reachable from it. Download the CLI separately even if you install.
+| Windows | `windows-x64-ko-ls_<version>_x64-setup.exe`, or `windows-x64-kols-desktop.exe` to run without installing |
+| MacBook | `macos-arm64-ko-ls_<version>_aarch64.dmg` |
 
 Both platforms object to an unsigned download the first time, in ways that read as a broken
-build:
+build. On macOS the `.dmg` is refused by Gatekeeper: **right-click → Open**, once, rather than
+double-clicking. On Windows SmartScreen warns about the installer; the portable `.exe` avoids it
+entirely. There is no signing certificate on this project, so both are expected.
 
-```bash
-# macOS — the release asset is prefixed, and arrives quarantined and non-executable
-mv macos-arm64-kols kols
-chmod +x kols
-xattr -d com.apple.quarantine kols      # else: "cannot be opened because the developer…"
-```
+Ignore the `kols` binaries in the release. They are a development tool (`design/00` D30) and no
+step here uses one.
 
-On Windows, rename `windows-x64-kols.exe` to `kols.exe` and put it somewhere on `PATH`.
-SmartScreen warns about the installer and leaves the portable `.exe` files alone. There is no
-signing certificate on this project, so both objections are expected rather than symptoms.
-
-Building instead, where there is a toolchain:
-
-```bash
-cargo build -p kols-node      # target/debug/kols
-export PATH="$PWD/target/debug:$PATH"
-```
-
-Then give each machine its own state directory:
-
-```bash
-# A, macOS/Linux
-export KOLS_HOME=~/kols-alice
-
-# B, macOS/Linux
-export KOLS_HOME=~/kols-bob
-
-# Windows PowerShell, either machine
-$env:KOLS_HOME = "C:\kols\alice"
-```
-
-`--home <path>` does the same thing per-command, which is easier than exporting when two
-terminals on one machine need different identities.
-
-The seed written there is the only copy of that identity and there is no recovery service, so
-for a test point it somewhere disposable.
+**One state directory per machine, and it is chosen for you.** The window uses `~/.kols`
+(`%USERPROFILE%\.kols` on Windows) because an application launched from Finder or the Start menu
+inherits no environment you set in a shell. The seed written there is the only copy of that
+identity and there is no recovery service.
 
 ## 2. Create the network — **A**
 
-```bash
-kols init "the workshop"
-```
+Open the window. With no networks it opens on the picker.
 
-It prints the network id and, because no relay is designated yet, says so:
+Under **or make one**, give it a name — *the workshop* — and **leave the relay field empty**.
+There is nothing to put in it yet: the relay does not exist, and it will not start until it
+knows this network's id.
 
-```
-created the workshop
-  network   3f9a…            ← copy all 64 characters
-  you       14544277
-  state     /home/you/kols-alice
+**create**. The window opens on the new network with you as its sole founder.
 
-No relay designated. Two members behind NAT cannot reach each other
-without one, and `kols invite` will refuse until this network has one
-```
+## 3. Make the relay's identity — **A**
 
-That network id is `RELAY_NETWORK` in the next step.
+In the sidebar, **relay** → *set the relay*.
 
-## 3. Deploy the relay
+**generate a relay identity**, then **copy**. That is a BIP-39 phrase and it is the relay's
+private key — anyone holding it can answer as this relay. It is shown once and stored nowhere,
+so paste it somewhere you can reach in the next few minutes.
+
+It is **not your identity**. Yours never leaves the machine and has no interface at all.
+
+Directly below it is this network's id. **copy** that too — it is `RELAY_NETWORK`, and DI-Relay
+refuses to start without it.
+
+## 4. Deploy the relay
 
 A relay introduces two peers and gets out of the way — circuits are capped at 120 seconds and
 8 MB by design (Core §5.3), so this is connection setup rather than bandwidth, and it fits in a
-free tier. `DI-Relay`'s own README is the authority; what follows is the short form.
-
-Generate an identity for it, from the protocol checkout:
-
-```bash
-cargo run -p intranet-harness -- identity new
-```
-
-That prints a BIP-39 phrase. It is the relay's identity — treat it like an SSH private key,
-because anyone holding it can impersonate this relay to the network.
-
-Then on Railway:
+free tier. `DI-Relay`'s own README is the authority; this is the short form. All of it happens
+in a browser.
 
 1. **New project → Deploy from GitHub repo →** `DI-Relay`. The first build failing before
    variables are set is expected.
-2. **Variables:** `RELAY_PHRASE` (quoted), `RELAY_NETWORK` (the id from step 2), `PORT=8080`.
+2. **Variables:** `RELAY_PHRASE` (the phrase from step 3, in quotes), `RELAY_NETWORK` (the id
+   from step 3), `PORT=8080`.
 3. **Settings → Networking → Generate Domain**, and **Add TCP Proxy** on port `4001`.
-4. Check `/health` for `{"status":"ready", …}`, then read `/peer-id`.
+4. Open `/health` and expect `{"status":"ready", …}`, then `/peer-id`.
 
 **Both parts of step 3 are required and it is easy to do only the first.** Without the domain
 the health check fails and Railway restarts forever. Without the TCP proxy the service looks
@@ -179,141 +99,86 @@ That is why the two are exposed separately.
 > external ones and libp2p builds a circuit address from external addresses alone. Everything
 > downstream then fails for the wrong reason. This has cost real debugging time.
 
-## 4. Designate it — **A**
+## 5. Designate it — **A**
 
-```bash
-kols relay set /dns4/monorail.proxy.rlwy.net/tcp/54321/p2p/12D3KooWKiD4…
-kols relay list
-```
+Paste that address into the same **relay** panel and press **designate**.
 
-A governance action needing `define-policy`, which the founder holds. Every member learns the
-relay by replaying the log, which is what carries a newly deployed relay to people who already
-joined — their invite is spent and their cache may name a relay that is gone (Core §5.5).
+The address is checked before it becomes policy — one naming no peer id is refused here, because
+this entry is replayed by every member and a relay nothing can verify is worse than none.
 
-The address is checked before it becomes policy: one that parses but names no peer id is
-refused here, because a relay nothing can verify is worse than none, and this entry is replayed
-by everybody.
+The node then restarts itself onto the new relay. Watch the line above the panel:
 
-**A node dials relays when it starts.** Nothing is running yet at this point in the order, which
-is why the relay comes before `kols serve` — but if you ever designate one *later*, on a network
-already being served, restart that `kols serve` or it will keep running without the relay it now
-designates. `relay set` says so. The window has no such step: it restarts its own node, being
-the same process.
+| It says | Meaning |
+|---|---|
+| **reserved a circuit on …** | Working. Continue |
+| **designated, but none of them granted a circuit** | **Stop here.** The relay accepted the reservation and handed back no address — almost always the loopback case above, or a relay with no routable listen address (`RELAY_PUBLIC_ADDR`) |
+| **none designated** | The designation did not take. Check for a refusal under the form |
 
-## 5. Start the founder's node — **A, terminal 1**
+Nothing downstream can work without a circuit, so do not carry on past the second row.
 
-```bash
-kols serve
-```
+## 6. Set the network up — **A**
 
-`serve` holds the terminal, so leave it and open a second one. It also holds the network's MLS
-group, which is live state no one-shot command can keep — which is why nothing can be posted or
-keyed before it runs.
+Press **+** beside *channels* and name one `general`.
 
-The line that matters:
+The composer asks for a name before it will let you post — claim `alice`. Names are unique here
+and bound permanently, including after you leave, so nobody inherits yours and relabels what you
+wrote.
 
-```
-  relay     reserved a circuit on /dns4/monorail.proxy…
-```
+Then post something.
 
-**If it says the relay granted no usable circuit, stop here.** The relay accepted the
-reservation and handed back no address — almost always the loopback case above, or a relay with
-no routable listen address of its own (`RELAY_PUBLIC_ADDR` in DI-Relay's configuration). Nothing
-downstream can work without a circuit.
+## 7. Mint the invite — **A**
 
-Only one process may run a node per store, so if the desktop window has this network open,
-`kols serve` is refused and the reverse. A claim expires 30 seconds after its last heartbeat.
+Under *people*, press **invite**, then **copy**.
 
-## 6. Set the network up — **A, terminal 2**
-
-```bash
-kols name alice
-kols channel create general
-kols post general "first thing said on this network"
-kols read general
-```
-
-## 7. Mint the invite — **A, terminal 2**
-
-```bash
-kols invite --uses 1 --hours 24
-```
-
-An invite needs an address and only a running node knows one, so the daemon writes down what it
-is reachable on and `invite` reads that — refusing to mint rather than producing a credential
-that connects to nothing.
+An invite needs an address and only a running node knows one, so this carries what your node is
+currently reachable on. **Keep this window open** — it is what answers when B redeems it.
 
 Send the `intranet-chat://join/…` string to **B** however you like. It survives being pasted
-into a chat message and copied back out, and carries the network id, the relay and this node's
+into a chat message and copied back out, and carries the network, the relay and this node's
 addresses — nothing about the network's contents.
 
 ## 8. Redeem it — **B**
 
-```bash
-kols join intranet-chat://join/mfsw44dvorxxq5dfoj2xg2lom5qs4…
-```
+Open the window on the MacBook. Paste the invite into **join a network**.
 
 **Landing in the waiting room is success, not failure.** Under explicit intake an invite buys a
 connection and an identity and nothing else until a member admits you; a waiting-room identity
-is served no content, no metadata and no bandwidth, by design (Core §2.4, Storage §5.4).
+is served no content, no metadata and no bandwidth, by design (Core §2.4, Storage §5.4). The
+window says so rather than showing you an empty network.
 
-## 9. Admit them — **A, terminal 2**
+## 9. Admit them — **A**
 
-```bash
-kols waiting
-kols admit <their-identity-hex>
-```
+Under *people*, the waiting list fills. Press **admit**.
 
-The waiting room is live state in the running node, which writes it down for anything else to
-read — so it is stale by construction and refreshes as the daemon sees things.
+The waiting room is live state in the running node, so it is stale by construction and refreshes
+as the daemon sees things.
 
-## 10. Start the joiner's node — **B, terminal 1**
+## 10. Watch B come in — **B**
 
-```bash
-kols serve
-```
+Nothing to press. Redeeming the invite already opened the network and started its node.
 
-No `--peer` is needed: the addresses the invite carried were kept when it was redeemed. Expect,
-in roughly this order:
+**If keying takes a moment, that is fine.** The joiner re-asks every 30 seconds until it is
+keyed (Core §3.5.1), and until E14 landed a missed answer stranded the member permanently. Until
+then the sidebar says *waiting to be keyed in* — which is an ordinary place to be, not a fault.
 
-```
-relay     reserved a circuit on /dns4/monorail.proxy…
-asked 14544277 to key us in
-learned 4 governance entries
-epoch     held
-learned 1 record
-```
+Then claim a name — `bob` — and post something.
 
-**If keying takes a moment, that is now fine.** The joiner re-asks every 30 seconds until it is
-keyed (Core §3.5.1). A founder has ordinary reasons not to answer the instant a request lands,
-and until E14 landed a missed answer stranded the member permanently. After 60 seconds unkeyed
-the node says so and names where to look — and the reason will be on **A's** terminal, not B's.
+## 11. Confirm it travels both ways — **both**
 
-Then, in a second terminal on **B**:
-
-```bash
-kols name bob
-kols read general
-kols post general "reached you from the hotspot"
-```
-
-## 11. Confirm it travels both ways — **A, terminal 2**
-
-```bash
-kols read general
-```
-
-The test passes when both authors render on both machines:
-
-```
-general
-  alice  first thing said on this network   [7c1f…]
-  bob    reached you from the hotspot       [a904…]
-```
+Both messages should render in both windows, with both authors named.
 
 Then exercise the other record kinds, since each takes a different path through the merge:
-`kols react general <id> +1`, `kols edit`, `kols delete`, and several posts from both sides to
-confirm both terminals agree on the order.
+
+- **react** — hover a message, **+1**. Click the chip again to take it back; a chip you hold is
+  outlined
+- **edit** — hover your own message, **edit**
+- **withdraw** — hover your own message, **withdraw**. It is *hidden, never unsent*: anybody who
+  already has it keeps the bytes, and the window says which happened
+- **pin** — founder only here
+- **several posts from both sides**, to confirm both windows agree on the order
+
+Order is computed from the merged set rather than from arrival (`design/01` §4), so both windows
+must agree regardless of who posted when.
 
 ## 12. Take it back off both machines
 
@@ -324,38 +189,33 @@ irreversible by design rather than by omission. That is the intended end state f
 
 ### The state each machine holds
 
-Everything `kols` writes lives under the store root, so one directory per identity covers it —
-`seed`, `network`, `label`, `entries/`, `channels/`, `group`, `addresses`, `peers`, `relays`
-and the `lock`/`serving` files a running node uses.
+One directory per machine, and the window chose it: **`~/.kols`**, or `%USERPROFILE%\.kols` on
+Windows. Everything is under it — `seed`, `network`, `label`, `entries/`, `channels/`, `group`,
+`addresses`, `peers`, `relays`, and the `lock`/`serving` files a running node uses.
+
+**Close the window first.** A running node holds a claim on the store and rewrites the heartbeat
+as it goes.
+
+- **macOS** — Finder, **Go → Go to Folder**, type `~/.kols`, delete the folder.
+- **Windows** — Explorer, paste `%USERPROFILE%\.kols` in the address bar, delete the folder.
+
+Or, if you would rather:
 
 ```bash
-# macOS/Linux — whichever you exported in step 1
-rm -rf ~/kols-alice ~/kols-bob
+rm -rf ~/.kols                                    # macOS
 ```
 
 ```powershell
-# Windows
-Remove-Item -Recurse -Force C:\kols\alice
+Remove-Item -Recurse -Force "$env:USERPROFILE\.kols"   # Windows
 ```
 
-**Check `~/.kols` as well, on both machines.** That is the default when `KOLS_HOME` is unset,
-and it is easy to have created one without meaning to — a terminal opened before the export, or
-any `kols` command run from a fresh shell. On Windows it is `%USERPROFILE%\.kols`.
+Nothing else on the machine holds network state. If you also ran the development binaries at
+some point, they default to the same place and take `$KOLS_HOME` when it is set — worth a look
+only if you know you set one.
 
-```bash
-ls -la ~/.kols 2>/dev/null && echo "^ this exists too"
-```
+### What the application itself leaves
 
-### If you used the window for any of it
-
-**Then there is a second store, in a place the terminal steps never touched.** The window
-resolves the same `$KOLS_HOME`-else-`~/.kols` rule — but an application launched from Finder or
-the Start menu inherits no `KOLS_HOME` you exported in a shell, so it lands in `~/.kols` while
-your terminal ran in `~/kols-alice`. Deleting only the one you remember leaves a whole store
-behind, seed included.
-
-The webview keeps its own data under the bundle identifier `dev.kols.desktop`, separately from
-anything ko-ls writes. Nothing secret is in it, but it is what is left after an uninstall:
+Separate from anything ko-ls writes, and it survives an uninstall. Nothing secret is in it.
 
 ```bash
 # macOS — any of these that exist
@@ -398,29 +258,32 @@ cargo clean          # in the checkout, if you built locally
 ## If it stalls, capture this before changing anything
 
 A two-node failure reads as "nothing happened" from the waiting side, and the reason is almost
-always on the other machine — a founder refusing a request says so on *its* terminal, which the
-joiner cannot see. That has cost this project two rounds of guessing before, and the harness was
-changed to print every daemon's log for exactly this reason.
+always on the *other* machine. That has cost this project two rounds of guessing before.
 
-- **Both daemons' full output**, not just the one that appeared stuck. Highest-value item here
-  and the one most often missed.
-- **`kols relay list` on both machines.** Shows what replay designates and what each node
-  cached. A node whose cache names a relay that is gone behaves differently from one that never
-  had a relay.
-- **The relay's `/health` and `/peer-id`.** A peer id that moved means `RELAY_PHRASE` is missing
-  or was edited, and every address referencing the old one is stale.
-- **Whether `relay reserved a circuit on …` appeared**, on each machine. Its absence is the most
-  common single cause and is reported clearly enough that guessing is unnecessary.
+Capture, from **both** machines:
 
-In the window, the first and last of those are one place: the **relay** panel in the sidebar
-says which of the four states this node is in — a circuit reserved, none designated, designated
-and none usable, or not yet reported — and lists what replay designates above what this node
-cached, italicised where they differ. Anything that went wrong and was survivable appears in the
-same red strip a refused message uses.
+- **The relay panel**, in the sidebar. It says which of four states that node is in — a circuit
+  reserved, none designated, designated and none usable, or not yet reported — and lists what
+  replay designates above what this node cached, italicised where the two differ. A node whose
+  cache names a relay that is gone behaves differently from one that never had a relay, and this
+  is where you see which you have.
+- **The red strip** under the messages. Everything that went wrong and was survivable lands
+  there: a refused command, a key request that arrived before its sender was admitted, a payload
+  that opened under no held epoch.
+- **The sidebar's key line.** *Waiting to be keyed in* is an ordinary state and not a fault, but
+  it is the difference between "B is not admitted" and "B is admitted and unkeyed", which have
+  different causes.
+- **The relay's `/health` and `/peer-id`**, from a browser. A peer id that moved means
+  `RELAY_PHRASE` is missing or was edited, and every address naming the old one is stale.
 
-The window's blind spot is the *other* machine, exactly as the terminal's is: it can tell you
-that nobody answered, and not why. If one side is a window and the other a terminal, the
-terminal's output is the one to keep.
+**Absence of a circuit is the most common single cause**, and the panel reports it plainly
+enough that guessing should not be necessary.
+
+**The window's honest limit:** it can tell you that nobody answered, and not why. The reason
+lives on the other machine, so a screenshot of B's window is worth little without one of A's.
+If you exhaust the above, the development binary prints considerably more — `kols serve` narrates
+every governance entry, key request and answer — but it is a debugging escalation, not part of
+this test.
 
 ## What this test does and does not establish
 
@@ -428,10 +291,12 @@ It establishes that the path works across real networks: relay reachability, adm
 epoch-key delivery, pointer sync, segment fetch and a merged view between two nodes that have
 never been on the same machine.
 
-It does not exercise the desktop window unless you take the mapping above. The window has been
-opened once and rendered, but nothing was wired to it then (`STATUS.md` §0), so every path
-through it is unexercised — which is why a second pass, after the terminal has proved the
-network path, keeps a failure attributable to one thing.
+**It tests two unproven things at once, and that is worth going in knowing.** The window has
+been opened once and rendered, but nothing was wired to it then (`STATUS.md` §0), so every path
+through it is unexercised — as is the network path across real machines. A failure could be
+either. When something does not work, the question to ask first is whether the *other* window
+shows the state you expect: if A's says B was admitted and keyed, and B's shows nothing, the
+fault is between them rather than in the interface.
 
 It does not exercise private channels, direct messages, voice or search, none of which exist.
 And it says nothing about behaviour over days — retention, key retirement and segment sealing

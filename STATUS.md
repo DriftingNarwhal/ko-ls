@@ -118,9 +118,9 @@ complete and a failure can be reproduced in the same minute it appears.
 
 | | |
 |---|---|
-| **Working on** | Milestone: a client two people on separate networks can use. E14 landed, so a joiner that goes unanswered now keeps asking instead of stranding. Both binaries build for Windows and macOS in CI and v0.1.0 publishes them. The window now does relay setup too (O12/O13 closed 2026-08-21), so no step of the flow needs a terminal. Honest caveat: the window **has** been launched and rendered roughly correctly, but that was before anything was wired to it, so no flow has ever been exercised through it. What is left is a relay reachable from both machines |
+| **Working on** | Milestone: a client two people on separate networks can use, **tested through the window alone**. E14 landed, so a joiner that goes unanswered now keeps asking instead of stranding. Both binaries build for Windows and macOS in CI and v0.1.0 publishes them. The window now does relay setup too (O12/O13 closed 2026-08-21), so no step of the flow needs a terminal. Honest caveat: the window **has** been launched and rendered roughly correctly, but that was before anything was wired to it, so no flow has ever been exercised through it. What is left is a relay reachable from both machines |
 | **Blocked on** | Nothing |
-| **Runnable** | **`kols-desktop`** — *the product* (D30). A window that creates a network or joins one by invite, runs a node for it, designates relays and reports whether one granted a circuit, lists channels, renders one and posts to it, mints an invite and admits from the waiting room, updating as records arrive. **Launched once, before it was wired — it rendered, and no flow has been run through it.** **`kols`** — *a development tool, not a product surface*: init (with `--relay`), relay list/set, invite, join, waiting, attach, admit, revoke, name, serve, post, read, edit, delete, react, pin, and channel create/list/rename/topic/slowmode/archive. `cargo test` — 192 tests here and 649 in `../distributed-intranet`, clippy clean in both; `scripts/cross-check.sh` for big-endian, `taskset -c 0,1` for the starved case |
+| **Runnable** | **`kols-desktop`** — *the product* (D30). A window that creates a network or joins one by invite, runs a node for it, **generates a relay identity**, designates relays and reports whether one granted a circuit, lists channels, renders one, posts, **reacts, revises, withdraws and pins**, mints an invite and admits from the waiting room, updating as records arrive. Every step of the two-machine test is reachable from it and none needs a terminal. **Launched once, before it was wired — it rendered, and no flow has been run through it.** **`kols`** — *a development tool, not a product surface*: init (with `--relay`), relay list/set, invite, join, waiting, attach, admit, revoke, name, serve, post, read, edit, delete, react, pin, and channel create/list/rename/topic/slowmode/archive. `cargo test` — 192 tests here and 649 in `../distributed-intranet`, clippy clean in both; `scripts/cross-check.sh` for big-endian, `taskset -c 0,1` for the starved case |
 | **Next decision needed from the user** | Nothing blocking |
 
 ---
@@ -260,6 +260,33 @@ design changes before anything else is built.
 ## 9. Log
 
 Newest first. One line per change that moved the state above.
+
+- **2026-08-21** — **The window can now carry the whole test, and two gaps had to close before
+  that was true.** Asked for a window-only test; checking rather than assuming found that it was
+  not possible yet, for reasons neither of us had noticed.
+
+  **The relay's identity needed a terminal.** `RELAY_PHRASE` came from `intranet-harness
+  identity new` — a tool in the *protocol* repository — and DI-Relay refuses to start without
+  one, on purpose. So "no step needs a terminal" was false for the one step a founder cannot
+  skip. The relay panel generates one now: `MasterSeed::generate` and `to_backup_phrase`, from a
+  crate `kols-app` already depended on. Shown once, stored nowhere, and marked as the relay's
+  private key rather than the member's — the member's seed has no interface at all and must not
+  start looking like it does.
+
+  **React, revise, withdraw and pin did not exist in the window.** Seven of `kols-api`'s
+  thirteen commands were wired; these four were not, and step 11 asks for exactly them, because
+  each takes a different path through the merge. They are per-message controls revealed on hover.
+  Two details worth keeping: `mine` on a reaction now comes from the core rather than being
+  guessed, since a reaction is a toggle and a client that guessed would send an add for one the
+  member already holds — a no-op that reads as a dead button; and withdrawal asks for
+  confirmation in the words `design/01` §6 requires, *hidden, not unsent*.
+
+  Pin is gated on the network-wide `moderate-content` and so misses a per-channel moderator. That
+  error runs the safe way — it hides a control somebody may hold, rather than offering one that
+  will be refused — and is noted where it is written.
+
+  The runbook is now window-only end to end, cleanup included, and says plainly that it tests two
+  unproven things at once. 192 green, clippy clean.
 
 - **2026-08-21** — **`kols-cli` renamed to `kols-node`.** The name described 853 of its 5,578
   lines and misdescribed the rest. What is in it is the store, the node loop, the executor, the

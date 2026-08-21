@@ -127,7 +127,23 @@
             <summary>set the relay</summary>
 
             <p class="dim">
-              A relay needs this network's id before it will start — it is
+              A relay needs an identity of its own. Generate one, paste it into
+              the host as <code>RELAY_PHRASE</code>, and keep a copy — it is the
+              only way to redeploy the same relay rather than a new one.
+            </p>
+            <button type="button" id="new-relay-identity">generate a relay identity</button>
+            <div class="relay-phrase" id="relay-phrase" hidden>
+              <textarea id="relay-phrase-text" readonly rows="3"></textarea>
+              <button type="button" id="copy-phrase">copy</button>
+              <p class="dim warn">
+                Shown once and stored nowhere. Anyone holding it can answer as
+                this relay. It is <strong>not</strong> your identity — yours never
+                leaves this machine and is never displayed.
+              </p>
+            </div>
+
+            <p class="dim">
+              A relay also needs this network's id before it will start — it is
               <code>RELAY_NETWORK</code> in DI-Relay's configuration.
             </p>
             <div class="relay-id-row">

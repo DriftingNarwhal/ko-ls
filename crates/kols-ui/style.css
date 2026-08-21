@@ -342,9 +342,61 @@ body {
   background: #1d212b;
   border: 1px solid var(--line);
   border-radius: 10px;
+  color: var(--text);
+  cursor: pointer;
   font-size: 11px;
   padding: 1px 7px;
 }
+/* One this member holds. A reaction is a toggle, so the chip has to say which
+   way clicking it will go — otherwise the only way to find out is to click. */
+.message .reaction.mine {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+/* What can be done to a message. Revealed on hover so a hundred rows are not a
+   hundred rows of buttons, and kept in the flow rather than floated so it never
+   covers the text it belongs to. */
+.actions {
+  display: flex;
+  gap: 4px;
+  margin-left: auto;
+  opacity: 0;
+}
+.message:hover .actions,
+.actions:focus-within { opacity: 1; }
+.actions button {
+  background: none;
+  border: 1px solid transparent;
+  border-radius: var(--radius);
+  color: var(--dim);
+  cursor: pointer;
+  font-size: 11px;
+  padding: 0 5px;
+}
+.actions button:hover {
+  border-color: var(--line);
+  color: var(--text);
+}
+
+/* The relay's own backup phrase: a private key, shown once. Marked like the
+   secret it is rather than like another form field. */
+.relay-phrase {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.relay-phrase textarea {
+  width: 100%;
+  resize: vertical;
+  font: 12px/1.5 var(--mono);
+  color: var(--text);
+  background: var(--ground);
+  border: 1px solid var(--warn);
+  border-radius: var(--radius);
+  padding: 6px;
+}
+.dim.warn { color: var(--warn); }
 
 .refused {
   border-top: 1px solid var(--line);

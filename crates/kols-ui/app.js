@@ -308,6 +308,72 @@ function drawChannels(channels) {
   }
 }
 
+/// Runs a command and redraws, putting a refusal where the user is looking.
+///
+/// Every one of these is authorized on receipt, so a refusal here is an answer —
+/// too fast, not permitted, not yours to revise — rather than a fault. The
+/// redraw is unconditional because the projection is the authority on what
+/// happened, not this function's idea of what it asked for.
+async function act(run) {
+  try {
+    await run();
+    el("refused").hidden = true;
+    if (state.current) await openChannel(state.current);
+  } catch (err) {
+    el("refused").hidden = false;
+    el("refused").textContent = String(err);
+  }
+}
+
+/// What this member may do to one message.
+///
+/// Revising and withdrawing are offered on a member's own messages only, which
+/// is spec 07 §5.2's rule shown rather than enforced — the gate refuses either
+/// way. Pinning follows `may_moderate`, which is the network-wide capability and
+/// misses a per-channel moderator; that error hides a control somebody holds
+/// rather than offering one that will be refused.
+function actions(channel, message) {
+  const bar = document.createElement("span");
+  bar.className = "actions";
+
+  const button = (label, title, run) => {
+    const it = document.createElement("button");
+    it.textContent = label;
+    it.title = title;
+    it.addEventListener("click", () => act(run));
+    bar.append(it);
+  };
+
+  if (!message.withdrawn) {
+    button("+1", "react", () =>
+      invoke("react", { channel, message: message.id, key: "+1", remove: false }),
+    );
+  }
+
+  if (message.mine && !message.withdrawn) {
+    button("edit", "revise this", () => {
+      const body = prompt("revise this message", message.body);
+      // Distinguished deliberately: cancelling is not the same as clearing, and
+      // an empty edit is refused by the gate rather than silently dropped here.
+      if (body === null) return Promise.resolve();
+      return invoke("edit_message", { channel, message: message.id, body });
+    });
+    button("withdraw", "hidden, not unsent — everybody who has it keeps it", () =>
+      confirm("Withdraw this message?\n\nIt is hidden, not unsent: anybody who already has it keeps the bytes.")
+        ? invoke("delete_message", { channel, message: message.id })
+        : Promise.resolve(),
+    );
+  }
+
+  if (state.me?.may_moderate) {
+    button(message.pinned ? "unpin" : "pin", "needs chat:moderate", () =>
+      invoke("pin", { channel, message: message.id, remove: message.pinned }),
+    );
+  }
+
+  return bar;
+}
+
 function drawMessages(opened) {
   const channel = state.channels.find((c) => c.id === opened.channel);
   el("channel-name").textContent = channel ? `#${channel.name}` : "channel";
@@ -359,13 +425,29 @@ function drawMessages(opened) {
       row.append(edited);
     }
 
+    // Reactions are toggles, so each chip knows which way it is about to go.
+    // `mine` comes from the core rather than being guessed here: a client that
+    // guessed would send an add for one it already holds, which does nothing and
+    // reads as a dead button.
     for (const reaction of message.reactions) {
-      const chip = document.createElement("span");
-      chip.className = "reaction";
+      const chip = document.createElement("button");
+      chip.className = reaction.mine ? "reaction mine" : "reaction";
       chip.textContent = `${reaction.key} ${reaction.count}`;
+      chip.title = reaction.mine ? "take this back" : "react";
+      chip.addEventListener("click", () =>
+        act(() =>
+          invoke("react", {
+            channel: opened.channel,
+            message: message.id,
+            key: reaction.key,
+            remove: reaction.mine,
+          }),
+        ),
+      );
       row.append(chip);
     }
 
+    row.append(actions(opened.channel, message));
     list.append(row);
   }
 
@@ -452,6 +534,31 @@ el("copy-invite").addEventListener("click", async () => {
   await navigator.clipboard.writeText(uri);
   el("copy-invite").textContent = "copied";
   setTimeout(() => (el("copy-invite").textContent = "copy"), 1500);
+});
+
+el("new-relay-identity").addEventListener("click", async () => {
+  const button = el("new-relay-identity");
+  button.disabled = true;
+  try {
+    const phrase = await invoke("new_relay_identity");
+    el("relay-phrase").hidden = false;
+    el("relay-phrase-text").value = phrase;
+    el("relay-phrase-text").select();
+  } catch (err) {
+    el("relay-error").hidden = false;
+    el("relay-error").className = "relay-error";
+    el("relay-error").textContent = String(err);
+  } finally {
+    button.disabled = false;
+  }
+});
+
+el("copy-phrase").addEventListener("click", async () => {
+  const phrase = el("relay-phrase-text").value;
+  if (!phrase) return;
+  await navigator.clipboard.writeText(phrase);
+  el("copy-phrase").textContent = "copied";
+  setTimeout(() => (el("copy-phrase").textContent = "copy"), 1500);
 });
 
 el("copy-network").addEventListener("click", async () => {
