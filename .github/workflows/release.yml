@@ -16,6 +16,23 @@
 # a normal one. `kols` is the terminal client and `kols-desktop` the window.
 name: release
 
+# # Action versions are pinned to the lowest major that runs Node 24
+#
+# GitHub deprecated the Node 20 action runtime, which every build warned about.
+# The fix is a runtime bump, so these are bumped to the first major of each
+# action that carries one — deliberately not to the newest, because the newest
+# of two of them also changes behaviour this workflow depends on.
+#
+# `download-artifact` v8 stops unzipping unconditionally and decides from the
+# `Content-Type` instead. The publish job below downloads every artifact and
+# hands `find artifacts -type f` straight to `gh release create`, so a change in
+# what lands on disk changes what ends up attached to the release — quietly, and
+# only visible to somebody downloading a zip where they expected a binary. v7 is
+# the same action on Node 24 and nothing else. `checkout` v6 and v7 likewise
+# change PR-checkout behaviour this workflow never exercises.
+#
+# `Swatinem/rust-cache@v2` already runs on Node 24 and needs no change.
+
 # Only when a build is wanted: a `v*` tag publishes one, and a manual dispatch
 # produces the artifacts without publishing. Deliberately not on every push —
 # nothing here belongs on the path of an ordinary commit.
@@ -49,10 +66,10 @@ jobs:
       # checkout of this one alone cannot build. Both are public, so the default
       # token reaches them and PROTOCOL_REPO_TOKEN is a leftover for the case
       # where either goes private again.
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           path: ko-ls
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           repository: DriftingNarwhal/distributed-intranet
           token: ${{ secrets.PROTOCOL_REPO_TOKEN || github.token }}
@@ -177,7 +194,7 @@ jobs:
           cd out && for f in *; do mv "$f" "${{ matrix.name }}-$f"; done
           ls -la
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v6
         with:
           name: ${{ matrix.name }}
           path: ko-ls/out/*
@@ -192,7 +209,7 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v7
         with:
           path: artifacts
       - name: Release
