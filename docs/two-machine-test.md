@@ -263,6 +263,83 @@ Then exercise the other record kinds, since each takes a different path through 
 `kols react general <id> +1`, `kols edit`, `kols delete`, and several posts from both sides to
 confirm both terminals agree on the order.
 
+## 12. Take it back off both machines
+
+There is no server, so **nothing is deleted anywhere else when you delete it here.** These
+stores *are* the network — remove them from both machines and it is gone, with no account left
+behind and nobody to ask. The seed is the identity and there is no recovery service, so this is
+irreversible by design rather than by omission. That is the intended end state for a test.
+
+### The state each machine holds
+
+Everything `kols` writes lives under the store root, so one directory per identity covers it —
+`seed`, `network`, `label`, `entries/`, `channels/`, `group`, `addresses`, `peers`, `relays`
+and the `lock`/`serving` files a running node uses.
+
+```bash
+# macOS/Linux — whichever you exported in step 1
+rm -rf ~/kols-alice ~/kols-bob
+```
+
+```powershell
+# Windows
+Remove-Item -Recurse -Force C:\kols\alice
+```
+
+**Check `~/.kols` as well, on both machines.** That is the default when `KOLS_HOME` is unset,
+and it is easy to have created one without meaning to — a terminal opened before the export, or
+any `kols` command run from a fresh shell. On Windows it is `%USERPROFILE%\.kols`.
+
+```bash
+ls -la ~/.kols 2>/dev/null && echo "^ this exists too"
+```
+
+### If you opened the window
+
+**The window almost certainly used a different directory than your test did.** It resolves the
+same `$KOLS_HOME`-else-`~/.kols` rule, but an application launched from Finder or the Start menu
+does not inherit a `KOLS_HOME` you exported in a terminal — so it will have made its own
+`~/.kols` regardless of which store the CLI steps used. Delete that too.
+
+The webview keeps its own data under the bundle identifier `dev.kols.desktop`, separately from
+anything ko-ls writes. Nothing secret is in it, but it is what is left after an uninstall:
+
+```bash
+# macOS — any of these that exist
+rm -rf ~/Library/Application\ Support/dev.kols.desktop \
+       ~/Library/Caches/dev.kols.desktop \
+       ~/Library/WebKit/dev.kols.desktop \
+       ~/Library/Saved\ Application\ State/dev.kols.desktop.savedState
+rm -rf /Applications/ko-ls.app          # if you installed from the .dmg
+```
+
+```powershell
+# Windows — uninstall "ko-ls" from Settings > Apps if you ran the installer, then
+Remove-Item -Recurse -Force "$env:LOCALAPPDATA\dev.kols.desktop"
+```
+
+### The relay, which is the one thing that costs money
+
+**Delete the Railway project.** A relay left deployed keeps running, keeps its public address
+and keeps consuming whatever the free tier allows — and the identity in `RELAY_PHRASE` stays
+live, so anyone holding that phrase can still stand up something that answers as this relay.
+Deleting the project settles both.
+
+Then discard the phrase itself wherever you put it, and remember that any invite you pasted
+into a chat still names the relay's address and this network's id. Invites expire on their own
+(24 hours by default in step 7) and a spent one grants nothing, but the text is worth deleting
+from wherever you sent it.
+
+### The downloads, and the build tree
+
+The release binaries and installers in `~/Downloads` on both machines, plus the mounted `.dmg`
+volume if it is still attached. If you built rather than downloaded, `target/` is the large one
+— a day of cross-compiles took it to 11 GB here.
+
+```bash
+cargo clean          # in the checkout, if you built locally
+```
+
 ---
 
 ## If it stalls, capture this before changing anything
