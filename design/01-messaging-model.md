@@ -83,8 +83,10 @@ entry declaring the wrong one.
 **All of this applies to `server`-profile networks only.** A `conversation`-profile
 network (`03` §4.1) has exactly one channel, its id derived as
 spec 07 §3.6 specifies, declared nowhere — and a `ChannelDefinition` entry
-in such a network is **invalid and rejected on replay**, so the distinction is enforced
-rather than merely presented. Everything else in this document — segments, ordering,
+in such a network is **invalid and refused by every reader that understands the `chat`
+namespace** (spec 07 §1.2). The profile lives in replayed policy state, so they all reach
+the same verdict; the protocol carries the payload without decoding it and so enforces
+nothing here itself. Everything else in this document — segments, ordering,
 edits, reactions, retention, the live path — applies identically to both profiles, since
 a conversation is a channel like any other once you are inside it.
 
@@ -490,8 +492,8 @@ receives: `CurrentEpochForward` (the protocol's conservative default) or `Full`
 
 | Preset | Retention | Joiner access | Feels like |
 |---|---|---|---|
-| Open archive | `Unbounded` | `Full` | Discord with full scrollback for everyone |
-| Fresh start | `Unbounded` | `CurrentEpochForward` | History persists, but joining starts your clock |
+| Open archive | `Forever` | `Full` | Discord with full scrollback for everyone |
+| Fresh start | `Forever` | `CurrentEpochForward` | History persists, but joining starts your clock |
 | Rolling window | `Days(n)` | `Full` | The network decides how far back anything is kept; joiners see all of what remains |
 
 All three are genuine configurations of the same two switches, chosen at genesis and

@@ -153,11 +153,18 @@ map (`06` §9) as `chat:network-profile`:
 | Search | Network postings for public channels | Local index only — a conversation is too small to be worth DHT postings |
 | Presented as | A server in the server list | A contact in the friends list |
 
-**This is enforced, not conventional.** In a `conversation`-profile network, a
-`ChannelDefinition` entry is **invalid and rejected on replay** — the profile lives in
-replayed policy state, so every node reaches the same verdict, and a client that tried to
+**This is enforced, not conventional — by readers rather than by the protocol.** In a
+`conversation`-profile network, a `ChannelDefinition` entry is **invalid and refused by
+every reader that understands the `chat` namespace** (spec 07 §1.2). The profile lives in
+replayed policy state, so they all reach the same verdict, and a client that tried to
 create a channel in a conversation would find nobody accepting the entry. Categories,
 stage channels and app-bundle publishing are refused on the same basis.
+
+**What that is worth, stated precisely**, since E2 landed generically and the protocol
+carries `chat` payloads without decoding them: minting the entry still requires the
+declared capability, and every conformant client refuses it — but the platform cannot
+enforce a rule it cannot read, so a modified client would see a channel where others see
+none. Bounded, and weaker than "rejected on replay" implies.
 
 The one thing that is *not* claimed: permanence. A network's founders can change policy,
 and a conversation whose founders deliberately reconfigure it into a server becomes one —

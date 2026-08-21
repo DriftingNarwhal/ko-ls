@@ -1,9 +1,9 @@
 # ko-ls — Implementation Status
 
-**Updated:** 2026-08-21 (documentation pass — the README contradicted itself and the roadmap was two landings behind)
+**Updated:** 2026-08-21 (documentation pass — `design/06` described the opposite of what E2 landed, and a divergence from Core §1.1 had never been written down)
 **Phase:** P1 — two nodes talk live and durably, a joiner reads back through sealed
 history, and the boundary carries commands in and events out
-**Design:** [`design/`](design/) — `00`–`08` at v1.0, `09` at v0.2. **`distributed-intranet/specs/07` is normative** where it and the design set overlap.
+**Design:** [`design/`](design/) — `00`–`08` at v1.0, `09` at v0.3. **`distributed-intranet/specs/07` is normative** where it and the design set overlap.
 
 This file is the answer to "where are we?". It is updated in the same change that moves
 work, never afterwards from memory — a status file that lags is worse than none, because
@@ -126,7 +126,7 @@ complete and a failure can be reproduced in the same minute it appears.
 |---|---|---|
 | F1 record encoding | **Done** | `design/08-record-encoding.md`, normative |
 | F2 spec 07 in protocol repo | **Done** | `distributed-intranet/specs/07-chat-application-spec.md`, committed there. README and CLAUDE.md updated — the repo no longer claims six specs |
-| F3 design set → v1.0 | **Done** | `00`–`08` at v1.0. The review pass demoted `08` from normative (its content is upstream now), refreshed the roadmap and scale claims, and turned `05` §8's test plan into a table with real state per row. `09` was written after that pass and is at v0.2 — it describes an interface nothing has built yet, so v1.0 would be a claim about settled work |
+| F3 design set → v1.0 | **Done** | `00`–`08` at v1.0. The review pass demoted `08` from normative (its content is upstream now), refreshed the roadmap and scale claims, and turned `05` §8's test plan into a table with real state per row. `09` was written after that pass and is at v0.3 — it describes an interface that is a first pass rather than a settled one, so v1.0 would be a claim about work that has not been reviewed |
 
 ## 3. Setup
 
@@ -158,6 +158,7 @@ both green.
 | E12 | Optional peer discovery | **Landed, narrowed** — Core §5.1.1; a node MAY be built without Kademlia and mDNS. Asked as *tiered liveness*; only the behaviour set was the protocol's, so the hot/warm/cold tiering stayed client-side |
 | E13 | Cross-network connection bootstrap | **New** — from `design/09` §3; so two people starting a DM never provision a relay (P2) |
 | E14 | Idempotent epoch-key re-delivery | **New** — from the bug behind O10; `answer_epoch_key` re-adds a member already in the group, so the one request a joiner sends can never be retried (P1) |
+| E15 | Independent per-network seeds | **New** — from reading `design/06` against Core §1.1, which specifies one master seed with per-network *derivation*. D28 generates fresh entropy per network instead, and has since before the decision was recorded. Spec text only; blocks nothing, and belongs beside O7 |
 
 ## 5. Client Crates
 
@@ -238,6 +239,66 @@ design changes before anything else is built.
 ## 9. Log
 
 Newest first. One line per change that moved the state above.
+
+- **2026-08-21** — **A second documentation pass, over the design set against the protocol it
+  depends on rather than against itself.** The previous pass read the client's documents for
+  internal contradictions and found three. Reading them against the landed specs is a different
+  exercise and found five more, one of which had been true for weeks in a place nothing tracked
+  and one of which was a gap in the normative document rather than in this repo.
+
+  **`design/06` §2 described the opposite of what E2 landed.** It said all four channel entries
+  are capability-gated and therefore *count* toward branch length. Core §2.7.2 excludes them,
+  and is right — whether an application entry is cheap to mint depends on the tier of the
+  capability it declares, which the branch-length metric deliberately cannot resolve. This
+  file's own E2 log entry recorded the reversal on the day it landed; the design document that
+  asked for it was never updated, so the request and the outcome disagreed in writing for two
+  months. Now it carries both, because the reversal is the more useful half.
+
+  **The same section overclaimed profile enforcement, and so did two others.** "A
+  `ChannelDefinition` in a conversation network is rejected on replay" reads as the protocol
+  enforcing it. It cannot: E2 landed generically, so the platform carries `chat` payloads
+  without decoding them, and spec 07 §1.2 corrected the wording upstream. `01` §2.1, `03` §4.1
+  and `06` §2 each still had the strong form. Fixing one and leaving two is how a correction
+  becomes drift, so all three say the same weaker and true thing — every conformant reader
+  refuses it, the platform enforces nothing here, and a modified client would see a channel
+  where others see none.
+
+  **`design/06` §16 still assumed a master seed.** D28 removed it in August; `03` §4.6 was
+  updated for that and `06` was missed, so the one document that tracks what the protocol owes
+  was describing an identity model the client had abandoned.
+
+  **Which is how E15 was found, and it is the finding worth keeping.** The client does not
+  implement Core §1.1 — one master seed per person, per-network keypairs derived from it — and
+  does not intend to. D28 generates fresh entropy per network. That is a divergence from a
+  normative specification, and `design/06` §0's own rule is that a needed protocol change is
+  recorded there rather than assumed into existence. It never was: the decision lived in the
+  implementation, then in a decision register, and in no list of what the protocol owes. It
+  blocks nothing — the protocol's crates never see a seed, only the keypairs it produces, so
+  the cost is conformance rather than function — which is exactly why it stayed invisible.
+  Recorded now with what the amendment has to say, including the part the client cannot yet
+  answer: what a backup *is* when there is no phrase to write down, which is O7.
+
+  **The retention vocabulary split turned out to be hiding a real gap in the normative
+  document.** `01` §8 named the default `Forever` in its prose and `Unbounded` in its table
+  one screen later, and spec 07 §2.8 said `Unbounded` too. Aligning the word was the small
+  half. The large half is that §2.8 described retention as one setting, named neither policy
+  key, and never said how a network expresses "forever" in a key whose value is a day count —
+  so the one genuinely normative question here was unanswered: **what does `0` mean?** Two
+  clients answering that differently render different history from the same records, which is
+  precisely the divergence §4.3 exists to prevent. The client has always read absent, zero,
+  negative and overflow as `Forever`, fail-safe, because content allowed to go dark cannot be
+  brought back. §2.8 now says so as a MUST, names both keys, carries the two-windows reasoning
+  and the newest-record rule, and states that a reader must not report an unwrappable segment
+  as deleted. §4.3's key list gains both keys. Spec text only — the protocol stores app-layer
+  policy values without interpreting them (Core §2.6.2), so there is no protocol code to
+  change and no protocol test to write; the behaviour being specified is `kols-core::policy`'s
+  and was already tested here.
+
+  Also: this file called `design/09` v0.2 in two places after it went to v0.3.
+
+  **No code changed and no test moved**, and that was checked rather than assumed: 189 passing
+  here and clippy clean, counted from a file rather than a pipe for the reason a previous entry
+  records. Nothing upstream was touched, so its 649 stands unre-run.
 
 - **2026-08-21** — **A documentation pass, and it found three stale claims rather than none.**
   The point of reading all of it after a run of landings is that some of it is wrong, and it was.

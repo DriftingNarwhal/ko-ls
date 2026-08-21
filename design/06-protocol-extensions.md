@@ -1,6 +1,6 @@
 # Required Protocol Extensions
 
-**Document status:** v1.8 — E1 and E3 withdrawn, **E9, E2, E5, E4, E11 and E12 landed**; E12 narrowed to its protocol half on landing, E13 added from `09`, **E14 added from a bug**
+**Document status:** v1.9 — E1 and E3 withdrawn, **E9, E2, E5, E4, E11 and E12 landed**; E12 narrowed to its protocol half on landing, E13 added from `09`, E14 added from a bug, **E15 added from a divergence this document should have been carrying already**. §2's branch-length and profile-enforcement claims corrected to what landed
 **Depends on:** all preceding documents
 **Consumed by:** work in `distributed-intranet`
 
@@ -40,6 +40,7 @@ Two rules govern this list:
 | ~~E12~~ | Optional peer discovery — **landed**, Core §5.1.1. Asked as tiered liveness; only the behaviour set was the protocol's, and the tiering stayed in the client | — | Done |
 | E13 | Cross-network connection bootstrap, for direct messages | P2 | Medium |
 | E14 | Idempotent epoch-key re-delivery | P1 — a joiner can stall forever | Small |
+| E15 | Independent per-network seeds — Core §1.1's master seed is not what this client implements (D28) | Nothing; conformance rather than function | Spec text only |
 
 ---
 
@@ -81,21 +82,39 @@ EntryBody::ChannelMembership { channel_id, action, identity }   — private chan
 EntryBody::ChannelRotation   { channel_id, commit_ref, reason } — private channels only
 ```
 
-All four are **capability-gated and therefore count toward branch length** under the
-fork-choice rule (Core §2.7.1 point 2) — unlike device certificates, which are excluded
-because they need no capability. That is the correct classification: each requires
-`chat:manage-channel` or `chat:create-channel`, so none of them is free to mint, and
-none opens the grinding path point 2 exists to close.
+**This section asked for the opposite of what landed, and the reversal is worth keeping.**
+It argued all four are capability-gated and therefore *count* toward branch length (Core
+§2.7.1 point 2), since each requires `chat:manage-channel` or `chat:create-channel` and
+none is free to mint. Core §2.7.2 excludes them instead, and is right: whether an
+application entry is cheap to mint depends on the tier of the capability it declares, and
+answering that means resolving a tier against replayed state — which the branch-length
+metric deliberately cannot do. A generic carrier cannot tell a scarce declaration from a
+cheap one, so counting them would reopen the grinding path point 2 exists to close.
+
+**What it costs is real and bounded.** Channel structure carries no weight in fork choice,
+so a partition may void a definition a competing branch never saw. That is acceptable
+because everything which *must* survive a partition — membership, revocation, policy,
+epoch rotation — is a core entry that still counts, and a voided channel entry is
+resubmittable from the voided-actions report like any other (`02` §5, `05` §4). Spec 07
+§1.3 states this obligation normatively; a client that ignored the report would silently
+lose channels to a heal.
 
 `ChannelRotation` is the channel analogue of `EpochRotation` and inherits its discipline
 wholesale: tentative until finality (k = 10 capability-gated actions **and** T = 30
 minutes), prior channel-epoch secrets retained until then, re-welcome on a voided branch.
 
 **One validity rule beyond ordinary capability checking:** a `ChannelDefinition` (or any
-other channel entry) is **rejected on replay in a `conversation`-profile network** —
-`03` §4.1's profile distinction, enforced where it can actually be enforced. The profile
-lives in replayed policy state (E9), so this is a deterministic verdict every node
-reaches identically, not a client-side convention a modified client could ignore.
+other channel entry) is **refused in a `conversation`-profile network** — `03` §4.1's
+profile distinction. The profile lives in replayed policy state (E9), so every reader that
+understands the `chat` namespace reaches the same verdict.
+
+**Whose replay, though, and the generic form changed the answer.** This section originally
+said "rejected on replay" without qualifying it, which read as the protocol enforcing the
+rule. It cannot: it carries `chat` payloads without decoding them, so the rejection is an
+application-layer obligation and spec 07 §1.2 states it as one. What that costs is bounded
+— minting the entry still needs the declared capability, and every conformant client
+refuses it — but a client that ignored the profile would see a channel where others see
+none, which is a weaker guarantee than the original wording promised.
 
 **Acceptance:** replay produces current channel state deterministically; a channel entry
 in a conversation-profile network is refused by every node; a `ChannelRotation` on a
@@ -610,7 +629,63 @@ then re-asking on a schedule leaves the stall in place with the cause fixed.*
 
 ---
 
-## 15. Sequencing
+## 15. E15 — Independent Per-Network Seeds
+
+**Found by reading this document against the protocol it depends on, and it had been true
+for a while: the client does not implement Core §1.1's identity model and does not intend
+to.** D28 (`02` §6.3) generates fresh entropy per network. Core §1.1 specifies one master
+seed per *person*, "the single source of truth from which all other keys are derived", and
+Core §1.2 derives each network identity from it as
+`derive(master_seed, network_id, "identity")`. Those are different systems, and §0 of this
+document says a needed protocol change is recorded here rather than assumed into
+existence. This one was not — the divergence lived in the implementation, then in a
+decision register, and never in the place that tracks what the protocol owes.
+
+**The guarantees Core §1.2 exists for are preserved or strengthened, which is why this is
+an amendment rather than a bug.** Unlinkability holds by construction rather than by
+derivation: two per-network public keys are independent random keypairs, so they are
+uncorrelatable without the *weaker* assumption that a derivation function hides its
+inputs. Provable common ownership is unaffected, being a voluntary signed statement over
+two public keys (`03` §4.3) that never referenced the seed. Determinism within one network
+is unaffected. What changes is the blast radius: under a master seed, one compromised
+backup is every identity its holder has, in every network, forever — and it is precisely
+the object §1.1 tells a user to write down. Per-network seeds mean one leaked phrase
+exposes one network.
+
+**What the amendment must actually say**, since three sections lean on the master seed:
+
+- **§1.1** must permit an identity's per-network keypairs to be independently generated
+  rather than derived from one seed, and state the trade in both directions: derivation
+  buys recovery from a single phrase, independence buys a blast radius of one network.
+  Neither is wrong; a specification that names only the first leaves a conformant client
+  unable to choose the second.
+- **§1.2** must state its properties — unlinkability, determinism, provable common
+  ownership — as requirements on the *result* rather than as consequences of the
+  derivation, since independent generation satisfies all three by other means.
+- **§1.3 point 3** must be restated in terms of the seed *for that network*. Enrollment
+  already is per-network ("point 7"), so this is the wording catching up with the rule:
+  what signs a device certificate is the per-network identity key, and where that key
+  comes from is not the certificate's business.
+- **§1.1's recovery clause** must say what recovery costs under each model. This is the
+  half the client owes an answer to and does not yet have: a phrase alone restores nothing
+  either way, because a network's id cannot be derived from it — coming back needs the
+  phrase, the network id and a relay address (`02` §6.3). Under independent seeds a backup
+  is a *set the client exports*, which is O7 and a release gate.
+
+**Nothing upstream has to change for the client to keep working**, which is why this is
+sequenced late rather than urgently: the protocol's own crates never see a seed, only the
+per-network keypairs it produces, so the divergence costs conformance rather than
+function. That is exactly the kind of debt this document exists to stop being invisible.
+
+**Acceptance:** Core §1.1–§1.3 describe both models and require the properties rather than
+the mechanism; a client generating independent per-network seeds is conformant; §1.3's
+enrollment wording names the per-network key rather than the master seed; and the recovery
+clause states what a backup must carry under each model rather than implying a phrase is
+sufficient.
+
+---
+
+## 16. Sequencing
 
 ```
 P0   — nothing; E3 turned out to need no protocol change
@@ -620,9 +695,16 @@ P1   E14   (independent, small — and a joiner stalls forever without it)
 P2   E7   (depends on E2's ChannelRotation) ; E10 (independent, small) ; E13 (pairs with E10)
 P3   E6   — lands when it lands
 P4   E8
+—    E15  (blocks nothing; land it beside the credentials work O7, which is what it describes)
 ```
 
 E9 is small and unblocks the rest. E2 is the first item requiring real spec work.
+
+**E15 carries no phase deliberately.** It blocks nothing and nothing waits on it, because
+the divergence costs conformance rather than function — so sequencing it against a phase
+would overstate its urgency. It belongs next to O7, since credentials and backup are where
+the client finally has to say what a per-network seed means to a user, and amending the
+spec while writing that is cheaper than amending it twice.
 
 **E5 was pulled forward out of P3 and landed in P1**, which the sequencing above always
 permitted: it was scoped as a protocol bug fix independent of the chat client, and it
@@ -632,7 +714,7 @@ consumer written against the old shape would have been another thing to migrate.
 
 ---
 
-## 16. What This Design Deliberately Does Not Ask For
+## 17. What This Design Deliberately Does Not Ask For
 
 Recorded so the boundary is visible, and so nobody adds them under the impression they
 were oversights:
@@ -642,10 +724,12 @@ were oversights:
   there. The chat client provides its own isolation if and when it renders published apps.
 - **No cross-network shared state.** No shared identity, no federated search, no directory
   of networks — every one of those would break the unlinkability the identity model exists
-  to provide (Core §1.2). Note what this does *not* forbid: a client holding the master
-  seed knows locally that several networks are all yours, which is what makes a DM inbox
-  spanning networks possible (`03` §4.6). That correlation exists only inside the client,
-  and nothing about it is exposed to any peer.
+  to provide (Core §1.2). Note what this does *not* forbid: a client holding the workspace
+  knows locally that several networks are all yours, which is what makes a DM inbox
+  spanning networks possible (`03` §4.6). The knowledge comes from that directory and not
+  from a shared secret — seeds are per network (D28, `02` §6.3), so there is no master key
+  whose compromise would correlate them either. That correlation exists only inside the
+  client, and nothing about it is exposed to any peer.
 - **No reputation input to placement or ordering.** `reliability_signal` stays local-only
   and may feed exactly two selection decisions (swarm source selection, media relay
   selection). Nothing in this design reads it anywhere else, and nothing should.
