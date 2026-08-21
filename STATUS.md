@@ -156,7 +156,7 @@ both green.
 | E10 | Direct DM invite delivery | Not started (P2) |
 | E11 | Namespace registration for extension capabilities | **Landed** — Core §2.2.1; one registry entry per verb covers every scope of it |
 | E12 | Optional peer discovery | **Landed, narrowed** — Core §5.1.1; a node MAY be built without Kademlia and mDNS. Asked as *tiered liveness*; only the behaviour set was the protocol's, so the hot/warm/cold tiering stayed client-side |
-| E13 | Cross-network connection bootstrap | **New** — from `design/09` §3; so two people starting a DM never provision a relay (P2) |
+| E13 | Cross-network connection bootstrap | **Load-bearing since O11, not merely convenient.** From `design/09` §3. If a relay cannot be shared between networks and every direct message is its own network, then without this a conversation across NAT needs its own deployed relay — which nobody will do, so it means no DMs at all. It was scoped as removing friction; it is now the mechanism (P2) |
 | E14 | Idempotent epoch-key delivery | **Landed** — Core §3.5.1; a repeat request **replaces** the requester's leaf rather than adding a second one. Asked as key re-delivery, which would have restored no group state |
 | E15 | Independent per-network seeds | **New** — from reading `design/06` against Core §1.1, which specifies one master seed with per-network *derivation*. D28 generates fresh entropy per network instead, and has since before the decision was recorded. Spec text only; blocks nothing, and belongs beside O7 |
 
@@ -198,6 +198,9 @@ somebody forgot.
 | O8 | ~~**On Windows a seed is written with default ACLs.**~~ **Closed 2026-08-20.** `kols-cli::secret` restricts a secret to this user on both platforms — a `chmod` on Unix, a *protected* DACL on Windows — and refuses rather than writing one it cannot protect | Confirmed by running it: a seed written by `kols.exe` on NTFS shows this account and nothing else in its Security tab, with no inherited `SYSTEM` or `Administrators` entry, which is what the protected flag is for. The refusal path was confirmed the same day, from a `\\wsl$\` path that has no permissions to set | `kols-cli::secret`, `design/02` §6.3 |
 | O9 | **A suspended node can lose its claim and not know.** `NODE_CLAIM_STALE` is wall-clock, so a laptop asleep past the window can have its claim taken over while it still believes it holds one | Making it impossible needs the holder to re-check ownership as it beats. Rare rather than impossible today, because taking over requires somebody to start a second node inside that window | `kols-cli::store::NODE_CLAIM_STALE` |
 | O10 | ~~**Answering a key request is not idempotent, so the one request a joiner sends can never be repeated.**~~ **Closed 2026-08-21.** `kols serve` now re-asks every 30 seconds while unkeyed | Landed as **E14**, Core §3.5.1 — but not in the shape it was written. Re-delivering keys would have restored read access and no group state, so the member would fall out at the next rotation; and re-adding is worse than "a lie in the log", since revocation resolves an identity to its *first* leaf and would remove the abandoned one while handing the new key to the member it excluded. Answering now **replaces** the leaf in one commit | `kols-cli::serve`, `intranet-transport::answer_epoch_key` |
+| O11 | **A relay may not be shared between networks, and nothing enforces it.** Decided 2026-08-21: reusing one relay across two of a member's networks breaks the unlinkability Core §1.2 exists to provide, so it is not permitted. Today it is merely *not done* — a founder can paste one address into two networks and nothing objects | A relay checks no membership by design (Core §5.5 — it replays no log and holds no capabilities), so it cannot refuse a peer for being in the wrong network. Underneath that, **the separation is not structural**: `kad::Behaviour::new` takes the default protocol name and `PROTOCOL_VERSION` is `/intranet/0.1.0` for every network, so two networks sharing a relay share a routing table and their members become mutually discoverable. Enforcing it means network-scoping the protocol names, which is a wire change and a protocol extension, not a client fix. Until then the client should at least refuse to designate a relay another of its own networks already uses — it holds the workspace, so it is the one party that can tell | `design/09` §1, §3; Core §5.5 |
+| O12 | **The window cannot finish setting up a relay, and its own text says it can.** Two dead ends: it never shows the network id, which DI-Relay requires as `RELAY_NETWORK` before it will boot; and the relay field at creation says "You can add one later" when nothing anywhere adds one later — `SetBootstrapRelays` exists only in `kols`. A founder who creates a network in the window without a relay cannot invite, cannot add a relay, and is not told the one string a relay needs | The command and its gate exist and are correct (`define-policy`, `Sensitivity::Governs`); what is missing is a handler and a surface. Also missing is the ordering, which `kols init` prints and the window does not: the relay needs the network id, the network needs a relay before it can invite, so it goes create → deploy → designate → invite. This is the gap between §0's "no step of the flow needs a terminal" and what is actually true | `crates/kols-ui/index.html`, `crates/kols-app/src/main.rs` |
+| O13 | **In the window a working relay is invisible; only a broken one reports.** `kols serve` distinguishes reserved, granted-but-unusable, unreachable and none-designated, and says which — but success is a `println!` while the failures go through `Event::Degraded`. So the window shows relay trouble and never relay health | One line's difference, and it matters at exactly the moment it is hard to debug: "is my relay working" is the question two people on separate machines will actually have, and the window can only answer it in the negative | `crates/kols-cli/src/serve.rs` |
 
 **Closed since this register was written:** the executor, the two checks `authorize`
 deliberately could not make, and the event half of the boundary. The first two were owed
@@ -252,6 +255,49 @@ design changes before anything else is built.
 ## 9. Log
 
 Newest first. One line per change that moved the state above.
+
+- **2026-08-21** — **Reviewed how a relay is actually reached, and one finding turned into a
+  decision that changes what direct messages need.** No code moved; this is the review the
+  two-machine test was waiting on, recorded as O11–O13.
+
+  **What a relay is, checked against the code rather than the docs.** `RelayBehaviour` is circuit
+  relay v2, identify, ping and kad — no governance replay, no ledger, no membership check, exactly
+  as Core §5.5 says ("not a member of the network it serves"). It holds no state and circuits are
+  capped at 120s and 8MB, so it establishes connections rather than carrying them. **The only
+  network-specific thing about a relay is its identity**: `RelayNode::new` takes a
+  `PerNetworkIdentity`, derives a keypair, and that is the whole role `RELAY_NETWORK` plays in
+  DI-Relay.
+
+  **Which raised the question, and the answer is no.** Because a relay checks nothing, one
+  deployment *can* serve several networks — and it must not. Two networks sharing a relay share a
+  routing table: `kad` runs under the default protocol name and `PROTOCOL_VERSION` is
+  `/intranet/0.1.0` for every network, so nothing keeps their members from discovering each other,
+  and two of one person's identities meeting on one relay is exactly the correlation Core §1.2
+  exists to prevent. `design/09` §1 already listed "any relay that sees both" as an honest limit;
+  reuse would have made an incidental limit into the normal case. **Decided: a relay is not shared
+  between networks.** Recorded as **O11**, along with the uncomfortable half — nothing enforces it
+  today, and enforcing it properly means network-scoping the protocol names, which is a wire change
+  rather than a client fix.
+
+  **The decision makes E13 load-bearing rather than convenient**, and that is the consequence worth
+  not burying. Every direct message is its own network (D10). If a relay cannot be shared, then
+  without cross-network bootstrap a conversation between two NATed people needs its own deployed
+  relay — which nobody will do. E13 was scoped as removing friction from a flow that would
+  otherwise work; it is now the only thing that makes DMs work across NAT at all. §4 says so now.
+
+  **The window cannot finish the relay journey, which contradicts §0's own claim** that no step
+  needs a terminal. It never shows the network id — the one string DI-Relay demands before it will
+  boot — and its creation form says "You can add one later" when nothing adds one later, since
+  `SetBootstrapRelays` reaches only `kols`. So a founder who skips the relay there is stuck at
+  every exit and is not told why. **O12.** Alongside it, **O13**: `kols serve` reports reserved,
+  granted-but-unusable, unreachable and none-designated, and says which — but success is a
+  `println!` while the failures are `Event::Degraded`, so the window surfaces relay trouble and
+  never relay health. "Is my relay working" is the question two machines will actually raise.
+
+  **None of this blocks the two-machine test**, which is the useful conclusion. The CLI path is
+  complete and signposted — `kols init` prints the network id and the exact ordering when no relay
+  is given — and DI-Relay's own README covers the traps, including the `RELAY_PUBLIC_ADDR` case
+  that looks like nothing is wrong. Deploy, and run the test on that path.
 
 - **2026-08-21** — **E14 landed, and it was a security fix wearing a liveness fix's clothes.** It
   was written up as "a joiner can stall forever", which is true and is the smaller half.
