@@ -220,7 +220,9 @@ jobs:
           gh release create "${GITHUB_REF_NAME}" $(find artifacts -type f) \
             --repo "${GITHUB_REPOSITORY}" \
             --title "${GITHUB_REF_NAME}" \
-            --notes "\`kols-desktop\` is the window and \`kols\` the terminal client. Both are portable; the installers are optional.
+            --notes "\`kols-desktop\` is the application, and the installer is the ordinary way to get it — it needs no terminal for any step, including setting up a relay.
+
+          \`kols\` is a **development tool**, not a second way to use this. It is published because it is the reference path when the window misbehaves, and because the two-machine runbook is written in it.
 
           **Windows** needs the WebView2 runtime, which ships with Windows 11 and current Windows 10.
 

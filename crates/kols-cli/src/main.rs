@@ -14,6 +14,15 @@
 //! encoding and the same storage layer a desktop client would use, with nothing
 //! stubbed on the path a message actually takes.
 //!
+//! # What it is not
+//!
+//! **A product surface** (`design/00` D30). Nobody is expected to use this
+//! application from a command line — the window is the client — so nothing here
+//! owes the window feature parity, discoverability or documentation aimed at
+//! somebody who has not read this file. What it owes is the property above:
+//! crossing the same boundary a window crosses, so that "works here, not in the
+//! window" is a sentence that means something.
+//!
 //! # What it is now
 //!
 //! Argument parsing and rendering, over `kols_cli::executor`. Every command a

@@ -77,7 +77,9 @@ crates/kols-core   records, canonical encoding, merge ordering, permissions, cha
                    channel structure as chat-namespace governance payloads
 crates/kols-net    publishing a channel over the transport, and reading one back
 crates/kols-api    the boundary — commands and their gate going in, outcomes and events out
-crates/kols-cli    the executor, the node loop, the workspace, and `kols` — the terminal client
+crates/kols-cli    the executor, the node loop, the workspace — and `kols`, a development
+                   client over the same boundary. Misnamed: the window depends on this crate
+                   for everything but its own window
 crates/kols-app    `kols-desktop` — the Tauri shell, holding a workspace and running a node
 crates/kols-ui     the interface: HTML, CSS and one script, holding no keys and no sockets
 design/            00-08 at v1.0, 09 the interface
@@ -126,6 +128,15 @@ path changes — the frozen vectors were produced on a little-endian machine, so
 only there proves they are self-consistent rather than host-independent.
 
 ## Trying it
+
+**Download a build.** [Releases](https://github.com/DriftingNarwhal/ko-ls/releases) carry an
+installer and a portable binary for Windows and Apple Silicon macOS. `kols-desktop` is the
+application; it needs no terminal for any step, including setting up a relay.
+
+Everything below is the **development** path. `kols` is a tool for building this, not a way to
+use it: it exists because a front end over `kols-api` could be driven before there was a window,
+and it stays because it is the reference path when the window misbehaves. It owes the window no
+feature parity and nobody is expected to chat from a command line.
 
 ```bash
 cargo build -p kols-cli

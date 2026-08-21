@@ -52,7 +52,7 @@ What that needs, and where it stands:
 
 ### Start here tomorrow
 
-1. `cargo test` — **189 here, 649 in `../distributed-intranet`** — and
+1. `cargo test` — **192 here, 649 in `../distributed-intranet`** — and
    `cargo clippy --workspace --all-targets` clean in both. Both trees were left green; if they
    are not, fix that before anything else. Clippy on the Windows target is a *second* run,
    `cargo clippy -p kols-cli --target x86_64-pc-windows-gnu`, and it caught something the
@@ -120,7 +120,7 @@ complete and a failure can be reproduced in the same minute it appears.
 |---|---|
 | **Working on** | Milestone: a client two people on separate networks can use. E14 landed, so a joiner that goes unanswered now keeps asking instead of stranding. Both binaries build for Windows and macOS in CI and v0.1.0 publishes them. The window now does relay setup too (O12/O13 closed 2026-08-21), so no step of the flow needs a terminal. Honest caveat: the window **has** been launched and rendered roughly correctly, but that was before anything was wired to it, so no flow has ever been exercised through it. What is left is a relay reachable from both machines |
 | **Blocked on** | Nothing |
-| **Runnable** | **`kols`** — init (with `--relay`), relay list/set, invite, join, waiting, attach, admit, revoke, name, serve, post, read, edit, delete, react, pin, and channel create/list/rename/topic/slowmode/archive. **`kols-desktop`** — a window that creates a network or joins one by invite, runs a node for it, designates relays and reports whether one granted a circuit, lists channels, renders one and posts to it, mints an invite and admits from the waiting room, updating as records arrive. **Launched once, before it was wired — it rendered, and no flow has been run through it.** `cargo test` — 189 tests here and 649 in `../distributed-intranet`, clippy clean in both; `scripts/cross-check.sh` for big-endian, `taskset -c 0,1` for the starved case |
+| **Runnable** | **`kols-desktop`** — *the product* (D30). A window that creates a network or joins one by invite, runs a node for it, designates relays and reports whether one granted a circuit, lists channels, renders one and posts to it, mints an invite and admits from the waiting room, updating as records arrive. **Launched once, before it was wired — it rendered, and no flow has been run through it.** **`kols`** — *a development tool, not a product surface*: init (with `--relay`), relay list/set, invite, join, waiting, attach, admit, revoke, name, serve, post, read, edit, delete, react, pin, and channel create/list/rename/topic/slowmode/archive. `cargo test` — 192 tests here and 649 in `../distributed-intranet`, clippy clean in both; `scripts/cross-check.sh` for big-endian, `taskset -c 0,1` for the starved case |
 | **Next decision needed from the user** | Nothing blocking |
 
 ---
@@ -260,6 +260,28 @@ design changes before anything else is built.
 ## 9. Log
 
 Newest first. One line per change that moved the state above.
+
+- **2026-08-21** — **D30: the terminal is a development tool, not a product surface.** Stated by
+  the user and worth recording, because it changes what "finished" means rather than what the
+  code does. Nobody is expected to use this application from a command line, so `kols` owes the
+  window **no feature parity**, no discoverability and no end-user documentation. What it must
+  keep is the one property that makes it worth having: it crosses the same `kols-api` boundary a
+  window does, so "works in `kols`, not in the window" localises a fault to the interface.
+
+  Consequences applied: the README's *Trying it* now opens with the release rather than
+  `cargo build -p kols-cli`, and marks everything below it as the development path. The release
+  notes said "`kols-desktop` is the window and `kols` the terminal client", which read as two
+  products on the download page; `kols` is now described as what it is. §1's Runnable row is
+  ordered product-first.
+
+  **What this decision is not:** an instruction to delete the crate. `kols-cli` is 5,578 lines
+  and 853 of them are the binary — the rest is `serve`, `store`, `executor`, `workspace`,
+  `join`, `invite`, `network`, `chat` and `secret`, which is the window's entire backend and its
+  only ko-ls dependency besides `kols-api` and `kols-core`. The binary is also what CI drives to
+  check the seed's permissions on the built artifact, which is the one test that inspects the
+  artifact rather than the source. When the window has carried the two-machine test end to end,
+  `main.rs` and the `[[bin]]` target can go and the crate wants renaming to `kols-node`; the
+  seed check moves to a library test on the same `secret::write_private` path.
 
 - **2026-08-21** — **Runbook brought level with the window, and one asymmetry the restart
   created.** `kols relay set` now says what it cannot do: a node dials relays when it starts, and
