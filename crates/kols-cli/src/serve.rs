@@ -135,6 +135,15 @@ pub fn run(
 /// than a delay and crying early would train somebody to ignore it.
 const UNKEYED_WARNING: std::time::Duration = std::time::Duration::from_secs(60);
 
+/// How long to wait before asking for a key again.
+///
+/// Retrying is safe since Core §3.5.1 — a repeat request replaces this node's
+/// leaf rather than adding a second one — and it is not free: every answer is a
+/// real epoch rotation and a governance entry every member replays forever. So
+/// this is deliberately slow relative to the two-second tick. A node stalled for
+/// a minute asks twice, not thirty times.
+const KEY_REQUEST_RETRY: std::time::Duration = std::time::Duration::from_secs(30);
+
 /// The node loop.
 ///
 /// Runs until the future is dropped, which is how a caller stops it: there is no
@@ -197,9 +206,9 @@ pub async fn serve(
     // When this node started waiting for a key, so a stall can say so.
     let mut unkeyed_since: Option<Instant> = None;
     let mut said_unkeyed = false;
-    // Whether the one request this node may send has gone out. Not a retry
-    // counter: see the tick for why exactly one is all that is safe.
-    let mut asked_for_key = false;
+    // When this node last asked to be keyed in, so the ask can be repeated on a
+    // schedule rather than being a single chance.
+    let mut last_asked: Option<Instant> = None;
 
     // A group saved by a previous run comes back first. Core §3.3.1: holding the
     // epoch key is not the same as holding the group — a node with only the key
@@ -416,16 +425,18 @@ pub async fn serve(
                 // accepted in one go, so the one opportunity was the one that
                 // failed.
                 //
-                // **Still exactly one request, and that is deliberate rather
-                // than timid.** `answer_epoch_key` calls `add_member`
-                // unconditionally, so a second request re-adds a member already
-                // in the group and appends a second rotation, forking the log
-                // against the entry that admitted them — tried, and it voided a
-                // member's grant (`STATUS` §6, O10). So this makes the single
-                // ask reliable; it does not make asking repeatable, and it must
-                // not until answering is idempotent.
+                // **Asked on a schedule, not once.** A founder has ordinary
+                // reasons not to answer at the instant a request arrives —
+                // answering appends a rotation and so takes the store's append
+                // lock every one-shot command also takes — and a lost race
+                // reports a degradation on *its* terminal and tells the asker
+                // nothing. A single ask therefore stranded a member permanently.
+                // Repeating it is safe since Core §3.5.1: a repeat request
+                // replaces this node's leaf rather than minting a second one,
+                // which is what used to fork the log against the entry that
+                // admitted them.
                 if !keyed
-                    && !asked_for_key
+                    && last_asked.is_none_or(|at: Instant| at.elapsed() >= KEY_REQUEST_RETRY)
                     && ready(&store, &mut node, &identity, seal_bytes).is_ok()
                 {
                     for peer in connected.iter().copied() {
@@ -434,7 +445,7 @@ pub async fn serve(
                         {
                             println!("asked {} to key us in", from.short());
                             unkeyed_since.get_or_insert_with(Instant::now);
-                            asked_for_key = true;
+                            last_asked = Some(Instant::now());
                             break;
                         }
                     }
@@ -451,13 +462,10 @@ pub async fn serve(
                 // lost race reports a degradation to *its* terminal and tells the
                 // asker nothing.
                 //
-                // Retrying is the obvious fix and is **not safe today**:
-                // `answer_epoch_key` calls `add_member` unconditionally, so a
-                // second request adds an existing member again and appends a
-                // second rotation, which forks the log against the entry that
-                // admitted them. Tried, and it voided a member's grant — see
-                // `STATUS` §6. So this says what happened instead of papering
-                // over it, and the fix belongs upstream where the group is.
+                // This node does keep asking now (Core §3.5.1 made that safe),
+                // so a stall this long is no longer "nothing will retry" — it
+                // means the answers are not arriving or not being given, and the
+                // reason is on the other side's terminal rather than this one's.
                 if !keyed
                     && !said_unkeyed
                     && unkeyed_since.is_some_and(|at: Instant| at.elapsed() >= UNKEYED_WARNING)
@@ -465,11 +473,11 @@ pub async fn serve(
                     said_unkeyed = true;
                     sink(&[Event::Degraded {
                         reason: format!(
-                            "still waiting for a key {}s after asking. Nothing will retry: the \
-                             request is sent once, and the answer is not idempotent so this node \
-                             must not ask again. Restart this node to ask afresh, and check the \
-                             other side's log for a refusal",
-                            UNKEYED_WARNING.as_secs()
+                            "still waiting for a key {}s after first asking, and still asking \
+                             every {}s. The answer is what is missing, so check the other side's \
+                             log for a refusal or for a node that holds no group",
+                            UNKEYED_WARNING.as_secs(),
+                            KEY_REQUEST_RETRY.as_secs()
                         ),
                     }]);
                 }
@@ -553,12 +561,16 @@ pub async fn serve(
                         // A member with no key can fetch every byte of this
                         // network's content and open none of it, so asking for
                         // one is the first thing worth doing after admission.
-                        if !keyed && !asked_for_key && let Some(from) = peer_identity(peer, &store)? {
+                        if !keyed
+                            && last_asked
+                                .is_none_or(|at: Instant| at.elapsed() >= KEY_REQUEST_RETRY)
+                            && let Some(from) = peer_identity(peer, &store)?
+                        {
                             match node.request_epoch_key(from, &identity) {
                                 Ok(_) => {
                                     println!("asked {} to key us in", from.short());
                                     unkeyed_since.get_or_insert_with(Instant::now);
-                                    asked_for_key = true;
+                                    last_asked = Some(Instant::now());
                                 }
                                 Err(err) => sink(&[Event::Degraded {
                                     reason: format!("could not ask for a key: {err}"),

@@ -113,7 +113,7 @@ complete and a failure can be reproduced in the same minute it appears.
 
 | | |
 |---|---|
-| **Working on** | Milestone: a client two people on separate networks can use. Both binaries build for Windows and macOS in CI, and the window needs no terminal for any step. What is left is a relay reachable from both machines |
+| **Working on** | Milestone: a client two people on separate networks can use. E14 landed, so a joiner that goes unanswered now keeps asking instead of stranding. Both binaries build for Windows and macOS in CI, and the window needs no terminal for any step. What is left is a relay reachable from both machines |
 | **Blocked on** | Nothing |
 | **Runnable** | **`kols`** — init (with `--relay`), relay list/set, invite, join, waiting, attach, admit, revoke, name, serve, post, read, edit, delete, react, pin, and channel create/list/rename/topic/slowmode/archive. **`kols-desktop`** — a window that creates a network or joins one by invite, runs a node for it, lists channels, renders one and posts to it, mints an invite and admits from the waiting room, updating as records arrive. `cargo test` — 189 tests here and 649 in `../distributed-intranet`, clippy clean in both; `scripts/cross-check.sh` for big-endian, `taskset -c 0,1` for the starved case |
 | **Next decision needed from the user** | Nothing blocking |
@@ -157,7 +157,7 @@ both green.
 | E11 | Namespace registration for extension capabilities | **Landed** — Core §2.2.1; one registry entry per verb covers every scope of it |
 | E12 | Optional peer discovery | **Landed, narrowed** — Core §5.1.1; a node MAY be built without Kademlia and mDNS. Asked as *tiered liveness*; only the behaviour set was the protocol's, so the hot/warm/cold tiering stayed client-side |
 | E13 | Cross-network connection bootstrap | **New** — from `design/09` §3; so two people starting a DM never provision a relay (P2) |
-| E14 | Idempotent epoch-key re-delivery | **New** — from the bug behind O10; `answer_epoch_key` re-adds a member already in the group, so the one request a joiner sends can never be retried (P1) |
+| E14 | Idempotent epoch-key delivery | **Landed** — Core §3.5.1; a repeat request **replaces** the requester's leaf rather than adding a second one. Asked as key re-delivery, which would have restored no group state |
 | E15 | Independent per-network seeds | **New** — from reading `design/06` against Core §1.1, which specifies one master seed with per-network *derivation*. D28 generates fresh entropy per network instead, and has since before the decision was recorded. Spec text only; blocks nothing, and belongs beside O7 |
 
 ## 5. Client Crates
@@ -197,7 +197,7 @@ somebody forgot.
 | O7 | **No credentials and no backup.** Seeds are written to `<home>/seed` in the clear and never surfaced, so a member's only copy is a file, and anything with read access to the disk is that member | **Deliberately deferred, and it must land well before any 1.0.** The shape is decided (`design/02` §6.3): a local account whose password *wraps* a keyring of per-network seeds and never derives them, plus an export bundle of phrase, network id and relay address per network. Not needed to test between two machines you own; needed before anybody else's identity depends on it | `design/02` §6.3, `design/05` §5 |
 | O8 | ~~**On Windows a seed is written with default ACLs.**~~ **Closed 2026-08-20.** `kols-cli::secret` restricts a secret to this user on both platforms — a `chmod` on Unix, a *protected* DACL on Windows — and refuses rather than writing one it cannot protect | Confirmed by running it: a seed written by `kols.exe` on NTFS shows this account and nothing else in its Security tab, with no inherited `SYSTEM` or `Administrators` entry, which is what the protected flag is for. The refusal path was confirmed the same day, from a `\\wsl$\` path that has no permissions to set | `kols-cli::secret`, `design/02` §6.3 |
 | O9 | **A suspended node can lose its claim and not know.** `NODE_CLAIM_STALE` is wall-clock, so a laptop asleep past the window can have its claim taken over while it still believes it holds one | Making it impossible needs the holder to re-check ownership as it beats. Rare rather than impossible today, because taking over requires somebody to start a second node inside that window | `kols-cli::store::NODE_CLAIM_STALE` |
-| O10 | **Answering a key request is not idempotent, so the one request a joiner sends can never be repeated.** The ask now happens reliably — it is no longer gated on an event that need not recur — but if it goes unanswered, nothing may ask again | `answer_epoch_key` calls `add_member` unconditionally, so a second request re-adds a member already in the group and appends a second rotation, forking the log against the entry that admitted them — tried, and it voided a member's grant. The fix is upstream and is now specified as **E14** (`design/06` §14): answering a member already in the group must re-deliver rather than re-add. Until then the node reports the stall after sixty seconds rather than hiding it | `kols-cli::serve`, `intranet-transport::answer_epoch_key` |
+| O10 | ~~**Answering a key request is not idempotent, so the one request a joiner sends can never be repeated.**~~ **Closed 2026-08-21.** `kols serve` now re-asks every 30 seconds while unkeyed | Landed as **E14**, Core §3.5.1 — but not in the shape it was written. Re-delivering keys would have restored read access and no group state, so the member would fall out at the next rotation; and re-adding is worse than "a lie in the log", since revocation resolves an identity to its *first* leaf and would remove the abandoned one while handing the new key to the member it excluded. Answering now **replaces** the leaf in one commit | `kols-cli::serve`, `intranet-transport::answer_epoch_key` |
 
 **Closed since this register was written:** the executor, the two checks `authorize`
 deliberately could not make, and the event half of the boundary. The first two were owed
@@ -252,6 +252,57 @@ design changes before anything else is built.
 ## 9. Log
 
 Newest first. One line per change that moved the state above.
+
+- **2026-08-21** — **E14 landed, and it was a security fix wearing a liveness fix's clothes.** It
+  was written up as "a joiner can stall forever", which is true and is the smaller half.
+
+  The stall is real: key delivery is a request and a response, the answer can be lost, and a
+  request that is never answered strands a member permanently — in the log, served by honest
+  nodes, holding no key that opens any of it. The client asked exactly once because retrying was
+  known to be unsafe, so a lost answer was terminal.
+
+  **What the fix had to be was not what `design/06` §14 specified.** That asked for key
+  re-delivery: answer a member already in the group with the key material and append nothing.
+  It reads correctly and restores half a member. A requester asking again has no group state *by
+  construction* — it asks because it holds no key, and it holds no key because the Welcome that
+  would have carried both never arrived — so keys alone leave it able to read what exists now and
+  unable to apply any later commit. `apply_pending_rotations` returns immediately for a node with
+  no group. It would have fallen out of the network at the next membership change, silently,
+  having looked recovered.
+
+  **And re-adding turned out to break revocation, which nobody had noticed.** §14's objection to
+  it was honesty — a second leaf for one member is a lie in a log every member replays. The
+  actual cost is worse: removal is expressed against an *identity* and applied to a *leaf*, so
+  `leaf_index_for` finds the **first** leaf holding that credential. Revoking a doubled member
+  removes the abandoned leaf, rotates, and hands the new epoch key to the member it was asked to
+  exclude, still sitting on the leaf nobody removed. The removal reports success and Core §3.1's
+  guarantee is gone. The new test fails against the old behaviour with the revoked member's key
+  fingerprint **identical to the founder's**.
+
+  So answering replaces the leaf — remove the stale one and add the requester's key package in one
+  commit, producing one rotation and a Welcome they can open. Core §3.5.1, `GroupSession::
+  replace_member`, which clears both proposals if either fails, since a dangling remove would be
+  swept into whatever commit came next and drop a member nobody decided to drop.
+
+  **A test was written, run against the old code, and thrown away**, which is the part worth
+  keeping. It asserted the log stayed linear across two answers — and passed under both
+  behaviours, because answering parents on the current tip, so a duplicate add never forked
+  anything. The fork in the original report came from concurrent writers; the duplicate add's
+  damage is the second leaf. A green test that asserts nothing is worse than no test, so it was
+  replaced with the revocation one, and that one was checked against the old code before being
+  believed.
+
+  The client re-asks every 30 seconds while unkeyed — deliberately slow against a two-second tick,
+  because every answer is a real rotation and a governance entry every member replays forever.
+
+  Also: spec 07 §7's amendment table gains **E13, E14 and E15**, which were tracked only in the
+  client, so the protocol repo's own record said one chat amendment was outstanding when four
+  were.
+
+  649 → 653 upstream, 189 here, clippy clean in both. `two_nodes` passes 10/10 at full width;
+  **pinned to two cores it now fails one where it used to fail two**, which is recorded rather
+  than claimed as a fix — the retry plausibly recovers one of the starved cases, and one run is
+  not evidence.
 
 - **2026-08-21** — **All three repos are licensed, and two of them were wrong in opposite
   directions.** `distributed-intranet` had no LICENSE and no licence metadata, which under

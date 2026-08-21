@@ -1,6 +1,6 @@
 # Required Protocol Extensions
 
-**Document status:** v1.9 — E1 and E3 withdrawn, **E9, E2, E5, E4, E11 and E12 landed**; E12 narrowed to its protocol half on landing, E13 added from `09`, E14 added from a bug, **E15 added from a divergence this document should have been carrying already**. §2's branch-length and profile-enforcement claims corrected to what landed
+**Document status:** v2.0 — **E14 landed**, as leaf replacement rather than the re-delivery this document asked for;  E1 and E3 withdrawn, **E9, E2, E5, E4, E11 and E12 landed**; E12 narrowed to its protocol half on landing, E13 added from `09`, E14 added from a bug, **E15 added from a divergence this document should have been carrying already**. §2's branch-length and profile-enforcement claims corrected to what landed
 **Depends on:** all preceding documents
 **Consumed by:** work in `distributed-intranet`
 
@@ -39,7 +39,7 @@ Two rules govern this list:
 | ~~E11~~ | Namespace registration for extension capabilities — **landed**, Core §2.2.1 | — | Done |
 | ~~E12~~ | Optional peer discovery — **landed**, Core §5.1.1. Asked as tiered liveness; only the behaviour set was the protocol's, and the tiering stayed in the client | — | Done |
 | E13 | Cross-network connection bootstrap, for direct messages | P2 | Medium |
-| E14 | Idempotent epoch-key re-delivery | P1 — a joiner can stall forever | Small |
+| ~~E14~~ | Idempotent epoch-key delivery — **landed**, Core §3.5.1. Asked as key re-delivery; landed as leaf replacement, because re-delivery restores no group state and re-adding silently breaks revocation | — | Done |
 | E15 | Independent per-network seeds — Core §1.1's master seed is not what this client implements (D28) | Nothing; conformance rather than function | Spec text only |
 
 ---
@@ -584,7 +584,7 @@ hole-punch failure falls back without the disclosure gate being bypassed.
 
 ---
 
-## 14. E14 — Idempotent Epoch-Key Re-Delivery
+## 14. E14 — Idempotent Epoch-Key Delivery ✅ **landed, in a different form**
 
 **Found by a bug, not by review, and it is the shape this project keeps meeting: an operation
 with no way to recover.** `MemberNode::answer_epoch_key` calls `GroupSession::add_member`
@@ -605,27 +605,55 @@ The client can make the single request *reliable*, and now does (`05` §4). It c
 
 ```
 answer_epoch_key(request, identity, now):
-    if the requester's credential is already in the group:
-        deliver the current epoch key and the historical keys policy allows
-        append no rotation
+    if the requester's credential already holds a leaf:
+        replace that leaf with the requester's key package, in ONE commit
     else:
         add, rotate, welcome — as today
 ```
 
-**Why re-delivery rather than re-add.** A Welcome is produced by the commit that adds a member,
-so it cannot be reissued later; but a member already in the group does not need one — they need
-the key material, which the keyring already holds. Adding them again would also be wrong on its
-own terms: it mints a second leaf for one member and rotates a group whose membership did not
-change, which is a lie about what happened told in a log every member replays.
+**This section asked for key re-delivery, and that turned out to be half a fix.** The reasoning
+was that a Welcome cannot be reissued — true — and that a member already in the group therefore
+needs only the key material the keyring holds. That second half is wrong, and the error is worth
+keeping because it is easy to make twice. **A requester asking again has no group state by
+construction:** it asks because it holds no key, and it holds no key because the Welcome that
+would have carried *both* never arrived. Keys alone leave it able to read what exists now and
+unable to apply any later commit, so it falls out of the group at the next membership change —
+silently, having looked recovered. `apply_pending_rotations` returns immediately for a node with
+no group, which is where that shows up in the code.
 
-**Acceptance:** a repeated request from a member already in the group appends **no** governance
-entry and delivers a key that opens content wrapped under the current rotation; the governance
-log after two requests is byte-identical to the log after one; a request from an identity *not*
-in the group behaves exactly as it does today; and a member whose first delivery was lost can
-obtain keys by asking again.
+**And re-adding is worse than this section said, which the tests found rather than review.** The
+objection here was honesty: a second leaf for one member is a lie in a log every member replays.
+The real cost is a security failure. Removal is expressed against an *identity* and applied to a
+*leaf*, so `leaf_index_for` finds the **first** leaf holding that credential — a revocation
+therefore removes the abandoned leaf, rotates, and hands the new epoch key to the member it was
+asked to exclude, who is still on the leaf nobody removed. **The removal reports success and
+Core §3.1's guarantee is gone.**
 
-*Flagged: this makes the client's retry safe, and the retry is the point. Landing this without
-then re-asking on a schedule leaves the stall in place with the cause fixed.*
+**What landed: replace the leaf.** Remove the stale one and add the requester's key package in a
+single commit, producing one rotation and a Welcome the requester can open. It restores the
+member completely, it is the honest record of what happened, and it needs no capability of its
+own since the roster before and after is identical. Specified as **Core §3.5.1**, with
+`GroupSession::replace_member` staging both proposals and clearing them if either fails — a
+dangling remove proposal would otherwise be swept into whatever commit came next and drop a
+member nobody decided to drop.
+
+**Acceptance — all met.** In `intranet-epoch/tests/conformance.rs`: a replacement leaves one
+leaf rather than two and welcomes the member again; a replaced member can apply a later commit
+and converge on the same key, which is the property key-only delivery would have lacked; and a
+failed replacement removes nobody. In `intranet-transport/tests/revocation.rs`: a member who
+asked for a key twice is **still revocable** — which fails against the old behaviour with the
+revoked member's key fingerprint identical to the founder's. A requester may re-send the *same*
+key package, which is what a node that never completed a join actually holds.
+
+**One test was written, run against the old code, and thrown away.** It asserted that answering
+twice kept the governance log linear — and it passed under both behaviours, because answering
+parents on the current tip, so a duplicate add never forked anything. The fork in the original
+report came from concurrent writers, not from the duplicate add; the duplicate add's damage is
+the second leaf. A green test that asserts nothing is worse than no test.
+
+*The client's retry is the point of this, and it landed with it:* `kols serve` now re-asks every
+30 seconds while unkeyed rather than once, deliberately slow against a two-second tick because
+every answer is a real rotation and a governance entry.
 
 ---
 
@@ -691,7 +719,7 @@ sufficient.
 P0   — nothing; E3 turned out to need no protocol change
 P1   E2 → E4 ✅ ; E9 ✅, E11 ✅ (independent, small).  E5 landed here, ahead of its phase
 P1   E12 ✅ (independent of everything else; landed as its protocol half only)
-P1   E14   (independent, small — and a joiner stalls forever without it)
+P1   E14 ✅ (independent, small — and a joiner stalls forever without it)
 P2   E7   (depends on E2's ChannelRotation) ; E10 (independent, small) ; E13 (pairs with E10)
 P3   E6   — lands when it lands
 P4   E8
