@@ -1,15 +1,60 @@
 # ko-ls
 
-A Discord-shaped chat client — text now, voice and video later — built on the
-[Distributed Intranet protocol](../distributed-intranet) as its networking, identity,
-storage and real-time backend.
+**A chat client shaped like Discord, with nobody running it.** Servers, channels, roles and
+direct messages — text now, voice and video later — carried entirely by the machines of the
+people using them. No company owns a community here, no hosting bill keeps it alive, and
+there is no operator who could read it, sell it, or switch it off.
 
-A "server" is a **network**: its own governance log, membership, epoch key chain and DHT
-namespace. A role is a governance group, a permission is a capability, and a direct message
-is its own two-person network rather than a channel in somebody else's. There is no
-operator above the members.
+Built on the
+[Distributed Intranet protocol](https://github.com/DriftingNarwhal/distributed-intranet) as
+its networking, identity, storage and real-time backend.
 
 **Working name.** `ko-ls` is a placeholder; nothing in the design depends on it.
+
+---
+
+## What "no server" means here
+
+The word *server* does two jobs in chat, and this project keeps one and drops the other. A
+Discord "server" — a community, with its channels and its roles — is still here; it is called
+a **network**. The machine in a datacentre that would hold it is gone.
+
+In its place, the members' own nodes store and serve the network's content between them,
+encrypted so that holding a copy is not the same as being able to read one, and how much disk
+a network may use is each member's own choice. Membership, roles and permissions live in a
+**governance log every member replays for themselves**, so *"may they post here?"* is a
+question each node answers by computing, never by asking a peer or a service. A role is a
+governance group, a permission is a capability, and a direct message is its own two-person
+network rather than a channel in somebody else's — so a private conversation lands on the two
+machines having it and on no others.
+
+What that is actually worth:
+
+- **There is nothing to shut down.** A network lasts as long as its members do. There is no
+  account to suspend, no bill to stop paying, and no operator to serve an order on.
+- **There is no operator above the members.** Every moderation and administration action is
+  taken by somebody holding a capability, and recorded where every member can replay it.
+- **Your identity here is not your identity there.** Each network gets its own keys, so no
+  member of one can tell that your membership in another is also yours, unless you
+  deliberately prove it to them. Stated precisely, because the difference matters: that holds
+  at the key layer. Two identities connecting from one address are still correlatable by
+  anyone positioned to see both, and the protocol says so rather than implying otherwise.
+
+**And what it costs, stated here rather than discovered later:**
+
+- **A network still needs one relay, and this is the honest exception.** Two people behind
+  ordinary home routers cannot reach each other directly, so a network designates a relay — a
+  member's own machine on a routable address, or a small hosted one. It helps peers connect
+  and carries bytes; it holds no messages, reads nothing, and stores no state.
+- **There is no support, and no recovery.** No password reset, no account restoration, no
+  appeal above the network's own members. Losing your keys loses that identity.
+- **Nothing is browsable.** Joining is by invite, always. There is no directory of networks
+  and no global username, by construction rather than by omission.
+- **Deleting hides a message; it does not un-send it.** Nothing here can retract bytes
+  somebody already has, and the interface is required to say so rather than imply otherwise.
+
+None of this is a plan. What is built, and what is not, is [below](#what-exists) and in
+[`STATUS.md`](STATUS.md).
 
 ---
 
@@ -19,7 +64,7 @@ operator above the members.
 |---|---|
 | Where the work stands and what is next | [`STATUS.md`](STATUS.md) |
 | Why anything is the way it is | [`design/00-overview.md`](design/00-overview.md) |
-| The normative wire contract | `../distributed-intranet/specs/07-chat-application-spec.md` |
+| The normative wire contract | [`specs/07-chat-application-spec.md`](https://github.com/DriftingNarwhal/distributed-intranet/blob/main/specs/07-chat-application-spec.md) in the protocol repo |
 
 The design set (`design/00`–`09`) owns client design, rationale and sequencing.
 **Spec 07 in the protocol repo is normative** where the two overlap.
