@@ -24,7 +24,7 @@ jobs:
       # a poor trade.
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest]
+        os: [ubuntu-latest, windows-latest, macos-latest]
     runs-on: ${{ matrix.os }}
 
     steps:
@@ -109,7 +109,9 @@ jobs:
 
       # What `.devcontainer/Dockerfile` installs for the same reason: Tauri v2
       # links against webkit2gtk 4.1 here, and the tray library Debian and Ubuntu
-      # ship is the Ayatana fork rather than `libappindicator3-dev`.
+      # ship is the Ayatana fork rather than `libappindicator3-dev`. macOS needs
+      # no equivalent — WebKit is the system's — and Windows uses WebView2, which
+      # the runner image already carries.
       - name: GTK and webview, for kols-app
         if: runner.os == 'Linux'
         run: |

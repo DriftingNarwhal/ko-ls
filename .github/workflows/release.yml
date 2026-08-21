@@ -1,0 +1,143 @@
+# Desktop binaries, built where they run, published to a GitHub release.
+#
+# # Built natively rather than cross-compiled, and that is not fastidiousness
+#
+# The first Windows binaries were cross-compiled from the Linux dev container
+# with mingw. That worked and cost something at the far end: a GNU build
+# *imports* `WebView2Loader.dll` rather than linking the loader in, so the window
+# would not start unless that DLL was copied alongside it. An MSVC build on a
+# Windows runner has no such tail. macOS cannot be cross-compiled from Linux at
+# all without an SDK nobody may redistribute, so it was simply absent until
+# there was somewhere to build it.
+#
+# # What comes out
+#
+# Portable binaries for each platform, plus an installer where the platform has
+# a normal one. `kols` is the terminal client and `kols-desktop` the window.
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            name: windows-x64
+            bundle: nsis
+          - os: macos-latest
+            name: macos-arm64
+            bundle: dmg
+          - os: macos-13
+            name: macos-x64
+            bundle: dmg
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      # See gate.yml for why both repos: the client depends on the protocol by
+      # path, so a checkout of this one alone cannot build.
+      - uses: actions/checkout@v4
+        with:
+          path: ko-ls
+      - uses: actions/checkout@v4
+        with:
+          repository: DriftingNarwhal/distributed-intranet
+          token: ${{ secrets.PROTOCOL_REPO_TOKEN || github.token }}
+          path: distributed-intranet
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: ko-ls
+          key: ${{ matrix.name }}
+
+      # Real-time scanning inspects every object file a release build writes,
+      # and this dependency tree is large. Tolerated failing: an image with
+      # Defender already off should not fail the build for refusing twice.
+      - name: Take Defender off the build tree
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          foreach ($path in @($env:GITHUB_WORKSPACE, "$env:USERPROFILE\.cargo")) {
+            Add-MpPreference -ExclusionPath $path -ErrorAction SilentlyContinue
+          }
+          foreach ($proc in @("cargo.exe", "rustc.exe", "link.exe")) {
+            Add-MpPreference -ExclusionProcess $proc -ErrorAction SilentlyContinue
+          }
+
+      - name: Build
+        working-directory: ko-ls
+        run: cargo build --release --bin kols --bin kols-desktop
+
+      # The npm package installs a `tauri` binary. `cargo tauri` is the other
+      # distribution of the same CLI and is not this one.
+      - name: Tauri CLI
+        run: npm install -g @tauri-apps/cli@^2
+
+      # `bundle.active` is false in tauri.conf.json, because an ordinary
+      # `cargo build` has no business producing an installer. It is asked for
+      # here instead of turned on there.
+      - name: Installer
+        working-directory: ko-ls/crates/kols-app
+        run: tauri build --bundles ${{ matrix.bundle }}
+        continue-on-error: true
+
+      - name: Collect
+        working-directory: ko-ls
+        shell: bash
+        run: |
+          mkdir -p out
+          for binary in kols kols-desktop; do
+            if [ -f "target/release/$binary.exe" ]; then
+              cp "target/release/$binary.exe" "out/"
+            else
+              cp "target/release/$binary" "out/"
+            fi
+          done
+          # Best-effort: the portable binaries are the deliverable that must not
+          # fail, and a bundler that cannot run should not take them down with it.
+          find target/release/bundle -type f \( -name "*-setup.exe" -o -name "*.dmg" \) \
+            -exec cp {} out/ \; 2>/dev/null || true
+          # Named per platform, because every one of these produces a `kols` and
+          # they would otherwise overwrite each other in the release.
+          cd out && for f in *; do mv "$f" "${{ matrix.name }}-$f"; done
+          ls -la
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.name }}
+          path: ko-ls/out/*
+
+  # Publishing is its own job so that three matrix legs do not race to create one
+  # release. A manual run stops after `build` and leaves the artifacts, which is
+  # how to exercise this without publishing anything.
+  publish:
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+      - name: Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          find artifacts -type f -exec ls -la {} \;
+          gh release create "${GITHUB_REF_NAME}" $(find artifacts -type f) \
+            --repo "${GITHUB_REPOSITORY}" \
+            --title "${GITHUB_REF_NAME}" \
+            --notes "\`kols-desktop\` is the window and \`kols\` the terminal client. Both are portable; the installers are optional.
+
+          **Windows** needs the WebView2 runtime, which ships with Windows 11 and current Windows 10.
+
+          **macOS** builds are unsigned, so Gatekeeper will refuse them on first run: open the app from the right-click menu once, or \`xattr -d com.apple.quarantine <file>\`. Signing needs a developer certificate this project does not have."

@@ -75,11 +75,45 @@ impl Daemon {
             }
             assert!(
                 Instant::now() < deadline,
-                "waited {within:?} for {needle:?}, saw:\n{seen}"
+                "waited {within:?} for {needle:?}, saw:\n{seen}\n\n\
+                 and every other daemon in this run said:\n{}",
+                every_daemon_log()
             );
             std::thread::sleep(Duration::from_millis(200));
         }
     }
+}
+
+/// Every daemon log this process wrote, for a failure that names one of them.
+///
+/// A two-node test that fails prints the log of the daemon it was waiting on,
+/// which is the half that did not do the thing — and the reason is almost always
+/// in the other half. The founder refusing to answer a key request says so on
+/// *its* terminal, and a joiner waiting for the answer cannot see it, which is
+/// exactly how a stall reads as "nothing happened" from one side.
+fn every_daemon_log() -> String {
+    let mine = format!("-{}.log", std::process::id());
+    let Ok(entries) = std::fs::read_dir(std::env::temp_dir()) else {
+        return "(the temp directory would not open)".to_owned();
+    };
+    let mut logs: Vec<(String, String)> = entries
+        .filter_map(Result::ok)
+        .map(|entry| entry.path())
+        .filter(|path| {
+            path.file_name()
+                .and_then(|name| name.to_str())
+                .is_some_and(|name| name.starts_with("kols-2n-") && name.ends_with(&mine))
+        })
+        .filter_map(|path| {
+            let name = path.file_name()?.to_str()?.to_owned();
+            Some((name, std::fs::read_to_string(&path).ok()?))
+        })
+        .collect();
+    logs.sort();
+    logs.into_iter()
+        .map(|(name, body)| format!("---- {name} ----\n{body}"))
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 fn run(home: &Home, args: &[&str]) -> std::process::Output {

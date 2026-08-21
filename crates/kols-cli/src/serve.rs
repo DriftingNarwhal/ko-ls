@@ -197,6 +197,9 @@ pub async fn serve(
     // When this node started waiting for a key, so a stall can say so.
     let mut unkeyed_since: Option<Instant> = None;
     let mut said_unkeyed = false;
+    // Whether the one request this node may send has gone out. Not a retry
+    // counter: see the tick for why exactly one is all that is safe.
+    let mut asked_for_key = false;
 
     // A group saved by a previous run comes back first. Core §3.3.1: holding the
     // epoch key is not the same as holding the group — a node with only the key
@@ -397,6 +400,46 @@ pub async fn serve(
                 // it without running a destructor.
                 _claim.beat();
 
+                // Ask for a key if that has not happened yet.
+                //
+                // **The ask used to live only inside `Synced { accepted > 0 }`,
+                // nested under `learned > 0`** — so it fired only on the sync
+                // that accepted new governance entries, and only if this node
+                // happened to be `ready` at that instant. Miss it and there is
+                // no second chance: every later tick syncs, accepts nothing new,
+                // and skips the whole block. A joiner then sits forever having
+                // learned its own admission and never asked to be keyed in.
+                //
+                // Reproduced by starving the machine, which is what made the
+                // race lose: `ready` fails while the ledger advertisement has
+                // not landed, and on a quiet loopback the entries were all
+                // accepted in one go, so the one opportunity was the one that
+                // failed.
+                //
+                // **Still exactly one request, and that is deliberate rather
+                // than timid.** `answer_epoch_key` calls `add_member`
+                // unconditionally, so a second request re-adds a member already
+                // in the group and appends a second rotation, forking the log
+                // against the entry that admitted them — tried, and it voided a
+                // member's grant (`STATUS` §6, O10). So this makes the single
+                // ask reliable; it does not make asking repeatable, and it must
+                // not until answering is idempotent.
+                if !keyed
+                    && !asked_for_key
+                    && ready(&store, &mut node, &identity, seal_bytes).is_ok()
+                {
+                    for peer in connected.iter().copied() {
+                        if let Some(from) = peer_identity(peer, &store)?
+                            && node.request_epoch_key(from, &identity).is_ok()
+                        {
+                            println!("asked {} to key us in", from.short());
+                            unkeyed_since.get_or_insert_with(Instant::now);
+                            asked_for_key = true;
+                            break;
+                        }
+                    }
+                }
+
                 // A stall here is silent otherwise, and it is the one place in
                 // this loop that cannot recover on its own.
                 //
@@ -510,11 +553,12 @@ pub async fn serve(
                         // A member with no key can fetch every byte of this
                         // network's content and open none of it, so asking for
                         // one is the first thing worth doing after admission.
-                        if !keyed && let Some(from) = peer_identity(peer, &store)? {
+                        if !keyed && !asked_for_key && let Some(from) = peer_identity(peer, &store)? {
                             match node.request_epoch_key(from, &identity) {
                                 Ok(_) => {
                                     println!("asked {} to key us in", from.short());
                                     unkeyed_since.get_or_insert_with(Instant::now);
+                                    asked_for_key = true;
                                 }
                                 Err(err) => sink(&[Event::Degraded {
                                     reason: format!("could not ask for a key: {err}"),

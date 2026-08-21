@@ -1,6 +1,6 @@
 # ko-ls — Implementation Status
 
-**Updated:** 2026-08-20 (CI found a real bug: the key request is sent once and nothing retries it)
+**Updated:** 2026-08-21 (the joiner that never asked for a key, found by reproducing rather than reading; macOS builds)
 **Phase:** P1 — two nodes talk live and durably, a joiner reads back through sealed
 history, and the boundary carries commands in and events out
 **Design:** [`design/`](design/) — `00`–`08` at v1.0, `09` at v0.2. **`distributed-intranet/specs/07` is normative** where it and the design set overlap.
@@ -67,10 +67,11 @@ What that needs, and where it stands:
    WebView2 and neither is reachable from this container. `design/07` §2 S3 records what the
    Linux toolchain needed.
 
-### Building for Windows
+### Building for Windows and macOS
 
-**In CI, not here.** `.github/workflows/windows-release.yml` builds both binaries on
-`windows-latest` and attaches them to a release on a `v*` tag; `workflow_dispatch` runs it
+**In CI, not here.** `.github/workflows/release.yml` builds both binaries on `windows-latest`,
+`macos-latest` (Apple Silicon) and `macos-13` (Intel), and attaches them to a release on a `v*`
+tag; `workflow_dispatch` runs it
 without publishing, which is how to test the workflow itself. `gate.yml` runs the tests and
 clippy on Linux *and* Windows for every push, which is the only reason the platform-specific
 half of `kols-cli::secret` is ever exercised by anything but a person.
@@ -193,7 +194,7 @@ somebody forgot.
 | O6 | **The window has no presence.** It mints invites, shows the waiting room and admits from it now; what it cannot answer is `design/09` §4's third question — who is here, and are they around | Presence needs the ephemeral gossip of `design/01` §9, which nothing implements on either front end. Deliberately last: an interface that says "offline" when it means "I have not heard from them" is stating something it cannot know (§4.1), so the mechanism has to exist before the dot does | `design/09` §4.1, §7 |
 | O7 | **No credentials and no backup.** Seeds are written to `<home>/seed` in the clear and never surfaced, so a member's only copy is a file, and anything with read access to the disk is that member | **Deliberately deferred, and it must land well before any 1.0.** The shape is decided (`design/02` §6.3): a local account whose password *wraps* a keyring of per-network seeds and never derives them, plus an export bundle of phrase, network id and relay address per network. Not needed to test between two machines you own; needed before anybody else's identity depends on it | `design/02` §6.3, `design/05` §5 |
 | O8 | ~~**On Windows a seed is written with default ACLs.**~~ **Closed 2026-08-20.** `kols-cli::secret` restricts a secret to this user on both platforms — a `chmod` on Unix, a *protected* DACL on Windows — and refuses rather than writing one it cannot protect | Confirmed by running it: a seed written by `kols.exe` on NTFS shows this account and nothing else in its Security tab, with no inherited `SYSTEM` or `Administrators` entry, which is what the protected flag is for. The refusal path was confirmed the same day, from a `\\wsl$\` path that has no permissions to set | `kols-cli::secret`, `design/02` §6.3 |
-| O10 | **Asking to be keyed in is a one-shot request that nothing retries, and it cannot safely be retried.** The joiner sends it on the `Synced` event that first learns it was admitted — an event that need never recur. A founder has ordinary reasons not to answer at that instant, since answering appends a rotation and takes the store's append lock that every one-shot command also takes, and a lost race tells the asker nothing | **Found by CI on a loaded Windows runner**, as four tests stopping dead at `asked X to key us in`. Retrying is the obvious fix and is unsafe today: `answer_epoch_key` calls `add_member` unconditionally, so a second request re-adds an existing member and appends a second rotation, which forks the log against the entry that admitted them — tried, and it voided a member's grant. The fix belongs upstream: answering must re-deliver to an existing member rather than add them again. Until then the node says it is stalled rather than hiding it | `kols-cli::serve`, `intranet-transport::answer_epoch_key` |
+| O10 | **Answering a key request is not idempotent, so the one request a joiner sends can never be repeated.** The ask now happens reliably — it is no longer gated on an event that need not recur — but if it goes unanswered, nothing may ask again | `answer_epoch_key` calls `add_member` unconditionally, so a second request re-adds a member already in the group and appends a second rotation, forking the log against the entry that admitted them — tried, and it voided a member's grant. The fix is upstream: answering a member already in the group must re-deliver rather than re-add. Until then the node reports the stall after sixty seconds rather than hiding it | `kols-cli::serve`, `intranet-transport::answer_epoch_key` |
 | O9 | **A suspended node can lose its claim and not know.** `NODE_CLAIM_STALE` is wall-clock, so a laptop asleep past the window can have its claim taken over while it still believes it holds one | Making it impossible needs the holder to re-check ownership as it beats. Rare rather than impossible today, because taking over requires somebody to start a second node inside that window | `kols-cli::store::NODE_CLAIM_STALE` |
 
 **Closed since this register was written:** the executor, the two checks `authorize`
@@ -236,6 +237,33 @@ design changes before anything else is built.
 ## 9. Log
 
 Newest first. One line per change that moved the state above.
+
+- **2026-08-21** — **The joiner never asked, and reading the code had said otherwise twice.** The
+  round before this reported a stall after sixty seconds, which was useful and was not the
+  finding. The finding came from **reproducing it** — the suite pinned to two cores, with the
+  test harness changed to print *every* daemon's log rather than only the one being waited on.
+  The founder's side is where the answer was, and no failure had ever shown it.
+
+  What it showed: a joiner that learned its own admission and **never asked to be keyed in at
+  all**. The request lived inside `Synced { accepted > 0 }`, nested under `learned > 0`, so it
+  fired only on the sync that accepted new governance entries, and only if `ready` happened to
+  succeed at that instant. Miss it once and there is no second chance — every later tick syncs,
+  accepts nothing new, and skips the block. Starving the machine is what made that race lose:
+  `ready` fails while the ledger advertisement has not landed, and on quiet loopback every entry
+  arrives in one go, so the single opportunity was the one that failed.
+
+  The ask now happens on the tick whenever this node is unkeyed, ready and has not asked yet.
+  **Still exactly one request**, which is deliberate rather than timid: answering is not
+  idempotent (O10), so this makes the single ask *reliable* without making asking *repeatable*.
+
+  Pinned to two cores, `two_nodes` goes from six passing to eight; at four cores — the runner's
+  width — all ten pass in 80s. **Two cores still fails two**, both now in the content path after
+  keying rather than in keying, and that is recorded rather than tuned away.
+
+  **The harness change is the durable part.** A two-node failure printed the log of the daemon
+  that did not do the thing, and the reason is almost always in the other one — a founder
+  refusing a request says so on *its* terminal, which the waiting side cannot see. That is how a
+  stall reads as "nothing happened" from one side and cost two rounds of guessing.
 
 - **2026-08-20** — **The Windows gate found a real bug, and it is not about Windows.** Four of
   six failures stop at the same line — `asked X to key us in`, then nothing for 135 seconds. On
