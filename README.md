@@ -257,3 +257,24 @@ reader holding the previous version refetches **one chunk of three** across the 
 delta property is what makes a chat log affordable on a storage layer built for documents,
 and the whole segment model exists to preserve it — it is asserted on bytes actually moved,
 in `crates/kols-core/tests/author_log.rs` and `crates/kols-net/tests/two_nodes.rs`.
+
+---
+
+## Licence
+
+**[GNU Affero General Public License v3.0](LICENSE)** — © DriftingNarwhal.
+
+Free for anyone to use, study, modify and share, commercial use included. What the licence
+requires in return is that it stays that way: **if you distribute this, or run a modified
+version as a service other people use over a network, you must publish the complete
+corresponding source under the same licence.** The Affero clause is the one that matters
+here, because the obvious way to enclose a chat system is to host a modified copy rather
+than to ship one.
+
+Selling it is permitted, and the licence is what makes that unprofitable rather than
+forbidden: whoever buys it receives the source and may give it away. That is the intended
+outcome — nobody can take this, close it, and sell it as their own.
+
+The protocol crates it links are [MPL-2.0](https://github.com/DriftingNarwhal/distributed-intranet),
+which is deliberate and compatible: MPL §3.3 permits covered software to be combined into a
+larger work under a Secondary Licence, and AGPL-3.0 is one.

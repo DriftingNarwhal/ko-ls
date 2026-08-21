@@ -233,12 +233,76 @@ design changes before anything else is built.
   up to date. Nothing in the client builds against a *published* version of the protocol:
   the crates are path dependencies on the sibling checkout, deliberately, until the
   extensions stop moving.
+- **Licensing, and one constraint that binds both repos.** This client is **AGPL-3.0-only**;
+  the protocol crates are **MPL-2.0**; both are © DriftingNarwhal. The split is deliberate —
+  the platform is meant to be built on by other implementations, the application is not meant
+  to be enclosed. What ties them together: MPL files here are **not** marked "Incompatible
+  With Secondary Licenses", and MPL §3.3 is the only reason an AGPL client may link them.
+  Adding Exhibit B to a protocol source file would silently make this workspace
+  undistributable. `DI-Relay` is AGPL for the same reason the client is: it is the component
+  somebody would run as a service, and its Affero clause is the one that binds there — a relay
+  is a service by definition, so a licence triggering only on distribution would never trigger.
+  Note it does not reach the network served: a relay holds no state, so running one places no
+  licence condition on anybody's client or content. **`specs/` in the protocol repo is CC BY
+  4.0**, not MPL. All three repos require a DCO sign-off (`CONTRIBUTING.md`), and **anything
+  depending on the protocol by tag must use `v1.0.1` or later** — `v1.0.0` predates the licence.
 
 ---
 
 ## 9. Log
 
 Newest first. One line per change that moved the state above.
+
+- **2026-08-21** — **All three repos are licensed, and two of them were wrong in opposite
+  directions.** `distributed-intranet` had no LICENSE and no licence metadata, which under
+  default copyright is all rights reserved — public and legally unusable, for the repo whose
+  specs exist to be implemented by other people. `ko-ls` declared `MIT OR Apache-2.0` in
+  `Cargo.toml` with no LICENSE file behind it, which is both ambiguous and the most permissive
+  reading available: it expressly allows closing this and selling it.
+
+  The requirement was "free for everyone, and nobody can sell it", and those cannot both hold
+  literally — every open-source licence, copyleft included, permits sale, and the Open Source
+  Definition forbids discriminating against commercial use. What it resolves to is that nobody
+  may **enclose** it, which is a copyleft question rather than a price one. So: **AGPL-3.0-only**
+  for the applications, **MPL-2.0** for the protocol crates, © DriftingNarwhal. Selling stays
+  legal and becomes pointless, since the buyer receives the source and may redistribute it.
+
+  The Affero clause is the one doing work here: the obvious way to enclose a chat system is to
+  host a modified copy rather than ship one, and plain GPL would permit exactly that. The MPL
+  side is the reverse trade — other implementations may build over the protocol and licence
+  their own work freely, while changes to these files stay open. §8 records the constraint that
+  couples them, which is that the MPL files must never carry Exhibit B.
+
+  Checked rather than assumed: the whole dependency tree is permissive (MIT, Apache-2.0,
+  MPL-2.0, BSD, Zlib, Unicode) with no GPL or non-commercial terms, so nothing blocked the
+  relicense; every crate in both workspaces now resolves a licence where nine resolved
+  `UNDECLARED`; and both gates are green — 189 here, 649 upstream, clippy clean in both.
+
+  **The specs are licensed separately, under CC BY 4.0.** A software licence is the wrong
+  instrument for prose — MPL is written about Source Code Form and executables, and an
+  implementer quoting a section into their own documentation should not have to work out
+  whether that makes their document Covered Software. Attribution is the whole and correct ask
+  for documents that exist to be implemented by other people.
+
+  **DI-Relay needed a second fix that licensing it alone would not have delivered.** It pulled
+  `intranet-transport` and `intranet-identity` at tag `v1.0.0`, which predates the protocol's
+  licence — so anyone building it was building against code that was still all rights reserved.
+  A licence on `main` does not reach a tag. `v1.0.1` is the first protocol tag carrying MPL-2.0,
+  and DI-Relay is repointed at it; its README had also claimed MIT/Apache "matching the protocol
+  repository", which was wrong in both halves, since the protocol repository had no licence to
+  match.
+
+  **All three repos now carry a `CONTRIBUTING.md` requiring a DCO sign-off.** Deliberately not a
+  copyright-assignment CLA — contributors keep their copyright. A copyleft licence is only as
+  good as the project's established right to ship the code under it, and with the repos public
+  that right needs recording per commit rather than reconstructing later by asking every past
+  contributor individually.
+
+  **Honest limit:** `ko-ls` was public for a day declaring `MIT OR Apache-2.0`. A permissive
+  grant already given cannot be withdrawn from copies already taken, so anyone who cloned it in
+  that window may hold that snapshot under those terms. No LICENSE file existed and nothing was
+  published to crates.io, which makes the grant weak and the practical exposure nil — but it is
+  worth writing down rather than describing the change as clean.
 
 - **2026-08-21** — **A second documentation pass, over the design set against the protocol it
   depends on rather than against itself.** The previous pass read the client's documents for

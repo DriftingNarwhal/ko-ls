@@ -6,7 +6,7 @@ members = ["crates/kols-core", "crates/kols-net", "crates/kols-api", "crates/kol
 version = "0.1.0"
 edition = "2024"
 rust-version = "1.85"
-license = "MIT OR Apache-2.0"
+license = "AGPL-3.0-only"
 
 [workspace.dependencies]
 intranet-crypto = { path = "../distributed-intranet/crates/intranet-crypto" }
