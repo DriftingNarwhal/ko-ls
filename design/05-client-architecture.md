@@ -1,6 +1,6 @@
 # Client Architecture
 
-**Document status:** v1.1 — `kols-core`, `kols-net`, §3's boundary in both directions, an executor behind it and a first `kols-app`/`kols-ui` slice exist; the store and media do not
+**Document status:** v1.2 — `kols-core`, `kols-net`, §3's boundary in both directions, an executor behind it, and a `kols-app`/`kols-ui` window that runs a node and brings a member in; the store and media do not
 **Depends on:** all preceding documents; App Hosting Spec §1–§3 for the sandbox path
 **Consumed by:** implementation; `09` for the interface built on §3's boundary
 
@@ -234,6 +234,13 @@ network publishes. `intranet-*` key types implement no `Debug` and no
 serialization deliberately — use their `fingerprint()` methods for logging and tests, and
 do not derive around it.
 
+**None of that is built, and the paragraph above is a target rather than a description.** What
+exists today is a seed written to a file, unencrypted, restricted to the account that wrote it —
+a `chmod 0600` on Unix, a protected DACL on Windows — and refused outright where it cannot be
+restricted, since a secret another account can read is worse than one that was not written. So
+anything with read access to that user's disk is that member. This is `STATUS` §6's O7, and it
+is a release gate rather than a feature (`00` §5).
+
 **Two UI honesty requirements**, carried from the guarantees the protocol actually makes:
 
 - **Deleted means hidden, not unsent** (`01` §6). The confirmation dialog says so.
@@ -308,12 +315,29 @@ boundary, which is worth having regardless.
 | Executor | Every record kind end to end through the real binary: the record is written, the merge renders it, and the refusals the gate cannot make — somebody else's message, the rate ceiling — happen before anything is signed | **Done** — 10 cases over a keyed node |
 | Events (§3, property 3) | A consumer that merges rather than appends: the same event twice, events out of order, a gap filled later, and the case that actually happens — a record arriving live and again inside the segment behind it | **Done** — 5 cases. The daemon's own wording is asserted by the two-node tests, which is what makes the emitter's refactor behaviour-preserving |
 | Keying | A removed member must fail to decrypt content wrapped after the rotation, and must still decrypt what they held. Assert the honest guarantee, not a stronger one | Not started (P2) |
+| Platform | The code that differs per operating system, run where it differs: the seed's permissions and the home directory's resolution. Not the daemon suite, which tests merge and gossip and is platform-neutral | **Partial** — the store's resolution is a pure function with cases; the seed's permissions are asserted on Unix by `cargo test` and on Windows only against the **built artifact** in CI, because the Rust test for it is `#[cfg(unix)]` and compiles out |
 | Multi-node | Extend the existing Docker NAT harness with chat scenarios: partition two members over a real network, heal, assert identical history | Not started — the in-process partition test is not this |
 | Media | Loss and jitter injection against both `MediaTransport` impls; the fallback is expected to degrade badly and the test should record how badly, not skip it | Not started (P3) |
 
 The protocol repo's gate applies to this work too: `cargo test --workspace` and
 `cargo clippy --workspace --all-targets` both stay clean, and a run that skipped clippy
 because the toolchain lacked it has checked half the gate and should say so.
+
+**Where these run, and why it is not CI.** The suite runs in the development container, where
+the output is complete and a failure can be reproduced in the minute it appears. CI builds; it
+does not gate. The exception is the platform row above, which is the one thing a Linux container
+cannot do for itself, and it runs as part of a build rather than on every push.
+
+**Run the daemon tests starved as well as fast.** `taskset -c 0,1` is not a curiosity: these
+tests spawn two or three processes that sign and encrypt, and a wide machine wins every race a
+narrow one loses. A keying bug that had been latent for weeks — a joiner that learned its own
+admission and never asked to be keyed in, because the ask was nested under an event that need
+not recur — was invisible at full speed and reproducible in one run at two cores. Timeouts scale
+with available parallelism (`tests/common::patience`) so the same suite is honest on both.
+
+**And clean up.** This container's storage is the host's. Test helpers remove their directories
+on `Drop` rather than at the end of a test, because `Drop` runs on an unwind and a failing test
+is exactly when scratch is left behind.
 
 **One measurement discipline learned in P0, worth keeping.** A test that asserts on bytes
 moved must measure at the point the cost is actually incurred. The first version of the

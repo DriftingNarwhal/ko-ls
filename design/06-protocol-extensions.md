@@ -1,6 +1,6 @@
 # Required Protocol Extensions
 
-**Document status:** v1.7 — E1 and E3 withdrawn, **E9, E2, E5, E4, E11 and E12 landed**; E12 narrowed to its protocol half on landing, E13 added from `09`
+**Document status:** v1.8 — E1 and E3 withdrawn, **E9, E2, E5, E4, E11 and E12 landed**; E12 narrowed to its protocol half on landing, E13 added from `09`, **E14 added from a bug**
 **Depends on:** all preceding documents
 **Consumed by:** work in `distributed-intranet`
 
@@ -39,6 +39,7 @@ Two rules govern this list:
 | ~~E11~~ | Namespace registration for extension capabilities — **landed**, Core §2.2.1 | — | Done |
 | ~~E12~~ | Optional peer discovery — **landed**, Core §5.1.1. Asked as tiered liveness; only the behaviour set was the protocol's, and the tiering stayed in the client | — | Done |
 | E13 | Cross-network connection bootstrap, for direct messages | P2 | Medium |
+| E14 | Idempotent epoch-key re-delivery | P1 — a joiner can stall forever | Small |
 
 ---
 
@@ -564,12 +565,58 @@ hole-punch failure falls back without the disclosure gate being bypassed.
 
 ---
 
-## 14. Sequencing
+## 14. E14 — Idempotent Epoch-Key Re-Delivery
+
+**Found by a bug, not by review, and it is the shape this project keeps meeting: an operation
+with no way to recover.** `MemberNode::answer_epoch_key` calls `GroupSession::add_member`
+unconditionally. There is no check for a requester already in the group, so a second request for
+the same identity adds a second leaf and appends a **second `EpochRotation`** — which forks the
+governance log against the entry that admitted them. Observed: a keyed member losing a grant it
+held, in a test that had passed for days.
+
+The consequence is not the duplicate rotation. It is that **the request can never be retried**,
+and a request that is never answered strands a member permanently: they hold an identity, they
+are in the log, honest nodes will serve them, and they can open none of it. A founder has
+ordinary reasons not to answer at the moment one arrives — answering appends a rotation and so
+takes the store's append lock that every one-shot command also takes — and a lost race reports a
+degradation on the *founder's* terminal and tells the asker nothing.
+
+The client can make the single request *reliable*, and now does (`05` §4). It cannot make asking
+*repeatable*, and must not until this lands.
+
+```
+answer_epoch_key(request, identity, now):
+    if the requester's credential is already in the group:
+        deliver the current epoch key and the historical keys policy allows
+        append no rotation
+    else:
+        add, rotate, welcome — as today
+```
+
+**Why re-delivery rather than re-add.** A Welcome is produced by the commit that adds a member,
+so it cannot be reissued later; but a member already in the group does not need one — they need
+the key material, which the keyring already holds. Adding them again would also be wrong on its
+own terms: it mints a second leaf for one member and rotates a group whose membership did not
+change, which is a lie about what happened told in a log every member replays.
+
+**Acceptance:** a repeated request from a member already in the group appends **no** governance
+entry and delivers a key that opens content wrapped under the current rotation; the governance
+log after two requests is byte-identical to the log after one; a request from an identity *not*
+in the group behaves exactly as it does today; and a member whose first delivery was lost can
+obtain keys by asking again.
+
+*Flagged: this makes the client's retry safe, and the retry is the point. Landing this without
+then re-asking on a schedule leaves the stall in place with the cause fixed.*
+
+---
+
+## 15. Sequencing
 
 ```
 P0   — nothing; E3 turned out to need no protocol change
 P1   E2 → E4 ✅ ; E9 ✅, E11 ✅ (independent, small).  E5 landed here, ahead of its phase
 P1   E12 ✅ (independent of everything else; landed as its protocol half only)
+P1   E14   (independent, small — and a joiner stalls forever without it)
 P2   E7   (depends on E2's ChannelRotation) ; E10 (independent, small) ; E13 (pairs with E10)
 P3   E6   — lands when it lands
 P4   E8
@@ -585,7 +632,7 @@ consumer written against the old shape would have been another thing to migrate.
 
 ---
 
-## 15. What This Design Deliberately Does Not Ask For
+## 16. What This Design Deliberately Does Not Ask For
 
 Recorded so the boundary is visible, and so nobody adds them under the impression they
 were oversights:

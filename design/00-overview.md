@@ -183,11 +183,16 @@ next. Estimates are deliberately absent — sequence is the useful part.
   gossip path, history backfill, edits/deletes/reactions/threads, invites and onboarding, the
   Tauri desktop client. Public channels only.
 
-  Done: channel structure as governance payloads, permission resolution, the live gossip
-  path, segment sealing and backfill, admission and revocation with the epoch rotation each
-  implies, and the `05` §3 API boundary's command half. Not yet: an executor behind that
-  boundary, its event half, edits and reactions as commands anything can run, threads,
-  invites, and every part of the Tauri client. `STATUS.md` §6 is the current debt list.
+  Done: channel structure as governance payloads, permission resolution, the live gossip path,
+  segment sealing and backfill, admission and revocation with the epoch rotation each implies,
+  display names, both halves of the `05` §3 API boundary with one executor behind it, invites as
+  a single string, relays a network designates, and a desktop client that creates or joins a
+  network, runs a node for it, renders a channel and brings the next member in. It builds for
+  Windows and macOS as well as Linux.
+
+  Not yet: threads, presence, and the abuse limits as enforced rather than merely readable
+  policy. `STATUS.md` §6 is the current debt list, and the release gate below is the thing that
+  matters most in it.
 - **P2 — Private channels and direct messages.** Per-channel MLS subgroups and channel
   membership entries; the DM flow (network creation, direct invite delivery, voluntary
   identity link) and a DM inbox spanning networks; moderation redactions; search — network

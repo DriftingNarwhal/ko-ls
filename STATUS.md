@@ -1,6 +1,6 @@
 # ko-ls — Implementation Status
 
-**Updated:** 2026-08-21 (tests run here, GitHub builds — and only when a build is wanted)
+**Updated:** 2026-08-21 (documentation pass — the README contradicted itself and the roadmap was two landings behind)
 **Phase:** P1 — two nodes talk live and durably, a joiner reads back through sealed
 history, and the boundary carries commands in and events out
 **Design:** [`design/`](design/) — `00`–`08` at v1.0, `09` at v0.2. **`distributed-intranet/specs/07` is normative** where it and the design set overlap.
@@ -113,9 +113,9 @@ complete and a failure can be reproduced in the same minute it appears.
 
 | | |
 |---|---|
-| **Working on** | Milestone: a client two people on separate networks can use. The window creates, joins and runs a node; the Windows build is next |
+| **Working on** | Milestone: a client two people on separate networks can use. Both binaries build for Windows and macOS in CI, and the window needs no terminal for any step. What is left is a relay reachable from both machines |
 | **Blocked on** | Nothing |
-| **Runnable** | **`kols`** — init (with `--relay`), relay list/set, invite, join, waiting, attach, admit, revoke, name, serve, post, read, edit, delete, react, pin, and channel create/list/rename/topic/slowmode/archive. **`kols-desktop`** — a window that creates a network or joins one by invite, runs a node for it, lists channels, renders one and posts to it, updating as records arrive. `cargo test` — 189 tests here and 649 in `../distributed-intranet`, clippy clean in both; `scripts/cross-check.sh` for big-endian |
+| **Runnable** | **`kols`** — init (with `--relay`), relay list/set, invite, join, waiting, attach, admit, revoke, name, serve, post, read, edit, delete, react, pin, and channel create/list/rename/topic/slowmode/archive. **`kols-desktop`** — a window that creates a network or joins one by invite, runs a node for it, lists channels, renders one and posts to it, mints an invite and admits from the waiting room, updating as records arrive. `cargo test` — 189 tests here and 649 in `../distributed-intranet`, clippy clean in both; `scripts/cross-check.sh` for big-endian, `taskset -c 0,1` for the starved case |
 | **Next decision needed from the user** | Nothing blocking |
 
 ---
@@ -133,7 +133,7 @@ complete and a failure can be reproduced in the same minute it appears.
 | Item | State | Notes |
 |---|---|---|
 | S1 client repo | **Done** | `/workspaces/ko-ls/ko-ls`, design moved in, crates building. Committed and pushed to `DriftingNarwhal/ko-ls` on `main`, in step with `origin` — §0's table is the current statement of that |
-| S2 protocol changes on `main` | In progress | E9 (Core §2.6.2), E2 (Core §2.7.2), E5, E4, E11 (Core §2.2.1) and E12 (Core §5.1.1) landed, each with spec text, implementation and tests together. P1's protocol work is finished again; E7, E10 and E13 are P2 |
+| S2 protocol changes on `main` | In progress | E9 (Core §2.6.2), E2 (Core §2.7.2), E5, E4, E11 (Core §2.2.1) and E12 (Core §5.1.1) landed, each with spec text, implementation and tests together. **E14 is P1 and outstanding** — found by a bug rather than by planning; E7, E10 and E13 are P2 |
 | S3 Tauri environment | **Done** | Node 24 LTS, webkit2gtk 4.1 and the GTK stack, bundler tools, a generated UTF-8 locale — all in `.devcontainer/Dockerfile`, so a rebuild has them rather than each machine acquiring them by hand. Proven by building a Tauri v2 app and watching a window map |
 
 ## 4. Protocol Extensions
@@ -157,6 +157,7 @@ both green.
 | E11 | Namespace registration for extension capabilities | **Landed** — Core §2.2.1; one registry entry per verb covers every scope of it |
 | E12 | Optional peer discovery | **Landed, narrowed** — Core §5.1.1; a node MAY be built without Kademlia and mDNS. Asked as *tiered liveness*; only the behaviour set was the protocol's, so the hot/warm/cold tiering stayed client-side |
 | E13 | Cross-network connection bootstrap | **New** — from `design/09` §3; so two people starting a DM never provision a relay (P2) |
+| E14 | Idempotent epoch-key re-delivery | **New** — from the bug behind O10; `answer_epoch_key` re-adds a member already in the group, so the one request a joiner sends can never be retried (P1) |
 
 ## 5. Client Crates
 
@@ -165,9 +166,9 @@ both green.
 | `kols-core` | **Encoding, author logs, merge, collision recovery, chat policy, channel structure** — records/segments/ids, `AuthorLog` incl. `rebase`, `ChannelView`, permissions, capability vocabulary, `ChatPolicy`, `ChannelEntry`. 88 tests |
 | `kols-net` | **Publish and fetch** — stores/announces chunks, accepts pointers, reassembles segments. Two live two-node tests |
 | `kols-api` | **The whole boundary** — `Command`, `Sensitivity`, `Refusal` and `authorize` returning an `Authorized` nothing else can construct, going in; `Outcome` and `Event` coming out. All three of `design/05` §3's properties are now held. 26 tests |
-| `kols-cli` | **`kols`, its node daemon, and the executor** — a library now, with the binary as argument parsing and rendering over it. Creates a network, admits and keys in joiners, serves and fetches content, writes every record kind, renders a merged view across authors. Tests that drive the real binaries, eight of them over a live wire between two processes |
-| `kols-app` | **The desktop shell** — a Tauri v2 window over the boundary, holding a *workspace* of networks and an `Executor` for whichever is open, with the view types the webview receives and the handlers that build commands from plain arguments. `kols-desktop`. 7 tests |
-| `kols-ui` | **The interface** — HTML, CSS and one script, holding no keys, no sockets and no files. Creates and picks networks, answers `design/09` §4's first two questions, and gates its chrome on permission |
+| `kols-cli` | **`kols`, its node daemon, and the executor** — a library now, with the binary as argument parsing and rendering over it. Creates a network, admits and keys in joiners, serves and fetches content, writes every record kind, renders a merged view across authors. `secret` restricts a written seed to this user on both platforms and refuses when it cannot. Tests that drive the real binaries, ten of them over a live wire between two processes |
+| `kols-app` | **The desktop shell** — a Tauri v2 window over the boundary, holding a *workspace* of networks and an `Executor` for whichever is open, with the view types the webview receives and the handlers that build commands from plain arguments — including minting an invite, reading the waiting room and admitting from it. `kols-desktop`. 7 tests |
+| `kols-ui` | **The interface** — HTML, CSS and one script, holding no keys, no sockets and no files. Creates and picks networks, answers `design/09` §4's first two questions, gates its chrome on permission, and carries the doorway an `approve-node` holder uses to invite and admit |
 | `kols-store` | Not created |
 | `kols-media` | Not created |
 
@@ -194,8 +195,8 @@ somebody forgot.
 | O6 | **The window has no presence.** It mints invites, shows the waiting room and admits from it now; what it cannot answer is `design/09` §4's third question — who is here, and are they around | Presence needs the ephemeral gossip of `design/01` §9, which nothing implements on either front end. Deliberately last: an interface that says "offline" when it means "I have not heard from them" is stating something it cannot know (§4.1), so the mechanism has to exist before the dot does | `design/09` §4.1, §7 |
 | O7 | **No credentials and no backup.** Seeds are written to `<home>/seed` in the clear and never surfaced, so a member's only copy is a file, and anything with read access to the disk is that member | **Deliberately deferred, and it must land well before any 1.0.** The shape is decided (`design/02` §6.3): a local account whose password *wraps* a keyring of per-network seeds and never derives them, plus an export bundle of phrase, network id and relay address per network. Not needed to test between two machines you own; needed before anybody else's identity depends on it | `design/02` §6.3, `design/05` §5 |
 | O8 | ~~**On Windows a seed is written with default ACLs.**~~ **Closed 2026-08-20.** `kols-cli::secret` restricts a secret to this user on both platforms — a `chmod` on Unix, a *protected* DACL on Windows — and refuses rather than writing one it cannot protect | Confirmed by running it: a seed written by `kols.exe` on NTFS shows this account and nothing else in its Security tab, with no inherited `SYSTEM` or `Administrators` entry, which is what the protected flag is for. The refusal path was confirmed the same day, from a `\\wsl$\` path that has no permissions to set | `kols-cli::secret`, `design/02` §6.3 |
-| O10 | **Answering a key request is not idempotent, so the one request a joiner sends can never be repeated.** The ask now happens reliably — it is no longer gated on an event that need not recur — but if it goes unanswered, nothing may ask again | `answer_epoch_key` calls `add_member` unconditionally, so a second request re-adds a member already in the group and appends a second rotation, forking the log against the entry that admitted them — tried, and it voided a member's grant. The fix is upstream: answering a member already in the group must re-deliver rather than re-add. Until then the node reports the stall after sixty seconds rather than hiding it | `kols-cli::serve`, `intranet-transport::answer_epoch_key` |
 | O9 | **A suspended node can lose its claim and not know.** `NODE_CLAIM_STALE` is wall-clock, so a laptop asleep past the window can have its claim taken over while it still believes it holds one | Making it impossible needs the holder to re-check ownership as it beats. Rare rather than impossible today, because taking over requires somebody to start a second node inside that window | `kols-cli::store::NODE_CLAIM_STALE` |
+| O10 | **Answering a key request is not idempotent, so the one request a joiner sends can never be repeated.** The ask now happens reliably — it is no longer gated on an event that need not recur — but if it goes unanswered, nothing may ask again | `answer_epoch_key` calls `add_member` unconditionally, so a second request re-adds a member already in the group and appends a second rotation, forking the log against the entry that admitted them — tried, and it voided a member's grant. The fix is upstream and is now specified as **E14** (`design/06` §14): answering a member already in the group must re-deliver rather than re-add. Until then the node reports the stall after sixty seconds rather than hiding it | `kols-cli::serve`, `intranet-transport::answer_epoch_key` |
 
 **Closed since this register was written:** the executor, the two checks `authorize`
 deliberately could not make, and the event half of the boundary. The first two were owed
@@ -237,6 +238,40 @@ design changes before anything else is built.
 ## 9. Log
 
 Newest first. One line per change that moved the state above.
+
+- **2026-08-21** — **A documentation pass, and it found three stale claims rather than none.**
+  The point of reading all of it after a run of landings is that some of it is wrong, and it was.
+
+  **The README contradicted itself.** "The window" said *"It runs no node, so it will not show
+  you another member's messages and will not update while you watch"* — three paragraphs above
+  "What exists", which said the window runs a node and updates as records arrive. Both were
+  written a day apart and only one was true. It now describes what the window does, including
+  minting an invite and admitting from the waiting room, and says plainly what it still cannot
+  do, which is presence.
+
+  **`design/00`'s roadmap was two landings behind**, listing as *not yet* an executor behind the
+  API boundary, its event half, edits and reactions as commands, invites, and "every part of the
+  Tauri client". All but threads are built. A roadmap that describes finished work as pending is
+  worse than none, because somebody plans around it.
+
+  **`design/09` §5 still owed its presentation half**, which is built: the shell resolves each
+  capability against replayed state and hands the interface a flag per control, so there is no
+  second permission model in the front end to drift from the first. §7's invite question is
+  mostly answered too, and what is left of it is now stated precisely — use-count and expiry are
+  *defaulted rather than decided*, which is a smaller and more honest open question.
+
+  **`design/05` §5 described a keychain nobody has built.** It read as a description and was a
+  target: what exists is an unencrypted seed file restricted to its owner, refused where it
+  cannot be restricted. Now says so, and points at O7.
+
+  **E14 is new in `design/06`**, which is where a required protocol change belongs — O10 was
+  living only in `STATUS`. It carries the mechanism, why re-delivery rather than re-add (a
+  Welcome cannot be reissued, and re-adding rotates a group whose membership did not change,
+  which is a lie in a log every member replays), and acceptance criteria.
+
+  Also recorded in `design/05` §8: run the daemon tests starved as well as fast, because a wide
+  machine wins every race a narrow one loses; and clean up after them, because this container's
+  storage is the host's.
 
 - **2026-08-21** — **The gate is gone: tests run here, GitHub builds.** A CI gate on every push
   was never asked for — builds were — and it turned three rounds of debugging into somebody

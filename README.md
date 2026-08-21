@@ -36,6 +36,7 @@ crates/kols-app    `kols-desktop` — the Tauri shell, holding a workspace and r
 crates/kols-ui     the interface: HTML, CSS and one script, holding no keys and no sockets
 design/            00-08 at v1.0, 09 the interface
 .devcontainer/     the environment for this repo and the protocol beside it
+.github/           release.yml — Windows and macOS builds, on a tag or on demand
 scripts/           cross-check.sh — runs the encoding on a big-endian target
 ```
 
@@ -62,9 +63,15 @@ cargo clippy --workspace --all-targets       # must stay clean
 ./scripts/cross-check.sh                     # big-endian verification, see below
 ```
 
-`.devcontainer/` builds all of it, plus the protocol workspace beside it and the Tauri
-toolchain the desktop client will need. Open **this repo's folder** in it — the container
-mounts the parent so both repos are visible, which is what the path dependency needs.
+`.devcontainer/` builds all of it, plus the protocol workspace beside it and the Tauri toolchain
+`kols-app` links against. Open **this repo's folder** in it — the container mounts the parent so
+both repos are visible, which is what the path dependency needs.
+
+**Windows and macOS binaries are built by CI, not here** — `.github/workflows/release.yml`, on a
+`v*` tag or a manual dispatch. Building where the thing runs is not fastidiousness: a
+cross-compiled Windows window *imports* `WebView2Loader.dll` rather than linking the loader in,
+so it will not start unless that DLL travels beside it, and an MSVC build has no such tail.
+Nothing runs on an ordinary push; the tests run here.
 
 `cross-check.sh` is not part of the default gate. It needs `qemu-user-static`,
 `gcc-s390x-linux-gnu` and the `s390x-unknown-linux-gnu` Rust target, and takes about a
@@ -124,14 +131,19 @@ That is the whole launch. No `DISPLAY` or `GDK_BACKEND` to set: inside the dev c
 finds the Wayland socket VS Code forwards, and on a desktop it finds whatever is there. Run it
 from a terminal you can leave occupied — it holds the terminal until you close the window.
 
-It opens the network at `$KOLS_HOME` and shows what that node's store already holds: the
-channels replay knows about, and the messages in one of them. Posting works, because writing a
-record is a local act.
+It opens on a picker — join a network with an invite, or create one — and then **runs a node
+for whichever network you open**, so it fetches, hears gossip and updates while you watch. It
+lists channels, renders one, posts to it, and, for a member holding `approve-node`, mints an
+invite and admits whoever redeems it. No step of the flow needs a terminal any more.
 
-**It runs no node**, so it will not show you another member's messages and will not update
-while you watch. `kols serve` is what fetches and what hears gossip; the window reads what the
-store has. A shell that ran its own node would look identical and be a different piece of
-work — [`STATUS.md`](STATUS.md) §6 carries it.
+Only one process may run a node per network, so `kols serve` on a store the window has open is
+refused, and the other way round. The claim expires after thirty seconds without a heartbeat,
+because a window is closed by the window manager and that runs no destructors — a crash costs a
+pause rather than a stuck store.
+
+What it does **not** do is presence: `design/09` §4's third question, who is here and are they
+around, has no answer in the interface yet, because nothing implements the ephemeral gossip it
+needs. [`STATUS.md`](STATUS.md) §6 carries that as O6.
 
 ## What exists
 
@@ -177,12 +189,18 @@ reported rather than guessed ahead of it. They are idempotent by construction: a
 over gossip is also inside the segment that follows, so a consumer merges by record id rather
 than appending — which makes the ordinary case of hearing something twice a non-event.
 
-The window does the same, without a terminal: it creates a network or joins one by invite,
-runs a node for it, and updates as records arrive. `kols-desktop`, and [the launch
-instructions](#the-window) below.
+The window does all of it without a terminal: it creates a network or joins one by invite, runs
+a node for it, updates as records arrive, and brings the next person in — mint an invite, watch
+the waiting room, admit. `kols-desktop`, and [the launch instructions](#the-window) above.
+
+It builds for **Windows and macOS** as well as Linux, in CI rather than here, and a seed it
+writes is restricted to the account that wrote it on every platform — a `chmod` on Unix, a
+protected DACL on Windows — or it is not written at all. That last part is the design's
+fail-closed rule applied where it is easy to skip: a secret written somewhere another account
+can read it is worse than a secret not written, because the second is an error somebody sees.
 
 What does not exist yet: no private-channel keying, no voice, no search, no presence, and no
-credentials — seeds sit on disk in the clear with no way to back them up, which is fine while
+credentials — seeds are unencrypted on disk with no way to back them up, which is fine while
 you are testing between machines you own and is a release gate before anything else.
 [`STATUS.md`](STATUS.md) is the honest inventory, its §0 is where to start, and its §6 is the
 list of what this client owes and why.

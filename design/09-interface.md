@@ -1,10 +1,10 @@
 # Interface
 
-**Document status:** v0.2 — an interface now exists and is a first pass, not a settled one: it
-creates and joins networks, runs a node, renders a channel and gates its chrome on permission.
-§1's workspace, §5's enforcement half and §4's first two questions are built; §2's tiering,
-§4.1's presence and §6's theming are not, and §7's navigation question stays open by default
-rather than by decision
+**Document status:** v0.3 — an interface now exists and is a first pass, not a settled one: it
+creates and joins networks, runs a node, renders a channel, brings the next member in, and gates
+its chrome on permission. §1's workspace, **both halves of §5**, §4's first two questions and
+most of §7's second are built; §2's tiering, §4.1's presence and §6's theming are not, and §7's
+navigation question stays open by default rather than by decision
 **Depends on:** `05` for the crate layout and API boundary; `01` §9 for presence; `03` §4 for
 direct messages; App Hosting Spec §1.2 and §3.3 for the sandbox path
 **Consumed by:** implementation
@@ -226,9 +226,21 @@ not one.
 
 **That half is built, and it refuses in the type system rather than at review time.** The
 gate hands back a value with no public constructor, so an executor cannot receive a command
-that skipped it (D25). What this section still owes is the *presentation* half — deciding
-which controls a given member sees — and that is a question about rendering, answered by
-asking the same resolution the gate uses rather than by a second, drifting copy of it.
+that skipped it (D25).
+
+**The presentation half is built too, and it asks the gate's own question rather than keeping a
+second copy of the answer.** The shell resolves each capability against replayed state and hands
+the interface a flag per control — `may_post`, `may_create_channel`, `may_invite` — so a member
+without `approve-node` is shown no door, and a member without `chat:create-channel` no `+`.
+There is no second permission model in the front end to drift from the first.
+
+**One thing the interface must not get wrong about hiding, learned by getting it wrong.**
+`hidden` is an attribute, and the browser's `[hidden] { display: none }` is the weakest rule
+there is — so any rule setting `display` beats it. The picker rendered correctly with the
+channel screen sitting *underneath* it, reachable by scrolling, because `.app { display: grid }`
+won. `[hidden] { display: none !important }` is the fix, and the `!important` is right exactly
+here: hiding is not a style choice a later rule may reasonably override, and a theme (§6) must
+never be able to reveal a screen this client decided you are not on.
 
 ---
 
@@ -299,12 +311,12 @@ rearranges the interface is something a user should choose deliberately.
 
 1. **Navigation shape.** §4 fixes what must be answerable; the arrangement that answers it
    is not decided. Explicitly not assumed to be Discord's three columns.
-2. **The invite flow, in the window.** The mechanism exists and the terminal drives it
-   (`02` §6.1): mint, hand over one string, redeem, wait, be admitted. What is undecided is
-   the *interface* — how a URI is offered for copying, whether use-count and expiry are
-   surfaced or defaulted, and what a joiner sees between redeeming and admission. Under
-   explicit intake that last one is a waiting room which must be built out of the invite
-   alone, because a waiting member is served nothing (`02` §6.2).
+2. **The invite flow's remaining choices.** Built: an `approve-node` holder mints an invite,
+   copies one string, watches the waiting room and admits from it, and a joiner who lands in
+   the waiting room is told that is a success rather than shown an empty network. Still
+   defaulted rather than decided: **use-count and expiry**, currently one join and
+   twenty-four hours with nothing in the interface to change them — a founder inviting six
+   people has to mint six times, which is a decision nobody made.
 3. **How a warm network surfaces activity.** A message arriving on a network that is not in
    view has to be noticeable without every warm network demanding attention.
 4. **What "recent" means for warm tier membership.** §2 says recent networks stay warm;
