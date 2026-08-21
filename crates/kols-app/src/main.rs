@@ -150,7 +150,11 @@ fn relays(app: tauri::State<'_, App>) -> Result<dto::Relays, String> {
 /// what the interface has to say plainly: this is the set, not an addition to
 /// it.
 #[tauri::command]
-fn set_relays(app: tauri::State<'_, App>, relays: String) -> Result<(), String> {
+fn set_relays(
+    handle: tauri::AppHandle,
+    app: tauri::State<'_, App>,
+    relays: String,
+) -> Result<(), String> {
     let relays: Vec<String> = relays
         .split_whitespace()
         .filter(|address| !address.is_empty())
@@ -166,12 +170,36 @@ fn set_relays(app: tauri::State<'_, App>, relays: String) -> Result<(), String> 
         .iter()
         .map(|relay| kols_cli::parse_relay(relay))
         .collect::<Result<Vec<_>, _>>()?;
-    app.with(|executor| {
+    let root = app.with(|executor| {
         executor
             .submit(Command::SetBootstrapRelays { relays })
-            .map(|_| ())
-            .map_err(|err| err.to_string())
-    })
+            .map_err(|err| err.to_string())?;
+        Ok(executor.store().root().to_path_buf())
+    })?;
+
+    // Restarted here rather than asked for. A relay is dialled when a node
+    // starts, so designating one while a node is already running changes policy
+    // and nothing else — and the interface would have had to tell the user to
+    // go and reopen the network, which is a step that exists only because of
+    // how this is implemented. Naming the next step is worse than taking it.
+    //
+    // The cost, stated: this drops whatever connections the node had. On the
+    // path that matters it had none, because designating the first relay is
+    // what a network does before it can reach anybody.
+    start_node(&handle, app, root);
+    Ok(())
+}
+
+/// Restarts the node for the open network.
+///
+/// For the case [`set_relays`] cannot reach: a member learns of a relay
+/// designated by *somebody else* through replay, and their node has been running
+/// since before it existed. Same problem, one machine removed.
+#[tauri::command]
+fn restart_node(handle: tauri::AppHandle, app: tauri::State<'_, App>) -> Result<(), String> {
+    let root = app.with(|executor| Ok(executor.store().root().to_path_buf()))?;
+    start_node(&handle, app, root);
+    Ok(())
 }
 
 /// The channels replay currently knows about.
@@ -473,9 +501,7 @@ fn start_node(handle: &tauri::AppHandle, app: tauri::State<'_, App>, root: std::
         Ok(node) => node,
         Err(_) => return,
     };
-    if let Some(previous) = node.take() {
-        previous.abort();
-    }
+    let previous = node.take();
 
     let emitter = handle.clone();
     let sink: kols_cli::serve::Sink = std::sync::Arc::new(move |events: &[kols_api::Event]| {
@@ -521,6 +547,24 @@ fn start_node(handle: &tauri::AppHandle, app: tauri::State<'_, App>, root: std::
 
     let failed = handle.clone();
     *node = Some(tauri::async_runtime::spawn(async move {
+        // Stopping the previous node is *awaited*, not merely requested, and
+        // that distinction is the whole reason this is here rather than above.
+        //
+        // Only one process may run a node per store, and the claim is released
+        // when the serving future is dropped. `abort()` does not drop it — it
+        // asks the task to stop at its next await point. Spawning the
+        // replacement immediately therefore races the claim of the node being
+        // replaced, and `hold_node` does not fail fast on a claim that looks
+        // fresh: it waits the staleness window out, so the window would appear
+        // to hang for half a minute and then work.
+        //
+        // Awaited in the new task rather than at the call site so nothing blocks
+        // the thread the interface is on.
+        if let Some(previous) = previous {
+            previous.abort();
+            let _ = previous.await;
+        }
+
         let outcome = kols_cli::serve::serve(
             root,
             "/ip4/0.0.0.0/tcp/0",
@@ -584,7 +628,8 @@ fn main() {
             join_network,
             open_network,
             relays,
-            set_relays
+            set_relays,
+            restart_node
         ])
         .run(tauri::generate_context!())
         .expect("the window opens");

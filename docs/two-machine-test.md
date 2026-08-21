@@ -26,9 +26,10 @@ neither — it is a routable address both can reach.
 - **The terminal says more when it fails.** `kols serve` prints the relay's standing, every
   governance entry it learns and every key request it answers. The window shows the same
   information in less of it.
-- **The window has never been launched.** Not on Windows, not on macOS, not once
-  (`STATUS.md` §0). Running the test through it means two unproven things at the same time, and
-  a failure that could be either.
+- **No flow has been run through the window.** It has been opened once and rendered roughly
+  correctly, but that was before anything was wired to it (`STATUS.md` §0) — so every path it
+  now has is unexercised. Running the test through it means two unproven things at the same
+  time, and a failure that could be either.
 
 So: **run it in the terminal the first time**, then repeat it in the window, where a failure is
 unambiguously the window's. If you would rather start in the window, this is the mapping:
@@ -37,7 +38,7 @@ unambiguously the window's. If you would rather start in the window, this is the
 |---|---|
 | 2 — create | **or make one** on the picker. Leave the relay field empty |
 | 3 — the relay's `RELAY_NETWORK` | **relay** in the sidebar → *set the relay* → **copy** |
-| 4 — designate it | Paste the address into the same panel → **designate**, then reopen the network from **networks** — a relay is dialled when a node starts |
+| 4 — designate it | Paste the address into the same panel → **designate**. The node restarts itself onto the new relay; the line above the panel says when it has a circuit |
 | 5 — serve | Nothing. The window runs a node for whichever network is open |
 | 6 — name, channel, post | The composer asks for a name before it lets you post; **+** beside *channels* |
 | 7 — invite | **invite** under *people*, then **copy** |
@@ -398,10 +399,10 @@ It establishes that the path works across real networks: relay reachability, adm
 epoch-key delivery, pointer sync, segment fetch and a merged view between two nodes that have
 never been on the same machine.
 
-It does not exercise the desktop window. That is now a separate and much cheaper check than it
-was — v0.1.0 publishes an installer for both platforms — but the window has still never been
-launched as a window on either (`STATUS.md` §0), so opening it once is worth doing on its own
-rather than folding into this test, where a failure would be ambiguous between the two. It does not exercise private channels, direct
+It does not exercise the desktop window, unless you take the mapping above. The window has been
+opened once and rendered, but nothing was wired to it then (`STATUS.md` §0), so every path
+through it is unexercised — which is why running it as a second pass, after the terminal has
+proved the network path, keeps a failure attributable to one thing. It does not exercise private channels, direct
 messages, voice or search, none of which exist. And it says nothing about behaviour over days —
 retention, key retirement and segment sealing thresholds are all unmeasured beyond a single
 spike.

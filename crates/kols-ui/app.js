@@ -10,7 +10,25 @@ const { invoke } = window.__TAURI__.core;
 const { listen } = window.__TAURI__.event;
 
 const el = (id) => document.getElementById(id);
-const state = { channels: [], current: null, me: null, relay: null };
+const state = {
+  channels: [],
+  current: null,
+  me: null,
+  // This node's standing with the relay, as last reported. Null means it has
+  // not reported yet — at startup, and again after a restart.
+  relay: null,
+  // The designated set as last drawn, and when a restart was last taken. Both
+  // exist to keep the automatic restart below from firing twice for one change.
+  designated: null,
+  restartedAt: 0,
+};
+
+/// How long after a restart to ignore a changed relay set.
+///
+/// The entry this window writes comes back through replay a moment later, which
+/// is the same signal as somebody else designating one. Without this the window
+/// would restart for its own action twice.
+const RESTART_QUIET_MILLIS = 8000;
 
 /// Which view is showing. There are only two, and no network open is not an
 /// error state — it is where somebody starts.
@@ -105,11 +123,32 @@ function drawMe(me) {
 // hard to debug: a node whose cache names a relay that is gone behaves
 // differently from one that never had a relay, and the difference is invisible
 // if only the designated set is shown.
-async function drawRelays() {
+async function drawRelays({ act = false } = {}) {
   let relays;
   try {
     relays = await invoke("relays");
   } catch {
+    return;
+  }
+
+  // A relay is dialled when a node starts, so a relay this node learned *after*
+  // it started is designated and unused. That is how a member who joined before
+  // the network had one finds out about it: through replay, while their node has
+  // been running since before it existed.
+  //
+  // Only when there is no circuit, so a working node is never interrupted for a
+  // relay it does not need. Not a loop: a restart that fails to get a circuit
+  // leaves the set unchanged, so nothing fires again.
+  const designated = relays.designated.join(" ");
+  const changed = state.designated !== null && state.designated !== designated;
+  state.designated = designated;
+  if (
+    act &&
+    changed &&
+    !state.relay?.reserved &&
+    Date.now() - state.restartedAt > RESTART_QUIET_MILLIS
+  ) {
+    await restart("this network designated a relay — reconnecting through it");
     return;
   }
 
@@ -167,6 +206,25 @@ function drawRelayState(relays) {
   // before it has. Not "broken", which is the wrong thing to say for a second.
   line.className = "relay-state";
   line.textContent = "designated — waiting for this node to report";
+}
+
+/// Restarts the node, and says so where the relay's standing is shown.
+///
+/// The node reports its relay standing once, at startup, so a restart is also
+/// the only way to get a fresh answer — which makes the "reconnecting" line
+/// honest rather than decorative.
+async function restart(why) {
+  state.relay = null;
+  state.restartedAt = Date.now();
+  const line = el("relay-state");
+  line.className = "relay-state";
+  line.textContent = `${why}…`;
+  try {
+    await invoke("restart_node");
+  } catch (err) {
+    line.className = "relay-state bad";
+    line.textContent = String(err);
+  }
 }
 
 /// Enough of an address to recognise, since a full one wraps three lines.
@@ -408,16 +466,17 @@ el("relay-form").addEventListener("submit", async (event) => {
   try {
     await invoke("set_relays", { relays });
     el("relay-input").value = "";
+    // The node was restarted by the command itself, so its standing is unknown
+    // again until it reports. Recorded here too, so the same change coming back
+    // through replay a moment later is not mistaken for somebody else's.
+    state.relay = null;
+    state.restartedAt = Date.now();
     await drawRelays();
-    // Said plainly, because it is the one part of this that is not immediate: a
-    // relay is dialled when a node starts, so the circuit this designates is not
-    // reserved until the network is reopened.
     error.hidden = false;
     error.className = "relay-error good";
     error.textContent =
-      "designated. Every member learns it by replay. A relay is dialled when a " +
-      "node starts, so this one is not in use until you reopen this network — " +
-      "networks, then pick it again.";
+      "designated, and this node is reconnecting through it now. Every other " +
+      "member learns it by replay.";
   } catch (err) {
     // A refusal is an answer: a malformed address, or a member without
     // define-policy. Both belong here rather than in the channel's refusals.
@@ -525,8 +584,11 @@ async function watch() {
     drawMe(await invoke("me"));
     drawChannels(await invoke("channels"));
     // Relays are policy, so an entry that moved the log may have changed them —
-    // which is how a member learns of a relay designated after they joined.
-    await drawRelays();
+    // which is how a member learns of a relay designated after they joined. The
+    // only place that passes `act`: a change learned from the log is the case
+    // where this node is running without having dialled what the network now
+    // names.
+    await drawRelays({ act: true });
     if (state.current) await openChannel(state.current);
   });
 

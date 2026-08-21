@@ -65,9 +65,12 @@ What that needs, and where it stands:
    DI-Relay deploys one; `intranet-harness relay` is the local equivalent and is useless
    here, because it has to be reachable from both. Everything either end does after that is
    built and unproven across real networks.
-3. `kols-desktop` on Windows still needs a runner or a machine, because Tauri wants MSVC and
-   WebView2 and neither is reachable from this container. `design/07` §2 S3 records what the
-   Linux toolchain needed.
+3. **`kols-desktop` builds in CI and ships in the release** — Windows and Apple Silicon macOS,
+   installer and portable binary each. It cannot be *built* in this container (Tauri wants a
+   platform toolchain here) but that stopped being a blocker when the workflow started building
+   it. What is unproven is the window as a window: it has been opened once, before it was wired,
+   and no flow has been run through it. `design/07` §2 S3 records what the Linux toolchain
+   needed.
 
 ### Building, and where tests run
 
@@ -115,9 +118,9 @@ complete and a failure can be reproduced in the same minute it appears.
 
 | | |
 |---|---|
-| **Working on** | Milestone: a client two people on separate networks can use. E14 landed, so a joiner that goes unanswered now keeps asking instead of stranding. Both binaries build for Windows and macOS in CI and v0.1.0 publishes them. The window now does relay setup too (O12/O13 closed 2026-08-21), so no step of the flow needs a terminal — with the standing caveat that the window has still never been launched, so that is true of the code and unverified by a person. What is left is a relay reachable from both machines |
+| **Working on** | Milestone: a client two people on separate networks can use. E14 landed, so a joiner that goes unanswered now keeps asking instead of stranding. Both binaries build for Windows and macOS in CI and v0.1.0 publishes them. The window now does relay setup too (O12/O13 closed 2026-08-21), so no step of the flow needs a terminal. Honest caveat: the window **has** been launched and rendered roughly correctly, but that was before anything was wired to it, so no flow has ever been exercised through it. What is left is a relay reachable from both machines |
 | **Blocked on** | Nothing |
-| **Runnable** | **`kols`** — init (with `--relay`), relay list/set, invite, join, waiting, attach, admit, revoke, name, serve, post, read, edit, delete, react, pin, and channel create/list/rename/topic/slowmode/archive. **`kols-desktop`** — a window that creates a network or joins one by invite, runs a node for it, designates relays and reports whether one granted a circuit, lists channels, renders one and posts to it, mints an invite and admits from the waiting room, updating as records arrive. **Never launched as a window on either platform.** `cargo test` — 189 tests here and 649 in `../distributed-intranet`, clippy clean in both; `scripts/cross-check.sh` for big-endian, `taskset -c 0,1` for the starved case |
+| **Runnable** | **`kols`** — init (with `--relay`), relay list/set, invite, join, waiting, attach, admit, revoke, name, serve, post, read, edit, delete, react, pin, and channel create/list/rename/topic/slowmode/archive. **`kols-desktop`** — a window that creates a network or joins one by invite, runs a node for it, designates relays and reports whether one granted a circuit, lists channels, renders one and posts to it, mints an invite and admits from the waiting room, updating as records arrive. **Launched once, before it was wired — it rendered, and no flow has been run through it.** `cargo test` — 189 tests here and 649 in `../distributed-intranet`, clippy clean in both; `scripts/cross-check.sh` for big-endian, `taskset -c 0,1` for the starved case |
 | **Next decision needed from the user** | Nothing blocking |
 
 ---
@@ -201,7 +204,7 @@ somebody forgot.
 | O9 | **A suspended node can lose its claim and not know.** `NODE_CLAIM_STALE` is wall-clock, so a laptop asleep past the window can have its claim taken over while it still believes it holds one | Making it impossible needs the holder to re-check ownership as it beats. Rare rather than impossible today, because taking over requires somebody to start a second node inside that window | `kols-cli::store::NODE_CLAIM_STALE` |
 | O10 | ~~**Answering a key request is not idempotent, so the one request a joiner sends can never be repeated.**~~ **Closed 2026-08-21.** `kols serve` now re-asks every 30 seconds while unkeyed | Landed as **E14**, Core §3.5.1 — but not in the shape it was written. Re-delivering keys would have restored read access and no group state, so the member would fall out at the next rotation; and re-adding is worse than "a lie in the log", since revocation resolves an identity to its *first* leaf and would remove the abandoned one while handing the new key to the member it excluded. Answering now **replaces** the leaf in one commit | `kols-cli::serve`, `intranet-transport::answer_epoch_key` |
 | O11 | **A relay may not be shared between networks, and nothing enforces it.** Decided 2026-08-21: reusing one relay across two of a member's networks breaks the unlinkability Core §1.2 exists to provide, so it is not permitted. Today it is merely *not done* — a founder can paste one address into two networks and nothing objects | A relay checks no membership by design (Core §5.5 — it replays no log and holds no capabilities), so it cannot refuse a peer for being in the wrong network. Underneath that, **the separation is not structural**: `kad::Behaviour::new` takes the default protocol name and `PROTOCOL_VERSION` is `/intranet/0.1.0` for every network, so two networks sharing a relay share a routing table and their members become mutually discoverable. Enforcing it means network-scoping the protocol names, which is a wire change and a protocol extension, not a client fix. Until then the client should at least refuse to designate a relay another of its own networks already uses — it holds the workspace, so it is the one party that can tell | `design/09` §1, §3; Core §5.5 |
-| ~~O12~~ | ~~**The window cannot finish setting up a relay, and its own text says it can.**~~ **Closed 2026-08-21.** The window submits `SetBootstrapRelays` through a relay panel in the rail, shows the **full** network id with a copy button beside it — labelled as the `RELAY_NETWORK` a relay needs to boot — and the creation form no longer promises a "later" that did not exist. Address validation moved to `kols_cli::parse_relay` and is shared with the terminal, so `kols relay set` and `kols init --relay` refuse a relay naming no peer id too | Was: a command and gate that existed with no handler and no surface | `crates/kols-ui/*`, `crates/kols-app/src/main.rs` |
+| ~~O12~~ | ~~**The window cannot finish setting up a relay, and its own text says it can.**~~ **Closed 2026-08-21.** The window submits `SetBootstrapRelays` through a relay panel in the rail, shows the **full** network id with a copy button beside it — labelled as the `RELAY_NETWORK` a relay needs to boot — and the creation form no longer promises a "later" that did not exist. Designating one restarts the node onto it rather than telling you to reopen the network. Address validation moved to `kols_cli::parse_relay` and is shared with the terminal, so `kols relay set` and `kols init --relay` refuse a relay naming no peer id too | Was: a command and gate that existed with no handler and no surface | `crates/kols-ui/*`, `crates/kols-app/src/main.rs` |
 | ~~O13~~ | ~~**In the window a working relay is invisible; only a broken one reports.**~~ **Closed 2026-08-21.** New `Event::Relay { reserved, designated }`, emitted at startup in every case including success. It carries the count as well as the address so that "designates none" stays distinguishable from "designates some, none usable" — both leave a node reachable only on its own addresses, and only the second is a fault | The terminal keeps its `println!` and ignores the event, since it already said this where it happened | `crates/kols-api/src/event.rs`, `crates/kols-cli/src/serve.rs` |
 
 **Closed since this register was written:** the executor, the two checks `authorize`
@@ -257,6 +260,26 @@ design changes before anything else is built.
 ## 9. Log
 
 Newest first. One line per change that moved the state above.
+
+- **2026-08-21** — **Designating a relay now restarts the node itself, and a latent restart race
+  is gone.** Asked as "why would we not build it into the flow" — and the honest answer was that
+  naming the next step is worse than taking it. `set_relays` restarts the node it just made
+  policy for; a relay learned from *replay* does the same through `restart_node`, but only when
+  there is no circuit, so a working node is never interrupted for a relay it does not need.
+
+  **Underneath it was a real bug, not just a missing convenience.** `start_node` aborted the
+  previous node and spawned the next immediately. `JoinHandle::abort()` does not drop the
+  future — it asks the task to stop at its next await — and the store's claim is released *on
+  drop*. So the replacement raced its predecessor's claim, and `hold_node` does not fail fast on
+  a claim that looks fresh: it waits the staleness window out. The symptom would have been a
+  window that hangs for half a minute and then works, on the ordinary path of reopening a
+  network. The abort is now awaited, inside the new task so nothing blocks the interface thread.
+
+  Also corrected: **the window has been launched.** Once, before anything was wired to it, and
+  it rendered roughly correctly. Three documents said it never had. What is true is narrower and
+  more useful — no *flow* has been run through it, so every path it has is unexercised. And §0's
+  item 3 no longer says `kols-desktop` needs a Windows machine, which stopped being true when
+  CI started building it.
 
 - **2026-08-21** — **O12 and O13 closed: the window can set up a relay, and says when one
   works.** Found by a question worth recording — "why am I using the CLI at all if there is a
