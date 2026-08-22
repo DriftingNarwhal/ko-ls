@@ -47,6 +47,12 @@ impl Drop for Home {
 struct Daemon {
     child: Child,
     log: PathBuf,
+    /// How much of the log previous waits have already consumed.
+    ///
+    /// See [`Daemon::wait_for`]: without this, waiting for something a daemon
+    /// has *already* said returns immediately and the test walks on before the
+    /// thing it meant to wait for has happened.
+    read: usize,
 }
 
 impl Drop for Daemon {
@@ -62,20 +68,61 @@ impl Daemon {
         std::fs::read_to_string(&self.log).unwrap_or_default()
     }
 
-    /// Waits for `needle` to appear, or gives up and shows what did appear.
-    fn wait_for(&self, needle: &str, within: Duration) -> String {
+    /// Whether this daemon has exited, and with what.
+    ///
+    /// `wait_for` asks before every sleep, because a daemon that has *died* and
+    /// one that is merely slow look identical from the outside — a log that
+    /// stopped growing — and waiting the full deadline out to say "it never
+    /// printed this" describes the symptom rather than the cause.
+    fn exited(&mut self) -> Option<std::process::ExitStatus> {
+        self.child.try_wait().ok().flatten()
+    }
+
+    /// Waits for the **next** `needle`, or gives up and shows what did appear.
+    ///
+    /// # Why this consumes the log rather than searching all of it
+    ///
+    /// It used to search the whole file, and that made every wait on a needle a
+    /// daemon says more than once a coin flip. `a_channel_created_after_a_member_joins_reaches_them`
+    /// waits for `"picked up"` after creating one channel and again after
+    /// creating a second; the second wait matched the **first** channel's line,
+    /// still sitting in the log, and returned in *thirteen microseconds*. The
+    /// test then asserted that Bob had a channel Alice had not finished adopting
+    /// — sometimes true, sometimes not, depending on which won the race.
+    ///
+    /// That is the whole of the flake three separate sittings looked for a
+    /// distributed-systems cause for. It presented as "the governance entry did
+    /// not travel", which is a real failure mode and was not this one.
+    ///
+    /// So a match consumes everything up to and including itself, and the next
+    /// wait starts after it. Sequential steps in a scenario are what every call
+    /// site means, and now that is what they get.
+    fn wait_for(&mut self, needle: &str, within: Duration) -> String {
         // Scaled here rather than at each call site: a deadline is a claim about
         // the machine, and one place to make it is one place to be wrong.
         let within = patience(within);
         let deadline = Instant::now() + within;
         loop {
             let seen = self.output();
-            if seen.contains(needle) {
+            // Only what this daemon has said since the last wait finished.
+            let fresh = seen.get(self.read..).unwrap_or("");
+            if let Some(at) = fresh.find(needle) {
+                self.read += at + needle.len();
                 return seen;
+            }
+            // Read the log *before* checking, so a daemon that printed the
+            // needle and then exited is a success rather than a race.
+            if let Some(status) = self.exited() {
+                panic!(
+                    "the daemon exited {status} while waiting for {needle:?}. It said:\n{seen}\n\n\
+                     and every other daemon in this run said:\n{}",
+                    every_daemon_log()
+                );
             }
             assert!(
                 Instant::now() < deadline,
-                "waited {within:?} for {needle:?}, saw:\n{seen}\n\n\
+                "waited {within:?} for {needle:?} — not counting anything said before the \
+                 previous wait — saw:\n{seen}\n\n\
                  and every other daemon in this run said:\n{}",
                 every_daemon_log()
             );
@@ -167,6 +214,7 @@ fn serve_tuned(
 ) -> Daemon {
     let log = std::env::temp_dir().join(format!("kols-2n-{port}-{}.log", std::process::id()));
     let file = std::fs::File::create(&log).expect("a log file");
+    let errors = file.try_clone().expect("a second handle on the log");
     let mut command = Command::new(env!("CARGO_BIN_EXE_kols"));
     command
         .arg("--home")
@@ -187,10 +235,16 @@ fn serve_tuned(
     }
     let child = command
         .stdout(Stdio::from(file))
-        .stderr(Stdio::null())
+        // **stderr goes to the same log as stdout, and used to go nowhere.**
+        // A daemon that exits early — a lock it could not take, a store it could
+        // not read — says why on stderr and says nothing more on stdout. With
+        // stderr discarded, every such exit presented as `wait_for` running out
+        // of patience against a log that simply stopped, which reads as a hang.
+        // The reason was being thrown away at the point it was produced.
+        .stderr(Stdio::from(errors))
         .spawn()
         .expect("serve starts");
-    Daemon { child, log }
+    Daemon { child, log, read: 0 }
 }
 
 fn field(output: &str, prefix: &str) -> String {
@@ -219,7 +273,7 @@ fn a_joiner_is_admitted_keyed_and_reads_what_was_written_before_they_arrived() {
 
     // Alice's daemon keys the network on first run, because an MLS group is live
     // state no one-shot command can hold.
-    let alice_node = serve(&alice, 45101, None);
+    let mut alice_node = serve(&alice, 45101, None);
     let listening = alice_node.wait_for("listening", Duration::from_secs(20));
     let address = field(&listening, "listening ");
     assert!(
@@ -236,7 +290,7 @@ fn a_joiner_is_admitted_keyed_and_reads_what_was_written_before_they_arrived() {
     ok(&alice, &["post", "general", "written before bob arrived"]);
     alice_node.wait_for("picked up", Duration::from_secs(20));
 
-    let bob_node = serve(&bob, 45102, Some(&address));
+    let mut bob_node = serve(&bob, 45102, Some(&address));
     let keyed = bob_node.wait_for("keyed into this network", Duration::from_secs(45));
     assert!(
         keyed.contains("learned 3 governance entr"),
@@ -265,7 +319,7 @@ fn a_reply_travels_back_and_both_sides_agree_on_the_order() {
     let attached = ok(&bob, &["attach", &network]);
     ok(&alice, &["admit", &field(&attached, "kols admit ")]);
 
-    let alice_node = serve(&alice, 45103, None);
+    let mut alice_node = serve(&alice, 45103, None);
     let address = field(
         &alice_node.wait_for("listening", Duration::from_secs(20)),
         "listening ",
@@ -274,7 +328,7 @@ fn a_reply_travels_back_and_both_sides_agree_on_the_order() {
     ok(&alice, &["post", "general", "first from alice"]);
     alice_node.wait_for("picked up", Duration::from_secs(20));
 
-    let bob_node = serve(&bob, 45104, Some(&address));
+    let mut bob_node = serve(&bob, 45104, Some(&address));
     bob_node.wait_for("learned 1 record", Duration::from_secs(45));
 
     // Bob replies with **both daemons still up and nothing restarted**, which is
@@ -318,7 +372,7 @@ fn a_founder_can_still_key_somebody_in_after_restarting() {
     let network = field(&created, "network   ");
 
     // First run: creates the group and the network's first epoch key.
-    let first = serve(&alice, 45111, None);
+    let mut first = serve(&alice, 45111, None);
     let opened = first.wait_for("keyed     this network", Duration::from_secs(20));
     assert!(
         opened.contains("epoch     held, and this node can key others in"),
@@ -331,7 +385,7 @@ fn a_founder_can_still_key_somebody_in_after_restarting() {
 
     // Second run: a different process, which must come back holding the group
     // rather than only the key it can read with.
-    let second = serve(&alice, 45112, None);
+    let mut second = serve(&alice, 45112, None);
     let restarted = second.wait_for("listening", Duration::from_secs(20));
     assert!(
         restarted.contains("group     restored from the last run"),
@@ -348,7 +402,7 @@ fn a_founder_can_still_key_somebody_in_after_restarting() {
     let attached = ok(&bob, &["attach", &network]);
     ok(&alice, &["admit", &field(&attached, "kols admit ")]);
 
-    let bob_node = serve(&bob, 45113, Some(&address));
+    let mut bob_node = serve(&bob, 45113, Some(&address));
     bob_node.wait_for("keyed into this network", Duration::from_secs(45));
     bob_node.wait_for("learned 1 record", Duration::from_secs(45));
 
@@ -382,7 +436,7 @@ fn a_revocation_rotates_the_epoch_and_leaves_the_network_working() {
     let bob_identity = field(&attached, "kols admit ");
     ok(&alice, &["admit", &bob_identity]);
 
-    let alice_node = serve(&alice, 45121, None);
+    let mut alice_node = serve(&alice, 45121, None);
     let address = field(
         &alice_node.wait_for("listening", Duration::from_secs(20)),
         "listening ",
@@ -391,7 +445,7 @@ fn a_revocation_rotates_the_epoch_and_leaves_the_network_working() {
     ok(&alice, &["post", "general", "before the revocation"]);
     alice_node.wait_for("picked up", Duration::from_secs(20));
 
-    let bob_node = serve(&bob, 45122, Some(&address));
+    let mut bob_node = serve(&bob, 45122, Some(&address));
     bob_node.wait_for("keyed into this network", Duration::from_secs(45));
     bob_node.wait_for("learned 1 record", Duration::from_secs(45));
     drop(bob_node);
@@ -451,13 +505,28 @@ fn a_revocation_rotates_the_epoch_and_leaves_the_network_working() {
     // network has ever rotated through — measured at ~0.72ms per thousand keys,
     // paid per unwrap, on a list that grows with every membership change.
     ok(&alice, &["post", "general", "after the revocation"]);
-    alice_node.wait_for("picked up", Duration::from_secs(30));
 
-    assert_ne!(
-        wrappings(&alice),
-        stale,
-        "a wrapping opened under a superseded key must be re-wrapped under the current one"
-    );
+    // **Polled on the condition rather than on a log line.** This waited for
+    // `"picked up"`, which the daemon says when it adopts a *governance* entry —
+    // and a post is a record, so no further one was ever coming. It passed
+    // anyway, because `wait_for` used to search the whole log and matched the
+    // channel definition's line from a minute earlier: a wait that returned
+    // instantly and asserted nothing. The re-wrap it was standing in for is
+    // observable directly, so observe that.
+    let deadline = Instant::now() + patience(Duration::from_secs(30));
+    let refreshed = loop {
+        let now = wrappings(&alice);
+        if now != stale {
+            break now;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "a wrapping opened under a superseded key must be re-wrapped under the \
+             current one, and 30s after the rotation it still is not"
+        );
+        std::thread::sleep(Duration::from_millis(200));
+    };
+    assert_ne!(refreshed, stale);
     let read = ok(&alice, &["read", "general"]);
     assert!(read.contains("before the revocation"), "{read}");
     assert!(read.contains("after the revocation"), "{read}");
@@ -507,7 +576,7 @@ fn a_node_offline_across_a_rotation_catches_up_and_can_still_read() {
     let bob_identity = field(&ok(&bob, &["attach", &network]), "kols admit ");
     ok(&alice, &["admit", &bob_identity]);
 
-    let alice_node = serve(&alice, 45131, None);
+    let mut alice_node = serve(&alice, 45131, None);
     let address = field(
         &alice_node.wait_for("listening", Duration::from_secs(20)),
         "listening ",
@@ -515,7 +584,7 @@ fn a_node_offline_across_a_rotation_catches_up_and_can_still_read() {
     ok(&alice, &["channel", "create", "general"]);
 
     // Bob joins and is keyed, then goes away.
-    let bob_node = serve(&bob, 45132, Some(&address));
+    let mut bob_node = serve(&bob, 45132, Some(&address));
     bob_node.wait_for("keyed into this network", Duration::from_secs(45));
     drop(bob_node);
 
@@ -523,7 +592,7 @@ fn a_node_offline_across_a_rotation_catches_up_and_can_still_read() {
     // epoch — and then writes a log Bob has never seen.
     let carol_identity = field(&ok(&carol, &["attach", &network]), "kols admit ");
     ok(&alice, &["admit", &carol_identity]);
-    let carol_node = serve(&carol, 45133, Some(&address));
+    let mut carol_node = serve(&carol, 45133, Some(&address));
     carol_node.wait_for("keyed into this network", Duration::from_secs(45));
     ok(&carol, &["post", "general", "written while bob was away"]);
     // Waited for on *Alice's* side, because Carol's daemon prints nothing when
@@ -535,7 +604,7 @@ fn a_node_offline_across_a_rotation_catches_up_and_can_still_read() {
     // Bob returns. Carol's log is a new object, wrapped under the epoch that
     // admitting her produced — one Bob was not present for and must derive from
     // the commit in the log.
-    let bob_again = serve(&bob, 45134, Some(&address));
+    let mut bob_again = serve(&bob, 45134, Some(&address));
     bob_again.wait_for("caught up on", Duration::from_secs(45));
     bob_again.wait_for("learned 1 record", Duration::from_secs(60));
 
@@ -569,14 +638,14 @@ fn a_record_goes_out_live_and_arrives_exactly_once() {
     let attached = ok(&bob, &["attach", &network]);
     ok(&alice, &["admit", &field(&attached, "kols admit ")]);
 
-    let alice_node = serve(&alice, 45141, None);
+    let mut alice_node = serve(&alice, 45141, None);
     let address = field(
         &alice_node.wait_for("listening", Duration::from_secs(20)),
         "listening ",
     );
     ok(&alice, &["channel", "create", "general"]);
 
-    let bob_node = serve(&bob, 45142, Some(&address));
+    let mut bob_node = serve(&bob, 45142, Some(&address));
     bob_node.wait_for("keyed into this network", Duration::from_secs(45));
 
     ok(&alice, &["post", "general", "sent while you were watching"]);
@@ -631,7 +700,7 @@ fn history_still_converges_with_the_live_path_carrying_nothing() {
     let attached = ok(&bob, &["attach", &network]);
     ok(&alice, &["admit", &field(&attached, "kols admit ")]);
 
-    let alice_node = serve_sealing(&alice, 45143, None, None, false);
+    let mut alice_node = serve_sealing(&alice, 45143, None, None, false);
     let address = field(
         &alice_node.wait_for("listening", Duration::from_secs(20)),
         "listening ",
@@ -643,7 +712,7 @@ fn history_still_converges_with_the_live_path_carrying_nothing() {
     );
     alice_node.wait_for("picked up", Duration::from_secs(20));
 
-    let bob_node = serve_sealing(&bob, 45144, Some(&address), None, false);
+    let mut bob_node = serve_sealing(&bob, 45144, Some(&address), None, false);
     bob_node.wait_for("keyed into this network", Duration::from_secs(45));
     bob_node.wait_for("learned 1 record", Duration::from_secs(45));
 
@@ -673,7 +742,7 @@ fn a_joiner_walks_back_through_sealed_segments_to_read_the_start() {
     // A threshold small enough that ordinary chat crosses it repeatedly, so this
     // writes a chain rather than the single ever-growing segment the daemon
     // produced before sealing existed.
-    let alice_node = serve_sealing(&alice, 45109, None, Some(1024), true);
+    let mut alice_node = serve_sealing(&alice, 45109, None, Some(1024), true);
     let address = field(
         &alice_node.wait_for("listening", Duration::from_secs(20)),
         "listening ",
@@ -692,7 +761,7 @@ fn a_joiner_walks_back_through_sealed_segments_to_read_the_start() {
     // up with came through the durable path. Without this Alice re-broadcasts
     // her whole backlog the moment he subscribes and he learns all thirty
     // records live, which reads like a pass and tests nothing.
-    let bob_node = serve_sealing(&bob, 45110, Some(&address), None, false);
+    let mut bob_node = serve_sealing(&bob, 45110, Some(&address), None, false);
 
     // The property. Without the walk Bob absorbs the segment the pointer names
     // and stops, which is the tail of the conversation — he would still read
@@ -745,7 +814,7 @@ fn history_is_not_re_broadcast_live_to_a_peer_that_arrives_later() {
 
     // A window a test can get to the far side of. The bound is local tuning, so
     // a small one exercises the same rule the default does.
-    let alice_node = serve_tuned(&alice, 45151, None, None, true, Some(1_000));
+    let mut alice_node = serve_tuned(&alice, 45151, None, None, true, Some(1_000));
     let address = field(
         &alice_node.wait_for("listening", Duration::from_secs(20)),
         "listening ",
@@ -761,7 +830,7 @@ fn history_is_not_re_broadcast_live_to_a_peer_that_arrives_later() {
     // — and history is the durable path's job.
     std::thread::sleep(Duration::from_secs(3));
 
-    let bob_node = serve(&bob, 45152, Some(&address));
+    let mut bob_node = serve(&bob, 45152, Some(&address));
     bob_node.wait_for("learned 1 record", Duration::from_secs(60));
 
     let output = bob_node.output();
@@ -800,7 +869,7 @@ fn a_channel_created_after_a_member_joins_reaches_them() {
     // 45161/45162: every other port here is taken, and two tests sharing one
     // means the second daemon binds nothing and reports nothing, which reads as
     // the feature under test failing.
-    let alice_node = serve(&alice, 45161, None);
+    let mut alice_node = serve(&alice, 45161, None);
     let address = field(
         &alice_node.wait_for("listening", Duration::from_secs(20)),
         "listening ",
@@ -809,7 +878,7 @@ fn a_channel_created_after_a_member_joins_reaches_them() {
     ok(&alice, &["post", "general", "before the second channel"]);
     alice_node.wait_for("picked up", Duration::from_secs(20));
 
-    let bob_node = serve(&bob, 45162, Some(&address));
+    let mut bob_node = serve(&bob, 45162, Some(&address));
     bob_node.wait_for("learned 1 record", Duration::from_secs(45));
 
     // The whole point: defined now, with both daemons up and Bob already keyed

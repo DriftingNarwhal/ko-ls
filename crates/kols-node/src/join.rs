@@ -113,7 +113,7 @@ pub async fn redeem(
             .parse()
             .expect("a literal multiaddr parses"),
     )
-    .map_err(|err| format!("could not listen: {err}"))?;
+    .map_err(|err| err.to_string())?;
 
     for address in &invite.bootstrap_addresses {
         let parsed: Multiaddr = address

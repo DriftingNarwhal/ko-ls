@@ -630,15 +630,19 @@ reaches its claim — only *display* waits. So the reader reports two categories
 one, and only the permanent one is shown as a refusal. Saying "refused" about something
 that will appear in four minutes is a client asserting what it does not know.
 
-*Flagged: slowmode is applied to the message **class**, so an edit or a withdrawal is paced
-along with a post.* Neither spec 07 §4.3 nor §10.3 says whether slowmode reaches past a
-`Message`, and class is the answer that keeps two client versions agreeing — the whole
-argument for encoding rate class in the discriminant range (spec 07 §3.3) is that an old
-node counts a new kind correctly without understanding it, and a rule keyed on a variant's
-*meaning* gives that up. The cost is real and worth naming: in a channel with a long
-slowmode, fixing a typo waits as long as posting again does. If that turns out to be the
-wrong trade, the fix is a second, shorter bound for the corrective kinds — not a rule that
-two implementations compute differently.
+**Slowmode is applied to the message class, so an edit or a withdrawal is paced along with a
+post. Decided rather than flagged**, 2026-08-22. Neither spec 07 §4.3 nor §10.3 says whether
+slowmode reaches past a `Message`, and class is the answer that keeps two client versions
+agreeing — the whole argument for encoding rate class in the discriminant range (spec 07 §3.3)
+is that an old node counts a new kind correctly without understanding it, and a rule keyed on a
+variant's *meaning* gives that up.
+
+The cost is named rather than hidden: in a channel with a long slowmode, fixing a typo waits as
+long as posting again does. That is accepted on the expectation that slowmode is a rarely-used
+instrument — it is a moderator calming one busy channel, not a setting a network runs with. If
+that expectation turns out to be wrong, the fix is a second and shorter bound for the corrective
+kinds, still keyed on class; it is **not** a rule that reaches into what a variant means, which
+is the one shape that would have two implementations disagreeing.
 
 ### 10.5 Beyond Limits
 

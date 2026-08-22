@@ -94,7 +94,13 @@ fn serving(home: &Home, port: u16) -> Daemon {
         .args(["serve", "--listen"])
         .arg(format!("/ip4/127.0.0.1/tcp/{port}"))
         .stdout(Stdio::null())
-        .stderr(Stdio::null())
+        // **Inherited rather than discarded.** These tests watch the store
+        // rather than the daemon's output, so a daemon that exits early is
+        // otherwise completely silent and presents as whatever it failed to do
+        // — a waiting room that never fills, a name that never lands. Inherit
+        // costs nothing while the daemon is healthy, since it says nothing on
+        // stderr until something goes wrong.
+        .stderr(Stdio::inherit())
         .spawn()
         .expect("serve starts");
 
@@ -179,8 +185,24 @@ fn one_string_takes_a_stranger_from_nothing_to_a_place_in_the_network() {
     );
 
     // And the admin can see him without being sent his identity out of band.
-    let waiting = ok(&alice, &["waiting"]);
-    assert!(waiting.contains("kols admit"), "{waiting}");
+    //
+    // **Polled, because `join` returning is not the room being written.**
+    // `answer_join` sends the joiner their response *before* the daemon persists
+    // governance and records the room, so reading the file the instant `join`
+    // returns is a race — one this file's other test was fixed for and this one
+    // was not, which is why it stayed the flakiest assertion in the suite.
+    let deadline = Instant::now() + patience(Duration::from_secs(20));
+    let waiting = loop {
+        let seen = ok(&alice, &["waiting"]);
+        if seen.contains("kols admit") {
+            break seen;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "nobody reached the waiting room:\n{seen}"
+        );
+        std::thread::sleep(Duration::from_millis(200));
+    };
 
     let identity = joined
         .lines()

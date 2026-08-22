@@ -48,7 +48,13 @@ fn keyed(home: &Home, port: u16) -> Daemon {
         .args(["serve", "--listen"])
         .arg(format!("/ip4/127.0.0.1/tcp/{port}"))
         .stdout(Stdio::null())
-        .stderr(Stdio::null())
+        // **Inherited rather than discarded.** These tests watch the store
+        // rather than the daemon's output, so a daemon that exits early is
+        // otherwise completely silent and presents as whatever it failed to do
+        // — a waiting room that never fills, a name that never lands. Inherit
+        // costs nothing while the daemon is healthy, since it says nothing on
+        // stderr until something goes wrong.
+        .stderr(Stdio::inherit())
         .spawn()
         .expect("serve starts");
     let deadline = Instant::now() + patience(Duration::from_secs(20));

@@ -179,13 +179,13 @@ pub async fn serve(
     // `--listen` still overrides, for a test that wants one specific socket.
     if listen.trim().is_empty() {
         node.listen_default()
-            .map_err(|err| format!("could not listen: {err}"))?;
+            .map_err(|err| err.to_string())?;
     } else {
         let address: Multiaddr = listen
             .parse()
             .map_err(|err| format!("{listen:?} is not a multiaddr: {err}"))?;
         node.listen_on(address)
-            .map_err(|err| format!("could not listen: {err}"))?;
+            .map_err(|err| err.to_string())?;
     }
 
     // Kademlia stays in client mode until a node has a confirmed external

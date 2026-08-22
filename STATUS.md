@@ -105,9 +105,9 @@ complete and a failure can be reproduced in the same minute it appears.
   address list from external addresses alone, so a loopback relay grants reservations that
   carry nothing and everything downstream looks broken for the wrong reason.
 - **Only one process may run a node per network.** The window runs one now, so `kols serve`
-  on the same store is refused. The claim expires after 30 seconds without a heartbeat, so a
+  on the same store is refused. The claim expires after **six** seconds without a heartbeat, so a
   crash costs a pause rather than a stuck store.
-- **One daemon test is flaky, and it is not a new one.** `two_nodes::a_node_offline_across_a_rotation_catches_up_and_can_still_read` intermittently times out waiting 45s for `keyed into this network`. It passes alone and in most whole-suite runs; it was reproduced on a **stashed, pre-change tree**, so it is the suite's own timing rather than anything recent. It spawns three nodes and does two full keying rounds, which makes it the heaviest test in the file, and `common::patience` scales on core *count* — which on a wide machine is exactly why more of these run at once, so the factor does not help where it is needed. Re-run before believing a red suite.
+- **An interrupted test run leaves daemons holding the suite's ports, and every later run is poisoned until they are killed.** `Daemon::drop` kills the child, and a `Drop` does not run when the *test harness itself* is killed — a Ctrl-C, a timeout, a `pkill` on cargo. The orphans keep listening on 45101–45162 forever. The next run's daemons then cannot bind, and before 2026-08-22 they said so into a discarded stderr, so it presented as two or three tests failing in ways that read as distributed-systems faults. **This was the whole of the "flaky daemon test".** It now diagnoses itself in under a second — `the daemon exited exit status: 1 while waiting for "listening". It said: kols: could not listen: Address already in use` — but the cure is still `pkill -f 'target/debug/kols'` before believing a red suite.
 - **Nobody has looked hard at the interface.** The X forwarding into this container is
   intermittent, so the layout is unreviewed beyond the user confirming the picker renders.
   `design/09` §7's navigation question is open by default, not by decision.
@@ -264,6 +264,50 @@ design changes before anything else is built.
 
 Newest first. One line per change that moved the state above.
 
+- **2026-08-22** — **The flaky daemon test was orphaned processes, and three separate defects
+  kept that invisible.**
+
+  Asked to find out why `two_nodes::a_node_offline_across_a_rotation_catches_up_and_can_still_read`
+  was flaky. **It is not, and neither is anything else in the suite.** On a clean machine the file
+  passes 11/11 in 36 seconds, five runs in a row. On a machine where an earlier run was
+  interrupted it fails two or three tests every time, in 103 seconds.
+
+  `Daemon::drop` kills its child, and `Drop` does not run when the *harness* is killed — a
+  Ctrl-C, a timeout, a `pkill` on cargo. The orphans keep listening on 45101–45162 indefinitely,
+  and every later run's daemons fail to bind. My own earlier measurements in this session were
+  contaminated by my own orphans, including the one that made me report the flake as
+  pre-existing. It **is** pre-existing; the cause was not what I said.
+
+  **Why nobody could see it.** Three things, each of which alone would have been enough.
+  Every daemon helper spawned with `stderr(Stdio::null())`, so a daemon that exited said why into
+  a void. `wait_for` never asked whether the daemon was still alive, so it spent the whole
+  deadline reporting the wrong thing. And `TransportError::Listen` carried the empty string,
+  because `libp2p::TransportError::Other` writes nothing in `Display` and puts the reason in
+  `source()` — so even a captured stderr said `could not listen: ` with nothing after it. All
+  three are fixed; the case now diagnoses itself in under a second and names the port.
+
+  **Two real test bugs found on the way, both of which had been passing for the wrong reason.**
+  `wait_for` searched the *whole* log, so waiting for something a daemon says more than once
+  matched a line from a minute earlier — one such wait returned in **thirteen microseconds**.
+  Found by instrumenting every wait with the time it took, which turns a rare failure into a
+  number: a wait that returns instantly is not waiting. A match now consumes the log up to
+  itself. That immediately exposed the second: `a_revocation_rotates_the_epoch...` waited for
+  `"picked up"` after a post, and a post is a record rather than a governance entry, so no such
+  line was ever coming — it had always matched the channel definition's line and asserted
+  nothing. It polls the re-wrap it was standing in for instead.
+
+  And `invites::one_string_takes_a_stranger...` had the identical race its sibling in the same
+  file was fixed for and it was not: `join` returns when the daemon *answers*, which is before
+  the daemon persists governance and records the room. It polls now too.
+
+  **Found and deliberately not fixed:** `serve`'s event loop takes the store's append lock with
+  `?` in three places, and `Store::lock` gives up after ten seconds — so a one-shot command
+  holding it too long does not delay a key answer, it **terminates the node**. Core §3.5.1 makes
+  retrying safe, so degrading would cost nothing. It is a product bug rather than a test one and
+  it is not what caused this.
+
+  213 green six runs running, clippy clean; 655 upstream.
+
 - **2026-08-22** — **Abuse control was built in halves, and the halves each cited the other.**
   Found by a full documents-and-code review. §4.3 calls the rate ceilings *validity rules* —
   "a record past the ceiling is refused by readers, so a local limit would mean two members
@@ -294,9 +338,11 @@ Newest first. One line per change that moved the state above.
   stays in the set, is served like anything else, and renders when local time reaches it; telling
   somebody it was refused would be the interface asserting what it knows to be untrue.
 
-  *Flagged:* slowmode applies to the message **class**, so an edit is paced along with a post. The
-  specs do not say, and class is what keeps two client versions agreeing (spec 07 §3.3) — but in a
-  six-hour slowmode it also means waiting six hours to fix a typo. `design/01` §10.4 records it.
+  **Decided, not flagged:** slowmode applies to the message **class**, so an edit is paced along
+  with a post. The specs do not say, and class is what keeps two client versions agreeing (spec 07
+  §3.3) — the cost is that a six-hour slowmode also delays fixing a typo, accepted because
+  slowmode is an instrument a moderator reaches for occasionally rather than a setting a network
+  runs with. `design/01` §10.4 carries the reasoning and the fix if that turns out to be wrong.
 
   16 new tests in `kols-core`, one through the real binary, and all nine of the ones that assert
   new behaviour were confirmed to fail against the unfixed build first. 213 green, clippy clean.
