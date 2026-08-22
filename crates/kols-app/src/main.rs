@@ -56,6 +56,20 @@ use tauri::{Emitter, Manager};
 struct App {
     workspace: Workspace,
     open: Mutex<Option<Executor>>,
+    /// This node's last reported standing with the relay, or `None` before it
+    /// has reported.
+    ///
+    /// # Why this is held and not only emitted
+    ///
+    /// It was only emitted, and that lost it. The node starts in Tauri's
+    /// `setup`, so it can settle its relay before the webview has finished
+    /// registering listeners — and an event with nobody listening is gone. The
+    /// panel then said "waiting for this node to report" forever, about a node
+    /// that had already reported.
+    ///
+    /// So the event stays, for liveness, and this is the answer to the
+    /// question. A consumer that can *ask* cannot miss the reply.
+    relay: Mutex<Option<(Option<String>, usize)>>,
     /// The node running for the open network.
     ///
     /// Dropping the handle aborts it, which is the whole shutdown protocol:
@@ -128,6 +142,11 @@ fn me_of(executor: &Executor) -> Result<dto::Me, String> {
 /// and asking it costs nothing.
 #[tauri::command]
 fn relays(app: tauri::State<'_, App>) -> Result<dto::Relays, String> {
+    let standing = app
+        .relay
+        .lock()
+        .map_err(|_| "the relay lock is poisoned")?
+        .clone();
     app.with(|executor| {
         let store = executor.store();
         let identity = store.identity().map_err(|e| e.to_string())?;
@@ -137,6 +156,8 @@ fn relays(app: tauri::State<'_, App>) -> Result<dto::Relays, String> {
             cached: store.relays(),
             may_set: state
                 .identity_holds(&identity.id(), &intranet_governance::Capability::DefinePolicy),
+            reported: standing.is_some(),
+            reserved: standing.and_then(|(reserved, _)| reserved),
         })
     })
 }
@@ -628,6 +649,12 @@ fn start_node(handle: &tauri::AppHandle, app: tauri::State<'_, App>, root: std::
         Ok(node) => node,
         Err(_) => return,
     };
+    // A new node has not reported yet, and the standing of the one being
+    // replaced says nothing about it. Cleared here rather than when the new one
+    // reports, so the gap reads as "asking" instead of as a stale answer.
+    if let Ok(mut relay) = app.relay.lock() {
+        *relay = None;
+    }
     let previous = node.take();
 
     let emitter = handle.clone();
@@ -661,10 +688,13 @@ fn start_node(handle: &tauri::AppHandle, app: tauri::State<'_, App>, root: std::
                     reserved,
                     designated,
                 } => {
-                    let _ = emitter.emit(
-                        "kols://relay",
-                        (reserved.clone(), *designated),
-                    );
+                    // Recorded before it is emitted, so that a consumer which
+                    // missed the event can still ask. The emit is what makes it
+                    // prompt; this is what makes it reliable.
+                    if let Ok(mut held) = emitter.state::<App>().relay.lock() {
+                        *held = Some((reserved.clone(), *designated));
+                    }
+                    let _ = emitter.emit("kols://relay", (reserved.clone(), *designated));
                     continue;
                 }
             };
@@ -739,6 +769,7 @@ fn main() {
             workspace,
             open: Mutex::new(open),
             node: Mutex::new(None),
+            relay: Mutex::new(None),
         })
         .invoke_handler(tauri::generate_handler![
             me,

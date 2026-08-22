@@ -123,8 +123,20 @@ body {
   padding-left: 8px;
 }
 .relay-state.good { color: var(--good); border-left-color: var(--good); }
+/* Asking, rather than an answer. Distinct from the three verdicts so a node
+   twenty seconds into its life does not read as a node that failed. */
+.relay-state.working { color: var(--accent); border-left-color: var(--accent); }
 .relay-state.none { color: var(--warn); border-left-color: var(--warn); }
 .relay-state.bad { color: var(--bad); border-left-color: var(--bad); }
+
+.relay-help {
+  border-left: 2px solid var(--bad);
+  padding-left: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.relay-help .mono { font-size: 10px; overflow-wrap: anywhere; color: var(--text); }
 
 .relay-list {
   list-style: none;

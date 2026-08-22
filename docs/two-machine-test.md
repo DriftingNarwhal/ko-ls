@@ -79,6 +79,15 @@ in a browser.
    from step 3), `PORT=8080`.
 3. **Settings → Networking → Generate Domain**, and **Add TCP Proxy** on port `4001`.
 4. Open `/health` and expect `{"status":"ready", …}`, then `/peer-id`.
+5. **Add one more variable, now that the proxy has a host and port:**
+   `RELAY_PUBLIC_ADDR=/dns4/<proxy-host>/tcp/<proxy-port>` — **no `/p2p/…` on the end**. Then
+   redeploy.
+
+**Step 5 is the one that is skipped, and skipping it fails in the least helpful way.** The relay
+listens on a private container address, so what it announces is unreachable. It still accepts
+reservations, still reports healthy, and hands clients an address list they reject — so
+everything looks fine except that no circuit is ever granted. `RELAY_PUBLIC_ADDR` is what tells
+it where it actually is. It is harmless when unnecessary.
 
 **Both parts of step 3 are required and it is easy to do only the first.** Without the domain
 the health check fails and Railway restarts forever. Without the TCP proxy the service looks
@@ -111,7 +120,8 @@ The node then restarts itself onto the new relay. Watch the line above the panel
 | It says | Meaning |
 |---|---|
 | **reserved a circuit on …** | Working. Continue |
-| **designated, but none of them granted a circuit** | **Stop here.** The relay accepted the reservation and handed back no address — almost always the loopback case above, or a relay with no routable listen address (`RELAY_PUBLIC_ADDR`) |
+| **asking the relay for a circuit…** | Working on it. Settles within about 20 seconds |
+| **designated, and no circuit was granted** | **Stop here** — and see step 4.5. The relay answered and handed back nothing usable, which is nearly always a missing `RELAY_PUBLIC_ADDR`. The panel says so, with the value to set |
 | **none designated** | The designation did not take. Check for a refusal under the form |
 
 Nothing downstream can work without a circuit, so do not carry on past the second row.

@@ -14,13 +14,11 @@ const state = {
   channels: [],
   current: null,
   me: null,
-  // This node's standing with the relay, as last reported. Null means it has
-  // not reported yet — at startup, and again after a restart.
-  relay: null,
   // The designated set as last drawn, and when a restart was last taken. Both
   // exist to keep the automatic restart below from firing twice for one change.
   designated: null,
   restartedAt: 0,
+  relayPoll: null,
 };
 
 /// How long after a restart to ignore a changed relay set.
@@ -153,7 +151,7 @@ async function drawRelays({ act = false } = {}) {
   if (
     act &&
     changed &&
-    !state.relay?.reserved &&
+    !relays.reserved &&
     Date.now() - state.restartedAt > RESTART_QUIET_MILLIS
   ) {
     await restart("this network designated a relay — reconnecting through it");
@@ -189,11 +187,11 @@ async function drawRelays({ act = false } = {}) {
 /// trouble and never relay health.
 function drawRelayState(relays) {
   const line = el("relay-state");
-  const standing = state.relay;
 
-  if (standing?.reserved) {
+  if (relays.reserved) {
     line.className = "relay-state good";
-    line.textContent = `reserved a circuit on ${short(standing.reserved)}`;
+    line.textContent = `reserved a circuit on ${short(relays.reserved)}`;
+    stopWatchingRelay();
     return;
   }
   if (relays.designated.length === 0) {
@@ -201,34 +199,65 @@ function drawRelayState(relays) {
     line.textContent =
       "none designated — you are reachable only on your own addresses, and " +
       "cannot invite anybody yet";
+    stopWatchingRelay();
     return;
   }
-  if (standing && standing.designated > 0) {
+  if (relays.reported) {
     line.className = "relay-state bad";
     line.textContent =
-      "designated, but none of them granted a circuit — nobody behind a router " +
-      "can reach you";
+      "designated, and no circuit was granted. The relay answered and handed " +
+      "back no usable address — see the note under the form";
+    el("relay-help").hidden = false;
+    stopWatchingRelay();
     return;
   }
-  // No standing yet: the node reports once, at startup, so this is the gap
-  // before it has. Not "broken", which is the wrong thing to say for a second.
-  line.className = "relay-state";
-  line.textContent = "designated — waiting for this node to report";
+  // Not reported yet. The node settles this within about 20 seconds of
+  // starting, so this is a real "asking", and it says so in those words rather
+  // than in words that could be mistaken for a verdict.
+  line.className = "relay-state working";
+  line.textContent = "asking the relay for a circuit…";
+}
+
+/// Polls while the node has not reported.
+///
+/// Belt and braces on the event, which is prompt and can be missed — a node that
+/// settles before the webview has registered its listeners emits into nothing.
+/// Reservation is bounded at roughly 20 seconds, so this asks a little past that
+/// and stops.
+function watchRelay() {
+  stopWatchingRelay();
+  let asked = 0;
+  state.relayPoll = setInterval(async () => {
+    asked += 1;
+    if (asked > 15) {
+      stopWatchingRelay();
+      return;
+    }
+    await drawRelays();
+  }, 2000);
+}
+
+function stopWatchingRelay() {
+  if (state.relayPoll) {
+    clearInterval(state.relayPoll);
+    state.relayPoll = null;
+  }
 }
 
 /// Restarts the node, and says so where the relay's standing is shown.
 ///
-/// The node reports its relay standing once, at startup, so a restart is also
-/// the only way to get a fresh answer — which makes the "reconnecting" line
+/// The node settles its relay standing once, when it starts, so restarting is
+/// also the only way to get a fresh answer — which makes the "reconnecting" line
 /// honest rather than decorative.
 async function restart(why) {
-  state.relay = null;
   state.restartedAt = Date.now();
   const line = el("relay-state");
-  line.className = "relay-state";
+  line.className = "relay-state working";
   line.textContent = `${why}…`;
+  el("relay-help").hidden = true;
   try {
     await invoke("restart_node");
+    watchRelay();
   } catch (err) {
     line.className = "relay-state bad";
     line.textContent = String(err);
@@ -584,14 +613,16 @@ el("relay-form").addEventListener("submit", async (event) => {
     // The node was restarted by the command itself, so its standing is unknown
     // again until it reports. Recorded here too, so the same change coming back
     // through replay a moment later is not mistaken for somebody else's.
-    state.relay = null;
     state.restartedAt = Date.now();
+    el("relay-help").hidden = true;
     await drawRelays();
+    watchRelay();
     error.hidden = false;
     error.className = "relay-error good";
     error.textContent =
-      "designated, and this node is reconnecting through it now. Every other " +
-      "member learns it by replay.";
+      "designated, and this node is restarting onto it. Every other member " +
+      "learns it by replay. The line above says what happens next — it takes " +
+      "up to about 20 seconds to settle.";
   } catch (err) {
     // A refusal is an answer: a malformed address, or a member without
     // define-policy. Both belong here rather than in the channel's refusals.
@@ -713,9 +744,10 @@ async function watch() {
 
   // The node's standing with the relay, reported once at startup — and
   // reported on success, which is the half a window never used to get.
-  await listen("kols://relay", async (event) => {
-    const [reserved, designated] = event.payload;
-    state.relay = { reserved, designated };
+  await listen("kols://relay", async () => {
+    // The payload is not read: the node holds this answer and `relays` returns
+    // it, so the event's only job is to say "ask again now" rather than to be
+    // the answer itself. That is what makes a missed one harmless.
     await drawRelays();
   });
 
@@ -741,6 +773,7 @@ async function start() {
 
   show("app");
   drawMe(me);
+  watchRelay();
   const channels = await invoke("channels");
   drawChannels(channels);
   if (channels.length > 0) await openChannel(channels[0].id);

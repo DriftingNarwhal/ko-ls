@@ -123,6 +123,26 @@
           <p class="relay-state" id="relay-state">…</p>
           <ul class="relay-list" id="relay-list"></ul>
 
+          <!-- Shown only when a circuit was refused. The cause is nearly always
+               the same one and it is not guessable from the symptom: the relay
+               grants the reservation, reports healthy, and hands back an address
+               list built from its own private container address. -->
+          <div class="relay-help" id="relay-help" hidden>
+            <p class="dim">
+              Almost always the relay having no routable address of its own —
+              behind a proxy it hands back its private container address, grants
+              the reservation anyway, and keeps reporting healthy. Set
+              <code>RELAY_PUBLIC_ADDR</code> on the relay to its public host and
+              port, with <strong>no</strong> <code>/p2p/…</code> on the end:
+            </p>
+            <p class="mono dim">/dns4/your-host.proxy.rlwy.net/tcp/54321</p>
+            <p class="dim">
+              Then redeploy it and press <strong>designate</strong> again here,
+              which restarts this node onto it. Worth checking first: the relay's
+              <code>/health</code> lists what it is actually listening on.
+            </p>
+          </div>
+
           <details class="relay-set" id="relay-set" hidden>
             <summary>set the relay</summary>
 

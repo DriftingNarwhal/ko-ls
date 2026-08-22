@@ -261,6 +261,31 @@ design changes before anything else is built.
 
 Newest first. One line per change that moved the state above.
 
+- **2026-08-22** — **The relay panel could miss the answer it was waiting for.** Found by the
+  first real use of the window: the panel sat on "waiting for this node to report" about a node
+  that had already reported.
+
+  The standing was **only ever pushed**, as `kols://relay`. The node starts in Tauri's `setup`,
+  so it can settle its relay before the webview has finished registering listeners — and an
+  event with nobody listening is gone, permanently, with no second chance because the node
+  settles this once at startup. The window then reported a state that had no way of changing.
+
+  Now the node *holds* its standing and `relays` returns it, so the event's only job is to say
+  "ask again"; a missed one is harmless. The interface also polls every two seconds while
+  unreported, stopping at about 30 — reservation is bounded near 20 — which covers a missed
+  event without waiting on one.
+
+  Two things that made this hard to see and are also fixed. **Nothing said the node was working
+  on it**: pressing *designate* restarted the node and the panel changed almost nothing, so there
+  was no way to tell the button had done anything. There is now an *asking the relay for a
+  circuit…* state, visually distinct from the three verdicts. And **the refusal named no cause**,
+  which for this failure is nearly always one thing: a relay behind a proxy announces its private
+  container address, grants the reservation, reports healthy, and hands back a list clients
+  reject. The panel now says that, with the `RELAY_PUBLIC_ADDR` to set — and the runbook adds it
+  as step 4.5 rather than leaving it to be discovered.
+
+  192 green, clippy clean.
+
 - **2026-08-21** — **The window can now carry the whole test, and two gaps had to close before
   that was true.** Asked for a window-only test; checking rather than assuming found that it was
   not possible yet, for reasons neither of us had noticed.

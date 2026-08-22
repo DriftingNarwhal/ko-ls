@@ -205,6 +205,14 @@ pub struct Relays {
     pub cached: Vec<String>,
     /// Whether this member may change them — `define-policy`.
     pub may_set: bool,
+    /// Whether the running node has reported its relay standing yet.
+    ///
+    /// Distinguishes "no circuit" from "not asked yet", which look identical
+    /// from the interface and mean opposite things: the first is a fault to act
+    /// on, the second is a node that has been up for two seconds.
+    pub reported: bool,
+    /// The relay a circuit was reserved on, when one was.
+    pub reserved: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
