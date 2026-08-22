@@ -261,6 +261,32 @@ design changes before anything else is built.
 
 Newest first. One line per change that moved the state above.
 
+- **2026-08-22** — **The client offered no IPv6, which is the path the spec designates when a hole
+  punch fails.** Raised as "the relay should never carry messages", which sent me to Core §5.2 —
+  and the sentence that matters is this one:
+
+  > Two peers who can never hole-punch are expected to reach each other over IPv6, not over a
+  > relay. … A deployment that expects CGNAT users to depend on relayed circuits for ordinary
+  > traffic has misread this ordering.
+
+  That is what had been built. Both front ends bound `/ip4/0.0.0.0/tcp/0` and nothing else: no
+  IPv6, no QUIC — visible in a real log where every listening line was IPv4 TCP. §5.1 requires
+  both families and both transports, `MemberNode::listen_default` had provided exactly that all
+  along, and its own doc comment says binding all four "is what gives two peers behind CGNAT a
+  path at all". Both front ends now default to it; `--listen` still overrides.
+
+  **Where the stronger claim does not hold, recorded because it will come up again.** §5.2 keeps
+  tier 3 deliberately: a relayed circuit is "a correctness guarantee, not a usable path", so that
+  two peers are never partitioned. It is bounded by §5.3's ceilings, which "are the design, not a
+  throttle to be raised when users complain". So content over a relay is permitted, expected to
+  hit the caps, and never something to depend on — the remedy being IPv6 or a member volunteering
+  as a relay, never a larger allowance on the hosted one.
+
+  Dual-stack also multiplied what an invite carries: one machine had five interfaces before IPv6
+  and QUIC doubled each. Loopback, unspecified and IPv6 link-local are now filtered out of the
+  published set — legitimate to listen on, useless to hand somebody else, and previously shipped
+  in every invite. 195 tests here.
+
 - **2026-08-22** — **Taking the relay away silenced two nodes, and bringing it back did not
   reconnect them.** A deliberate test — is the hole punch working? — and it found three faults,
   one of which was hurting every conversation whether or not a relay was involved.

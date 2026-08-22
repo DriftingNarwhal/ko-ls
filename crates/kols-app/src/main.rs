@@ -748,7 +748,8 @@ fn start_node(handle: &tauri::AppHandle, app: tauri::State<'_, App>, root: std::
 
         let outcome = kols_node::serve::serve(
             root,
-            "/ip4/0.0.0.0/tcp/0",
+            // Dual-stack: TCP and QUIC over IPv4 and IPv6. See `serve`.
+            "",
             &[],
             kols_node::serve::SEAL_TARGET_BYTES,
             true,

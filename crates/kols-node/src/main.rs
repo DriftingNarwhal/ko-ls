@@ -143,8 +143,12 @@ enum Command {
     },
     /// Run this node so peers can reach it, and pull in what they hold.
     Serve {
-        /// What to listen on.
-        #[arg(long, default_value = "/ip4/0.0.0.0/tcp/0")]
+        /// What to listen on. Empty means the dual-stack defaults.
+        ///
+        /// TCP and QUIC over IPv4 and IPv6, which Core §5.1 requires and §5.2
+        /// depends on: a pair behind CGNAT usually cannot traverse IPv4, so
+        /// IPv6 is the path the spec designates for them rather than a relay.
+        #[arg(long, default_value = "")]
         listen: String,
         /// Peers to dial on startup, as multiaddrs including `/p2p/<peer-id>`.
         #[arg(long = "peer")]

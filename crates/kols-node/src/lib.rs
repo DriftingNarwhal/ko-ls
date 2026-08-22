@@ -89,6 +89,28 @@ pub fn random_32() -> Result<[u8; 32], String> {
     Ok(bytes)
 }
 
+/// Whether an address is worth handing to somebody else.
+///
+/// A node listens on every interface it has, and most of them cannot be reached
+/// from anywhere else: loopback answers only this machine, and an IPv6
+/// link-local address is scoped to one link and needs a zone index a joiner does
+/// not have. Both are legitimate to *listen* on and useless to *publish*, and an
+/// invite carries whatever was published.
+pub fn is_worth_publishing(address: &libp2p::Multiaddr) -> bool {
+    address.iter().all(|part| match part {
+        libp2p::multiaddr::Protocol::Ip4(ip) => !ip.is_loopback() && !ip.is_unspecified(),
+        libp2p::multiaddr::Protocol::Ip6(ip) => {
+            !ip.is_loopback() && !ip.is_unspecified() && !is_link_local(&ip)
+        }
+        _ => true,
+    })
+}
+
+/// `fe80::/10`, which `std` has no stable predicate for.
+fn is_link_local(ip: &std::net::Ipv6Addr) -> bool {
+    ip.segments()[0] & 0xffc0 == 0xfe80
+}
+
 /// Whether an address is a relay circuit rather than a direct socket.
 ///
 /// The distinction matters for what a node should say when one goes away: a
@@ -98,6 +120,45 @@ pub fn is_circuit_address(address: &libp2p::Multiaddr) -> bool {
     address
         .iter()
         .any(|part| matches!(part, libp2p::multiaddr::Protocol::P2pCircuit))
+}
+
+#[cfg(test)]
+mod address_tests {
+    use super::is_worth_publishing;
+    use libp2p::Multiaddr;
+
+    fn addr(text: &str) -> Multiaddr {
+        text.parse().expect("valid multiaddr")
+    }
+
+    #[test]
+    fn a_routable_address_is_published() {
+        assert!(is_worth_publishing(&addr("/ip4/203.0.113.7/tcp/4001")));
+        assert!(is_worth_publishing(&addr("/ip6/2001:db8::1/udp/4001/quic-v1")));
+        // A private LAN address still is: two machines on one network reach
+        // each other with it, and tier 1 is meant to find that.
+        assert!(is_worth_publishing(&addr("/ip4/192.168.1.200/tcp/65519")));
+    }
+
+    #[test]
+    fn what_cannot_answer_anybody_else_is_not() {
+        // Loopback answers only this machine, and shipped in every invite.
+        assert!(!is_worth_publishing(&addr("/ip4/127.0.0.1/tcp/65519")));
+        assert!(!is_worth_publishing(&addr("/ip6/::1/tcp/65519")));
+        // Link-local is scoped to one link and needs a zone index the joiner
+        // does not have. Binding dual-stack is what made these appear.
+        assert!(!is_worth_publishing(&addr("/ip6/fe80::1/tcp/4001")));
+        assert!(!is_worth_publishing(&addr("/ip4/0.0.0.0/tcp/4001")));
+    }
+
+    #[test]
+    fn a_circuit_address_survives_the_filter() {
+        // Its IP belongs to the relay rather than to this node, and it is the
+        // one address a peer behind NAT can actually use.
+        assert!(is_worth_publishing(&addr(
+            "/ip4/66.33.22.230/tcp/55503/p2p/12D3KooWDq3KKteeKPBfkcz39RuaqnT49BjhMiKAcnrVDDbw4Vtn/p2p-circuit"
+        )));
+    }
 }
 
 #[cfg(test)]

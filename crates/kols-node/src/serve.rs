@@ -166,11 +166,27 @@ pub async fn serve(
     let identity = store.identity().map_err(|e| e.to_string())?;
 
     let mut node = MemberNode::new(&identity).map_err(|err| format!("could not start: {err}"))?;
-    let address: Multiaddr = listen
-        .parse()
-        .map_err(|err| format!("{listen:?} is not a multiaddr: {err}"))?;
-    node.listen_on(address)
-        .map_err(|err| format!("could not listen: {err}"))?;
+    // **Dual-stack unless told otherwise, and this is load-bearing.**
+    //
+    // This bound `/ip4/0.0.0.0/tcp/0` and nothing else: no IPv6, no QUIC. Core
+    // §5.1 requires both families and both transports, and §5.2 says why in the
+    // case that actually bites — a pair behind CGNAT typically cannot traverse
+    // IPv4 at all, so **IPv6 is the path the spec designates for them**, not a
+    // relay circuit. Offering only IPv4 removes tier 1's better half and leaves
+    // such a pair on tier 3, which §5.2 calls a correctness guarantee and not a
+    // usable path, and which §5.3's ceilings are designed to make untenable.
+    //
+    // `--listen` still overrides, for a test that wants one specific socket.
+    if listen.trim().is_empty() {
+        node.listen_default()
+            .map_err(|err| format!("could not listen: {err}"))?;
+    } else {
+        let address: Multiaddr = listen
+            .parse()
+            .map_err(|err| format!("{listen:?} is not a multiaddr: {err}"))?;
+        node.listen_on(address)
+            .map_err(|err| format!("could not listen: {err}"))?;
+    }
 
     // Kademlia stays in client mode until a node has a confirmed external
     // address, and on loopback that never happens — so every provider lookup
@@ -559,8 +575,17 @@ pub async fn serve(
                     // Written down so a one-shot `kols invite` can carry them.
                     // Only a running node knows what it is reachable on, and an
                     // invite with no bootstrap address cannot connect anybody.
-                    let addresses: Vec<String> =
-                        listening.iter().map(ToString::to_string).collect();
+                    // Loopback and link-local are never useful to somebody
+                    // else, and an invite carries whatever is here. Binding
+                    // dual-stack multiplied the noise: this machine had five
+                    // interfaces before IPv6 and QUIC doubled each of them, so
+                    // an unfiltered invite names a dozen addresses a joiner
+                    // will dial in order, most of which cannot answer.
+                    let addresses: Vec<String> = listening
+                        .iter()
+                        .filter(|address| crate::is_worth_publishing(address))
+                        .map(ToString::to_string)
+                        .collect();
                     if let Err(err) = store.set_addresses(&addresses) {
                         sink(&[Event::Degraded {
                             reason: format!("could not record this node's addresses: {err}"),
