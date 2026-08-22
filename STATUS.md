@@ -262,6 +262,32 @@ design changes before anything else is built.
 
 Newest first. One line per change that moved the state above.
 
+- **2026-08-22** — **Interface pass one: settings, votes, and a door that clears.**
+
+  **The waiting room never emptied**, and the cause is worth keeping: the node's room is filled
+  when a join is answered and emptied by nothing that admission passes through — admitting writes
+  a governance entry, and no path from one reaches that room. So a founder was shown somebody
+  they had already let in, beside an `admit` button already pressed. The published list is now
+  recomputed every tick and filtered against **replayed membership**, which is the authority — so
+  it is also right for members admitted by somebody else, and after a restart. Verified against
+  the unfixed build first: the new assertion in `invites.rs` fails there.
+
+  **The relay moved out of the rail into a settings sheet.** Core §5.5 calls a bootstrap relay
+  scaffolding, and scaffolding does not belong in the frame you look at all day — but it is one
+  keystroke away, because when it *is* wanted it is usually because nothing else works. Escape
+  closes it.
+
+  **Reactions became an up/down vote, with no protocol change.** Spec 07's
+  `Reaction { target, key, remove }` carries a free-form key, so up and down are two of them.
+  Mutually exclusive, which is the difference from a reaction: voting up while holding a down
+  vote withdraws the down vote first — two records, both this member's, because the log has no
+  notion of changing your mind, only of what you have said. Keys this client does not offer are
+  still rendered as chips, since another client writing one is conformant and hiding it would
+  make "no button for that" look like "never happened".
+
+  196 green, clippy clean. **Presence — who is online in a network or a channel — is not built**;
+  see the note in §1, since the honest version is narrower than the request.
+
 - **2026-08-22** — **Circuit lifetime raised to 60s, and §5.3 now says what the ceilings do not
   bound.** Asked whether the lowered ceilings limit a network to hundreds of thousands of nodes.
   They do not, and the arithmetic runs the other way: `max_circuit_duration` and

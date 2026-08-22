@@ -193,6 +193,28 @@ fn one_string_takes_a_stranger_from_nothing_to_a_place_in_the_network() {
     );
 
     ok(&alice, &["admit", identity]);
+
+    // **And then they are not waiting any more.**
+    //
+    // The node's waiting room is filled when a join is answered and emptied by
+    // nothing that admission passes through — admitting writes a governance
+    // entry, and no path from one reaches that room. So a founder kept being
+    // shown somebody they had already let in, beside an `admit` button that had
+    // already been pressed. The daemon recomputes the published list against
+    // replayed membership, so this is the first tick after the entry lands.
+    let deadline = Instant::now() + Duration::from_secs(30);
+    let mut waiting = String::new();
+    while Instant::now() < deadline {
+        waiting = ok(&alice, &["waiting"]);
+        if !waiting.contains(identity) {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(250));
+    }
+    assert!(
+        !waiting.contains(identity),
+        "an admitted member is still shown at the door:\n{waiting}"
+    );
 }
 
 #[test]

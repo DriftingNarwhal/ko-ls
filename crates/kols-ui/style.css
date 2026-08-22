@@ -102,6 +102,65 @@ body {
 
 .dim { color: var(--dim); font-size: 12px; margin: 0; }
 
+/* ---- settings ----------------------------------------------------------- */
+
+.rail-actions {
+  display: flex;
+  gap: 6px;
+}
+
+/* Over everything rather than beside it. Settings are rare and modal in intent:
+   somebody here is doing one thing, not reading a channel at the same time. */
+.settings {
+  position: fixed;
+  inset: 0;
+  background: rgba(9, 10, 14, 0.72);
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding: 6vh var(--gap);
+  z-index: 10;
+}
+.settings-sheet {
+  background: var(--raised);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  width: min(560px, 100%);
+  max-height: 88vh;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+.settings-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--gap);
+  border-bottom: 1px solid var(--line);
+}
+.settings-head h2 {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+}
+.settings-head button {
+  background: none;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  color: var(--text);
+  cursor: pointer;
+  font-size: 12px;
+  padding: 3px 10px;
+}
+.settings-head button:hover { border-color: var(--accent); color: var(--accent); }
+.settings-body {
+  overflow-y: auto;
+  min-height: 0;
+}
+/* Inside the sheet it is the only thing there, so it keeps no top border of its
+   own and its details sit open rather than folded away behind a summary. */
+.settings-body .relay { border-top: none; }
+
 /* ---- the relay --------------------------------------------------------- */
 
 .relay {
@@ -361,6 +420,34 @@ body {
   color: var(--dim);
   font-size: 11px;
 }
+
+/* The vote. Kept tight and to the left of the actions, since it is the one
+   control on a message that everybody has rather than one gated on capability. */
+.votes {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+}
+.votes .vote {
+  background: none;
+  border: none;
+  color: var(--dim);
+  cursor: pointer;
+  font-size: 11px;
+  line-height: 1;
+  padding: 2px 3px;
+  border-radius: var(--radius);
+}
+.votes .vote:hover { color: var(--text); background: #1d212b; }
+.votes .vote.cast { color: var(--accent); }
+.votes .score {
+  color: var(--dim);
+  font: 11px/1 var(--mono);
+  min-width: 1.4em;
+  text-align: center;
+}
+.votes .score.up { color: var(--good); }
+.votes .score.down { color: var(--bad); }
 
 .message .reaction {
   background: #1d212b;

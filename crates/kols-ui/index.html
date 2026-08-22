@@ -70,7 +70,10 @@
       <aside class="rail" data-kols="rail">
         <!-- Question 1: which network am I in? -->
         <header class="network" data-kols="network">
-          <button class="switcher" id="switcher" title="your networks">networks</button>
+          <div class="rail-actions">
+            <button class="switcher" id="switcher" title="your networks">networks</button>
+            <button class="switcher" id="open-settings" title="network settings">settings</button>
+          </div>
           <h1 id="network-label">…</h1>
           <p class="mono" id="network-id"></p>
           <p class="you">
@@ -109,13 +112,69 @@
           <p class="dim" id="waiting-note" hidden></p>
         </section>
 
+        <footer class="state" data-kols="state">
+          <p id="key-state"></p>
+        </footer>
+      </aside>
+
+      <main class="channel" data-kys="channel" data-kols="channel">
+        <header class="channel-head" data-kols="channel-head">
+          <h2 id="channel-name">no channel</h2>
+          <p id="channel-topic"></p>
+        </header>
+
+        <ol class="messages" id="messages" data-kols="messages"></ol>
+
+        <div class="refused" id="refused" hidden data-kols="refused"></div>
+
+        <form class="composer" id="composer" data-kols="composer" hidden>
+          <input
+            id="body"
+            type="text"
+            autocomplete="off"
+            placeholder="write something"
+          />
+          <button type="submit">send</button>
+        </form>
+        <p class="composer-denied" id="composer-denied" hidden>
+          you may not post here
+        </p>
+
+        <!-- Claiming a name is the member's own act, so nothing does it at
+             admission and the composer waits until they have. -->
+        <form class="namer" id="namer" data-kols="namer" hidden>
+          <label for="name">pick a name before you post</label>
+          <div class="namer-row">
+            <input id="name" type="text" autocomplete="off" placeholder="a name" />
+            <button type="submit">claim</button>
+          </div>
+          <p class="namer-note">
+            Unique here, and yours permanently — it stays bound to you even if you
+            claim another, so nobody inherits it and what you wrote with it.
+          </p>
+        </form>
+      </main>
+    </div>
+    <!-- Settings. Out of the rail because a relay is something you set once and
+         then never think about — Core §5.5 calls a bootstrap relay scaffolding,
+         and scaffolding does not belong in the frame you look at all day. Still
+         one keystroke away, because when it *is* wanted it is usually because
+         nothing else works. -->
+    <section class="settings" id="settings" data-kols="settings" hidden>
+      <div class="settings-sheet">
+        <header class="settings-head">
+          <h2>settings</h2>
+          <button type="button" id="close-settings" title="close">done</button>
+        </header>
+
+        <div class="settings-body">
         <!-- The relay, which is the one part of setting a network up that has an
              order you cannot guess: the relay will not boot without this
              network's id, and this network cannot invite anybody before it has
              a relay. So the id is here, next to where you paste the address
              back. Shown to everybody, because "is the relay working" is a
              question any member can have; only the form is gated. -->
-        <section class="relay" id="relay" data-kols="relay" hidden>
+          <section class="relay" id="relay" data-kols="relay" hidden>
           <div class="channels-head">
             <h2>relay</h2>
           </div>
@@ -141,7 +200,7 @@
             </p>
           </div>
 
-          <details class="relay-set" id="relay-set" hidden>
+          <details class="relay-set" id="relay-set" open hidden>
             <summary>set the relay</summary>
 
             <p class="dim">
@@ -188,49 +247,10 @@
           </details>
         </section>
 
-        <footer class="state" data-kols="state">
-          <p id="key-state"></p>
-        </footer>
-      </aside>
+        </div>
+      </div>
+    </section>
 
-      <main class="channel" data-kys="channel" data-kols="channel">
-        <header class="channel-head" data-kols="channel-head">
-          <h2 id="channel-name">no channel</h2>
-          <p id="channel-topic"></p>
-        </header>
-
-        <ol class="messages" id="messages" data-kols="messages"></ol>
-
-        <div class="refused" id="refused" hidden data-kols="refused"></div>
-
-        <form class="composer" id="composer" data-kols="composer" hidden>
-          <input
-            id="body"
-            type="text"
-            autocomplete="off"
-            placeholder="write something"
-          />
-          <button type="submit">send</button>
-        </form>
-        <p class="composer-denied" id="composer-denied" hidden>
-          you may not post here
-        </p>
-
-        <!-- Claiming a name is the member's own act, so nothing does it at
-             admission and the composer waits until they have. -->
-        <form class="namer" id="namer" data-kols="namer" hidden>
-          <label for="name">pick a name before you post</label>
-          <div class="namer-row">
-            <input id="name" type="text" autocomplete="off" placeholder="a name" />
-            <button type="submit">claim</button>
-          </div>
-          <p class="namer-note">
-            Unique here, and yours permanently — it stays bound to you even if you
-            claim another, so nobody inherits it and what you wrote with it.
-          </p>
-        </form>
-      </main>
-    </div>
     <script src="app.js"></script>
   </body>
 </html>

@@ -403,6 +403,71 @@ async function act(run) {
   }
 }
 
+/// The two reaction keys this client offers as a vote.
+///
+/// A vote is not a new record kind: spec 07's `Reaction { target, key, remove }`
+/// carries a free-form key, so up and down are two of them and the rest of the
+/// protocol is unchanged. Another client writing `:tada:` is still conformant,
+/// and still rendered here as a chip.
+const UP = "+1";
+const DOWN = "-1";
+
+/// Up, score, down — one control, because they are one decision.
+///
+/// Mutually exclusive, which is the whole difference from a reaction: voting up
+/// while holding a down vote withdraws the down vote first. That is two records
+/// rather than one, both authored by this member, because the log has no notion
+/// of changing your mind — only of what you have said.
+function votes(channel, message) {
+  const box = document.createElement("span");
+  box.className = "votes";
+
+  const held = (key) => message.reactions.find((r) => r.key === key);
+  const up = held(UP);
+  const down = held(DOWN);
+  const score = (up?.count ?? 0) - (down?.count ?? 0);
+
+  const cast = (key, mine, opposite) =>
+    act(async () => {
+      if (mine) {
+        await invoke("react", { channel, message: message.id, key, remove: true });
+        return;
+      }
+      if (opposite?.mine) {
+        await invoke("react", {
+          channel,
+          message: message.id,
+          key: key === UP ? DOWN : UP,
+          remove: true,
+        });
+      }
+      await invoke("react", { channel, message: message.id, key, remove: false });
+    });
+
+  const arrow = (label, key, mine, opposite, title) => {
+    const button = document.createElement("button");
+    button.className = mine ? "vote cast" : "vote";
+    button.textContent = label;
+    button.title = title;
+    button.addEventListener("click", () => cast(key, mine, opposite));
+    return button;
+  };
+
+  const count = document.createElement("span");
+  // Zero is shown rather than hidden: a message nobody voted on and a message
+  // with two up and two down are different facts about the same number.
+  count.className = score > 0 ? "score up" : score < 0 ? "score down" : "score";
+  count.textContent = String(score);
+  count.title = `${up?.count ?? 0} up, ${down?.count ?? 0} down`;
+
+  box.append(
+    arrow("▲", UP, Boolean(up?.mine), down, up?.mine ? "take back your vote" : "vote up"),
+    count,
+    arrow("▼", DOWN, Boolean(down?.mine), up, down?.mine ? "take back your vote" : "vote down"),
+  );
+  return box;
+}
+
 /// What this member may do to one message.
 ///
 /// Revising and withdrawing are offered on a member's own messages only, which
@@ -421,12 +486,6 @@ function actions(channel, message) {
     it.addEventListener("click", () => act(run));
     bar.append(it);
   };
-
-  if (!message.withdrawn) {
-    button("+1", "react", () =>
-      invoke("react", { channel, message: message.id, key: "+1", remove: false }),
-    );
-  }
 
   if (message.mine && !message.withdrawn) {
     button("edit", "revise this", () => {
@@ -539,11 +598,14 @@ function drawMessages(opened) {
       row.append(pinned);
     }
 
-    // Reactions are toggles, so each chip knows which way it is about to go.
-    // `mine` comes from the core rather than being guessed here: a client that
-    // guessed would send an add for one it already holds, which does nothing and
-    // reads as a dead button.
+    if (!message.withdrawn) row.append(votes(opened.channel, message));
+
+    // Anything that is not a vote, kept visible. The record carries a free-form
+    // key (spec 07 §3), so another client may write reactions this one does not
+    // offer — rendering them as chips is the difference between "this client
+    // has no button for that" and "that never happened".
     for (const reaction of message.reactions) {
+      if (reaction.key === UP || reaction.key === DOWN) continue;
       const chip = document.createElement("button");
       chip.className = reaction.mine ? "reaction mine" : "reaction";
       chip.textContent = `${reaction.key} ${reaction.count}`;
@@ -870,6 +932,23 @@ el("joiner").addEventListener("submit", async (event) => {
 });
 
 el("switcher").addEventListener("click", drawPicker);
+
+el("open-settings").addEventListener("click", async () => {
+  el("settings").hidden = false;
+  // Asked for on open rather than kept warm: the panel is closed almost always,
+  // and a relay's standing is only interesting when somebody is looking at it.
+  await drawRelays();
+});
+
+el("close-settings").addEventListener("click", () => {
+  el("settings").hidden = true;
+});
+
+// Escape closes it, since a panel over everything with one way out is a trap
+// the first time somebody opens it by accident.
+document.addEventListener("keydown", (event) => {
+  if (event.key === "Escape" && !el("settings").hidden) el("settings").hidden = true;
+});
 
 /// What the node learns, while it runs.
 ///

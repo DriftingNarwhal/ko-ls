@@ -406,6 +406,12 @@ pub async fn serve(
             }
             _ = refresh.tick() => {
                 adopt_local_changes(&store, &mut node, &identity, seal_bytes, sink)?;
+                // Recomputed on the tick rather than only when somebody knocks.
+                // Admission is a governance entry, and no path from one reaches
+                // the waiting room — so this is where an admitted member stops
+                // being shown at the door, whoever admitted them and whichever
+                // process wrote the entry.
+                record_waiting(&store, &node, &identity, sink);
                 // Both halves of the live path, together. Spec 07 §6.1 requires
                 // conformance be testable with gossip disabled — "a client with
                 // gossip disabled is slower and completely correct" — and a node
@@ -1251,8 +1257,26 @@ fn record_waiting(
     let Some(occupants) = node.waiting_room_for(&identity.id()) else {
         return;
     };
+
+    // **Anybody already admitted is no longer waiting.**
+    //
+    // The node's waiting room is populated when a join is answered and emptied
+    // by nothing that admission goes through: admitting somebody writes a
+    // governance entry, and no path from that entry reaches this room. So a
+    // founder who admitted a member kept being shown them at the door forever,
+    // with an `admit` button that had already been pressed.
+    //
+    // Filtered against replayed state rather than fixed by remembering who was
+    // admitted, because replay is the authority on membership and this is then
+    // correct for members admitted by somebody else, and after a restart.
+    let members = store.state().ok();
     let identities: Vec<String> = occupants
         .iter()
+        .filter(|entry| {
+            members
+                .as_ref()
+                .is_none_or(|state| !state.is_member(&entry.identity))
+        })
         .map(|entry| intranet_crypto::to_hex(entry.identity.verifying_key().as_bytes()))
         .collect();
     if let Err(err) = store.set_waiting(&identities) {
