@@ -261,6 +261,27 @@ design changes before anything else is built.
 
 Newest first. One line per change that moved the state above.
 
+- **2026-08-22** — **A founder watching the door saw nobody at it.** B redeemed an invite, landed
+  in the waiting room and stayed there; A's window never showed anyone waiting.
+
+  The node did its half correctly: `record_waiting` writes the room to the store *before*
+  `JoinAnswered` is emitted, so the answer was on disk the whole time. The shell emitted
+  `kols://joins`. **Nothing listened for it.** The waiting list was only re-read inside `drawMe`,
+  which runs on `kols://governance` and `kols://keys` — and a join produces neither. So the one
+  event that means "somebody is at the door" was the one event with no listener.
+
+  Audited the rest rather than fixing only the reported one: six events are emitted and
+  `joins` was the only orphan. All six now have listeners.
+
+  The doorway also re-reads every four seconds while a member who can admit is looking at it.
+  `design/09` §4 already calls the waiting room stale by construction — it is live state in the
+  node, written down for anything else to read — so refreshing is the model rather than a patch
+  over a missed event. **This is the third bug in two days of the same shape**: an answer that
+  existed, an event that carried it, and a consumer that was not listening at that moment.
+
+  Also confirmed: v0.3.4 published a `.dmg`, so Tauri accepts `signingIdentity: "-"` and the
+  ad-hoc signing landed.
+
 - **2026-08-22** — **The macOS build said it was "damaged".** Not a corrupted download and not a
   bundler failure: **an arm64 binary must carry a valid signature to execute at all**, so an
   unsigned `.app` inside a quarantined `.dmg` fails Gatekeeper's check outright — and macOS

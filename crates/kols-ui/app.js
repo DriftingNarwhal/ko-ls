@@ -19,7 +19,15 @@ const state = {
   designated: null,
   restartedAt: 0,
   relayPoll: null,
+  doorPoll: null,
 };
+
+/// How often to re-read the waiting room while it is on screen.
+///
+/// Somebody is standing at a door waiting to be let in, so this is the interval
+/// at which the person who can let them in finds out. Cheap: a local file the
+/// node has already written.
+const DOOR_REFRESH_MILLIS = 4000;
 
 /// How long after a restart to ignore a changed relay set.
 ///
@@ -107,6 +115,13 @@ function drawMe(me) {
   // Shown to every member, unlike the door: whether this node has a way through
   // NAT is not a privileged question, and a member who cannot fix it still
   // benefits from knowing that is what is wrong.
+  // Re-read on a timer as well as on the event. `design/09` §4 already calls the
+  // waiting room stale by construction — it is live state in the node, written
+  // down for anything else to read — so refreshing it is the model rather than a
+  // patch over one. It is a local file read, and only while somebody is looking
+  // at a door they can actually open.
+  watchDoor(me.may_invite);
+
   el("relay").hidden = false;
   el("relay-set").hidden = !me.may_set_relays;
   el("relay-network-id").textContent = me.network;
@@ -276,6 +291,16 @@ async function restart(why) {
 function short(address) {
   const parts = address.split("/p2p/");
   return parts.length === 2 ? `${parts[0]}/…${parts[1].slice(-6)}` : address;
+}
+
+/// Keeps the waiting room fresh while a member who can admit is looking at it.
+function watchDoor(may_invite) {
+  if (state.doorPoll) {
+    clearInterval(state.doorPoll);
+    state.doorPoll = null;
+  }
+  if (!may_invite) return;
+  state.doorPoll = setInterval(drawWaiting, DOOR_REFRESH_MILLIS);
 }
 
 // Who is at the door, and letting them in.
@@ -744,6 +769,17 @@ async function watch() {
     // names.
     await drawRelays({ act: true });
     if (state.current) await openChannel(state.current);
+  });
+
+  // Somebody presented an invite. The node has already written the waiting room
+  // down by the time this arrives, so this only has to re-read it.
+  //
+  // Its absence was the whole of one bug: the event was emitted and nothing
+  // listened, so a founder watching the door saw nobody at it while the joiner
+  // waited to be let in. The same shape as the relay panel missing its report,
+  // and the reason the doorway now polls as well.
+  await listen("kols://joins", async () => {
+    drawMe(await invoke("me"));
   });
 
   await listen("kols://keys", async () => {
