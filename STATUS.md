@@ -206,7 +206,7 @@ somebody forgot.
 | O11 | **A relay may not be shared between networks, and nothing enforces it.** Decided 2026-08-21: reusing one relay across two of a member's networks breaks the unlinkability Core §1.2 exists to provide, so it is not permitted. Today it is merely *not done* — a founder can paste one address into two networks and nothing objects | A relay checks no membership by design (Core §5.5 — it replays no log and holds no capabilities), so it cannot refuse a peer for being in the wrong network. Underneath that, **the separation is not structural**: `kad::Behaviour::new` takes the default protocol name and `PROTOCOL_VERSION` is `/intranet/0.1.0` for every network, so two networks sharing a relay share a routing table and their members become mutually discoverable. Enforcing it means network-scoping the protocol names, which is a wire change and a protocol extension, not a client fix. Until then the client should at least refuse to designate a relay another of its own networks already uses — it holds the workspace, so it is the one party that can tell | `design/09` §1, §3; Core §5.5 |
 | ~~O12~~ | ~~**The window cannot finish setting up a relay, and its own text says it can.**~~ **Closed 2026-08-21.** The window submits `SetBootstrapRelays` through a relay panel in the rail, shows the **full** network id with a copy button beside it — labelled as the `RELAY_NETWORK` a relay needs to boot — and the creation form no longer promises a "later" that did not exist. Designating one restarts the node onto it rather than telling you to reopen the network. Address validation moved to `kols_node::parse_relay` and is shared with the terminal, so `kols relay set` and `kols init --relay` refuse a relay naming no peer id too | Was: a command and gate that existed with no handler and no surface | `crates/kols-ui/*`, `crates/kols-app/src/main.rs` |
 | ~~O13~~ | ~~**In the window a working relay is invisible; only a broken one reports.**~~ **Closed 2026-08-21.** New `Event::Relay { reserved, designated }`, emitted at startup in every case including success. It carries the count as well as the address so that "designates none" stays distinguishable from "designates some, none usable" — both leave a node reachable only on its own addresses, and only the second is a fault | The terminal keeps its `println!` and ignores the event, since it already said this where it happened | `crates/kols-api/src/event.rs`, `crates/kols-node/src/serve.rs` |
-| ~~O14~~ | ~~**The client still lets a relayed circuit carry payload, which Core §5.2 now forbids.**~~ **Closed 2026-08-22** upstream (`45578b3`): a relayed connection no longer triggers a sync, a failed hole punch disconnects the peer, and the ceilings are sized for a negotiation (30s/256KB) rather than a session. Original entry: ** Corrected in the spec on 2026-08-21/22 (upstream `0b085e4`): there is no third tier, a circuit carries the DCUtR negotiation and is closed when the upgrade fails. Today a failed punch leaves the circuit open and everything keeps flowing over it | Three parts, in order of how much they buy. **Close the circuit on `HolePunchFailed`** — the direct expression of the rule, and it makes the failure visible instead of silent. **Refuse to send payload over a circuit**, so a circuit that exists for a negotiation cannot be used by anything else even transiently. **Lower DI-Relay's ceilings** from 120s/8MB toward the negotiation's own cost, so a relay enforces this itself rather than trusting every client — §5.3 now says exactly that. Not done at once because v0.6.0 is under test and changing transport behaviour underneath it would waste the run | Core §5.2, §5.3; `design/09` §3 |
+| ~~O14~~ | ~~**The client still lets a relayed circuit carry payload, which Core §5.2 now forbids.**~~ **Closed 2026-08-22** upstream (`45578b3`): a relayed connection no longer triggers a sync, a failed hole punch disconnects the peer, and the ceilings are sized for a negotiation (60s/256KB) rather than a session. Original entry: ** Corrected in the spec on 2026-08-21/22 (upstream `0b085e4`): there is no third tier, a circuit carries the DCUtR negotiation and is closed when the upgrade fails. Today a failed punch leaves the circuit open and everything keeps flowing over it | Three parts, in order of how much they buy. **Close the circuit on `HolePunchFailed`** — the direct expression of the rule, and it makes the failure visible instead of silent. **Refuse to send payload over a circuit**, so a circuit that exists for a negotiation cannot be used by anything else even transiently. **Lower DI-Relay's ceilings** from 120s/8MB toward the negotiation's own cost, so a relay enforces this itself rather than trusting every client — §5.3 now says exactly that. Not done at once because v0.6.0 is under test and changing transport behaviour underneath it would waste the run | Core §5.2, §5.3; `design/09` §3 |
 
 **Closed since this register was written:** the executor, the two checks `authorize`
 deliberately could not make, and the event half of the boundary. The first two were owed
@@ -262,6 +262,22 @@ design changes before anything else is built.
 
 Newest first. One line per change that moved the state above.
 
+- **2026-08-22** — **Circuit lifetime raised to 60s, and §5.3 now says what the ceilings do not
+  bound.** Asked whether the lowered ceilings limit a network to hundreds of thousands of nodes.
+  They do not, and the arithmetic runs the other way: `max_circuit_duration` and
+  `max_circuit_bytes` bound *one* circuit, so shorter and smaller means a relay performs **more**
+  introductions per hour, not fewer — at 32 concurrent circuits, 120s allowed ~960/hour and 60s
+  allows ~1,900. What bounds a single relay is `max_reservations` (128) and `max_circuits` (32),
+  neither of which changed, and what scales past them is more relays and `relay_bootstrap_willing`
+  members (§5.5) rather than a larger allowance on one host — a relay that could serve 100k
+  members would be exactly the infrastructure §5.3 exists to prevent.
+
+  The question did surface a coupling I had created: 30 seconds was chosen against the old
+  behaviour, where a cut-short negotiation left the pair on a relayed connection. §5.2 made that
+  fatal in the same commit, so the cost of being slightly tight became two members who cannot
+  talk. Raised to 60 — still half the original, still nowhere near a session — with the bytes
+  ceiling left at 256KB, where the anti-abuse work actually happens. Upstream `9951282`.
+
 - **2026-08-22** — **O14 closed: a relayed circuit now carries the negotiation and nothing else.**
   Three parts, and the first was the one actually leaking.
 
@@ -275,7 +291,11 @@ Newest first. One line per change that moved the state above.
   it open is how a relay quietly becomes the path. `dcutr` reports failure only after
   `MAX_NUMBER_OF_UPGRADE_ATTEMPTS`, so this is not closing on a first stumble.
 
-  **The ceilings dropped from 120s/8MB to 30s/256KB**, in §5.3 and the implementation together.
+  **The ceilings dropped from 120s/8MB to 60s/256KB**, in §5.3 and the implementation together.
+  (First set to 30s, then raised on review: 30 was chosen against the *old* behaviour, where a
+  circuit ending mid-negotiation left the pair relayed. §5.2 made that fatal in the same change,
+  so a ceiling a few seconds too tight now costs two members who cannot talk. A DCUtR exchange
+  runs ten to fifteen seconds on a lossy mobile link — which is exactly the pair that needs one.)
   The old figures predated the prohibition and were loose enough that a client relaying a whole
   conversation never met a limit — the rule held only by clients choosing to obey it, and one did
   not. `default_limits_match_the_spec_baselines` failed the moment the two disagreed, which is
