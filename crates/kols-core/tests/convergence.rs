@@ -16,6 +16,13 @@ use intranet_governance::{
 use intranet_identity::{MasterSeed, NetworkId, PerNetworkIdentity};
 use kols_core::*;
 
+/// Limits that refuse nothing, for tests about something other than §4.3.
+///
+/// Spelled out at each call rather than defaulted, because `ReaderLimits` has
+/// no `Default` on purpose — a reader that silently enforced nothing is the
+/// state this parameter exists to end.
+const LAX: kols_core::ReaderLimits = kols_core::ReaderLimits::unbounded();
+
 fn network() -> NetworkId {
     NetworkId::from_bytes([7u8; 32])
 }
@@ -158,21 +165,21 @@ fn arrival_order_does_not_change_the_rendering() {
     let records = conversation(&a, &b);
 
     let mut baseline = ChannelView::new(placement());
-    baseline.admit(records.clone(), &authority);
-    let expected = baseline.render();
+    baseline.admit(records.clone(), &authority, &LAX);
+    let expected = baseline.render(&LAX, 0);
     assert_eq!(expected.len(), 100);
 
     // Every permutation we can afford to try must agree, including reversal —
     // the worst case for anything that accidentally depends on insertion order.
     for seed in 1..40u32 {
         let mut view = ChannelView::new(placement());
-        view.admit(shuffled(records.clone(), seed), &authority);
-        assert_eq!(view.render(), expected, "seed {seed} rendered differently");
+        view.admit(shuffled(records.clone(), seed), &authority, &LAX);
+        assert_eq!(view.render(&LAX, 0), expected, "seed {seed} rendered differently");
     }
 
     let mut reversed = ChannelView::new(placement());
-    reversed.admit(records.iter().rev().cloned().collect::<Vec<_>>(), &authority);
-    assert_eq!(reversed.render(), expected);
+    reversed.admit(records.iter().rev().cloned().collect::<Vec<_>>(), &authority, &LAX);
+    assert_eq!(reversed.render(&LAX, 0), expected);
 }
 
 #[test]
@@ -183,16 +190,16 @@ fn duplicate_delivery_is_idempotent() {
     let records = conversation(&a, &b);
 
     let mut once = ChannelView::new(placement());
-    once.admit(records.clone(), &authority);
+    once.admit(records.clone(), &authority, &LAX);
 
     // The live and durable paths overlap by design, so the same record arrives
     // twice as a matter of course rather than as an error case.
     let mut twice = ChannelView::new(placement());
-    twice.admit(records.clone(), &authority);
-    twice.admit(shuffled(records, 7), &authority);
+    twice.admit(records.clone(), &authority, &LAX);
+    twice.admit(shuffled(records, 7), &authority, &LAX);
 
     assert_eq!(twice.len(), once.len());
-    assert_eq!(twice.render(), once.render());
+    assert_eq!(twice.render(&LAX, 0), once.render(&LAX, 0));
 }
 
 // ── criterion 3: partition, both post, heal, converge ──────────────────
@@ -228,17 +235,17 @@ fn a_partition_heals_to_one_history() {
         .collect();
 
     let mut node_a = ChannelView::new(placement());
-    node_a.admit(side_a.clone(), &authority);
+    node_a.admit(side_a.clone(), &authority, &LAX);
     let mut node_b = ChannelView::new(placement());
-    node_b.admit(side_b.clone(), &authority);
-    assert_ne!(node_a.render(), node_b.render(), "the partition was not real");
+    node_b.admit(side_b.clone(), &authority, &LAX);
+    assert_ne!(node_a.render(&LAX, 0), node_b.render(&LAX, 0), "the partition was not real");
 
     // Heal: each side learns the other's records, in different orders.
-    node_a.admit(shuffled(side_b, 11), &authority);
-    node_b.admit(shuffled(side_a, 23), &authority);
+    node_a.admit(shuffled(side_b, 11), &authority, &LAX);
+    node_b.admit(shuffled(side_a, 23), &authority, &LAX);
 
-    let healed = node_a.render();
-    assert_eq!(healed, node_b.render());
+    let healed = node_a.render(&LAX, 0);
+    assert_eq!(healed, node_b.render(&LAX, 0));
     assert_eq!(healed.len(), 50);
 
     // Concurrent records at identical readings are ordered by record hash — the
@@ -266,9 +273,10 @@ fn a_non_member_is_refused_by_the_reader() {
             Record::create(&stranger, channel(), Hlc::new(2, 0), message("refused")),
         ],
         &authority,
+        &LAX,
     );
 
-    assert_eq!(view.render().len(), 1);
+    assert_eq!(view.render(&LAX, 0).len(), 1);
     assert_eq!(view.rejected().len(), 1);
     assert_eq!(view.rejected()[0].1, Rejection::NotAMember);
 }
@@ -283,8 +291,8 @@ fn a_forged_signature_is_refused() {
     forged.body = message("tampered");
 
     let mut view = ChannelView::new(placement());
-    view.admit(vec![forged], &authority);
-    assert!(view.render().is_empty());
+    view.admit(vec![forged], &authority, &LAX);
+    assert!(view.render(&LAX, 0).is_empty());
     assert_eq!(view.rejected()[0].1, Rejection::BadSignature);
 }
 
@@ -299,6 +307,7 @@ fn a_record_for_another_channel_is_refused() {
     view.admit(
         vec![Record::create(&member, elsewhere, Hlc::new(1, 0), message("hi"))],
         &authority,
+        &LAX,
     );
     assert_eq!(view.rejected()[0].1, Rejection::WrongChannel);
 }
@@ -372,8 +381,8 @@ fn edits_tombstones_reactions_and_redactions_are_order_independent() {
     let mut expected: Option<Vec<RenderedMessage>> = None;
     for seed in 1..30u32 {
         let mut view = ChannelView::new(placement());
-        view.admit(shuffled(effects.clone(), seed), &authority);
-        let rendered = view.render();
+        view.admit(shuffled(effects.clone(), seed), &authority, &LAX);
+        let rendered = view.render(&LAX, 0);
         match &expected {
             None => {
                 let first_msg = &rendered[0];
@@ -420,9 +429,10 @@ fn nobody_edits_or_withdraws_somebody_elses_message() {
             ),
         ],
         &authority,
+        &LAX,
     );
 
-    let rendered = view.render();
+    let rendered = view.render(&LAX, 0);
     // The impostor's records are validly signed and they are a member, so they
     // are admitted — and then ignored, because authorship is checked where the
     // effect is applied. Both defences matter: one keeps the record set honest,
@@ -456,9 +466,10 @@ fn a_non_moderator_cannot_redact() {
             ),
         ],
         &authority,
+        &LAX,
     );
 
-    assert!(view.render()[0].is_visible());
+    assert!(view.render(&LAX, 0)[0].is_visible());
     assert_eq!(view.rejected()[0].1, Rejection::NotAModerator);
 }
 
@@ -491,9 +502,10 @@ fn a_non_moderator_cannot_pin() {
             ),
         ],
         &authority,
+        &LAX,
     );
 
-    assert!(!view.render()[0].pinned, "a pin from a non-moderator holds");
+    assert!(!view.render(&LAX, 0)[0].pinned, "a pin from a non-moderator holds");
     assert_eq!(view.rejected()[0].1, Rejection::NotAModerator);
 }
 
@@ -521,8 +533,9 @@ fn a_moderator_can_pin() {
             ),
         ],
         &authority,
+        &LAX,
     );
 
     assert!(view.rejected().is_empty(), "{:?}", view.rejected());
-    assert!(view.render()[0].pinned);
+    assert!(view.render(&LAX, 0)[0].pinned);
 }

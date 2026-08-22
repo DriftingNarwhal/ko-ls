@@ -19,7 +19,8 @@
 //! the durable path guarantees they eventually do.
 
 use crate::{
-    Attachment, Authority, ChannelId, Hlc, MessageId, Placement, Record, RecordBody,
+    Attachment, Authority, ChannelId, Hlc, MessageId, Placement, ReaderLimits, Record, RecordBody,
+    Withheld,
 };
 use intranet_identity::PerNetworkIdentityId;
 use std::collections::{BTreeMap, BTreeSet};
@@ -41,6 +42,15 @@ pub enum Rejection {
     NotAModerator,
     /// Its target does not exist in this view.
     UnknownTarget,
+    /// Its body exceeds `chat:message-max-bytes` — spec 07 §4.3.
+    TooLarge,
+    /// Its author was past the rate ceiling for its class — spec 07 §4.3.
+    ///
+    /// A property of the record set rather than of the record, so it is decided
+    /// in [`crate::withheld`] rather than in the per-record check.
+    TooFast,
+    /// It came faster than this channel's slowmode allows — `design/01` §10.3.
+    Slowmode,
 }
 
 /// One message as it currently stands.
@@ -108,14 +118,21 @@ impl ChannelView {
     ///
     /// Idempotent: a record delivered twice occupies the same key and replaces
     /// itself, which is what lets the live and durable paths overlap freely.
+    ///
+    /// `limits` carries the bounds that are properties of *one record* — the
+    /// body size of §4.3. The bounds that are properties of the whole set, the
+    /// rate ceilings and the skew hold, cannot be decided here without making
+    /// the verdict depend on arrival order; they are applied at render, and
+    /// [`crate::withheld`] explains why at length.
     pub fn admit<A: Authority>(
         &mut self,
         records: impl IntoIterator<Item = Record>,
         authority: &A,
+        limits: &ReaderLimits,
     ) {
         for record in records {
             let id = record.id();
-            if let Err(reason) = self.check(&record, authority) {
+            if let Err(reason) = self.check(&record, authority, limits) {
                 self.rejected.push((id, reason));
                 continue;
             }
@@ -124,7 +141,12 @@ impl ChannelView {
     }
 
     /// Checks a record against replayed state, before it can affect anything.
-    fn check<A: Authority>(&self, record: &Record, authority: &A) -> Result<(), Rejection> {
+    fn check<A: Authority>(
+        &self,
+        record: &Record,
+        authority: &A,
+        limits: &ReaderLimits,
+    ) -> Result<(), Rejection> {
         if record.channel != self.channel {
             return Err(Rejection::WrongChannel);
         }
@@ -134,6 +156,13 @@ impl ChannelView {
         if !authority.is_member(&record.author) {
             return Err(Rejection::NotAMember);
         }
+        // §4.3's size ceilings, on the read side. `check_bounds` had implemented
+        // this since the encoding landed and was called only by its own tests —
+        // the gate re-implements the same rule for the writer, so the rule
+        // existed twice and ran on neither half of the path that matters.
+        record
+            .check_bounds(limits.message_max_bytes)
+            .map_err(|_| Rejection::TooLarge)?;
         match &record.body {
             RecordBody::Redaction {
                 governance_head, ..
@@ -183,17 +212,39 @@ impl ChannelView {
         self.records.is_empty()
     }
 
+    /// What this view holds and must not apply — §4.3's ceilings, §2.6's hold.
+    ///
+    /// A pure function of the record set and `now_millis`. Exposed rather than
+    /// kept inside [`Self::render`] so an interface can say *why* a message is
+    /// missing, and in particular can tell a held record from a refused one:
+    /// one of those resolves itself in a few minutes and the other never does.
+    pub fn withheld(&self, limits: &ReaderLimits, now_millis: i64) -> Withheld {
+        crate::withheld(self.records.values(), limits, now_millis)
+    }
+
     /// Renders the channel.
     ///
-    /// A pure function of the admitted record set: same records in, same bytes
-    /// out, on every node, regardless of the order they arrived in. Everything
-    /// below resolves *after* sorting, which is what makes that true.
-    pub fn render(&self) -> Vec<RenderedMessage> {
+    /// A pure function of the admitted record set and `now_millis`: same records
+    /// and same clock in, same bytes out, on every node, regardless of the order
+    /// they arrived in. Everything below resolves *after* sorting, which is what
+    /// makes that true.
+    ///
+    /// **`now_millis` is the one input that is not the record set**, and it is a
+    /// parameter rather than a clock read because this crate holds no clock by
+    /// design (`design/05` §2) — and because a caller that can move it can test
+    /// §2.6's hold without waiting for a real minute to pass. Two nodes with
+    /// skewed clocks render slightly different *sets* for a few minutes and the
+    /// same set thereafter, which is exactly what "held, not dropped" buys.
+    pub fn render(&self, limits: &ReaderLimits, now_millis: i64) -> Vec<RenderedMessage> {
+        let withheld = self.withheld(limits, now_millis);
         let mut messages: BTreeMap<MessageId, RenderedMessage> = BTreeMap::new();
         let mut order: Vec<MessageId> = Vec::new();
 
         // Pass one: messages, in merge order, so later passes can target them.
         for ((hlc, id), record) in &self.records {
+            if withheld.excludes(id) {
+                continue;
+            }
             if let RecordBody::Message {
                 body,
                 reply_to,
@@ -223,7 +274,15 @@ impl ChannelView {
         // Pass two: everything that modifies a message. Applied in merge order,
         // so the last edit wins deterministically and a remove that sorts after
         // an add wins over it.
-        for record in self.records.values() {
+        //
+        // Withheld records are skipped here too, and it has to be both passes: a
+        // reaction refused for rate has to not land on its target, and a
+        // future-dated withdrawal has to not hide a message before its own
+        // claimed moment arrives.
+        for ((_, id), record) in &self.records {
+            if withheld.excludes(id) {
+                continue;
+            }
             match &record.body {
                 RecordBody::Message { .. } => {}
                 RecordBody::Edit { target, body } => {

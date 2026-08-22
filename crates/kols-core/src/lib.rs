@@ -25,6 +25,7 @@ mod log;
 mod permissions;
 mod policy;
 mod ids;
+mod limits;
 mod live;
 mod names;
 mod record;
@@ -57,6 +58,7 @@ pub use policy::{
     ChatPolicy, NetworkProfile, Retention, conversation_genesis_values, defaults, keys,
 };
 pub use segment::{MAX_RECORDS_PER_SEGMENT, Segment};
+pub use limits::{RATE_WINDOW_MILLIS, ReaderLimits, Withheld, withheld};
 pub use view::{ChannelView, Rejection, RenderedMessage};
 
 /// What can go wrong building or reading a record.

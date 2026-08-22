@@ -52,7 +52,7 @@ What that needs, and where it stands:
 
 ### Start here tomorrow
 
-1. `cargo test` — **192 here, 649 in `../distributed-intranet`** — and
+1. `cargo test` — **213 here, 655 in `../distributed-intranet`** — and
    `cargo clippy --workspace --all-targets` clean in both. Both trees were left green; if they
    are not, fix that before anything else. Clippy on the Windows target is a *second* run,
    `cargo clippy -p kols-node --target x86_64-pc-windows-gnu`, and it caught something the
@@ -107,6 +107,7 @@ complete and a failure can be reproduced in the same minute it appears.
 - **Only one process may run a node per network.** The window runs one now, so `kols serve`
   on the same store is refused. The claim expires after 30 seconds without a heartbeat, so a
   crash costs a pause rather than a stuck store.
+- **One daemon test is flaky, and it is not a new one.** `two_nodes::a_node_offline_across_a_rotation_catches_up_and_can_still_read` intermittently times out waiting 45s for `keyed into this network`. It passes alone and in most whole-suite runs; it was reproduced on a **stashed, pre-change tree**, so it is the suite's own timing rather than anything recent. It spawns three nodes and does two full keying rounds, which makes it the heaviest test in the file, and `common::patience` scales on core *count* — which on a wide machine is exactly why more of these run at once, so the factor does not help where it is needed. Re-run before believing a red suite.
 - **Nobody has looked hard at the interface.** The X forwarding into this container is
   intermittent, so the layout is unreviewed beyond the user confirming the picker renders.
   `design/09` §7's navigation question is open by default, not by decision.
@@ -120,7 +121,7 @@ complete and a failure can be reproduced in the same minute it appears.
 |---|---|
 | **Working on** | Milestone: a client two people on separate networks can use, **tested through the window alone**. E14 landed, so a joiner that goes unanswered now keeps asking instead of stranding. Both binaries build for Windows and macOS in CI and v0.1.0 publishes them. The window now does relay setup too (O12/O13 closed 2026-08-21), so no step of the flow needs a terminal. Honest caveat: the window **has** been launched and rendered roughly correctly, but that was before anything was wired to it, so no flow has ever been exercised through it. What is left is a relay reachable from both machines |
 | **Blocked on** | Nothing |
-| **Runnable** | **`kols-desktop`** — *the product* (D30). A window that creates a network or joins one by invite, runs a node for it, **generates a relay identity**, designates relays and reports whether one granted a circuit, lists channels, renders one, posts, **reacts, revises, withdraws and pins**, mints an invite and admits from the waiting room, updating as records arrive. Every step of the two-machine test is reachable from it and none needs a terminal. **Launched once, before it was wired — it rendered, and no flow has been run through it.** **`kols`** — *a development tool, not a product surface*: init (with `--relay`), relay list/set, invite, join, waiting, attach, admit, revoke, name, serve, post, read, edit, delete, react, pin, and channel create/list/rename/topic/slowmode/archive. `cargo test` — 192 tests here and 649 in `../distributed-intranet`, clippy clean in both; `scripts/cross-check.sh` for big-endian, `taskset -c 0,1` for the starved case |
+| **Runnable** | **`kols-desktop`** — *the product* (D30). A window that creates a network or joins one by invite, runs a node for it, **generates a relay identity**, designates relays and reports whether one granted a circuit, lists channels, renders one, posts, **reacts, revises, withdraws and pins**, mints an invite and admits from the waiting room, updating as records arrive. Every step of the two-machine test is reachable from it and none needs a terminal. **Launched once, before it was wired — it rendered, and no flow has been run through it.** **`kols`** — *a development tool, not a product surface*: init (with `--relay`), relay list/set, invite, join, waiting, attach, admit, revoke, name, serve, post, read, edit, delete, react, pin, and channel create/list/rename/topic/slowmode/archive. `cargo test` — 213 tests here and 655 in `../distributed-intranet`, clippy clean in both; `scripts/cross-check.sh` for big-endian, `taskset -c 0,1` for the starved case |
 | **Next decision needed from the user** | Nothing blocking |
 
 ---
@@ -169,7 +170,7 @@ both green.
 
 | Crate | State |
 |---|---|
-| `kols-core` | **Encoding, author logs, merge, collision recovery, chat policy, channel structure** — records/segments/ids, `AuthorLog` incl. `rebase`, `ChannelView`, permissions, capability vocabulary, `ChatPolicy`, `ChannelEntry`. 88 tests |
+| `kols-core` | **Encoding, author logs, merge, collision recovery, chat policy, channel structure** — records/segments/ids, `AuthorLog` incl. `rebase`, `ChannelView`, permissions, capability vocabulary, `ChatPolicy`, `ChannelEntry`, and `ReaderLimits`/`withheld` — spec 07 §4.3's ceilings and §2.6's hold, applied over the sorted set so the verdict cannot depend on arrival order. 104 tests |
 | `kols-net` | **Publish and fetch** — stores/announces chunks, accepts pointers, reassembles segments. Two live two-node tests |
 | `kols-api` | **The whole boundary** — `Command`, `Sensitivity`, `Refusal` and `authorize` returning an `Authorized` nothing else can construct, going in; `Outcome` and `Event` coming out. All three of `design/05` §3's properties are now held. 26 tests |
 | `kols-node` | **`kols`, its node daemon, and the executor** — a library now, with the binary as argument parsing and rendering over it. Creates a network, admits and keys in joiners, serves and fetches content, writes every record kind, renders a merged view across authors. `secret` restricts a written seed to this user on both platforms and refuses when it cannot. Tests that drive the real binaries, ten of them over a live wire between two processes |
@@ -262,6 +263,43 @@ design changes before anything else is built.
 ## 9. Log
 
 Newest first. One line per change that moved the state above.
+
+- **2026-08-22** — **Abuse control was built in halves, and the halves each cited the other.**
+  Found by a full documents-and-code review. §4.3 calls the rate ceilings *validity rules* —
+  "a record past the ceiling is refused by readers, so a local limit would mean two members
+  rendering different histories" — and only the writer was enforcing them. So the limit *was*
+  local: whatever the author's own client chose. `ChannelView::check` looked at channel,
+  signature, membership, moderation and posting rights, and never at the rate.
+
+  **The skew hold did not exist at all.** `max_future_skew_millis()` read its policy key and was
+  called from nowhere. That one matters more than it sounds, because §10.2's whole argument that
+  the ceiling cannot be gamed is a pointer at it: claim timestamps a minute apart while sending
+  them all at once, and *"records dated ahead of the receiver's clock are held until local time
+  reaches them. An author who lies about pacing gets exactly the pacing they claimed. No extra
+  mechanism needed."* Without the hold there was no mechanism, and a record claiming next year sat
+  at the top of the channel permanently. `spacing_claimed_timestamps_buys_exactly_the_pacing_claimed`
+  is the test for the pair, and it fails if either half is removed.
+
+  **Slowmode was settable, bounded, replayed, displayed and enforced by nothing.** No path read
+  `channel.slowmode` to refuse a post.
+
+  **The one design decision worth knowing about is where the rate check runs.** Not in `admit`:
+  "how many has this author written in the last minute" has no arrival-order-independent answer
+  while the set is still assembling, so the same records in two orders would refuse two different
+  ones — which is precisely the divergence the rule exists to prevent. It is a pass over the
+  sorted set instead (`kols_core::withheld`), like every other effect in the merge.
+  `every_arrival_order_refuses_the_same_records` asserts that over 40 shuffles.
+
+  **Held is not refused**, and the reader now reports the two separately. A future-dated record
+  stays in the set, is served like anything else, and renders when local time reaches it; telling
+  somebody it was refused would be the interface asserting what it knows to be untrue.
+
+  *Flagged:* slowmode applies to the message **class**, so an edit is paced along with a post. The
+  specs do not say, and class is what keeps two client versions agreeing (spec 07 §3.3) — but in a
+  six-hour slowmode it also means waiting six hours to fix a typo. `design/01` §10.4 records it.
+
+  16 new tests in `kols-core`, one through the real binary, and all nine of the ones that assert
+  new behaviour were confirmed to fail against the unfixed build first. 213 green, clippy clean.
 
 - **2026-08-22** — **Unread channels, votes that line up, and every colour behind a token.**
 

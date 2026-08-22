@@ -200,9 +200,11 @@ next. Estimates are deliberately absent — sequence is the useful part.
   network, runs a node for it, renders a channel and brings the next member in. It builds for
   Windows and macOS as well as Linux.
 
-  Not yet: threads, presence, and the abuse limits as enforced rather than merely readable
-  policy. `STATUS.md` §6 is the current debt list, and the release gate below is the thing that
-  matters most in it.
+  Not yet: threads and presence. The abuse limits became enforced rather than merely readable
+  policy on 2026-08-22 — the rate ceilings, the size bounds, §4's skew hold and per-channel
+  slowmode, at the writer and at the reader both, which is what `01` §10.1 means by calling them
+  validity rules. `STATUS.md` §6 is the current debt list, and the release gate below is the
+  thing that matters most in it.
 - **P2 — Private channels and direct messages.** Per-channel MLS subgroups and channel
   membership entries; the DM flow (network creation, direct invite delivery, voluntary
   identity link) and a DM inbox spanning networks; moderation redactions; search — network

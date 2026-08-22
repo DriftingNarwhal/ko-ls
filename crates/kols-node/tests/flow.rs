@@ -398,3 +398,41 @@ fn an_already_current_wrapping_is_not_rewritten_on_every_read() {
         "an already-current wrapping must not be rewritten"
     );
 }
+
+#[test]
+fn slowmode_stops_the_second_post_and_says_how_long() {
+    // The writer half of `design/01` §10.3. The reader enforces this too, and
+    // has its own tests in `kols-core`; this is the half that exists so a person
+    // is *told* rather than having their record refused by everybody else
+    // (§10.2). Both are needed and neither replaces the other.
+    let home = Home::new("slowmode");
+    ok(&home, &["init", "paced"]);
+    let _node = keyed(&home, 45221);
+
+    ok(&home, &["channel", "create", "general"]);
+    ok(&home, &["post", "general", "first"]);
+
+    // Slowmode is bounded by `chat:slowmode-max-seconds` and set by a
+    // `chat:manage-channel` holder — the founder is one.
+    ok(&home, &["channel", "slowmode", "general", "600"]);
+
+    let refused = run(&home, &["post", "general", "second"]);
+    assert!(
+        !refused.status.success(),
+        "a second post inside a ten-minute slowmode must be refused",
+    );
+    let said = String::from_utf8_lossy(&refused.stderr).to_string()
+        + &String::from_utf8_lossy(&refused.stdout);
+    assert!(said.contains("slowmode"), "{said}");
+    assert!(
+        said.contains("to go"),
+        "a refusal should say how long, not just that it happened:\n{said}"
+    );
+
+    // And turning it off lets the same post through, so this is a live setting
+    // rather than a channel that has been permanently soured.
+    ok(&home, &["channel", "slowmode", "general", "0"]);
+    ok(&home, &["post", "general", "second"]);
+    let read = ok(&home, &["read", "general"]);
+    assert!(read.contains("second"), "{read}");
+}

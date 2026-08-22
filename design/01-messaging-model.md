@@ -604,7 +604,43 @@ being delegable to the people who actually moderate.
 Effective limit for a record is the stricter of the two. Slowmode of `0` means off,
 which is the default for a new channel.
 
-### 10.4 Beyond Limits
+### 10.4 Where These Are Enforced, and Two Decisions the Specs Leave Open
+
+Both halves are built, and the shape they took is worth recording because one of them was
+forced by the determinism §10.2 claims rather than chosen for convenience.
+
+**The rate window cannot be evaluated as records land.** "How many has this author written
+in the last minute" has no arrival-order-independent answer while the set is still being
+assembled — the same records delivered in two orders would refuse two different ones, and
+two members would render different histories from identical records, which is the exact
+outcome §10.1 gives as the reason these are network policy. So the ceilings are applied the
+way every other effect in the merge is applied: as a function of the sorted set, after it
+is assembled. `kols_core::withheld` is that pass, and `ChannelView::render` runs it. The
+per-record bounds — a body's size — stay in the per-record check, because those genuinely
+are properties of one record.
+
+The author's records are then walked in canonical order and admitted greedily, so a record
+is refused when the ceiling is already met by the records *already admitted* in its
+trailing window. A refused record does not itself occupy a slot: one burst costs an author
+exactly the records that exceeded the rate, and does not silence them afterwards.
+
+**Held is not refused, and the interface must not conflate them.** A future-dated record
+(§4) stays in the record set, is served like any other, and renders the moment local time
+reaches its claim — only *display* waits. So the reader reports two categories rather than
+one, and only the permanent one is shown as a refusal. Saying "refused" about something
+that will appear in four minutes is a client asserting what it does not know.
+
+*Flagged: slowmode is applied to the message **class**, so an edit or a withdrawal is paced
+along with a post.* Neither spec 07 §4.3 nor §10.3 says whether slowmode reaches past a
+`Message`, and class is the answer that keeps two client versions agreeing — the whole
+argument for encoding rate class in the discriminant range (spec 07 §3.3) is that an old
+node counts a new kind correctly without understanding it, and a rule keyed on a variant's
+*meaning* gives that up. The cost is real and worth naming: in a channel with a long
+slowmode, fixing a typo waits as long as posting again does. If that turns out to be the
+wrong trade, the fix is a second, shorter bound for the corrective kinds — not a rule that
+two implementations compute differently.
+
+### 10.5 Beyond Limits
 
 Spam is a moderation problem with a moderation answer (§6), and persistent
 abuse is a `revoke-node` problem with the epoch rotation that implies. Note the useful

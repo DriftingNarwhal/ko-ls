@@ -29,6 +29,26 @@
 
 use crate::chat::{next_hlc, now_millis, rebuild_log};
 use crate::network;
+
+/// Replayed channel state, as `network::channels` returns it.
+type ChannelMap = std::collections::BTreeMap<ChannelId, network::Channel>;
+
+/// The bounds a reader applies to one channel — spec 07 §4.3, §2.6.
+///
+/// Two sources, joined here because they are enforced together: the network's
+/// policy carries the ceilings, and the channel's own definition carries the
+/// slowmode a manager set (`design/01` §10.3). A channel replay does not know
+/// about is read under the network's ceilings with slowmode off, which is the
+/// safe direction — a channel this node cannot see the definition of should not
+/// have records refused for a slowmode it is guessing at.
+fn reader_limits(
+    state: &intranet_governance::GovernanceState,
+    channels: &ChannelMap,
+    channel: &ChannelId,
+) -> kols_core::ReaderLimits {
+    let slowmode = channels.get(channel).map_or(0, |c| c.slowmode);
+    kols_core::ReaderLimits::of(&kols_core::ChatPolicy::of(&state.policy), slowmode)
+}
 use crate::store::{Store, StoreError};
 use intranet_crypto::Timestamp;
 use intranet_governance::{EntryBody, GroupId, LogEntry, MembershipAction};
@@ -131,7 +151,7 @@ impl Executor {
             },
         )?;
 
-        self.run(authorized, &identity, &state, &index)
+        self.run(authorized, &identity, &state, &index, &channels)
     }
 
     /// Runs a command that has been through the gate.
@@ -145,9 +165,12 @@ impl Executor {
         identity: &intranet_identity::PerNetworkIdentity,
         state: &intranet_governance::GovernanceState,
         index: &PlacementMap,
+        channels: &ChannelMap,
     ) -> Result<Outcome, ExecuteError> {
         match authorized.into_command() {
-            Command::OpenChannel { channel, .. } => self.open_channel(channel, state, index),
+            Command::OpenChannel { channel, .. } => {
+                self.open_channel(channel, state, index, channels)
+            }
 
             Command::SendMessage {
                 channel,
@@ -163,6 +186,7 @@ impl Executor {
                 },
                 identity,
                 state,
+                channels,
             ),
 
             Command::EditMessage {
@@ -171,12 +195,12 @@ impl Executor {
                 body,
             } => {
                 self.require_own_message(&channel, &target, &identity.id())?;
-                self.write(channel, RecordBody::Edit { target, body }, identity, state)
+                self.write(channel, RecordBody::Edit { target, body }, identity, state, channels)
             }
 
             Command::DeleteMessage { channel, target } => {
                 self.require_own_message(&channel, &target, &identity.id())?;
-                self.write(channel, RecordBody::Tombstone { target }, identity, state)
+                self.write(channel, RecordBody::Tombstone { target }, identity, state, channels)
             }
 
             Command::React {
@@ -193,13 +217,14 @@ impl Executor {
                 },
                 identity,
                 state,
+                channels,
             ),
 
             Command::Pin {
                 channel,
                 target,
                 remove,
-            } => self.write(channel, RecordBody::Pin { target, remove }, identity, state),
+            } => self.write(channel, RecordBody::Pin { target, remove }, identity, state, channels),
 
             Command::CreateChannel {
                 name,
@@ -358,6 +383,7 @@ impl Executor {
         channel: ChannelId,
         state: &intranet_governance::GovernanceState,
         index: &PlacementMap,
+        channels: &ChannelMap,
     ) -> Result<Outcome, ExecuteError> {
         let placement = index
             .get(&channel)
@@ -365,20 +391,36 @@ impl Executor {
             .unwrap_or(Placement { channel, category: None });
         let mut view = ChannelView::new(placement);
         let authority = StateAuthority { state };
+        let limits = reader_limits(state, channels, &channel);
 
         let records = self.store.records(&channel)?;
         let authors: std::collections::BTreeSet<_> =
             records.iter().map(|record| record.author).collect();
-        view.admit(records, &authority);
+        view.admit(records, &authority, &limits);
+
+        // Both halves of the refusal set, and they arrive from different places
+        // on purpose. `rejected` holds what failed a check about *one* record —
+        // a bad signature, a non-member, an oversized body. `withheld.refused`
+        // holds what failed a rule about the whole set, which cannot be decided
+        // as records land without making the verdict depend on arrival order.
+        //
+        // Held records are deliberately **not** in here. They are dated ahead of
+        // this node's clock and will render on their own within a few minutes
+        // (§2.6), and reporting them as refusals would be the interface saying
+        // something it knows to be untrue.
+        let at = now_millis();
+        let withheld = view.withheld(&limits, at);
+        let mut rejected: Vec<_> = view
+            .rejected()
+            .iter()
+            .map(|(id, rejection)| (*id, *rejection))
+            .collect();
+        rejected.extend(withheld.refused.iter().map(|(id, why)| (*id, *why)));
 
         Ok(Outcome::Opened {
             channel,
-            messages: view.render(),
-            rejected: view
-                .rejected()
-                .iter()
-                .map(|(id, rejection)| (*id, *rejection))
-                .collect(),
+            messages: view.render(&limits, at),
+            rejected,
             authors: authors.len(),
         })
     }
@@ -393,11 +435,12 @@ impl Executor {
         body: RecordBody,
         identity: &intranet_identity::PerNetworkIdentity,
         state: &intranet_governance::GovernanceState,
+        channels: &ChannelMap,
     ) -> Result<Outcome, ExecuteError> {
         let mut log = rebuild_log(&self.store, identity, channel, state)
             .map_err(ExecuteError::Rejected)?;
         let hlc = next_hlc(&log, now_millis());
-        self.require_within_rate(&channel, &body, hlc, identity, state)?;
+        self.require_within_rate(&channel, &body, hlc, identity, state, channels)?;
         let record = Record::create(identity, channel, hlc, body);
         let id = record.id();
         let stored = record.clone();
@@ -606,9 +649,33 @@ impl Executor {
         hlc: kols_core::Hlc,
         identity: &intranet_identity::PerNetworkIdentity,
         state: &intranet_governance::GovernanceState,
+        channels: &ChannelMap,
     ) -> Result<(), ExecuteError> {
         let policy = kols_core::ChatPolicy::of(&state.policy);
         let class = body.class();
+
+        // Slowmode first, since where it is set at all it is the stricter of the
+        // two (`design/01` §10.3) — and it is the one somebody is more likely to
+        // be surprised by, a channel having been calmed since they last posted.
+        let slowmode = channels.get(channel).map_or(0, |c| c.slowmode);
+        if class == kols_core::RecordClass::Message && slowmode > 0 {
+            let interval = i64::from(slowmode).saturating_mul(1_000);
+            let last = self
+                .store
+                .own_records(channel, &identity.id())?
+                .iter()
+                .filter(|record| record.body.class() == kols_core::RecordClass::Message)
+                .map(|record| record.hlc.wall_millis)
+                .max();
+            if let Some(previous) = last
+                && hlc.wall_millis.saturating_sub(previous) < interval
+            {
+                let wait = (interval - (hlc.wall_millis - previous)).div_euclid(1_000) + 1;
+                return Err(ExecuteError::Rejected(format!(
+                    "this channel is in slowmode at {slowmode}s — about {wait}s to go"
+                )));
+            }
+        }
         let ceiling = match class {
             kols_core::RecordClass::Message => policy.message_rate_per_minute(),
             kols_core::RecordClass::Reaction => policy.reaction_rate_per_minute(),

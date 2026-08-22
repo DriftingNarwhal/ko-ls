@@ -19,6 +19,13 @@ use libp2p::Multiaddr;
 use libp2p::multiaddr::Protocol;
 use std::time::Duration;
 
+/// Limits that refuse nothing, for tests about something other than §4.3.
+///
+/// Spelled out at each call rather than defaulted, because `ReaderLimits` has
+/// no `Default` on purpose — a reader that silently enforced nothing is the
+/// state this parameter exists to end.
+const LAX: kols_core::ReaderLimits = kols_core::ReaderLimits::unbounded();
+
 const NETWORK: NetworkId = NetworkId::from_bytes([42u8; 32]);
 
 fn identity(n: u8) -> PerNetworkIdentity {
@@ -287,12 +294,12 @@ async fn a_channel_crosses_the_wire_and_renders_identically() {
     // its own writes and one from bytes off the wire.
     let authority = StateAuthority { state: &state };
     let mut writer_view = ChannelView::new(placement());
-    writer_view.admit(log.segment().records.clone(), &authority);
+    writer_view.admit(log.segment().records.clone(), &authority, &LAX);
     let mut reader_view = ChannelView::new(placement());
-    reader_view.admit(segment.records.clone(), &authority);
+    reader_view.admit(segment.records.clone(), &authority, &LAX);
 
-    assert_eq!(reader_view.render().len(), 120);
-    assert_eq!(reader_view.render(), writer_view.render());
+    assert_eq!(reader_view.render(&LAX, 0).len(), 120);
+    assert_eq!(reader_view.render(&LAX, 0), writer_view.render(&LAX, 0));
 }
 
 #[tokio::test]

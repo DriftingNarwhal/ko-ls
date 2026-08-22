@@ -20,8 +20,15 @@ use intranet_governance::{
 use intranet_identity::{MasterSeed, NetworkId, PerNetworkIdentity};
 use kols_api::{Arrival, Event};
 use kols_core::{
+
     ChannelId, ChannelView, Hlc, Placement, Record, RecordBody, RenderedMessage, StateAuthority,
 };
+/// Limits that refuse nothing, for tests about something other than §4.3.
+///
+/// Spelled out at each call rather than defaulted, because `ReaderLimits` has
+/// no `Default` on purpose — a reader that silently enforced nothing is the
+/// state this parameter exists to end.
+const LAX: kols_core::ReaderLimits = kols_core::ReaderLimits::unbounded();
 
 const NET: NetworkId = NetworkId::from_bytes([11u8; 32]);
 
@@ -116,9 +123,9 @@ fn apply(events: &[Event], authority: &StateAuthority<'_>) -> Vec<RenderedMessag
         let Event::Records { records, .. } = event else {
             continue;
         };
-        view.admit(records.clone(), authority);
+        view.admit(records.clone(), authority, &LAX);
     }
-    view.render()
+    view.render(&LAX, 0)
 }
 
 fn records_event(records: Vec<Record>, arrival: Arrival) -> Event {
