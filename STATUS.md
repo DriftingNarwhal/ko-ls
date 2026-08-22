@@ -261,6 +261,34 @@ design changes before anything else is built.
 
 Newest first. One line per change that moved the state above.
 
+- **2026-08-22** — **A node could not dial an address written as a name.** The root cause of a
+  two-machine test that could not get a circuit, and the quietest failure this project has found.
+
+  `SwarmBuilder` composes a transport from what it is asked for, and name resolution is one of
+  those things. Without `.with_dns()` a `/dns4/…` address is unsupported — and nothing says so:
+  `listen_on` for a circuit succeeds, because registering a listener resolves nothing; the dial
+  that follows is refused inside the swarm; **no call returns an error**; the relay never sees a
+  connection; and the node reports only that no reservation arrived. Every address in this
+  project had been an `/ip4/` literal, so nothing had ever asked the transport to resolve a name
+  — and a deployed relay is normally reachable *only* by hostname, since its operator does not
+  control the IP.
+
+  Fixed in `distributed-intranet` (`b66b16a`) for both node types, with
+  `tests/dns_addresses.rs` dialling `/dns4/localhost` — no DNS server needed, so it cannot flake
+  on one. Verified against the unfixed build first: it fails there, by timing out with nothing
+  reported, which is the fault's own shape. 654 green upstream.
+
+  **And the client's message asserted more than it knew.** It said the relay "answered and
+  granted no usable circuit — it returned no address of its own", which is a claim about the far
+  end. `reserve_via_relay` returning `Ok` means the reservation was *started*, not that anything
+  replied. So a correctly configured relay was investigated for an evening on the strength of a
+  sentence the code had no basis for. It now says a circuit did not arrive and names both
+  possibilities, pointing at the relay's own log to tell them apart.
+
+  Prior fixes in this chain were real and are kept — `RELAY_PUBLIC_ADDR` genuinely is required
+  behind a proxy, and DI-Relay now reads Railway's proxy variables itself. They were not *this*
+  fault.
+
 - **2026-08-22** — **The relay panel showed a symptom with two opposite causes.** A first
   deployment could not get a circuit, tried a rebuilt relay from scratch, and got the same red
   line — because the line said "no circuit was granted" for both *nothing answered there* and

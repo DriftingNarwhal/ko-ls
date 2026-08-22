@@ -308,10 +308,16 @@ pub async fn serve(
                 // did nothing. A relay bound to loopback has no external address
                 // to hand back, and libp2p builds a reservation's address list
                 // from external addresses alone.
+                // Deliberately does not say the relay answered. `reserve_via_relay`
+                // returning `Ok` means the reservation was *started* — a circuit
+                // listener registered — not that anything replied. Claiming
+                // otherwise sent a real deployment looking at a correctly
+                // configured relay for an evening, because the message asserted
+                // more than the code knew.
                 let reason = format!(
-                    "{relay} answered and granted no usable circuit — it returned no \
-                     address of its own. A relay announces nothing when it is bound to \
-                     loopback, or is behind a proxy with no public address configured"
+                    "no circuit from {relay} within the reservation window. Either \
+                     nothing reached it — check the relay's own log for a connection — \
+                     or it replied announcing no address of its own"
                 );
                 failures.push(reason.clone());
                 sink(&[Event::Degraded { reason }]);

@@ -129,17 +129,15 @@
                list built from its own private container address. -->
           <div class="relay-help" id="relay-help" hidden>
             <p class="dim">
-              Almost always the relay having no routable address of its own —
-              behind a proxy it hands back its private container address, grants
-              the reservation anyway, and keeps reporting healthy. Set
-              <code>RELAY_PUBLIC_ADDR</code> on the relay to its public host and
-              port, with <strong>no</strong> <code>/p2p/…</code> on the end:
+              <strong>Look at the relay's own log first.</strong> If it shows no
+              connection, nothing reached it and the address or the port is
+              wrong. If it shows one, it replied announcing nothing.
             </p>
-            <p class="mono dim">/dns4/your-host.proxy.rlwy.net/tcp/54321</p>
             <p class="dim">
-              Then redeploy it and press <strong>designate</strong> again here,
-              which restarts this node onto it. Worth checking first: the relay's
-              <code>/health</code> lists what it is actually listening on.
+              Announcing nothing is a relay behind a proxy with no public address
+              set: it hands back its private container address, grants the
+              reservation anyway, and keeps reporting healthy. Its
+              <code>/health</code> shows what it announces.
             </p>
           </div>
 

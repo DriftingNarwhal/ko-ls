@@ -214,7 +214,7 @@ function drawRelayState(relays) {
     // The note is about a relay that answered. It says nothing useful about one
     // nothing could reach, so it is shown only for the case it explains.
     el("relay-help").hidden = !relays.failures.some((why) =>
-      why.includes("granted no usable circuit"),
+      why.includes("no circuit from"),
     );
     stopWatchingRelay();
     return;
