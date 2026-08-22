@@ -161,17 +161,26 @@ X's governance log. Ungated, this is a "list your other identities' addresses" o
 unlinkability is gone wholesale. For a DM the check is trivially tight, since X has exactly
 two members.
 
-**Fallback when hole-punching fails** (symmetric NAT, CGNAT): the shared network's
-**bootstrap** relay. Core §5.3's correction establishes that a stateless bootstrap relay
-"enforces the global ceilings only" and "carries bytes and never inspects a join at all" —
-so it will serve the circuit with no protocol change and no setup by either participant,
-which is the friction goal met. Note the precision: *member* relays meter per-identity
-against replayed state and would refuse an identity they cannot verify, so they are not the
-fallback.
+**When hole-punching fails** (symmetric NAT, CGNAT over IPv4): the DM does not connect.
+Core §5.2 was corrected on 2026-08-22 and now says this plainly — there is no third tier, a
+relayed circuit carries the DCUtR negotiation and nothing else, and a pair that cannot punch
+reaches each other over IPv6 or not at all.
 
-*Flagged: that fallback lets the shared network's relay observe that two DM identities are
-exchanging bytes, and IP correlation likely tells it who they are. This is the §1 honest
-limit showing up concretely rather than a new weakness.*
+**This removes what used to be written here as the fallback**, and it is worth keeping the
+correction visible: the shared network's bootstrap relay was going to serve the circuit, on
+the reasoning that it "carries bytes and never inspects a join at all". It does carry bytes
+— for a negotiation — and that is the whole of what it may carry. A DM riding a bootstrap
+relay is exactly the thing §5.2 now refuses.
+
+What survives is better rather than worse. The relay is still the **rendezvous** that lets two
+NATed members negotiate a punch, which is the friction goal and needs no protocol change or
+setup by either participant. And the privacy flag that used to sit here is gone with the
+fallback: a relay that carries only a negotiation observes that two identities met, for as long
+as a handshake takes, rather than watching a conversation. The §1 honest limit on IP correlation
+still applies to the rendezvous itself.
+
+Note the precision that still holds: *member* relays meter per-identity against replayed state
+and would refuse an identity they cannot verify, so they are not the rendezvous either.
 
 **A relay is never shared between two of a member's networks (D29), and that is a different
 statement from the one below.** Reuse is technically possible — a bootstrap relay checks no

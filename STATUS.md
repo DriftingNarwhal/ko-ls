@@ -194,7 +194,7 @@ somebody forgot.
 | # | Owed | Why it is not done | Where it is recorded |
 |---|---|---|---|
 | O1 | **Commands for direct messages, search, voice and stage** | Each has a line in `design/05` §3 and no code behind it. P2 for the first two, P3 and P4 for the rest | `kols-api::Command`'s own documentation |
-| O2 | **`Discovery::Off` for conversation-profile networks** — the client half of E12, and **load-bearing for privacy rather than merely leaner since D29** | `kols init` writes no `chat:network-profile` key, so every network the CLI creates is a `server` and there is no conversation network to build the leaner node for. `kols_core::policy::conversation_genesis_values` exists for one; only a test calls it. The escalation: E13's relay fallback has the shared network's relay briefly carry a conversation, and it is `Discovery::Off` that keeps that DM node out of the relay's routing table. With discovery on, the fallback would create exactly the shared-routing-table correlation D29 forbids | `design/06` §12, `design/09` §3 |
+| O2 | **`Discovery::Off` for conversation-profile networks** — the client half of E12, and **load-bearing for privacy rather than merely leaner since D29** | `kols init` writes no `chat:network-profile` key, so every network the CLI creates is a `server` and there is no conversation network to build the leaner node for. `kols_core::policy::conversation_genesis_values` exists for one; only a test calls it. The escalation *was* E13's relay fallback carrying a conversation; Core §5.2's correction of 2026-08-22 removes that fallback entirely, so what remains is the rendezvous. `Discovery::Off` still matters and for the same reason: with discovery on, a DM node meeting a peer at the shared network's relay lands in that relay's routing table, which is the shared-routing-table correlation D29 forbids — a shorter exposure than a carried conversation, and the same kind | `design/06` §12, `design/09` §3 |
 | O3 | **`may_moderate_at` answers from current state, ignoring the head it is given** | Checking authority *as of* a governance head needs the log rather than one replayed snapshot. The difference shows only when a moderator is demoted after acting: this retroactively invalidates their past redactions, where `design/01` §6 says they should stand. Pinning is now judged against current state deliberately (`may_moderate_now`), which is a different question rather than the same one approximated | `kols-core::permissions`, flagged in the type's own docs |
 | O4 | **`kols-store` does not exist.** `kols-node` carries its own file-backed store instead of the SQLite projection `design/05` §5 describes | Nothing has needed a projection yet — the CLI replays the log on every invocation, which is slow and correct. The projection is worth building when something renders fast enough to notice | `design/05` §5 |
 | O5 | **The executor rebuilds an author's whole log to append one record** | `rebuild_log` replays every record this member wrote in a channel on every write, which is correct — the segment is a pure function of the sequence — and is linear in a log that only grows. It is the same work O4's projection exists to stop repeating, and wants measuring before it is optimised rather than after | `kols-node::chat::rebuild_log` |
@@ -206,6 +206,7 @@ somebody forgot.
 | O11 | **A relay may not be shared between networks, and nothing enforces it.** Decided 2026-08-21: reusing one relay across two of a member's networks breaks the unlinkability Core §1.2 exists to provide, so it is not permitted. Today it is merely *not done* — a founder can paste one address into two networks and nothing objects | A relay checks no membership by design (Core §5.5 — it replays no log and holds no capabilities), so it cannot refuse a peer for being in the wrong network. Underneath that, **the separation is not structural**: `kad::Behaviour::new` takes the default protocol name and `PROTOCOL_VERSION` is `/intranet/0.1.0` for every network, so two networks sharing a relay share a routing table and their members become mutually discoverable. Enforcing it means network-scoping the protocol names, which is a wire change and a protocol extension, not a client fix. Until then the client should at least refuse to designate a relay another of its own networks already uses — it holds the workspace, so it is the one party that can tell | `design/09` §1, §3; Core §5.5 |
 | ~~O12~~ | ~~**The window cannot finish setting up a relay, and its own text says it can.**~~ **Closed 2026-08-21.** The window submits `SetBootstrapRelays` through a relay panel in the rail, shows the **full** network id with a copy button beside it — labelled as the `RELAY_NETWORK` a relay needs to boot — and the creation form no longer promises a "later" that did not exist. Designating one restarts the node onto it rather than telling you to reopen the network. Address validation moved to `kols_node::parse_relay` and is shared with the terminal, so `kols relay set` and `kols init --relay` refuse a relay naming no peer id too | Was: a command and gate that existed with no handler and no surface | `crates/kols-ui/*`, `crates/kols-app/src/main.rs` |
 | ~~O13~~ | ~~**In the window a working relay is invisible; only a broken one reports.**~~ **Closed 2026-08-21.** New `Event::Relay { reserved, designated }`, emitted at startup in every case including success. It carries the count as well as the address so that "designates none" stays distinguishable from "designates some, none usable" — both leave a node reachable only on its own addresses, and only the second is a fault | The terminal keeps its `println!` and ignores the event, since it already said this where it happened | `crates/kols-api/src/event.rs`, `crates/kols-node/src/serve.rs` |
+| O14 | **The client still lets a relayed circuit carry payload, which Core §5.2 now forbids.** Corrected in the spec on 2026-08-21/22 (upstream `0b085e4`): there is no third tier, a circuit carries the DCUtR negotiation and is closed when the upgrade fails. Today a failed punch leaves the circuit open and everything keeps flowing over it | Three parts, in order of how much they buy. **Close the circuit on `HolePunchFailed`** — the direct expression of the rule, and it makes the failure visible instead of silent. **Refuse to send payload over a circuit**, so a circuit that exists for a negotiation cannot be used by anything else even transiently. **Lower DI-Relay's ceilings** from 120s/8MB toward the negotiation's own cost, so a relay enforces this itself rather than trusting every client — §5.3 now says exactly that. Not done at once because v0.6.0 is under test and changing transport behaviour underneath it would waste the run | Core §5.2, §5.3; `design/09` §3 |
 
 **Closed since this register was written:** the executor, the two checks `authorize`
 deliberately could not make, and the event half of the boundary. The first two were owed
@@ -260,6 +261,37 @@ design changes before anything else is built.
 ## 9. Log
 
 Newest first. One line per change that moved the state above.
+
+- **2026-08-22** — **Core §5.2 corrected by its author: a bootstrap relay carries no payload, ever.**
+  I had read "a correctness guarantee, not a usable path" as permitting a capped fallback, and
+  argued that reading back. The author's intent is stricter and the spec now says it: **there is
+  no third tier.** A relayed circuit carries the DCUtR negotiation; when the upgrade fails the
+  circuit MUST be closed and MUST NOT carry protocol or application payload of any kind. A pair
+  that cannot hole-punch reaches each other over IPv6 or not at all.
+
+  Two consequences now stated rather than implied. Members with no mutual path are not
+  partitioned from the network, only from each other — everything is pull-based and
+  content-addressed, so they converge through any member both can reach, which is an ordinary
+  sync partner rather than a route. And a two-member network where neither can reach the other
+  has **no remedy**, which is a real limitation stated plainly instead of papered over.
+
+  §5.3's ceilings are recast as defence in depth behind the rule, with 120s and 8MB noted as now
+  generous by orders of magnitude. The harness spec asserted the opposite outcome in two
+  scenarios and has been rewritten, plus a new one asserting that an IPv4-only CGNAT pair does
+  **not** connect. Upstream `0b085e4`.
+
+  **E13 loses its fallback**, and `design/09` §3 records why: the shared network's bootstrap
+  relay was going to serve a DM's circuit on the reasoning that it "carries bytes and never
+  inspects a join". It may carry a negotiation and nothing more. What survives is the rendezvous,
+  which is the friction goal anyway — and the privacy flag that sat there goes with the fallback,
+  since a relay that carries only a handshake observes that two identities met rather than
+  watching a conversation.
+
+  **Implementation is now behind the spec, deliberately and briefly.** The client still permits a
+  relayed circuit to carry traffic — that is what v0.6.0 is being tested against right now, and
+  changing transport behaviour underneath a running test would waste it. What is owed: close the
+  circuit on a failed DCUtR upgrade, refuse to send payload over a circuit, and lower the
+  relay's own ceilings so it enforces the rule rather than trusting clients. Recorded as **O14**.
 
 - **2026-08-22** — **The client offered no IPv6, which is the path the spec designates when a hole
   punch fails.** Raised as "the relay should never carry messages", which sent me to Core §5.2 —
