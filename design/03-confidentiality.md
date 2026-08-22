@@ -310,9 +310,11 @@ messages take a day to arrive", and it is a better answer than putting a copy on
 else's machine.
 
 *Flagged: a bootstrap relay does not help here, and should not be made to. Relays hold no
-state and cap circuits at 120 seconds and 8 MB by design (Core §5.3) — a relay that
+state and cap circuits at 60 seconds and 256 KB by design (Core §5.3) — a relay that
 stored messages for later would be exactly the always-on infrastructure this project
-refuses to depend on.*
+refuses to depend on. The ceilings were 120 seconds and 8 MB until 2026-08-22 and the
+conclusion only gets firmer: at 256 KB a circuit cannot carry a conversation, let alone
+hold one for a recipient who is not there.*
 
 ### 4.6 What this means for the DM list
 

@@ -77,10 +77,13 @@ refuses to start without it.
 
 ## 4. Deploy the relay
 
-A relay introduces two peers and gets out of the way — circuits are capped at 120 seconds and
-8 MB by design (Core §5.3), so this is connection setup rather than bandwidth, and it fits in a
-free tier. `DI-Relay`'s own README is the authority; this is the short form. All of it happens
-in a browser.
+A relay introduces two peers and gets out of the way — circuits are capped at 60 seconds and
+256 KB by design (Core §5.3), so this is connection setup rather than bandwidth, and it fits in
+a free tier. **Deploy from `main`, not from a tag.** The ceilings live in the protocol crate
+`DI-Relay` pins, so a relay built before 2026-08-22 still enforces the old 120 seconds and
+8 MB — which is a relay that would carry a conversation rather than refusing to.
+`DI-Relay`'s own README is the authority; this is the short form. All of it happens in a
+browser.
 
 1. **New project → Deploy from GitHub repo →** `DI-Relay`. The first build failing before
    variables are set is expected.

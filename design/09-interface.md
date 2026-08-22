@@ -88,10 +88,15 @@ Not every network needs a live node at every moment. Three tiers, chosen per net
 | **Cold** | Nothing | The poll interval | Everything else |
 
 **Warm is the interesting one, and it rests on a distinction Core §5.3 already draws.**
-Reservations and circuits are metered separately: a relay caps concurrent circuits and holds
-each to **120 seconds and 8 MB**, deliberately, because a relay's job is connection
-*establishment* and not transport. So for any pair that cannot hole-punch, holding a
-connection open indefinitely is impossible — the relay ends it every two minutes.
+Reservations and circuits are metered separately, and only the first is long-lived: a relay
+caps concurrent circuits and holds each to **60 seconds and 256 KB**, because a relay's job
+is connection *establishment* and not transport. A reservation has no such ceiling — it is
+renewed indefinitely and costs the relay a table entry.
+
+*The figures were 120 seconds and 8 MB when this was written, and §5.3 lowered them on
+2026-08-22 so that a relay enforces §5.2 itself rather than trusting clients to. Nothing in
+this section turns on the size: it is the separation that matters, and the smaller ceiling
+makes the point harder rather than weaker.*
 
 A held connection is not what is needed. What is needed is to be **dialable**, and that is
 what a reservation is: long-lived, renewed periodically, cheap. The sender dials when it has

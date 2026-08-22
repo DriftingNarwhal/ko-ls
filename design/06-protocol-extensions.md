@@ -545,9 +545,10 @@ conversation-profile network, and the hot/warm/cold policy over reservations.
 **Note on the wake path, recorded because it was nearly specified as its own mechanism.** No
 wake-up message is needed. Being dialable is what a reservation provides, and the dial *is* the
 signal — an inbound stream wakes the handler. Core §5.3's separation of reservation limits from
-circuit limits is what makes this work: a circuit is capped at 120 seconds and 8 MB precisely
+circuit limits is what makes this work: a circuit is capped at 60 seconds and 256 KB precisely
 because a relay assists connection establishment rather than carrying traffic, so a held
-connection was never the primitive to reach for.
+connection was never the primitive to reach for. *(120 seconds and 8 MB when this was written;
+lowered 2026-08-22, which strengthens the argument rather than changing it.)*
 
 ---
 
