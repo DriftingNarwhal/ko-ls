@@ -21,6 +21,17 @@
      working, nothing designated, designated and not working. */
   --good: #9ece6a;
   --bad: #f7768e;
+  /* Surfaces and one foreground, named because a theme cannot override what a
+     rule spells out literally. These were hex values scattered through the
+     sheet, which made `design/09` §6's user themes true of the palette above
+     and false of everything that had grown around it. */
+  --hover: #161922;
+  --sunken: #1d212b;
+  --pinned: #1b1a16;
+  --veil: rgba(9, 10, 14, 0.72);
+  /* What goes *on* an accent-filled control, which is not `--text`: a theme
+     changing --accent to something pale needs this to follow. */
+  --on-accent: #0d1017;
   --gap: 12px;
   --radius: 6px;
   --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
@@ -102,6 +113,27 @@ body {
 
 .dim { color: var(--dim); font-size: 12px; margin: 0; }
 
+/* Unread. Weight rather than colour, so it reads at a glance without competing
+   with the channel you are actually in, and so a theme that recolours
+   everything cannot accidentally erase it. */
+.channel-name { flex: 1 1 auto; min-width: 0; overflow-wrap: anywhere; }
+#channel-list button.unread .channel-name {
+  color: var(--text);
+  font-weight: 700;
+}
+.unread-count {
+  background: var(--accent);
+  border-radius: 9px;
+  color: var(--ground);
+  flex: none;
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 1.6;
+  min-width: 17px;
+  padding: 0 5px;
+  text-align: center;
+}
+
 /* ---- who is here --------------------------------------------------------- */
 
 .roster {
@@ -158,7 +190,7 @@ body {
 .settings {
   position: fixed;
   inset: 0;
-  background: rgba(9, 10, 14, 0.72);
+  background: var(--veil);
   display: flex;
   align-items: flex-start;
   justify-content: center;
@@ -377,19 +409,23 @@ body {
 .channels ul { list-style: none; margin: 0; padding: 0; }
 
 .channels li button {
+  align-items: center;
   background: none;
   border: 0;
   border-radius: var(--radius);
   color: var(--dim);
   cursor: pointer;
-  display: block;
+  /* Flex rather than block, so an unread badge sits at the right edge instead
+     of running on after the name. */
+  display: flex;
+  gap: 6px;
   font: inherit;
   padding: 5px 8px;
   text-align: left;
   width: 100%;
 }
 
-.channels li button:hover { background: #1d212b; color: var(--text); }
+.channels li button:hover { background: var(--sunken); color: var(--text); }
 .channels li button.current { background: #222735; color: var(--text); }
 .channels li button.archived { opacity: 0.55; }
 .channels li.empty { color: var(--dim); font-size: 12px; padding: 5px 8px; }
@@ -437,7 +473,7 @@ body {
   border-radius: var(--radius);
 }
 
-.message:hover { background: #161922; }
+.message:hover { background: var(--hover); }
 
 .message .at { color: var(--dim); font-family: var(--mono); font-size: 11px; }
 .message .author { color: var(--accent); font-weight: 600; }
@@ -451,7 +487,7 @@ body {
    made a working pin look like a dead button. */
 .message.pinned {
   box-shadow: inset 3px 0 0 var(--warn);
-  background: #1b1a16;
+  background: var(--pinned);
 }
 .message .flag.pinned-flag {
   color: var(--warn);
@@ -482,7 +518,7 @@ body {
   padding: 2px 3px;
   border-radius: var(--radius);
 }
-.votes .vote:hover { color: var(--text); background: #1d212b; }
+.votes .vote:hover { color: var(--text); background: var(--sunken); }
 .votes .vote.cast { color: var(--accent); }
 .votes .score {
   color: var(--dim);
@@ -494,7 +530,7 @@ body {
 .votes .score.down { color: var(--bad); }
 
 .message .reaction {
-  background: #1d212b;
+  background: var(--sunken);
   border: 1px solid var(--line);
   border-radius: 10px;
   color: var(--text);
@@ -512,10 +548,11 @@ body {
 /* What can be done to a message. Revealed on hover so a hundred rows are not a
    hundred rows of buttons, and kept in the flow rather than floated so it never
    covers the text it belongs to. */
+/* No `margin-left: auto` here: the body already grows to fill the row, so this
+   sits where the text ends, and the votes after it take the right edge. */
 .actions {
   display: flex;
   gap: 4px;
-  margin-left: auto;
   opacity: 0;
 }
 .message:hover .actions,
@@ -583,7 +620,7 @@ body {
   background: var(--accent);
   border: 0;
   border-radius: var(--radius);
-  color: #0d1017;
+  color: var(--on-accent);
   cursor: pointer;
   font: inherit;
   font-weight: 600;
@@ -639,7 +676,7 @@ body {
   background: var(--accent);
   border: 0;
   border-radius: var(--radius);
-  color: #0d1017;
+  color: var(--on-accent);
   cursor: pointer;
   font: inherit;
   font-weight: 600;
@@ -745,7 +782,7 @@ body {
   background: var(--accent);
   border: 0;
   border-radius: var(--radius);
-  color: #0d1017;
+  color: var(--on-accent);
   cursor: pointer;
   font: inherit;
   font-weight: 600;

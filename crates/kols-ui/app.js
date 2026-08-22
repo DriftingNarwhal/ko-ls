@@ -21,6 +21,8 @@ const state = {
   relayPoll: null,
   doorPoll: null,
   channelPoll: null,
+  // Channel id to how many messages have arrived there unseen.
+  unread: {},
   // What `me` and the channel list looked like when last drawn, so a tick that
   // finds nothing new leaves the sidebar alone.
   meSignature: null,
@@ -430,11 +432,28 @@ function drawChannels(channels) {
   for (const channel of channels) {
     const item = document.createElement("li");
     const button = document.createElement("button");
-    button.textContent = `#${channel.name}`;
     button.dataset.id = channel.id;
     button.className = channel.id === state.current ? "current" : "";
     if (channel.private) button.title = "private";
     if (channel.archived) button.classList.add("archived");
+
+    const name = document.createElement("span");
+    name.className = "channel-name";
+    name.textContent = `#${channel.name}`;
+    button.append(name);
+
+    // Two signals for one fact, because they answer different questions from
+    // different distances: the weight says *something is here* at a glance, and
+    // the count says how much once you look.
+    const unread = state.unread[channel.id] ?? 0;
+    if (unread > 0 && channel.id !== state.current) {
+      button.classList.add("unread");
+      const badge = document.createElement("span");
+      badge.className = "unread-count";
+      badge.textContent = unread > 99 ? "99+" : String(unread);
+      button.append(badge);
+    }
+
     button.addEventListener("click", () => openChannel(channel.id));
     item.append(button);
     list.append(item);
@@ -660,7 +679,8 @@ function drawMessages(opened) {
       row.append(pinned);
     }
 
-    if (!message.withdrawn) row.append(votes(opened.channel, message));
+    // Appended *after* the actions below, so read the order at the end of this
+    // loop rather than here.
 
     // Anything that is not a vote, kept visible. The record carries a free-form
     // key (spec 07 §3), so another client may write reactions this one does not
@@ -685,7 +705,13 @@ function drawMessages(opened) {
       row.append(chip);
     }
 
+    // Actions first, votes last, so the votes sit flush against the right edge
+    // of every row. The other way round put them immediately left of the action
+    // bar — whose width depends on what this member may do to *this* message —
+    // so votes on your own messages, which carry edit and withdraw, sat out of
+    // line with votes on everybody else's.
     row.append(actions(opened.channel, message));
+    if (!message.withdrawn) row.append(votes(opened.channel, message));
     list.append(row);
   }
 
@@ -775,7 +801,43 @@ function watchChannel() {
   }, CHANNEL_REFRESH_MILLIS);
 }
 
+/// Unread counts, per channel, for this person on this machine.
+///
+/// Local by construction and deliberately so: what somebody has read is not a
+/// fact about the network, and writing it to the log would publish a reading
+/// habit to every member. `localStorage` is per-origin and per-device, which is
+/// exactly the scope wanted.
+///
+/// Keyed by network, since one window opens several and a channel id is only
+/// unique within one.
+function unreadKey() {
+  return `kols:unread:${state.me?.network ?? "none"}`;
+}
+
+function rememberUnread() {
+  try {
+    localStorage.setItem(unreadKey(), JSON.stringify(state.unread));
+  } catch {
+    // A window that cannot store this still counts unread for the session.
+    // Losing it on restart is worth less than failing to draw anything.
+  }
+}
+
+function recallUnread() {
+  try {
+    state.unread = JSON.parse(localStorage.getItem(unreadKey()) ?? "{}") ?? {};
+  } catch {
+    state.unread = {};
+  }
+}
+
 async function openChannel(id) {
+  // Reading it is what marks it read. Done before the render so the count is
+  // gone by the time the sidebar is drawn below.
+  if (state.unread[id]) {
+    delete state.unread[id];
+    rememberUnread();
+  }
   state.current = id;
   drawChannels(state.channels);
 
@@ -1028,7 +1090,18 @@ async function watch() {
   // the bug it produced: a message from the other side sat unrendered until the
   // reader posted, at which point the composer's own re-read revealed it. The
   // records were in the store the whole time.
-  await listen("kols://records", async () => {
+  await listen("kols://records", async (event) => {
+    const [channel, messages] = event.payload;
+    // Unread is driven by arrival rather than by scanning, which is what makes
+    // it free: the node reports what it learned, and a channel nobody is
+    // looking at gains a count. It survives the app being closed for the same
+    // reason — the node was not running either, so it learns the backlog on the
+    // next start and reports it then.
+    if (messages && channel !== state.current) {
+      state.unread[channel] = (state.unread[channel] ?? 0) + 1;
+      rememberUnread();
+      drawChannels(state.channels);
+    }
     if (state.current) await openChannel(state.current);
   });
 
@@ -1092,6 +1165,9 @@ async function start() {
 
   show("app");
   drawMe(me);
+  // After `drawMe`, which is what puts the network id in `state.me` — the key
+  // these are stored under.
+  recallUnread();
   watchRelay();
   watchChannel();
   const channels = await invoke("channels");

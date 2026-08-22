@@ -735,8 +735,25 @@ fn start_node(handle: &tauri::AppHandle, app: tauri::State<'_, App>, root: std::
             // cheapest way to hold to that is to render from the projection
             // every time.
             let name = match event {
-                kols_api::Event::Records { channel, .. } => {
-                    let _ = emitter.emit("kols://records", to_hex(channel.as_bytes()));
+                kols_api::Event::Records {
+                    channel, records, ..
+                } => {
+                    // Two facts, because the interface wants different things
+                    // from them: *something arrived here* means redraw, and *a
+                    // message arrived here* is what makes a channel unread. A
+                    // vote or an edit is activity and is not something somebody
+                    // needs to be told to go and read.
+                    let messages = records
+                        .iter()
+                        .any(|record| matches!(record.body, kols_core::RecordBody::Message { .. }));
+                    // No author check: a record this member wrote is already in
+                    // their store, so the absorb that follows reports nothing,
+                    // and anything they write live goes to the channel they are
+                    // looking at. Nothing here can mark your own post unread.
+                    let _ = emitter.emit(
+                        "kols://records",
+                        (to_hex(channel.as_bytes()), messages),
+                    );
                     continue;
                 }
                 kols_api::Event::Governance { .. } | kols_api::Event::Adopted { .. } => {

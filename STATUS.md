@@ -263,6 +263,32 @@ design changes before anything else is built.
 
 Newest first. One line per change that moved the state above.
 
+- **2026-08-22** — **Unread channels, votes that line up, and every colour behind a token.**
+
+  **Unread is driven by arrival, not by scanning**, which is what makes it free. The node already
+  reports what it learned; the shell now says whether any of it was a **message**, so a vote or an
+  edit counts as activity without telling somebody to go and read something. A channel that is not
+  open gains a count; opening it clears it. Kept in `localStorage`, keyed by network — what
+  somebody has read is not a fact about the network, and writing it to the log would publish a
+  reading habit to every member. It survives the app being closed for a pleasant reason: the node
+  was not running either, so it learns the backlog on the next start and reports it then.
+
+  **Votes were misaligned on your own messages.** They sat immediately left of the action bar,
+  whose width depends on what you may do to *that* message — so rows carrying edit and withdraw
+  pushed their votes further left than everybody else's. Actions now come first and votes take the
+  right edge, so the always-visible control is the aligned one.
+
+  **The theming question, answered by audit rather than impression.** No inline styles are set
+  from JavaScript, so structure and classes are fully reachable — but **seven colours were
+  literal hex** and therefore unreachable by any user theme, most of them added by me as the
+  interface grew: row hover, the pinned tint, chip backgrounds, the settings veil, and a
+  foreground used on accent-filled controls. All five are tokens now (`--hover`, `--pinned`,
+  `--sunken`, `--veil`, `--on-accent`), bringing `:root` to 18 and leaving no literal colour
+  anywhere else in the sheet. `design/09` §6's user themes were true of the original palette and
+  had quietly stopped being true of everything grown around it.
+
+  196 green, clippy clean.
+
 - **2026-08-22** — **The DHT was never bootstrapped, so routing had no reach.** Raised as "routing
   should be built into this — a mesh cannot need every member connected to every other member".
   Correct, and the design already agrees: §5.1's Kademlia is the routing layer, provider records
