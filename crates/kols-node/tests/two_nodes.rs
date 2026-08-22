@@ -774,3 +774,64 @@ fn history_is_not_re_broadcast_live_to_a_peer_that_arrives_later() {
     let read = ok(&bob, &["read", "general"]);
     assert!(read.contains("written well before bob showed up"), "{read}");
 }
+
+/// A channel defined *after* a member has joined reaches them.
+///
+/// # Why this was not covered
+///
+/// Every other test here creates its channels before the joiner arrives, so
+/// they reach him through the replay that runs when he first syncs. That is a
+/// different path from the one a running member takes: an entry appended while
+/// both daemons are up has to be adopted by the founder's node, offered on the
+/// next governance sync, and accepted into a log the joiner has already
+/// replayed once. Reported from a real two-machine session — the founder made a
+/// channel and the joiner never saw it — and reproduced here rather than guessed
+/// at.
+#[test]
+fn a_channel_created_after_a_member_joins_reaches_them() {
+    let alice = Home::new("alice-late-channel");
+    let bob = Home::new("bob-late-channel");
+
+    let created = ok(&alice, &["init", "late"]);
+    let network = field(&created, "network   ");
+    let attached = ok(&bob, &["attach", &network]);
+    ok(&alice, &["admit", &field(&attached, "kols admit ")]);
+
+    // 45161/45162: every other port here is taken, and two tests sharing one
+    // means the second daemon binds nothing and reports nothing, which reads as
+    // the feature under test failing.
+    let alice_node = serve(&alice, 45161, None);
+    let address = field(
+        &alice_node.wait_for("listening", Duration::from_secs(20)),
+        "listening ",
+    );
+    ok(&alice, &["channel", "create", "general"]);
+    ok(&alice, &["post", "general", "before the second channel"]);
+    alice_node.wait_for("picked up", Duration::from_secs(20));
+
+    let bob_node = serve(&bob, 45162, Some(&address));
+    bob_node.wait_for("learned 1 record", Duration::from_secs(45));
+
+    // The whole point: defined now, with both daemons up and Bob already keyed
+    // and already having replayed the log once.
+    ok(&alice, &["channel", "create", "afterwards"]);
+    alice_node.wait_for("picked up", Duration::from_secs(20));
+
+    let deadline = Instant::now() + Duration::from_secs(60);
+    let mut listing = String::new();
+    while Instant::now() < deadline {
+        listing = ok(&bob, &["channel", "list"]);
+        if listing.contains("afterwards") {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(500));
+    }
+
+    assert!(
+        listing.contains("afterwards"),
+        "a channel defined after Bob joined never reached him. Both daemons were \
+         up and he was keyed, so this is the governance entry not travelling \
+         rather than anything about content:\n{listing}\n\n{}",
+        every_daemon_log()
+    );
+}

@@ -21,6 +21,10 @@ const state = {
   relayPoll: null,
   doorPoll: null,
   channelPoll: null,
+  // What `me` and the channel list looked like when last drawn, so a tick that
+  // finds nothing new leaves the sidebar alone.
+  meSignature: null,
+  channelsSignature: null,
   // What the open channel looked like when it was last drawn, so a poll that
   // finds nothing new does no DOM work.
   channelSignature: null,
@@ -107,6 +111,7 @@ function drawKeyState(me) {
 /// Draws the network header and gates the chrome on what this member holds.
 function drawMe(me) {
   state.me = me;
+  state.meSignature = signatureOfMe(me);
   el("network-label").textContent = me.label || "unnamed network";
   el("network-id").textContent = me.network.slice(0, 16);
   el("you-name").textContent = me.name ?? "unnamed";
@@ -356,6 +361,7 @@ async function drawWaiting() {
 
 function drawChannels(channels) {
   state.channels = channels;
+  state.channelsSignature = signatureOfChannels(channels);
   const list = el("channel-list");
   list.replaceChildren();
 
@@ -574,6 +580,39 @@ function drawMessages(opened) {
     : "";
 }
 
+/// Re-reads what replay decides — this member's standing, and the channels.
+///
+/// Drawn only when either actually changed, since both replay the governance log
+/// and redrawing the sidebar on a timer would fight anybody using it.
+async function refreshReplayed() {
+  const me = await invoke("me");
+  if (signatureOfMe(me) !== state.meSignature) drawMe(me);
+
+  const channels = await invoke("channels");
+  if (signatureOfChannels(channels) !== state.channelsSignature) drawChannels(channels);
+}
+
+/// What this member may do, and is called. Not the network id, which cannot
+/// change while one is open.
+function signatureOfMe(me) {
+  return [
+    me.name,
+    me.has_key,
+    me.may_post,
+    me.may_create_channel,
+    me.may_invite,
+    me.may_moderate,
+    me.may_set_relays,
+  ].join(":");
+}
+
+/// Enough of the channel list to tell whether the sidebar would change.
+function signatureOfChannels(channels) {
+  return channels
+    .map((channel) => `${channel.id}|${channel.name}|${channel.topic}|${channel.archived}`)
+    .join(",");
+}
+
 /// Re-reads the open channel on a timer, whatever the events did.
 ///
 /// **The fourth bug in three days where a pushed event was the only path to a
@@ -588,6 +627,16 @@ function drawMessages(opened) {
 function watchChannel() {
   if (state.channelPoll) clearInterval(state.channelPoll);
   state.channelPoll = setInterval(async () => {
+    try {
+      // The sidebar and the header come out of replay too, and a channel
+      // defined by somebody else changes neither the open channel nor anything
+      // this window did. Verified in `two_nodes.rs`: a channel created after a
+      // member joins does reach them — so a founder making one that the joiner
+      // never saw was this list not being redrawn, not the entry not arriving.
+      await refreshReplayed();
+    } catch {
+      // Same reasoning as below: a background tick reports nothing.
+    }
     if (!state.current) return;
     try {
       const opened = await invoke("open_channel", { channel: state.current });

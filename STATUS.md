@@ -262,6 +262,24 @@ design changes before anything else is built.
 
 Newest first. One line per change that moved the state above.
 
+- **2026-08-22** — **A channel the founder created after the joiner arrived never showed up for
+  them.** Suspected to be permissions; it was not. Reproduced first: `two_nodes.rs` gained
+  `a_channel_created_after_a_member_joins_reaches_them`, and **it passes** — every other test
+  here creates its channels before the joiner arrives, so that path had never been covered, and
+  the entry does travel.
+
+  So the sidebar was the fifth surface where a pushed event was the only path to a redraw. The
+  channel list was drawn on `kols://governance` and nowhere else. The two-second tick now also
+  re-reads what replay decides — this member's standing and the channel list — each drawn only
+  when a signature over it changes, so a tick that finds nothing leaves the sidebar alone rather
+  than fighting somebody using it.
+
+  **The new test failed once and it was mine.** It passed alone and failed in the full suite,
+  which in this project is the signal for a real race — but here it was a port collision with
+  `a_founder_can_still_key_somebody_in_after_restarting`, so the second daemon bound nothing,
+  reported nothing, and looked exactly like the feature failing. Moved to free ports; 196 green,
+  and the ports now carry a comment saying why they are not shared.
+
 - **2026-08-22** — **The two-machine test passes, including the part that matters most.** Two
   machines on separate networks, through a relay, admitted, keyed, messages both ways — and then
   **the relay was taken down and messages kept flowing**, which is the hole punch working and the
