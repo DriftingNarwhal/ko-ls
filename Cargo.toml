@@ -3,7 +3,7 @@ resolver = "3"
 members = ["crates/kols-core", "crates/kols-net", "crates/kols-api", "crates/kols-node", "crates/kols-app"]
 
 [workspace.package]
-version = "0.6.2"
+version = "0.7.0"
 edition = "2024"
 rust-version = "1.85"
 license = "AGPL-3.0-only"
