@@ -376,6 +376,13 @@ pub async fn serve(
     redial.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
     redial.reset();
 
+    // A routing table goes stale: peers leave, buckets thin out, and a table
+    // that is never refreshed slowly stops being able to route. Kademlia's own
+    // guidance is to re-bootstrap periodically rather than once at startup.
+    let mut dht = tokio::time::interval(DHT_BOOTSTRAP_INTERVAL);
+    dht.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+    dht.reset();
+
     loop {
         let event = tokio::select! {
             event = node.next_event() => event,
@@ -388,6 +395,10 @@ pub async fn serve(
                         let _ = node.dial_candidates([address]);
                     }
                 }
+                continue;
+            }
+            _ = dht.tick(), if !connected.is_empty() => {
+                node.bootstrap_dht();
                 continue;
             }
             _ = relay_watch.tick(), if !designated.is_empty() => {
@@ -640,6 +651,13 @@ pub async fn serve(
                 println!("connected to {peer}");
                 connected.insert(peer);
                 record_connected(&store, &connected, sink);
+                // A new peer is a new place to walk from. The routing table is
+                // filled from peers this node connects to and nothing else, so
+                // until it is walked it is one hop deep — and a provider query
+                // over a one-hop table can only ask people already on the other
+                // end of a socket. That is what made this look like it needed
+                // every member connected to every other one.
+                node.bootstrap_dht();
                 start_sync(&mut node, peer);
             }
 
@@ -1390,6 +1408,13 @@ const RELAY_RECHECK: std::time::Duration = std::time::Duration::from_secs(20);
 /// Long enough not to hammer a peer that is genuinely away, short enough that a
 /// relay coming back is measured in seconds rather than in restarts.
 const REDIAL_INTERVAL: std::time::Duration = std::time::Duration::from_secs(15);
+
+/// How often to walk the DHT again.
+///
+/// Not a cost worth minimising — a bootstrap is a handful of queries — and a
+/// routing table that is never refreshed thins out as peers leave until it can
+/// no longer route, which reads as content having no providers.
+const DHT_BOOTSTRAP_INTERVAL: std::time::Duration = std::time::Duration::from_secs(300);
 
 /// Reserves a circuit on the first designated relay that grants one.
 ///

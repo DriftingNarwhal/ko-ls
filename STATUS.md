@@ -262,6 +262,33 @@ design changes before anything else is built.
 
 Newest first. One line per change that moved the state above.
 
+- **2026-08-22** — **The DHT was never bootstrapped, so routing had no reach.** Raised as "routing
+  should be built into this — a mesh cannot need every member connected to every other member".
+  Correct, and the design already agrees: §5.1's Kademlia is the routing layer, provider records
+  are published, provider queries are issued, and `fetch_chunks` pulls from **whichever holder
+  answers** rather than from an author. So A can read C's records through B without ever
+  connecting to C.
+
+  Every piece was present except the one that gives it reach. `add_address` records peers this
+  node is *already connected to*, and nothing else populated the table — so it was exactly one
+  hop deep, and a provider query could only ask the two or three peers already on the other end
+  of a socket. Content two hops away was unfindable, and that is indistinguishable from content
+  genuinely having no providers. `kad.bootstrap()` appeared nowhere in either repo.
+
+  Fixed upstream (`8c0e2c8`): `bootstrap_dht` walks the DHT with a query for the node's own key,
+  which returns the peers closest to it and fills the table on the way. The client calls it on
+  every new connection and every five minutes, since a table that is never refreshed thins out as
+  peers leave until it can no longer route. §5.1 now states the requirement rather than leaving it
+  to be noticed, and says why: content is fetched from whichever holder answers, and the DHT is
+  what finds one.
+
+  **A correction to what I said one message earlier.** I reported that this client "never attempts
+  a full mesh" and implied the fix was to hold more connections. That was the wrong conclusion —
+  you do not want a full mesh, you want a DHT, and the DHT was there and inert. Connection
+  breadth still matters (`design/09` §2's tiering does not exist), but Kademlia's own queries dial
+  as they route, so bootstrapping widens the graph as a side effect rather than needing a policy
+  first. 655 upstream, 196 here.
+
 - **2026-08-22** — **The waiting-room fix was too expensive, and a roster landed.**
 
   **`record_waiting` on every tick was a real cost**, flagged on review before it shipped
