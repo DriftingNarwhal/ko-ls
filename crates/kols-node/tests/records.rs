@@ -177,6 +177,16 @@ fn a_founder_may_pin_because_they_hold_every_capability() {
     ok(&home, &["pin", "general", &id]);
     let read = ok(&home, &["read", "general"]);
     assert!(read.contains("pinned"), "{read}");
+
+    // And back off again. The `--remove` path had no coverage, which mattered
+    // once a window offered pin and unpin as the same button: a toggle whose
+    // second half is untested is half a feature.
+    ok(&home, &["pin", "general", &id, "--remove"]);
+    let read = ok(&home, &["read", "general"]);
+    assert!(
+        !read.contains("pinned"),
+        "unpinning should leave no pin behind:\n{read}"
+    );
 }
 
 #[test]

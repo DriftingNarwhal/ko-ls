@@ -262,6 +262,28 @@ design changes before anything else is built.
 
 Newest first. One line per change that moved the state above.
 
+- **2026-08-22** — **The two-machine test passes, including the part that matters most.** Two
+  machines on separate networks, through a relay, admitted, keyed, messages both ways — and then
+  **the relay was taken down and messages kept flowing**, which is the hole punch working and the
+  relay out of the data path, confirmed on real networks rather than asserted. Edits, withdrawals
+  and reactions all confirmed too.
+
+  **Pinning "did nothing", and it was doing everything except showing.** Checked by running it:
+  the record round-trips and `kols read` prints `[pinned]`, and `records.rs` has covered this
+  since it was written. The window's entire signal for a pinned message was
+  `box-shadow: inset 2px 0 0` on a row with 4px of padding — present, invisible, and exactly what
+  a dead button looks like. It now carries a **`pinned` flag in words**, beside `edited`, plus a
+  heavier bar and a tinted row.
+
+  Two real defects came out of looking. The redraw signature ignored pin state, so a pin by
+  *another member* on any message but the last would never have been drawn — the same
+  only-when-you-act failure as before, one layer up. And `--remove` had no coverage, which
+  matters now that a window offers pin and unpin as one button: a toggle whose second half is
+  untested is half a feature. Both fixed; 195 green.
+
+  A correction: I said pinning had no test at all. It did — an earlier grep matched "wra**ppin**g"
+  and `head -5` hid the real hits.
+
 - **2026-08-22** — **Core §5.2 corrected by its author: a bootstrap relay carries no payload, ever.**
   I had read "a correctness guarantee, not a usable path" as permitting a capped fallback, and
   argued that reading back. The author's intent is stricter and the spec now says it: **there is

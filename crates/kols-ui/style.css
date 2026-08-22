@@ -343,7 +343,19 @@ body {
 /* Hidden, never unsent — the interface must not imply the bytes came back. */
 .message.withdrawn .body,
 .message.redacted .body { color: var(--dim); font-style: italic; }
-.message.pinned { box-shadow: inset 2px 0 0 var(--warn); }
+/* Pinned. The bar is the ambient signal and the flag is the readable one —
+   2px of shadow alone was invisible against a row with 4px of padding, which
+   made a working pin look like a dead button. */
+.message.pinned {
+  box-shadow: inset 3px 0 0 var(--warn);
+  background: #1b1a16;
+}
+.message .flag.pinned-flag {
+  color: var(--warn);
+  border: 1px solid var(--warn);
+  border-radius: 10px;
+  padding: 0 6px;
+}
 
 .message .flag {
   color: var(--dim);

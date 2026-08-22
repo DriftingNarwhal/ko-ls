@@ -457,6 +457,13 @@ function signatureOf(opened) {
     // changing how many there are, so the last one's shape rides along.
     last ? `${last.body}|${last.edited}|${last.withdrawn}|${last.reactions.length}` : "",
     opened.refused.length,
+    // Pins, anywhere in the channel rather than only on the last message: a
+    // moderator pinning something from an hour ago changes nothing else about
+    // the view, so without this a pin by somebody else would never be drawn.
+    opened.messages
+      .map((message, index) => (message.pinned ? index : ""))
+      .filter((index) => index !== "")
+      .join(","),
   ].join(":");
 }
 
@@ -514,6 +521,16 @@ function drawMessages(opened) {
       edited.className = "flag";
       edited.textContent = "edited";
       row.append(edited);
+    }
+
+    // Said in words, like `edited`. A pinned message used to be marked only by a
+    // 2px inset shadow on a row with 4px of padding — present, invisible, and
+    // indistinguishable from the pin having done nothing at all.
+    if (message.pinned) {
+      const pinned = document.createElement("span");
+      pinned.className = "flag pinned-flag";
+      pinned.textContent = "pinned";
+      row.append(pinned);
     }
 
     // Reactions are toggles, so each chip knows which way it is about to go.
