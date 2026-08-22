@@ -168,6 +168,17 @@ jobs:
       # `bundle.active` is false in tauri.conf.json, because an ordinary
       # `cargo build` has no business producing an installer. It is asked for
       # here instead of turned on there.
+      # `signingIdentity: "-"` in tauri.conf.json is an **ad-hoc** signature, and
+      # it is not cosmetic on Apple Silicon: an arm64 binary must carry a valid
+      # signature to execute at all, so an unsigned `.app` inside a quarantined
+      # `.dmg` fails Gatekeeper's check and macOS reports it as **"damaged and
+      # can't be opened"**. That message sends people to the Trash rather than to
+      # right-click → Open, which is the affordance for an app that is merely
+      # unidentified. Ad-hoc signing turns the first into the second.
+      #
+      # It is not notarisation and does not pretend to be: first launch still
+      # needs right-click → Open. Notarisation needs a paid developer
+      # certificate this project does not have.
       - name: Installer
         working-directory: ko-ls/crates/kols-app
         run: tauri build --bundles ${{ matrix.bundle }}
@@ -226,4 +237,4 @@ jobs:
 
           **Windows** needs the WebView2 runtime, which ships with Windows 11 and current Windows 10.
 
-          **macOS** builds are for Apple Silicon and are unsigned, so Gatekeeper will refuse them on first run: open the app from the right-click menu once, or \`xattr -d com.apple.quarantine <file>\`. Signing needs a developer certificate this project does not have."
+          **macOS** builds are for Apple Silicon and are ad-hoc signed, not notarised. Gatekeeper refuses them on first run: **right-click the app → Open**, once. If macOS instead calls it *damaged*, that is quarantine on an older download — \`xattr -dr com.apple.quarantine /Applications/ko-ls.app\` clears it. Notarising needs a paid developer certificate this project does not have."

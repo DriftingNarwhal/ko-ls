@@ -261,6 +261,22 @@ design changes before anything else is built.
 
 Newest first. One line per change that moved the state above.
 
+- **2026-08-22** — **The macOS build said it was "damaged".** Not a corrupted download and not a
+  bundler failure: **an arm64 binary must carry a valid signature to execute at all**, so an
+  unsigned `.app` inside a quarantined `.dmg` fails Gatekeeper's check outright — and macOS
+  reports that as *damaged and can't be opened*, which points at the Trash rather than at
+  right-click → Open. The affordance everybody knows is the one for an app that is merely
+  *unidentified*, which is a different state.
+
+  `signingIdentity: "-"` in `tauri.conf.json` ad-hoc signs it, which turns the first message into
+  the second. It is not notarisation and is not pretended to be — first launch still needs
+  right-click → Open, and notarising needs a paid certificate this project does not have. The
+  release notes and the runbook now say which message means what, since "damaged" is the one that
+  makes somebody delete a working build.
+
+  Two-machine test note: **the relay path works.** DNS, the relay, the circuit — all of it, on
+  real machines across real networks. This is packaging, downstream of that.
+
 - **2026-08-22** — **A node could not dial an address written as a name.** The root cause of a
   two-machine test that could not get a circuit, and the quietest failure this project has found.
 

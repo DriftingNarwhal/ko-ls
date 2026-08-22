@@ -31,9 +31,18 @@ neither — it is a routable address both can reach.
 | MacBook | `macos-arm64-ko-ls_<version>_aarch64.dmg` |
 
 Both platforms object to an unsigned download the first time, in ways that read as a broken
-build. On macOS the `.dmg` is refused by Gatekeeper: **right-click → Open**, once, rather than
-double-clicking. On Windows SmartScreen warns about the installer; the portable `.exe` avoids it
-entirely. There is no signing certificate on this project, so both are expected.
+build.
+
+**macOS**: drag the app out of the `.dmg`, then **right-click → Open** rather than
+double-clicking. If macOS says the app is **damaged and can't be opened**, that is quarantine
+plus a build older than v0.3.4 — clear it with
+`xattr -dr com.apple.quarantine /Applications/ko-ls.app`, or take a newer build, which is ad-hoc
+signed and gets the ordinary "unidentified developer" prompt instead.
+
+**Windows**: SmartScreen warns about the installer. The portable `.exe` avoids it entirely.
+
+Neither is a symptom: notarising and code-signing need paid certificates this project does not
+have.
 
 Ignore the `kols` binaries in the release. They are a development tool (`design/00` D30) and no
 step here uses one.
