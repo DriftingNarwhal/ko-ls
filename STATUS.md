@@ -262,6 +262,34 @@ design changes before anything else is built.
 
 Newest first. One line per change that moved the state above.
 
+- **2026-08-22** — **The waiting-room fix was too expensive, and a roster landed.**
+
+  **`record_waiting` on every tick was a real cost**, flagged on review before it shipped
+  anywhere. `Store::state` is not a lookup — it reads the whole governance log off disk and
+  re-applies it — so this paid a full replay every two seconds, for the lifetime of a node, to
+  answer a question whose answer is almost always "nobody". It now returns early when the room is
+  empty *and* nothing is written down; both halves are needed, since the second is what still
+  lets a room that has just emptied record that once. Steady state is an in-memory check and a
+  small file read.
+
+  **A roster, answering the narrow question honestly.** `people` returns every member with a
+  connected marker, and the note under it says what the marker means: *connected to you right
+  now*. An unlit member may be away, unreachable from here, or never dialled, and nothing on this
+  machine distinguishes them — so it is drawn as an empty ring rather than a red light. Written
+  on change rather than on a tick, because unlike the waiting room it needs nothing recomputed.
+
+  **The membership question this raised is worth recording.** There is no routing (Core §5.2), so
+  a member is reachable directly or by hole punch and otherwise not at all — and separately, this
+  client dials the peers it has addresses for and never attempts a full mesh, because
+  `design/09` §2's hot/warm/cold tiering does not exist. Convergence does not need one: it is
+  transitive through any shared peer. But it means "connected" is a subset of "reachable" by
+  policy and not only by network, which is exactly why the marker cannot be called presence.
+
+  A flake found and fixed on the way: `the_window_takes_the_same_path_as_the_terminal_to_join`
+  read the founder's waiting file the instant `redeem` returned. `answer_join` sends the response
+  *before* the daemon persists governance and writes that file, so this was always a race — it
+  just widened when recording the room started replaying. It polls now, like the rest of the file.
+
 - **2026-08-22** — **Interface pass one: settings, votes, and a door that clears.**
 
   **The waiting room never emptied**, and the cause is worth keeping: the node's room is filled

@@ -102,6 +102,50 @@ body {
 
 .dim { color: var(--dim); font-size: 12px; margin: 0; }
 
+/* ---- who is here --------------------------------------------------------- */
+
+.roster {
+  border-top: 1px solid var(--line);
+  padding: var(--gap);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-height: 0;
+}
+.roster-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  overflow-y: auto;
+}
+.person {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 12px;
+  color: var(--dim);
+}
+.person .who { flex: 1 1 auto; min-width: 0; overflow-wrap: anywhere; }
+.person.connected .who { color: var(--text); }
+.person .person-id { font-size: 10px; opacity: 0.7; }
+/* Lit means connected to this node. Deliberately a ring rather than a filled
+   dot when unlit, so "no connection" reads as absence of information rather
+   than as a red light saying somebody is away — which this cannot know. */
+.person .dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  border: 1px solid var(--dim);
+  flex: none;
+}
+.person.connected .dot {
+  background: var(--good);
+  border-color: var(--good);
+}
+
 /* ---- settings ----------------------------------------------------------- */
 
 .rail-actions {

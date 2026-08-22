@@ -191,6 +191,26 @@ pub struct Waiting {
 /// The permission flags exist so the interface can hide controls it should not
 /// offer (`design/09` §5) — and hiding is presentation, never enforcement. Every
 /// command is re-checked on receipt regardless of what this said.
+/// One member of this network, and whether this node is talking to them.
+#[derive(Debug, Serialize)]
+pub struct Member {
+    /// Their identity in this network, as hex.
+    pub identity: String,
+    /// A short form of it, for display beside a name.
+    pub short: String,
+    /// Their display name here, if they have claimed one.
+    pub name: Option<String>,
+    /// Whether this node currently has a connection to them.
+    ///
+    /// **Not "online".** There is no routing (Core §5.2) and this client dials
+    /// the peers it has addresses for rather than every member, so `false`
+    /// covers three different situations — away, unreachable from here, or
+    /// simply never dialled — and nothing on this machine distinguishes them.
+    pub connected: bool,
+    /// Whether this is the member reading the list.
+    pub you: bool,
+}
+
 /// What this network designates as relays, and what this node cached.
 ///
 /// Both, because they answer different questions and disagree in exactly the

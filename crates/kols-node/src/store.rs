@@ -510,6 +510,33 @@ impl Store {
         Ok(())
     }
 
+    /// Who this node is connected to, as the daemon last saw it.
+    ///
+    /// **"Connected to this node", never "online".** There is no routing here:
+    /// a member is reachable directly or by hole punch and otherwise not at all
+    /// (Core §5.2), and this client dials the peers it has addresses for rather
+    /// than every member. So a member missing from this list may be offline,
+    /// may be unreachable from here, or may simply be somebody this node has
+    /// never had reason to dial — and nothing on this machine can tell those
+    /// apart. Anywhere it is displayed has to say which question it answers.
+    pub fn set_connected(&self, identities: &[String]) -> Result<(), StoreError> {
+        fs::write(self.root.join("connected"), identities.join("\n"))?;
+        Ok(())
+    }
+
+    /// Who the daemon last saw this node connected to.
+    pub fn connected(&self) -> Vec<String> {
+        fs::read_to_string(self.root.join("connected"))
+            .map(|text| {
+                text.lines()
+                    .map(str::trim)
+                    .filter(|line| !line.is_empty())
+                    .map(str::to_owned)
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
     /// Who the daemon last saw waiting to be admitted.
     pub fn waiting(&self) -> Vec<String> {
         fs::read_to_string(self.root.join("waiting"))

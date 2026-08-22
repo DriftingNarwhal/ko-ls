@@ -25,6 +25,7 @@ const state = {
   // finds nothing new leaves the sidebar alone.
   meSignature: null,
   channelsSignature: null,
+  peopleSignature: null,
   // What the open channel looked like when it was last drawn, so a poll that
   // finds nothing new does no DOM work.
   channelSignature: null,
@@ -130,6 +131,9 @@ function drawMe(me) {
   // Shown to every member, unlike the door: whether this node has a way through
   // NAT is not a privileged question, and a member who cannot fix it still
   // benefits from knowing that is what is wrong.
+  el("roster").hidden = false;
+  drawPeople();
+
   // Re-read on a timer as well as on the event. `design/09` §4 already calls the
   // waiting room stale by construction — it is live state in the node, written
   // down for anything else to read — so refreshing it is the model rather than a
@@ -316,6 +320,64 @@ function watchDoor(may_invite) {
   }
   if (!may_invite) return;
   state.doorPoll = setInterval(drawWaiting, DOOR_REFRESH_MILLIS);
+}
+
+/// Who is in this network, and which of them this node is talking to.
+///
+/// The dot means **connected to this node**, and the note under the list says
+/// so. It is not presence: there is no routing (Core §5.2) and this client dials
+/// the peers it has addresses for rather than every member, so an unlit member
+/// may be away, unreachable from here, or simply never dialled — and nothing
+/// here can tell those apart. Saying "online" would be the kind of wrong that
+/// gets worse as a network grows.
+async function drawPeople() {
+  let people;
+  try {
+    people = await invoke("people");
+  } catch {
+    return;
+  }
+
+  const signature = people
+    .map((p) => `${p.identity}|${p.name ?? ""}|${p.connected}`)
+    .join(",");
+  if (signature === state.peopleSignature) return;
+  state.peopleSignature = signature;
+
+  const list = el("roster-list");
+  list.replaceChildren();
+  for (const person of people) {
+    const row = document.createElement("li");
+    row.className = person.connected ? "person connected" : "person";
+
+    const dot = document.createElement("span");
+    dot.className = "dot";
+    dot.title = person.you
+      ? "you"
+      : person.connected
+        ? "connected to you right now"
+        : "not connected to you — away, unreachable from here, or never dialled";
+
+    const who = document.createElement("span");
+    who.className = "who";
+    who.textContent = person.name ?? person.short;
+    if (person.you) who.textContent += " (you)";
+
+    // Spec 07 §8: a name never stands in for an identity, because uniqueness is
+    // decided on a key that does not fold confusables.
+    const id = document.createElement("span");
+    id.className = "mono person-id";
+    id.textContent = person.short;
+
+    row.append(dot, who, id);
+    list.append(row);
+  }
+
+  const live = people.filter((person) => person.connected || person.you).length;
+  el("roster-count").textContent = `${live}/${people.length}`;
+  el("roster-note").textContent =
+    "A lit dot means connected to you right now. An unlit one means away, " +
+    "unreachable from here, or never dialled — this client cannot tell those apart.";
 }
 
 // Who is at the door, and letting them in.
@@ -696,6 +758,7 @@ function watchChannel() {
       // member joins does reach them — so a founder making one that the joiner
       // never saw was this list not being redrawn, not the entry not arriving.
       await refreshReplayed();
+      await drawPeople();
     } catch {
       // Same reasoning as below: a background tick reports nothing.
     }

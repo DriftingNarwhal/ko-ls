@@ -639,11 +639,13 @@ pub async fn serve(
             NodeEvent::Connected { peer, .. } => {
                 println!("connected to {peer}");
                 connected.insert(peer);
+                record_connected(&store, &connected, sink);
                 start_sync(&mut node, peer);
             }
 
             NodeEvent::Disconnected { peer } => {
                 connected.remove(&peer);
+                record_connected(&store, &connected, sink);
             }
 
             // Governance first. Everything else is gated on it, so a peer's
@@ -1258,6 +1260,21 @@ fn record_waiting(
         return;
     };
 
+    // **Nothing at the door and nothing written down: stop here.**
+    //
+    // This runs on every tick, and the replay below reads the whole governance
+    // log off disk and re-applies it — `Store::state` is not a lookup. Paying
+    // that every two seconds for the lifetime of a node, to answer a question
+    // whose answer is almost always "nobody", is the kind of cost that does not
+    // show up until a log is long.
+    //
+    // Both halves are needed: the first skips the usual case, and the second is
+    // what still lets a room that has just emptied write that fact down once.
+    // `waiting()` is a small file; `state()` is the log.
+    if occupants.is_empty() && store.waiting().is_empty() {
+        return;
+    }
+
     // **Anybody already admitted is no longer waiting.**
     //
     // The node's waiting room is populated when a join is answered and emptied
@@ -1282,6 +1299,37 @@ fn record_waiting(
     if let Err(err) = store.set_waiting(&identities) {
         sink(&[Event::Degraded {
             reason: format!("could not record the waiting room: {err}"),
+        }]);
+    }
+}
+
+/// Writes down who this node is connected to, so anything else can read it.
+///
+/// Written on change rather than on a tick, because it *is* the change — unlike
+/// the waiting room, nothing here has to be recomputed against replayed state,
+/// so there is no reason to pay for it on a schedule.
+///
+/// A peer whose identity cannot be resolved is left out rather than shown as a
+/// peer id: this list exists to answer "which members am I talking to", and a
+/// libp2p peer id is not a member (Core §1.2 — the mapping is what makes an
+/// identity per-network in the first place).
+fn record_connected(store: &Store, connected: &BTreeSet<PeerId>, sink: &Sink) {
+    // Replayed once for the whole set, not once per peer. `peer_identity` reads
+    // and replays the entire governance log, so mapping five peers through it
+    // would be five replays for one answer — the shape of `STATUS` O5, and not
+    // worth introducing again on a path that fires on every connection.
+    let Some(state) = replayable(store) else {
+        return;
+    };
+    let roster = members(&state);
+    let identities: Vec<String> = connected
+        .iter()
+        .filter_map(|peer| roster.iter().find(|id| id.peer_id() == *peer))
+        .map(|id| intranet_crypto::to_hex(id.verifying_key().as_bytes()))
+        .collect();
+    if let Err(err) = store.set_connected(&identities) {
+        sink(&[Event::Degraded {
+            reason: format!("could not record who this node is connected to: {err}"),
         }]);
     }
 }

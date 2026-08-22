@@ -112,6 +112,19 @@
           <p class="dim" id="waiting-note" hidden></p>
         </section>
 
+        <!-- Who is here. Shown to everybody, unlike the door above: membership
+             is not privileged information among members, and the connection dot
+             answers "am I talking to them" rather than "are they online",
+             which is not a question this client can answer. -->
+        <section class="roster" id="roster" data-kols="roster" hidden>
+          <div class="channels-head">
+            <h2>people</h2>
+            <span class="dim" id="roster-count"></span>
+          </div>
+          <ul class="roster-list" id="roster-list"></ul>
+          <p class="dim" id="roster-note"></p>
+        </section>
+
         <footer class="state" data-kols="state">
           <p id="key-state"></p>
         </footer>

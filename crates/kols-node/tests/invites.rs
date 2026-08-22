@@ -288,7 +288,27 @@ fn the_window_takes_the_same_path_as_the_terminal_to_join() {
     match landed {
         kols_node::join::Landed::Waiting { identity } => {
             assert_eq!(identity.len(), 64, "an identity to be admitted by");
-            assert!(ok(&alice, &["waiting"]).contains(&identity));
+
+            // Polled, because the joiner's answer and the founder's note of it
+            // are not the same event. `answer_join` sends the response, and
+            // only then does the daemon persist governance and write the
+            // waiting room down — so returning from `redeem` says the answer
+            // arrived, never that the far side has finished filing it. Reading
+            // the file immediately was always a race; it just widened when
+            // recording the room started replaying membership.
+            let deadline = Instant::now() + Duration::from_secs(20);
+            let mut waiting = String::new();
+            while Instant::now() < deadline {
+                waiting = ok(&alice, &["waiting"]);
+                if waiting.contains(&identity) {
+                    break;
+                }
+                std::thread::sleep(Duration::from_millis(100));
+            }
+            assert!(
+                waiting.contains(&identity),
+                "the founder never wrote the joiner into the waiting room:\n{waiting}"
+            );
         }
         kols_node::join::Landed::Admitted => panic!("this network screens its members"),
     }

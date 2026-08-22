@@ -510,6 +510,57 @@ fn waiting(app: tauri::State<'_, App>) -> Result<Vec<dto::Waiting>, String> {
     })
 }
 
+/// Everybody in this network, and whether this node is connected to them.
+///
+/// A roster with a connection marker rather than a list of connections, because
+/// a bare list of peers answers a question nobody asked: what a person wants to
+/// know is who is here, and the connection is an attribute of each one.
+///
+/// The marker is honest about a narrow thing — `design/09` §2's hot/warm/cold
+/// tiering does not exist, so this node holds connections to the peers it had
+/// addresses for and not to every member. A member shown as not connected may
+/// be away, unreachable from here, or simply never dialled.
+#[tauri::command]
+fn people(app: tauri::State<'_, App>) -> Result<Vec<dto::Member>, String> {
+    app.with(|executor| {
+        let store = executor.store();
+        let me = store.identity().map_err(|e| e.to_string())?.id();
+        let state = store.state().map_err(|e| e.to_string())?;
+        let names = executor.names(&state).map_err(|e| e.to_string())?;
+        let connected: std::collections::BTreeSet<String> =
+            store.connected().into_iter().collect();
+
+        let mut people: Vec<dto::Member> = state
+            .groups
+            .values()
+            .flat_map(|group| group.members.keys().copied())
+            .collect::<std::collections::BTreeSet<_>>()
+            .into_iter()
+            .map(|identity| {
+                let hex = to_hex(identity.verifying_key().as_bytes());
+                dto::Member {
+                    connected: connected.contains(&hex),
+                    you: identity == me,
+                    short: identity.short(),
+                    name: names.of(&identity).map(str::to_owned),
+                    identity: hex,
+                }
+            })
+            .collect();
+        // Named members first, then by name, so the list does not reshuffle as
+        // people claim names and a stranger does not outrank somebody known.
+        people.sort_by(|a, b| {
+            b.name.is_some().cmp(&a.name.is_some()).then_with(|| {
+                a.name
+                    .as_deref()
+                    .unwrap_or(&a.short)
+                    .cmp(b.name.as_deref().unwrap_or(&b.short))
+            })
+        });
+        Ok(people)
+    })
+}
+
 /// Admits a waiting identity to the network.
 #[tauri::command]
 fn admit(app: tauri::State<'_, App>, identity: String) -> Result<(), String> {
@@ -811,6 +862,7 @@ fn main() {
             join_network,
             open_network,
             relays,
+            people,
             set_relays,
             restart_node,
             edit_message,
