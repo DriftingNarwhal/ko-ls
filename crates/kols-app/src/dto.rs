@@ -213,6 +213,12 @@ pub struct Relays {
     pub reported: bool,
     /// The relay a circuit was reserved on, when one was.
     pub reserved: Option<String>,
+    /// Why each designated relay did not work, in the order tried.
+    ///
+    /// Shown verbatim. These name the *cause* — unreachable, or reached and
+    /// announcing nothing — which need opposite fixes and which a status line
+    /// cannot distinguish.
+    pub failures: Vec<String>,
 }
 
 #[derive(Debug, Serialize)]

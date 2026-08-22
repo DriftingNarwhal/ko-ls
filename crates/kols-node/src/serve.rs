@@ -284,13 +284,14 @@ pub async fn serve(
     };
 
     let mut reserved: Option<String> = None;
+    let mut failures: Vec<String> = Vec::new();
     for relay in &designated {
         let address: Multiaddr = match relay.parse() {
             Ok(address) => address,
             Err(err) => {
-                sink(&[Event::Degraded {
-                    reason: format!("this network names an unusable relay {relay:?}: {err}"),
-                }]);
+                let reason = format!("this network names an unusable relay {relay:?}: {err}");
+                failures.push(reason.clone());
+                sink(&[Event::Degraded { reason }]);
                 continue;
             }
         };
@@ -307,17 +308,23 @@ pub async fn serve(
                 // did nothing. A relay bound to loopback has no external address
                 // to hand back, and libp2p builds a reservation's address list
                 // from external addresses alone.
-                sink(&[Event::Degraded {
-                    reason: format!(
-                        "{relay} granted no usable circuit. If that relay is bound to \
-                         127.0.0.1 it has no address to hand out — bind it to a routable \
-                         interface. Trying the next"
-                    ),
-                }]);
+                let reason = format!(
+                    "{relay} answered and granted no usable circuit — it returned no \
+                     address of its own. A relay announces nothing when it is bound to \
+                     loopback, or is behind a proxy with no public address configured"
+                );
+                failures.push(reason.clone());
+                sink(&[Event::Degraded { reason }]);
             }
-            Err(err) => sink(&[Event::Degraded {
-                reason: format!("could not reach the relay {relay}: {err}"),
-            }]),
+            Err(err) => {
+                let reason = format!(
+                    "could not reach the relay {relay} at all: {err}. Nothing answered \
+                     there, so this is the address, the port or the network — not what \
+                     the relay announces"
+                );
+                failures.push(reason.clone());
+                sink(&[Event::Degraded { reason }]);
+            }
         }
     }
     if designated.is_empty() {
@@ -328,6 +335,7 @@ pub async fn serve(
     sink(&[Event::Relay {
         reserved,
         designated: designated.len(),
+        failures,
     }]);
 
     // What `--peer` named, plus what an invite left in the store. A joiner

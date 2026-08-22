@@ -261,6 +261,26 @@ design changes before anything else is built.
 
 Newest first. One line per change that moved the state above.
 
+- **2026-08-22** — **The relay panel showed a symptom with two opposite causes.** A first
+  deployment could not get a circuit, tried a rebuilt relay from scratch, and got the same red
+  line — because the line said "no circuit was granted" for both *nothing answered there* and
+  *something answered and named no address*. Those need opposite fixes, and the node knew which
+  had happened: the reason went out as `Degraded`, into a different part of the interface, while
+  the status line kept its summary.
+
+  `Event::Relay` now carries `failures`, the reason per relay in the order tried, and the panel
+  prints them rather than a summary of them. The `RELAY_PUBLIC_ADDR` note is shown only for the
+  case it explains — it says nothing useful about a relay nothing could reach.
+
+  Verified rather than assumed, in `libp2p-relay` 0.21.1 itself: a reservation's address list is
+  built from the relay's **external addresses only** (`behaviour.rs`), and the client turns each
+  into a circuit listener (`priv_client/transport.rs`). An empty list is therefore granted and
+  then unusable, which confirms the announce theory — and equally confirms it explains only one
+  of the two failures.
+
+  Also checked and ruled out: protocol drift between the relay's pinned `v1.0.1` and this
+  checkout. The only changes are E14's, and none touch the relay path or `PROTOCOL_VERSION`.
+
 - **2026-08-22** — **The relay panel could miss the answer it was waiting for.** Found by the
   first real use of the window: the panel sat on "waiting for this node to report" about a node
   that had already reported.

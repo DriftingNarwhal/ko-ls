@@ -130,6 +130,16 @@ pub enum Event {
         /// a consumer that could not tell them apart would have to guess which
         /// to say.
         designated: usize,
+        /// Why each designated relay did not work, in the order tried.
+        ///
+        /// Carried because "no circuit" has two causes needing opposite fixes,
+        /// and the summary cannot tell them apart: a relay that could not be
+        /// reached at all is a network or port problem, and a relay that
+        /// answered and returned no address is a relay announcing nothing. Both
+        /// reach a consumer as `Degraded` too — and a consumer showing a status
+        /// line was left saying "no circuit" while the reason went past in a
+        /// different stream.
+        failures: Vec<String>,
     },
     /// Something did not work, and the node carried on.
     ///

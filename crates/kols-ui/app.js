@@ -204,10 +204,18 @@ function drawRelayState(relays) {
   }
   if (relays.reported) {
     line.className = "relay-state bad";
+    // The reasons rather than a summary of them. "No circuit" has two causes
+    // needing opposite fixes — nothing answered there, or something answered
+    // and named no address — and only the node knows which happened.
     line.textContent =
-      "designated, and no circuit was granted. The relay answered and handed " +
-      "back no usable address — see the note under the form";
-    el("relay-help").hidden = false;
+      relays.failures.length > 0
+        ? relays.failures.join(" · ")
+        : "designated, and no circuit was granted";
+    // The note is about a relay that answered. It says nothing useful about one
+    // nothing could reach, so it is shown only for the case it explains.
+    el("relay-help").hidden = !relays.failures.some((why) =>
+      why.includes("granted no usable circuit"),
+    );
     stopWatchingRelay();
     return;
   }
