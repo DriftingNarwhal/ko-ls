@@ -20,7 +20,17 @@ const state = {
   restartedAt: 0,
   relayPoll: null,
   doorPoll: null,
+  channelPoll: null,
+  // What the open channel looked like when it was last drawn, so a poll that
+  // finds nothing new does no DOM work.
+  channelSignature: null,
 };
+
+/// How often to re-read the open channel.
+///
+/// Matches the daemon's own 2-second sync tick: asking faster than records can
+/// arrive only costs replays.
+const CHANNEL_REFRESH_MILLIS = 2000;
 
 /// How often to re-read the waiting room while it is on screen.
 ///
@@ -436,12 +446,31 @@ function actions(channel, message) {
   return bar;
 }
 
+/// Enough of a channel to tell whether redrawing it would change anything.
+function signatureOf(opened) {
+  const last = opened.messages.at(-1);
+  return [
+    opened.channel,
+    opened.messages.length,
+    last?.id ?? "",
+    // Edits, withdrawals, reactions and pins all change a message without
+    // changing how many there are, so the last one's shape rides along.
+    last ? `${last.body}|${last.edited}|${last.withdrawn}|${last.reactions.length}` : "",
+    opened.refused.length,
+  ].join(":");
+}
+
 function drawMessages(opened) {
+  state.channelSignature = signatureOf(opened);
   const channel = state.channels.find((c) => c.id === opened.channel);
   el("channel-name").textContent = channel ? `#${channel.name}` : "channel";
   el("channel-topic").textContent = channel ? channel.topic : "";
 
   const list = el("messages");
+  // Measured before the list is emptied, since an empty list is always "at the
+  // bottom" and every redraw would then scroll.
+  const atBottom =
+    list.scrollHeight - list.scrollTop - list.clientHeight < 40 || list.children.length === 0;
   list.replaceChildren();
 
   for (const message of opened.messages) {
@@ -513,7 +542,11 @@ function drawMessages(opened) {
     list.append(row);
   }
 
-  list.scrollTop = list.scrollHeight;
+  // Only when they were already at the bottom. Now that a redraw happens on a
+  // timer rather than only on their own action, scrolling to the end
+  // unconditionally would drag a reader out of the history they scrolled up to
+  // read, every two seconds.
+  if (atBottom) list.scrollTop = list.scrollHeight;
 
   // A record this node refused is one another client may be showing. Silence
   // would make the two look like they agree.
@@ -522,6 +555,33 @@ function drawMessages(opened) {
   refused.textContent = opened.refused.length
     ? `refused ${opened.refused.length} record(s): ${opened.refused.join(", ")}`
     : "";
+}
+
+/// Re-reads the open channel on a timer, whatever the events did.
+///
+/// **The fourth bug in three days where a pushed event was the only path to a
+/// redraw**, and the reason this is a poll rather than another attempt to get
+/// the event right. `design/05` §3 already says a consumer merges rather than
+/// appends, and the interface already re-reads from the projection on every
+/// draw — so asking again costs a replay and can never show the wrong thing.
+///
+/// Cheap because it compares before it draws: replaying a channel is local, and
+/// the DOM work is what actually costs, so an unchanged channel does nothing.
+/// `STATUS` O4's projection is what makes the replay itself cheap later.
+function watchChannel() {
+  if (state.channelPoll) clearInterval(state.channelPoll);
+  state.channelPoll = setInterval(async () => {
+    if (!state.current) return;
+    try {
+      const opened = await invoke("open_channel", { channel: state.current });
+      if (signatureOf(opened) === state.channelSignature) return;
+      drawMessages(opened);
+    } catch {
+      // A channel that cannot be opened right now — mid-restart, or not keyed
+      // yet — is not something to report from a background timer. The paths a
+      // person actually triggered say so where they are looking.
+    }
+  }, CHANNEL_REFRESH_MILLIS);
 }
 
 async function openChannel(id) {
@@ -753,8 +813,15 @@ el("switcher").addEventListener("click", drawPicker);
 /// that appended what it was handed would show every message twice. Re-reading
 /// makes a duplicate a non-event, with no bookkeeping to get wrong.
 async function watch() {
-  await listen("kols://records", async (event) => {
-    if (event.payload === state.current) await openChannel(state.current);
+  // Any records at all, not only records naming the open channel.
+  //
+  // The comparison that used to be here could skip a redraw and could never
+  // cause one, which makes it a micro-optimisation whose only possible effect is
+  // the bug it produced: a message from the other side sat unrendered until the
+  // reader posted, at which point the composer's own re-read revealed it. The
+  // records were in the store the whole time.
+  await listen("kols://records", async () => {
+    if (state.current) await openChannel(state.current);
   });
 
   // Channels, permissions and names all come out of replay, so anything that
@@ -818,6 +885,7 @@ async function start() {
   show("app");
   drawMe(me);
   watchRelay();
+  watchChannel();
   const channels = await invoke("channels");
   drawChannels(channels);
   if (channels.length > 0) await openChannel(channels[0].id);

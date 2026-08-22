@@ -261,6 +261,33 @@ design changes before anything else is built.
 
 Newest first. One line per change that moved the state above.
 
+- **2026-08-22** — **A message from the other side did not render until the reader posted.** The
+  records were in the store the whole time: the daemon absorbs them on its own — `two_nodes.rs`'s
+  `a_reply_travels_back_and_both_sides_agree_on_the_order` asserts exactly that, with nobody
+  posting — and the composer's own re-read after sending was what finally revealed them.
+
+  **The fourth bug in three days where a pushed event was the only path to a redraw.** The
+  others: the relay panel missing its one startup report, `kols://joins` emitted with no
+  listener, and the near-miss before it. So this is fixed structurally rather than by another
+  attempt to get an event right.
+
+  The open channel is re-read every two seconds, matching the daemon's own sync tick, and drawn
+  only when a signature over it changes — so an unchanged channel costs a local replay and no DOM
+  work. `design/05` §3 already requires a consumer to merge rather than append, and the interface
+  already redraws from the projection every time, so asking again can never show the wrong thing.
+  O4's projection is what makes the replay itself cheap later.
+
+  Also removed: `if (event.payload === state.current)` on the records listener. It could skip a
+  redraw and could never cause one, which makes it a micro-optimisation whose only possible
+  effect was the bug.
+
+  And a consequence of drawing on a timer rather than on the reader's own action: scrolling to
+  the end is now conditional on already being there, or a reader who scrolled up to read history
+  would be dragged back every two seconds.
+
+  **The two-machine test now passes its core**: two machines on separate networks, through a
+  relay, admitted, keyed, messages both ways.
+
 - **2026-08-22** — **A relay reservation was obtained once and never kept.** Reported as having to
   make sure the founder was still connected before the joiner could redeem an invite — which is
   the shape of a reservation that was lost and never re-obtained.
