@@ -608,14 +608,23 @@ pub async fn serve(
                 continue;
             }
             NodeEvent::HolePunchFailed { peer } => {
-                // Not fatal and not silent. A relayed connection keeps working
-                // — capped at 120s and 8MB per circuit (Core §5.3) — so this is
-                // a warning about what those caps will start costing, not a
-                // failure of the conversation.
-                println!("  direct    could not hole-punch to {peer} — still relayed");
+                // **Core §5.2 says these two peers do not connect**, and this
+                // client does not yet enforce that: the circuit stays open and
+                // carries traffic, which the spec forbids outright rather than
+                // caps. Recorded as `STATUS` O14 and said out loud meanwhile,
+                // because a node quietly living on a relay is the exact failure
+                // the rule exists to prevent — and it looks like success.
+                println!(
+                    "  direct    could not hole-punch to {peer} — anything now going through \
+                     the relay violates Core §5.2 (STATUS O14)"
+                );
                 sink(&[Event::Degraded {
                     reason: format!(
-                        "could not open a direct connection to {peer}, so traffic keeps                          going through the relay. That works and is capped: this network                          stops if the relay does"
+                        "no direct connection to {peer}. Core §5.2: a pair that cannot \
+                         hole-punch reaches each other over IPv6 or not at all, and a relay \
+                         carries the negotiation and nothing else. This client does not \
+                         enforce that yet, so traffic is crossing a relay that should not be \
+                         carrying it"
                     ),
                 }]);
                 continue;
