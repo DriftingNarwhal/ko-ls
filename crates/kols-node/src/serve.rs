@@ -283,56 +283,8 @@ pub async fn serve(
         }
     };
 
-    let mut reserved: Option<String> = None;
     let mut failures: Vec<String> = Vec::new();
-    for relay in &designated {
-        let address: Multiaddr = match relay.parse() {
-            Ok(address) => address,
-            Err(err) => {
-                let reason = format!("this network names an unusable relay {relay:?}: {err}");
-                failures.push(reason.clone());
-                sink(&[Event::Degraded { reason }]);
-                continue;
-            }
-        };
-        match node.reserve_via_relay(address).await {
-            Ok(()) => {
-                if node.await_reservation().await {
-                    println!("  relay     reserved a circuit on {relay}");
-                    reserved = Some(relay.clone());
-                    break;
-                }
-                // The likely cause, named, because every other vantage point
-                // says this worked: the relay accepted the reservation and
-                // reports healthy, and only the missing address here shows it
-                // did nothing. A relay bound to loopback has no external address
-                // to hand back, and libp2p builds a reservation's address list
-                // from external addresses alone.
-                // Deliberately does not say the relay answered. `reserve_via_relay`
-                // returning `Ok` means the reservation was *started* — a circuit
-                // listener registered — not that anything replied. Claiming
-                // otherwise sent a real deployment looking at a correctly
-                // configured relay for an evening, because the message asserted
-                // more than the code knew.
-                let reason = format!(
-                    "no circuit from {relay} within the reservation window. Either \
-                     nothing reached it — check the relay's own log for a connection — \
-                     or it replied announcing no address of its own"
-                );
-                failures.push(reason.clone());
-                sink(&[Event::Degraded { reason }]);
-            }
-            Err(err) => {
-                let reason = format!(
-                    "could not reach the relay {relay} at all: {err}. Nothing answered \
-                     there, so this is the address, the port or the network — not what \
-                     the relay announces"
-                );
-                failures.push(reason.clone());
-                sink(&[Event::Degraded { reason }]);
-            }
-        }
-    }
+    let reserved = reserve_any_reporting(&mut node, &designated, sink, &mut failures).await;
     if designated.is_empty() {
         println!("  relay     none designated — this node is reachable only on its own addresses");
     }
@@ -384,9 +336,36 @@ pub async fn serve(
     let mut refresh = tokio::time::interval(std::time::Duration::from_secs(2));
     refresh.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
 
+    // A reservation is not held once, it is *kept*.
+    //
+    // libp2p renews one on its own for as long as the relay connection lasts —
+    // an hour-long lease, renewed well before it lapses — so this is not about
+    // expiry. It is about the connection ending: a relay holds reservation state
+    // in memory and is stateless across restarts (Core §5.5), so every redeploy
+    // drops every reservation it held. Nothing then asked again, and a node that
+    // had been reachable stayed running and quietly stopped being so. The
+    // symptom is somebody else's invite timing out.
+    let mut relay_watch = tokio::time::interval(RELAY_RECHECK);
+    relay_watch.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+    relay_watch.reset();
+
     loop {
         let event = tokio::select! {
             event = node.next_event() => event,
+            _ = relay_watch.tick(), if !designated.is_empty() => {
+                if !node.has_circuit() {
+                    let regained = reserve_any(&mut node, &designated, sink).await;
+                    sink(&[Event::Relay {
+                        reserved: regained,
+                        designated: designated.len(),
+                        // The reasons were reported when the reservation was
+                        // first settled. Repeating them every recheck would bury
+                        // whatever is happening now.
+                        failures: Vec::new(),
+                    }]);
+                }
+                continue;
+            }
             _ = refresh.tick() => {
                 adopt_local_changes(&store, &mut node, &identity, seal_bytes, sink)?;
                 // Both halves of the live path, together. Spec 07 §6.1 requires
@@ -520,6 +499,21 @@ pub async fn serve(
             }
         };
         match event {
+            // A circuit address going away means the reservation ended, and the
+            // watchdog above is what asks for another. Said out loud because
+            // the node keeps running and keeps its direct listeners: from every
+            // other angle nothing happened.
+            NodeEvent::ListenAddrGone(address) => {
+                if crate::is_circuit_address(&address) {
+                    println!("  relay     the circuit on {address} ended — asking again");
+                    sink(&[Event::Relay {
+                        reserved: None,
+                        designated: designated.len(),
+                        failures: Vec::new(),
+                    }]);
+                }
+                continue;
+            }
             NodeEvent::Listening(address) => {
                 // Printed with the peer id appended, because that is the form
                 // another node can actually dial — an address without it names a
@@ -1227,6 +1221,77 @@ fn render(events: &[Event]) {
             Event::Relay { .. } => {}
         }
     }
+}
+
+/// How often to check that a relay circuit is still held.
+///
+/// Not a renewal interval — libp2p renews an hour-long reservation on its own.
+/// This is how long a node can be silently unreachable after a relay restarts,
+/// which is the case that actually happens.
+const RELAY_RECHECK: std::time::Duration = std::time::Duration::from_secs(20);
+
+/// Reserves a circuit on the first designated relay that grants one.
+///
+/// Shared by startup and by the watchdog, so a reservation regained after a
+/// relay restart is obtained exactly the way the first one was.
+async fn reserve_any(
+    node: &mut MemberNode,
+    designated: &[String],
+    sink: &Sink,
+) -> Option<String> {
+    let mut discarded = Vec::new();
+    reserve_any_reporting(node, designated, sink, &mut discarded).await
+}
+
+/// As [`reserve_any`], collecting the reason each relay failed.
+async fn reserve_any_reporting(
+    node: &mut MemberNode,
+    designated: &[String],
+    sink: &Sink,
+    failures: &mut Vec<String>,
+) -> Option<String> {
+    for relay in designated {
+        let address: Multiaddr = match relay.parse() {
+            Ok(address) => address,
+            Err(err) => {
+                let reason = format!("this network names an unusable relay {relay:?}: {err}");
+                failures.push(reason.clone());
+                sink(&[Event::Degraded { reason }]);
+                continue;
+            }
+        };
+        match node.reserve_via_relay(address).await {
+            Ok(()) => {
+                if node.await_reservation().await {
+                    println!("  relay     reserved a circuit on {relay}");
+                    return Some(relay.clone());
+                }
+                // Deliberately does not say the relay answered.
+                // `reserve_via_relay` returning `Ok` means the reservation was
+                // *started* — a circuit listener registered — not that anything
+                // replied. Claiming otherwise sent a real deployment looking at
+                // a correctly configured relay for an evening, because the
+                // message asserted more than the code knew.
+                let reason = format!(
+                    "no circuit from {relay} within the reservation window. Either \
+                     nothing reached it — check the relay's own log for a connection — \
+                     or it replied announcing no address of its own"
+                );
+                failures.push(reason.clone());
+                sink(&[Event::Degraded { reason }]);
+            }
+            Err(err) => {
+                let reason = format!(
+                    "could not reach the relay {relay} at all: {err}. Nothing answered \
+                     there, so this is the address, the port or the network — not what \
+                     the relay announces"
+                );
+                failures.push(reason.clone());
+                sink(&[Event::Degraded { reason }]);
+            }
+        }
+    }
+    None
 }
 
 /// What one absorb pass took in.

@@ -125,3 +125,14 @@ mod relay_tests {
         }
     }
 }
+
+/// Whether an address is a relay circuit rather than a direct socket.
+///
+/// The distinction matters for what a node should say when one goes away: a
+/// direct listener closing is ordinary, and a circuit closing means this node
+/// stopped being reachable from behind somebody else's NAT.
+pub fn is_circuit_address(address: &libp2p::Multiaddr) -> bool {
+    address
+        .iter()
+        .any(|part| matches!(part, libp2p::multiaddr::Protocol::P2pCircuit))
+}

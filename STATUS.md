@@ -261,6 +261,32 @@ design changes before anything else is built.
 
 Newest first. One line per change that moved the state above.
 
+- **2026-08-22** — **A relay reservation was obtained once and never kept.** Reported as having to
+  make sure the founder was still connected before the joiner could redeem an invite — which is
+  the shape of a reservation that was lost and never re-obtained.
+
+  **The 120 seconds is not the reservation.** It is `max_circuit_duration`, the cap on a single
+  relayed connection (Core §5.3): a relay introduces, DCUtR hole-punches, and the direct
+  connection carries the conversation. The reservation lease is an hour and libp2p renews it
+  itself — verified in `libp2p-relay` 0.21.1, `reservation_duration` and the handler's renewal
+  timer. So expiry was never the problem.
+
+  **The connection ending was.** A relay holds reservation state in memory and is stateless
+  across restarts (§5.5), so every redeploy drops every reservation — and there were many
+  redeploys while the DNS fault was being chased. Nothing re-reserved: `reserve_via_relay` ran
+  once at startup, and `circuit_listeners` only ever *grew*, so the node believed it held a
+  circuit forever and advertised an address nothing answered on. Undetectable from inside and
+  invisible from outside.
+
+  Fixed in both repos. Upstream (`3335267`): listener loss prunes the sets and surfaces
+  `NodeEvent::ListenAddrGone`, plus `has_circuit()` — a question that could not be asked before,
+  because the answer was always yes. Here: a 20-second watchdog re-reserves through the same path
+  startup uses, and a lost circuit says so on the terminal and in the relay panel.
+
+  **Not done deliberately:** reserving on demand when an invite is redeemed. The reservation must
+  exist *before* the joiner tries to reach the founder — they arrive through the circuit — so
+  refreshing when needed is always too late. Maintaining it is the only ordering that works.
+
 - **2026-08-22** — **A founder watching the door saw nobody at it.** B redeemed an invite, landed
   in the waiting room and stayed there; A's window never showed anyone waiting.
 
