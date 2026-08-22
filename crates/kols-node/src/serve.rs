@@ -349,9 +349,31 @@ pub async fn serve(
     relay_watch.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
     relay_watch.reset();
 
+    // Nothing re-dialled a peer that went away.
+    //
+    // The addresses were dialled once, at startup, and a peer lost after that
+    // stayed lost — so a relay going down and coming back left two nodes that
+    // could see it, had re-reserved on it, and never spoke to each other again.
+    // A reconnect is a sync (`sync_with` runs on every `Connected`), so getting
+    // the connection back is the whole of the recovery.
+    let mut redial = tokio::time::interval(REDIAL_INTERVAL);
+    redial.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+    redial.reset();
+
     loop {
         let event = tokio::select! {
             event = node.next_event() => event,
+            // Only while nothing is connected. A node with a live peer has no
+            // reason to dial, and this way an unreachable peer is retried
+            // without a node that is fine doing anything at all.
+            _ = redial.tick(), if connected.is_empty() && !dialling.is_empty() => {
+                for peer in &dialling {
+                    if let Ok(address) = peer.parse::<Multiaddr>() {
+                        let _ = node.dial_candidates([address]);
+                    }
+                }
+                continue;
+            }
             _ = relay_watch.tick(), if !designated.is_empty() => {
                 if !node.has_circuit() {
                     let regained = reserve_any(&mut node, &designated, sink).await;
@@ -545,6 +567,33 @@ pub async fn serve(
                         }]);
                     }
                 }
+            }
+
+            // Whether tier 2 actually happened, said out loud.
+            //
+            // It was neither printed nor reported, so "is this still going
+            // through the relay?" had no answer short of taking the relay away
+            // — which is how somebody found out that losing a circuit dropped a
+            // peer they could still reach directly.
+            NodeEvent::HolePunchSucceeded { peer } => {
+                println!("  direct    hole-punched to {peer} — the relay is out of the path");
+                sink(&[Event::Degraded {
+                    reason: format!("connected directly to {peer}; the relay introduced you and is no longer carrying anything"),
+                }]);
+                continue;
+            }
+            NodeEvent::HolePunchFailed { peer } => {
+                // Not fatal and not silent. A relayed connection keeps working
+                // — capped at 120s and 8MB per circuit (Core §5.3) — so this is
+                // a warning about what those caps will start costing, not a
+                // failure of the conversation.
+                println!("  direct    could not hole-punch to {peer} — still relayed");
+                sink(&[Event::Degraded {
+                    reason: format!(
+                        "could not open a direct connection to {peer}, so traffic keeps                          going through the relay. That works and is capped: this network                          stops if the relay does"
+                    ),
+                }]);
+                continue;
             }
 
             NodeEvent::Connected { peer, .. } => {
@@ -1229,6 +1278,12 @@ fn render(events: &[Event]) {
 /// This is how long a node can be silently unreachable after a relay restarts,
 /// which is the case that actually happens.
 const RELAY_RECHECK: std::time::Duration = std::time::Duration::from_secs(20);
+
+/// How often to re-dial known peers while none is connected.
+///
+/// Long enough not to hammer a peer that is genuinely away, short enough that a
+/// relay coming back is measured in seconds rather than in restarts.
+const REDIAL_INTERVAL: std::time::Duration = std::time::Duration::from_secs(15);
 
 /// Reserves a circuit on the first designated relay that grants one.
 ///

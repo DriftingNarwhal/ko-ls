@@ -261,6 +261,34 @@ design changes before anything else is built.
 
 Newest first. One line per change that moved the state above.
 
+- **2026-08-22** — **Taking the relay away silenced two nodes, and bringing it back did not
+  reconnect them.** A deliberate test — is the hole punch working? — and it found three faults,
+  one of which was hurting every conversation whether or not a relay was involved.
+
+  **A closing connection was reported as a disconnect even when another remained.** A
+  hole-punched peer has two connections: the relayed one it arrived on and the direct one that
+  upgraded it. §5.2 exists so losing the first costs nothing, but `ConnectionClosed` reported
+  `Disconnected` unconditionally, and the client removes a disconnected peer from the set it
+  syncs with. **A circuit is capped at 120 seconds**, so the relay closes the relayed connection
+  about two minutes into every conversation — meaning a *successful* hole punch was followed by
+  the client dropping the peer and syncing with nobody. `num_established` is the answer libp2p
+  already provides. Fixed upstream (`9e83bbc`).
+
+  **Nothing re-dialled a peer that went away.** Addresses were dialled once at startup, so a peer
+  lost after that stayed lost — a relay going down and coming back left two nodes that could both
+  see it, had both re-reserved on it, and never spoke again. Re-dials every 15 seconds while
+  nothing is connected, and only then. A reconnect is already a sync, so the connection is the
+  whole recovery.
+
+  **Nothing said whether the hole punch happened.** `HolePunchSucceeded` and `HolePunchFailed`
+  were emitted by the transport and dropped by the client, so "is this still going through the
+  relay?" had no answer short of taking the relay away. Both are now reported.
+
+  On whether the relay should be out of the path after a punch: it is, and the 120-second cap is
+  what enforces it — the relayed connection is closed by the relay itself shortly after the
+  direct one exists. What was missing was the client surviving that closure, which is the first
+  fix above rather than anything about the relay.
+
 - **2026-08-22** — **A message from the other side did not render until the reader posted.** The
   records were in the store the whole time: the daemon absorbs them on its own — `two_nodes.rs`'s
   `a_reply_travels_back_and_both_sides_agree_on_the_order` asserts exactly that, with nobody
