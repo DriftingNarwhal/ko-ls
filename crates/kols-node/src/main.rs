@@ -593,6 +593,22 @@ fn render(outcome: &Outcome, names: &kols_core::Names) {
         Outcome::ChannelUpdated { channel } => {
             println!("updated {}", &to_hex(channel.as_bytes())[..12]);
         }
+        // Rendered but not reachable from any subcommand here. D30: the terminal
+        // owes the window no parity, and folders are a window's affordance — what
+        // it must keep is crossing the same boundary, which printing an outcome
+        // it can receive is part of.
+        Outcome::CategoryCreated { category, name } => {
+            println!(
+                "created category {name} {}",
+                &to_hex(category.as_bytes())[..12]
+            );
+        }
+        Outcome::CategoryUpdated { category } => {
+            println!(
+                "updated category {}",
+                &to_hex(category.as_bytes())[..12]
+            );
+        }
         Outcome::MembershipChanged { identity, admitted } => {
             if *admitted {
                 println!("admitted {}", who(identity, names));

@@ -237,6 +237,14 @@ impl Executor {
                 self.update_channel(channel, change, identity, state)
             }
 
+            Command::CreateCategory { name, position } => {
+                self.create_category(name, position, identity, state)
+            }
+
+            Command::UpdateCategory { category, change } => {
+                self.update_category(category, change, identity, state)
+            }
+
             Command::SetName { name } => {
                 let claim = NameClaim::new(name)
                     .map_err(|refusal| ExecuteError::Rejected(refusal.to_string()))?;
@@ -501,6 +509,56 @@ impl Executor {
             name,
             privacy,
         })
+    }
+
+    fn create_category(
+        &self,
+        name: String,
+        position: u32,
+        identity: &intranet_identity::PerNetworkIdentity,
+        state: &intranet_governance::GovernanceState,
+    ) -> Result<Outcome, ExecuteError> {
+        // Same shape as a channel's id and separated only by its domain tag,
+        // which is what keeps a category-scoped grant from resolving against a
+        // channel derived over the same inputs (spec 07 §3.2).
+        let nonce = crate::random_32().map_err(ExecuteError::Rejected)?;
+        let category = kols_core::category_id(self.store.network(), &nonce);
+
+        let entry = ChannelEntry::new(
+            category,
+            ChannelEntryBody::CategoryDefinition {
+                name: name.clone(),
+                position,
+            },
+        );
+        // No enclosing category to pass: nothing encloses a category, and a
+        // definition is authorized network-wide or not at all (spec 07 §1.8).
+        self.append_channel_entry(&entry, None, identity, state)?;
+
+        let state = self.store.state()?;
+        let (categories, _) = network::categories(&self.store, &state)?;
+        if !categories.contains_key(&category) {
+            return Err(ExecuteError::Rejected(
+                "the entry was written but replay did not produce the category".to_owned(),
+            ));
+        }
+
+        Ok(Outcome::CategoryCreated { category, name })
+    }
+
+    fn update_category(
+        &self,
+        category: kols_core::CategoryId,
+        change: kols_core::CategoryChange,
+        identity: &intranet_identity::PerNetworkIdentity,
+        state: &intranet_governance::GovernanceState,
+    ) -> Result<Outcome, ExecuteError> {
+        let entry = ChannelEntry::new(category, ChannelEntryBody::CategoryUpdate { change });
+        // A category's own scope is the one that can authorize an update, so it
+        // is passed as the placement rather than looked up: unlike a channel,
+        // there is nowhere else it could sit.
+        self.append_channel_entry(&entry, Some(&category), identity, state)?;
+        Ok(Outcome::CategoryUpdated { category })
     }
 
     fn update_channel(

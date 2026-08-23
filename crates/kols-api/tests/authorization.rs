@@ -663,3 +663,127 @@ fn claiming_a_name_needs_the_capability_everyone_is_given() {
         Err(Refusal::NotPermitted { .. })
     ));
 }
+
+// ---------------------------------------------------------------- categories
+
+fn create_category() -> Command {
+    Command::CreateCategory {
+        name: "Ops".to_owned(),
+        position: 0,
+    }
+}
+
+#[test]
+fn creating_a_category_needs_the_network_wide_grant() {
+    let member = person(2);
+    let state = network_granting(
+        &member,
+        [Capability::extension("chat:manage-channel:*".to_owned())],
+    );
+    assert!(check(&state, &member, create_category()).is_ok());
+}
+
+#[test]
+fn a_category_scoped_grant_cannot_create_a_category() {
+    // Spec 07 §1.8: a definition is scoped `*` or not at all. Scoping one to the
+    // category it defines is circular — that scope becomes grantable only once
+    // the entry exists — so holding every category grant in the network still
+    // does not let somebody mint a new one.
+    let member = person(2);
+    let cat = intranet_crypto::to_hex(category().as_bytes());
+    let state = network_granting(
+        &member,
+        [Capability::extension(format!("chat:manage-channel:cat:{cat}"))],
+    );
+    assert!(matches!(
+        check(&state, &member, create_category()),
+        Err(Refusal::NotPermitted { .. })
+    ));
+}
+
+#[test]
+fn creating_a_channel_does_not_let_somebody_create_a_category() {
+    // `create-channel` is Ordinary and expected to be granted widely. Categories
+    // are the furniture permissions bind to, and ride the governance-tier verb.
+    let member = person(2);
+    let state = network_granting(
+        &member,
+        [Capability::extension("chat:create-channel:*".to_owned())],
+    );
+    assert!(matches!(
+        check(&state, &member, create_category()),
+        Err(Refusal::NotPermitted { .. })
+    ));
+}
+
+#[test]
+fn updating_a_category_accepts_its_own_scope() {
+    let member = person(2);
+    let cat = intranet_crypto::to_hex(category().as_bytes());
+    let state = network_granting(
+        &member,
+        [Capability::extension(format!("chat:manage-channel:cat:{cat}"))],
+    );
+    assert!(
+        check(
+            &state,
+            &member,
+            Command::UpdateCategory {
+                category: category(),
+                change: kols_core::CategoryChange::SetPosition(4),
+            },
+        )
+        .is_ok()
+    );
+}
+
+#[test]
+fn category_commands_are_governance_tier() {
+    // D26: a command's consent class follows the tier of the capability it needs,
+    // not how consequential making a folder feels.
+    assert_eq!(create_category().sensitivity(), Sensitivity::Governs);
+    assert_eq!(
+        Command::UpdateCategory {
+            category: category(),
+            change: kols_core::CategoryChange::Delete,
+        }
+        .sensitivity(),
+        Sensitivity::Governs,
+    );
+}
+
+#[test]
+fn a_conversation_network_refuses_categories() {
+    // The profile rule reaches structure of every kind: a conversation has one
+    // implied channel and nothing to file it under.
+    let member = person(2);
+    let state = network_granting_in(
+        &member,
+        [Capability::extension("chat:manage-channel:*".to_owned())],
+        Some("conversation"),
+    );
+    assert!(matches!(
+        check(&state, &member, create_category()),
+        Err(Refusal::NotAServer)
+    ));
+}
+
+#[test]
+fn an_empty_category_name_is_refused() {
+    let member = person(2);
+    let state = network_granting(
+        &member,
+        [Capability::extension("chat:manage-channel:*".to_owned())],
+    );
+    assert!(matches!(
+        check(
+            &state,
+            &member,
+            Command::CreateCategory {
+                name: "   ".to_owned(),
+                position: 0,
+            },
+        ),
+        Err(Refusal::Empty("category name"))
+    ));
+}

@@ -1,7 +1,7 @@
 //! What a command produced.
 
 use intranet_identity::PerNetworkIdentityId;
-use kols_core::{ChannelId, MessageId, Privacy, Rejection, RenderedMessage};
+use kols_core::{CategoryId, ChannelId, MessageId, Privacy, Rejection, RenderedMessage};
 
 /// The result of running a command.
 ///
@@ -59,6 +59,18 @@ pub enum Outcome {
     ChannelUpdated {
         /// Which channel.
         channel: ChannelId,
+    },
+    /// A category was named and positioned.
+    CategoryCreated {
+        /// Its derived id.
+        category: CategoryId,
+        /// What it is called.
+        name: String,
+    },
+    /// A category's definition changed.
+    CategoryUpdated {
+        /// Which category.
+        category: CategoryId,
     },
     /// A display name was claimed.
     NameClaimed {

@@ -185,7 +185,7 @@ both green.
 | `kols-api` | **The whole boundary** — `Command`, `Sensitivity`, `Refusal` and `authorize` returning an `Authorized` nothing else can construct, going in; `Outcome` and `Event` coming out. All three of `design/05` §3's properties are now held. 26 tests |
 | `kols-node` | **`kols`, its node daemon, and the executor** — a library now, with the binary as argument parsing and rendering over it. Creates a network, admits and keys in joiners, serves and fetches content, writes every record kind, renders a merged view across authors. `secret` restricts a written seed to this user on both platforms and refuses when it cannot. Tests that drive the real binaries, ten of them over a live wire between two processes |
 | `kols-app` | **The desktop shell** — a Tauri v2 window over the boundary, holding a *workspace* of networks and an `Executor` for whichever is open, with the view types the webview receives and the handlers that build commands from plain arguments — including minting an invite, reading the waiting room and admitting from it. `kols-desktop`. 7 tests |
-| `kols-ui` | **The interface** — HTML, CSS and one script, holding no keys, no sockets and no files. Creates and picks networks, answers `design/09` §4's first two questions, gates its chrome on permission, and carries the doorway an `approve-node` holder uses to invite and admit |
+| `kols-ui` | **The interface** — HTML, CSS and one script, holding no keys, no sockets and no files. Draws the sidebar in the order the core computes rather than sorting again, manages channels and folders through a menu and a drag, and gates all of it on `chat:manage-channel`. Creates and picks networks, answers `design/09` §4's first two questions, gates its chrome on permission, and carries the doorway an `approve-node` holder uses to invite and admit |
 | `kols-store` | Not created |
 | `kols-media` | Not created |
 
@@ -276,6 +276,36 @@ design changes before anything else is built.
 ## 9. Log
 
 Newest first. One line per change that moved the state above.
+
+- **2026-08-23** — **The channel work reached the window.**
+
+  Folders can be made, renamed, reordered and deleted; channels can be renamed, given a topic,
+  archived, deleted, and dragged between folders. All of it gated on `chat:manage-channel` and
+  all of it re-checked on receipt. 242 tests, clippy clean.
+
+  **The order is computed once, in the core.** `sidebar_order` produces it and the webview draws
+  what it is given. Sorting again in JavaScript would have put a second implementation of a
+  normative rule beside the tested one, which is the arrangement that let a relay enforce
+  ceilings its own source had stopped specifying.
+
+  **Positions are sparse and split at the midpoint**, so an ordinary drag writes one governance
+  entry rather than renumbering a folder. Where there is no room — or a sibling was never
+  positioned, which sorts it last and leaves nothing to measure against — the folder is spaced
+  out once and the drag retried. That pass costs an entry per channel and happens once per
+  folder rather than once per drag. `move_channel` also checks whether the category is actually
+  changing before writing a `Recategorise`: a no-op entry is replayed by every joiner forever,
+  and spending that to record that somebody dragged a channel within the folder it was already
+  in is not a trade worth making.
+
+  **Two things this turned up.** `category_id` had never been implemented — §3.6 said a category
+  id derives from (network id, nonce) and nothing derived one, so the domain tag was registered
+  upstream (`c2438f4`) before anything could. And `dto::Category` went in and came straight back
+  out: `SidebarRow::Category` carries the fields inline, so the separate type was a claim that
+  something existed.
+
+  Deleting a folder says what it does. Spec 07 §1.8 makes that removal of a name and a sort key
+  rather than a scope, so the confirmation says the channels keep their permissions — a dialog
+  implying otherwise would be describing a different system.
 
 - **2026-08-23** — **Sidebar order, a network's name and named categories are built. O18 closed.**
 

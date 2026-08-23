@@ -111,6 +111,14 @@ impl App {
             .map(ChannelId::from_bytes)
             .ok_or_else(|| "that is not a channel id".to_owned())
     }
+
+    /// Parses a category id out of the hex the webview holds.
+    fn category(hex: &str) -> Result<kols_core::CategoryId, String> {
+        intranet_crypto::from_hex(hex.trim())
+            .and_then(|bytes| <[u8; 32]>::try_from(bytes.as_slice()).ok())
+            .map(kols_core::CategoryId::from_bytes)
+            .ok_or_else(|| "that is not a category id".to_owned())
+    }
 }
 
 /// Who this member is here, and what they may do.
@@ -140,6 +148,7 @@ fn me_of(executor: &Executor) -> Result<dto::Me, String> {
         has_key: store.epoch_key().is_ok(),
         may_post: holds("chat:post:*"),
         may_create_channel: holds("chat:create-channel:*"),
+        may_manage_channel: holds("chat:manage-channel:*"),
         may_invite: state.identity_holds(&identity.id(), &intranet_governance::Capability::ApproveNode),
         may_moderate: state
             .identity_holds(&identity.id(), &intranet_governance::Capability::ModerateContent),
@@ -275,6 +284,190 @@ fn channels(app: tauri::State<'_, App>) -> Result<Vec<dto::Channel>, String> {
         let (channels, _) = network::channels(store, &state).map_err(|e| e.to_string())?;
         Ok(channels.values().map(dto::Channel::of).collect())
     })
+}
+
+/// The sidebar, in the order the network agrees on — spec 07 §1.6.
+///
+/// Ordered here rather than in the webview, because the default order is
+/// normative and `kols_core::sidebar_order` is its tested implementation.
+#[tauri::command]
+fn sidebar(app: tauri::State<'_, App>) -> Result<Vec<dto::SidebarRow>, String> {
+    app.with(|executor| {
+        let store = executor.store();
+        let state = store.state().map_err(|e| e.to_string())?;
+        let (channels, _) = network::channels(store, &state).map_err(|e| e.to_string())?;
+        let (categories, _) = network::categories(store, &state).map_err(|e| e.to_string())?;
+
+        let ordered = kols_core::sidebar_order(
+            &channels
+                .values()
+                .map(|c| kols_core::SidebarChannel {
+                    id: c.id,
+                    category: c.category,
+                    position: c.position,
+                })
+                .collect::<Vec<_>>(),
+            &categories
+                .values()
+                .map(|c| kols_core::SidebarCategory {
+                    id: c.id,
+                    position: c.position,
+                })
+                .collect::<Vec<_>>(),
+        );
+
+        Ok(ordered
+            .into_iter()
+            .filter_map(|row| match row {
+                kols_core::SidebarRow::Channel(id) => {
+                    channels.get(&id).map(|channel| dto::SidebarRow::Channel {
+                        channel: dto::Channel::of(channel),
+                    })
+                }
+                kols_core::SidebarRow::Category { id, channels: inner } => {
+                    Some(dto::SidebarRow::Category {
+                        id: to_hex(id.as_bytes()),
+                        // Empty when nothing defined it. A channel may name a
+                        // category with no definition, and the webview decides
+                        // what to call that rather than this inventing a name.
+                        name: categories
+                            .get(&id)
+                            .map(|c| c.name.clone())
+                            .unwrap_or_default(),
+                        position: categories.get(&id).and_then(|c| c.position),
+                        channels: inner
+                            .iter()
+                            .filter_map(|c| channels.get(c))
+                            .map(dto::Channel::of)
+                            .collect(),
+                    })
+                }
+            })
+            .collect())
+    })
+}
+
+/// Names and positions a category.
+#[tauri::command]
+fn create_category(app: tauri::State<'_, App>, name: String, position: u32) -> Result<(), String> {
+    app.with(|executor| {
+        executor
+            .submit(Command::CreateCategory { name, position })
+            .map(|_| ())
+            .map_err(|err| err.to_string())
+    })
+}
+
+fn category_change(
+    app: &tauri::State<'_, App>,
+    category: &str,
+    change: kols_core::CategoryChange,
+) -> Result<(), String> {
+    let category = App::category(category)?;
+    app.with(|executor| {
+        executor
+            .submit(Command::UpdateCategory { category, change })
+            .map(|_| ())
+            .map_err(|err| err.to_string())
+    })
+}
+
+/// Renames a category.
+#[tauri::command]
+fn rename_category(app: tauri::State<'_, App>, category: String, name: String) -> Result<(), String> {
+    category_change(&app, &category, kols_core::CategoryChange::Rename(name))
+}
+
+/// Moves a category among the other categories.
+#[tauri::command]
+fn move_category(app: tauri::State<'_, App>, category: String, position: u32) -> Result<(), String> {
+    category_change(&app, &category, kols_core::CategoryChange::SetPosition(position))
+}
+
+/// Deletes a category.
+///
+/// Removes a name and a sort key, never a scope: channels naming it stay in it
+/// and resolve exactly what they did before (spec 07 §1.8). A caller meaning
+/// "and move its channels out" recategorises them first.
+#[tauri::command]
+fn delete_category(app: tauri::State<'_, App>, category: String) -> Result<(), String> {
+    category_change(&app, &category, kols_core::CategoryChange::Delete)
+}
+
+fn channel_change(
+    app: &tauri::State<'_, App>,
+    channel: &str,
+    change: kols_core::ChannelChange,
+) -> Result<(), String> {
+    let channel = App::channel(channel)?;
+    app.with(|executor| {
+        executor
+            .submit(Command::UpdateChannel { channel, change })
+            .map(|_| ())
+            .map_err(|err| err.to_string())
+    })
+}
+
+/// Renames a channel.
+#[tauri::command]
+fn rename_channel(app: tauri::State<'_, App>, channel: String, name: String) -> Result<(), String> {
+    channel_change(&app, &channel, kols_core::ChannelChange::Rename(name))
+}
+
+/// Sets a channel's topic.
+#[tauri::command]
+fn set_channel_topic(app: tauri::State<'_, App>, channel: String, topic: String) -> Result<(), String> {
+    channel_change(&app, &channel, kols_core::ChannelChange::SetTopic(topic))
+}
+
+/// Archives a channel: readable, not writable.
+#[tauri::command]
+fn archive_channel(app: tauri::State<'_, App>, channel: String) -> Result<(), String> {
+    channel_change(&app, &channel, kols_core::ChannelChange::Archive)
+}
+
+/// Deletes a channel — hidden from listings, not erased.
+#[tauri::command]
+fn delete_channel(app: tauri::State<'_, App>, channel: String) -> Result<(), String> {
+    channel_change(&app, &channel, kols_core::ChannelChange::Delete)
+}
+
+/// Moves a channel: into a category, or out of one, and to a position.
+///
+/// **Two governance entries, and not atomic.** The log has no transaction to put
+/// them in (spec 07 §1.8), so a caller that sees this fail must assume either,
+/// both or neither landed and read the sidebar back rather than guessing.
+#[tauri::command]
+fn move_channel(
+    app: tauri::State<'_, App>,
+    channel: String,
+    category: Option<String>,
+    position: u32,
+) -> Result<(), String> {
+    let target = match category.as_deref() {
+        Some(hex) if !hex.is_empty() => Some(App::category(hex)?),
+        _ => None,
+    };
+    let id = App::channel(&channel)?;
+
+    // Only recategorise when the category actually changes. A no-op entry is not
+    // free: every governance entry is replayed by every joiner forever, so
+    // writing one that changes nothing spends everybody's replay to record that
+    // somebody dragged a channel within the folder it was already in.
+    let moved = app.with(|executor| {
+        let store = executor.store();
+        let state = store.state().map_err(|e| e.to_string())?;
+        let (channels, _) = network::channels(store, &state).map_err(|e| e.to_string())?;
+        Ok(channels.get(&id).and_then(|c| c.category) != target)
+    })?;
+    if moved {
+        channel_change(
+            &app,
+            &channel,
+            kols_core::ChannelChange::Recategorise(target),
+        )?;
+    }
+    channel_change(&app, &channel, kols_core::ChannelChange::SetPosition(position))
 }
 
 /// Opens a channel and renders it.
@@ -867,6 +1060,16 @@ fn main() {
         .invoke_handler(tauri::generate_handler![
             me,
             channels,
+            sidebar,
+            create_category,
+            rename_category,
+            move_category,
+            delete_category,
+            rename_channel,
+            set_channel_topic,
+            archive_channel,
+            delete_channel,
+            move_channel,
             open_channel,
             send_message,
             create_channel,

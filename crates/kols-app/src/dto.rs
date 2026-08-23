@@ -41,6 +41,42 @@ pub struct Channel {
     pub private: bool,
     /// Whether it is archived: readable, not writable.
     pub archived: bool,
+    /// Hex of the category it sits in, if any.
+    pub category: Option<String>,
+    /// Its position among its siblings, if it has ever been given one.
+    pub position: Option<u32>,
+}
+
+/// One row of the sidebar, in the order the network agrees on.
+///
+/// **Ordered here rather than in the webview.** Spec 07 §1.6's default is
+/// normative — every node must compute the same one — so it is produced by
+/// `kols_core::sidebar_order`, which is the tested implementation of that rule.
+/// Sorting in JavaScript would be a second implementation of a normative rule
+/// living beside the first, which is the arrangement this module's own opening
+/// paragraph exists to refuse.
+#[derive(Debug, Serialize)]
+#[serde(tag = "kind", rename_all = "lowercase")]
+pub enum SidebarRow {
+    /// A channel in no category. These come before every category.
+    Channel {
+        /// The channel.
+        channel: Channel,
+    },
+    /// A category and the channels inside it, in their own order.
+    Category {
+        /// Hex of the category id.
+        id: String,
+        /// What to call it. Empty when nothing ever defined this category —
+        /// a channel may name one that has no definition (spec 07 §1.8).
+        name: String,
+        /// Its position among the other categories, if it has one. Sent because
+        /// the interface needs somewhere to put the next folder, and guessing
+        /// would pile every new one on the same position.
+        position: Option<u32>,
+        /// Its channels, ordered.
+        channels: Vec<Channel>,
+    },
 }
 
 /// One reaction, collapsed to a count.
@@ -257,6 +293,17 @@ pub struct Me {
     pub may_post: bool,
     /// Whether this member may define channels.
     pub may_create_channel: bool,
+    /// Whether this member may rename, move, archive or delete structure —
+    /// network-wide `chat:manage-channel`.
+    ///
+    /// An approximation in the same direction as `may_moderate`, and for the
+    /// same reason: `chat:manage-channel` is grantable per category and per
+    /// channel, and this does not see those. Somebody who manages one category
+    /// is offered no controls here and would be authorized if they had them.
+    /// Under-offering is the safe way to be wrong — the command is re-checked on
+    /// receipt either way, so a hidden control costs a discovery rather than a
+    /// refusal after the fact.
+    pub may_manage_channel: bool,
     /// Whether this member may create invites.
     pub may_invite: bool,
     /// Whether this member may pin — network-wide `moderate-content`.
@@ -320,6 +367,8 @@ impl Channel {
             topic: channel.topic.clone(),
             private: channel.privacy == Privacy::Private,
             archived: channel.archived,
+            category: channel.category.map(|c| to_hex(c.as_bytes())),
+            position: channel.position,
         }
     }
 }

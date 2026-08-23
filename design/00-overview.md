@@ -212,13 +212,14 @@ next. Estimates are deliberately absent — sequence is the useful part.
   - **Settings as sections rather than one panel.** The relay controls that already exist move
     into one; interface customisation — font size, colour — sits beside them; channel
     permissions get a home there until they earn a better one.
-  - **Channel management.** `Rename`, `Delete`, `Archive` and `Recategorise` are already
-    `ChannelChange` variants with no surface at all. Permissions need `SetPermission`, which
-    `05` §3 specifies and nothing implements.
-  - **A sidebar with folders.** Channels already carry a category, so dragging one between
-    folders *is* `Recategorise`. What was missing is that a category had no name and no order at
-    all — D34 gives it both, D35 makes the sort two-level, and both want spec text before code.
-  - **A network name** — D32.
+  - ~~**Channel management.**~~ **Done in the window**: rename, topic, archive and delete, each
+    gated on `chat:manage-channel` and each re-checked on receipt. What is still owed is
+    permissions themselves — `SetPermission`, which `05` §3 specifies and nothing implements.
+  - ~~**A sidebar with folders.**~~ **Done**: folders can be made, renamed, reordered and
+    deleted, and channels drag between them. The order the network agrees on is computed by
+    `kols_core::sidebar_order` and drawn as given, rather than sorted again in the webview.
+  - **A network name** — D32. Read back by `kols-core`; **no surface yet**, because the place it
+    belongs is the settings section above.
   - **The voided-actions report.** Not interface work, and listed here because it belongs before
     a lock rather than after one: Core §2.7.1 point 5 requires it, `intranet-governance`
     implements it, and this client never calls `reconcile` — so a revocation voided by a heal

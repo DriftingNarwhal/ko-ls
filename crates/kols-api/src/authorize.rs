@@ -4,6 +4,7 @@ use crate::{Command, Sensitivity};
 use intranet_governance::{Capability, GovernanceState};
 use intranet_identity::PerNetworkIdentityId;
 use kols_core::{
+    CategoryChange, MAX_CATEGORY_NAME_BYTES,
     Authority, CategoryId, ChannelChange, ChannelId, ChatPolicy, MAX_CHANNEL_NAME_BYTES,
     MAX_CHANNEL_TOPIC_BYTES, MAX_REACTION_KEY_BYTES, NameRefusal, Names, Placement, holds,
     holds_in_scope,
@@ -340,6 +341,51 @@ pub fn authorize<A: Authority, C: Channels>(
                 "chat:manage-channel",
             )?;
             check_change(change, &policy)?;
+        }
+
+        Command::CreateCategory {
+            name: category_name,
+            ..
+        } => {
+            if !policy.allows_channel_definitions() {
+                return Err(Refusal::NotAServer);
+            }
+            // Network-wide only. Nothing encloses a category, so there is no
+            // narrower grant that could authorize creating one, and scoping it to
+            // the category being created would be circular (spec 07 §1.8).
+            require(
+                holds_in_scope(actor.state, &actor.identity, "manage-channel", None),
+                name,
+                "chat:manage-channel:*, which is the only scope that can create a category",
+            )?;
+            if category_name.trim().is_empty() {
+                return Err(Refusal::Empty("category name"));
+            }
+            bound("category name", category_name.len(), MAX_CATEGORY_NAME_BYTES)?;
+        }
+
+        Command::UpdateCategory { category, change } => {
+            if !policy.allows_channel_definitions() {
+                return Err(Refusal::NotAServer);
+            }
+            require(
+                holds_in_scope(
+                    actor.state,
+                    &actor.identity,
+                    "manage-channel",
+                    Some(category),
+                ),
+                name,
+                "chat:manage-channel, at the category or the network",
+            )?;
+            if let CategoryChange::Rename(category_name) = change {
+                if category_name.trim().is_empty() {
+                    return Err(Refusal::Empty("category name"));
+                }
+                bound("category name", category_name.len(), MAX_CATEGORY_NAME_BYTES)?;
+            }
+            // A position has no range to violate, for the reason `check_change`
+            // gives of a channel's, and deleting carries no value at all.
         }
 
         Command::SetName { name } => {

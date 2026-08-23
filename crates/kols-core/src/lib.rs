@@ -46,9 +46,9 @@ pub use names::{
 };
 pub use log::{AuthorLog, CHAT_LOG_CONTENT_TYPE, Published, publish_head_index};
 pub use ids::{
-    ChannelId, MessageId, author_log_pointer, author_segment_pointer, channel_browse_collection,
-    conversation_channel_id, gossip_topic, moderation_log_pointer, participant_index_collection,
-    server_channel_id, thread_channel_id,
+    ChannelId, MessageId, author_log_pointer, author_segment_pointer, category_id,
+    channel_browse_collection, conversation_channel_id, gossip_topic, moderation_log_pointer,
+    participant_index_collection, server_channel_id, thread_channel_id,
 };
 pub use record::{
     Attachment, DEFAULT_MAX_BODY_BYTES, MAX_ATTACHMENT_NAME_BYTES, MAX_REACTION_KEY_BYTES,

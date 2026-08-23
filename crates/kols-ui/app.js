@@ -12,6 +12,13 @@ const { listen } = window.__TAURI__.event;
 const el = (id) => document.getElementById(id);
 const state = {
   channels: [],
+  // The sidebar as the network orders it — spec 07 §1.6, computed in the core
+  // and drawn here. `channels` is this flattened, for the lookups that want it.
+  sidebar: [],
+  // The channel being dragged, or null. Only ever set where the capability to
+  // move one is held.
+  dragging: null,
+  mayManage: false,
   current: null,
   me: null,
   // The designated set as last drawn, and when a restart was last taken. Both
@@ -26,7 +33,7 @@ const state = {
   // What `me` and the channel list looked like when last drawn, so a tick that
   // finds nothing new leaves the sidebar alone.
   meSignature: null,
-  channelsSignature: null,
+  sidebarSignature: null,
   peopleSignature: null,
   // What the open channel looked like when it was last drawn, so a poll that
   // finds nothing new does no DOM work.
@@ -127,6 +134,8 @@ function drawMe(me) {
   // shown. The hidden control and the refused command are independent, and the
   // second is the one that matters.
   el("new-channel").hidden = !me.may_create_channel;
+  el("new-folder").hidden = !me.may_manage_channel;
+  state.mayManage = me.may_manage_channel;
   el("doorway").hidden = !me.may_invite;
   if (me.may_invite) drawWaiting();
 
@@ -423,48 +432,425 @@ async function drawWaiting() {
   }
 }
 
-function drawChannels(channels) {
-  state.channels = channels;
-  state.channelsSignature = signatureOfChannels(channels);
+/// The sidebar, in the order the network agrees on — spec 07 §1.6.
+///
+/// **The order arrives already computed.** That default is normative — every
+/// node must reach the same one — and `kols_core::sidebar_order` is its tested
+/// implementation, so sorting here would put a second implementation of a rule
+/// two members must never disagree about right next to the first. This draws
+/// what it is given, in the order it is given.
+function drawSidebar(rows) {
+  state.sidebar = rows;
+  state.channels = flattenChannels(rows);
+  state.sidebarSignature = signatureOfSidebar(rows);
   const list = el("channel-list");
   list.replaceChildren();
 
-  for (const channel of channels) {
-    const item = document.createElement("li");
-    const button = document.createElement("button");
-    button.dataset.id = channel.id;
-    button.className = channel.id === state.current ? "current" : "";
-    if (channel.private) button.title = "private";
-    if (channel.archived) button.classList.add("archived");
-
-    const name = document.createElement("span");
-    name.className = "channel-name";
-    name.textContent = `#${channel.name}`;
-    button.append(name);
-
-    // Two signals for one fact, because they answer different questions from
-    // different distances: the weight says *something is here* at a glance, and
-    // the count says how much once you look.
-    const unread = state.unread[channel.id] ?? 0;
-    if (unread > 0 && channel.id !== state.current) {
-      button.classList.add("unread");
-      const badge = document.createElement("span");
-      badge.className = "unread-count";
-      badge.textContent = unread > 99 ? "99+" : String(unread);
-      button.append(badge);
+  for (const row of rows) {
+    if (row.kind === "channel") {
+      list.append(channelItem(row.channel, null));
+    } else {
+      list.append(folderItem(row));
     }
-
-    button.addEventListener("click", () => openChannel(channel.id));
-    item.append(button);
-    list.append(item);
   }
 
-  if (channels.length === 0) {
+  if (state.channels.length === 0 && rows.length === 0) {
     const empty = document.createElement("li");
     empty.className = "empty";
     empty.textContent = "no channels yet";
     list.append(empty);
   }
+}
+
+/// Every channel, folders flattened away, for the callers that want a lookup.
+function flattenChannels(rows) {
+  const out = [];
+  for (const row of rows) {
+    if (row.kind === "channel") out.push(row.channel);
+    else out.push(...row.channels);
+  }
+  return out;
+}
+
+/// One channel row. `category` is the folder it sits in, or null at top level.
+function channelItem(channel, category) {
+  const item = document.createElement("li");
+  item.className = "channel-item";
+  item.dataset.channel = channel.id;
+  item.dataset.category = category ?? "";
+
+  const button = document.createElement("button");
+  button.dataset.id = channel.id;
+  button.className = channel.id === state.current ? "current" : "";
+  if (channel.private) button.title = "private";
+  if (channel.archived) button.classList.add("archived");
+
+  const name = document.createElement("span");
+  name.className = "channel-name";
+  name.textContent = `#${channel.name}`;
+  button.append(name);
+
+  // Two signals for one fact, because they answer different questions from
+  // different distances: the weight says *something is here* at a glance, and
+  // the count says how much once you look.
+  const unread = state.unread[channel.id] ?? 0;
+  if (unread > 0 && channel.id !== state.current) {
+    button.classList.add("unread");
+    const badge = document.createElement("span");
+    badge.className = "unread-count";
+    badge.textContent = unread > 99 ? "99+" : String(unread);
+    button.append(badge);
+  }
+
+  button.addEventListener("click", () => openChannel(channel.id));
+
+  // Gated on the capability, like every other control here. Hiding is
+  // presentation only — the command is re-checked on receipt regardless.
+  if (state.mayManage) {
+    button.draggable = true;
+    button.addEventListener("dragstart", (event) => {
+      state.dragging = { channel: channel.id };
+      event.dataTransfer.effectAllowed = "move";
+      // Firefox will not start a drag without data set.
+      event.dataTransfer.setData("text/plain", channel.id);
+    });
+    button.addEventListener("dragend", () => {
+      state.dragging = null;
+      clearDropMarks();
+    });
+    button.addEventListener("contextmenu", (event) =>
+      channelMenu(event, channel, category),
+    );
+  }
+
+  item.append(button);
+  wireDrop(item, category);
+  return item;
+}
+
+/// One folder, and the channels inside it.
+function folderItem(row) {
+  const item = document.createElement("li");
+  item.className = "folder";
+  item.dataset.category = row.id;
+
+  const head = document.createElement("div");
+  head.className = "folder-head";
+
+  const label = document.createElement("span");
+  label.className = "folder-name";
+  // A channel may name a category nothing ever defined (spec 07 §1.8). That is
+  // not an error and not a blank: saying so is better than an empty row nobody
+  // can explain.
+  label.textContent = row.name || "unnamed folder";
+  if (!row.name) label.classList.add("unnamed");
+  head.append(label);
+
+  if (state.mayManage) {
+    head.addEventListener("contextmenu", (event) => folderMenu(event, row));
+    head.title = "right-click for folder actions";
+  }
+  item.append(head);
+
+  const inner = document.createElement("ul");
+  inner.className = "folder-channels";
+  for (const channel of row.channels) inner.append(channelItem(channel, row.id));
+  if (row.channels.length === 0) {
+    const empty = document.createElement("li");
+    empty.className = "empty";
+    empty.textContent = "empty";
+    inner.append(empty);
+  }
+  item.append(inner);
+
+  // The whole folder is a drop target, so dropping onto its header or its empty
+  // space puts a channel at the end of it.
+  wireDrop(item, row.id, true);
+  return item;
+}
+
+/// Enough of the sidebar to tell whether it would draw differently.
+function signatureOfSidebar(rows) {
+  return rows
+    .map((row) =>
+      row.kind === "channel"
+        ? `c:${row.channel.id}|${row.channel.name}|${row.channel.topic}|${row.channel.archived}`
+        : `f:${row.id}|${row.name}|` +
+          row.channels
+            .map((c) => `${c.id}|${c.name}|${c.topic}|${c.archived}`)
+            .join("~"),
+    )
+    .join(",");
+}
+
+// ── moving things ──────────────────────────────────────────────────────
+
+function clearDropMarks() {
+  for (const node of document.querySelectorAll(".drop-into, .drop-before")) {
+    node.classList.remove("drop-into", "drop-before");
+  }
+}
+
+/// Makes a node accept a dropped channel. `into` marks a folder body rather than
+/// a row, which means "at the end of this folder" instead of "before this row".
+function wireDrop(node, category, into = false) {
+  node.addEventListener("dragover", (event) => {
+    if (!state.dragging) return;
+    event.preventDefault();
+    event.dataTransfer.dropEffect = "move";
+    clearDropMarks();
+    node.classList.add(into ? "drop-into" : "drop-before");
+  });
+  node.addEventListener("drop", async (event) => {
+    if (!state.dragging) return;
+    event.preventDefault();
+    event.stopPropagation();
+    const moved = state.dragging.channel;
+    state.dragging = null;
+    clearDropMarks();
+    const before = into ? null : node.dataset.channel;
+    await moveChannelTo(moved, category, before);
+  });
+}
+
+/// The channels that would be siblings in `category`, in their drawn order.
+function siblingsIn(category) {
+  if (category === null || category === "") {
+    return state.sidebar
+      .filter((row) => row.kind === "channel")
+      .map((row) => row.channel);
+  }
+  const folder = state.sidebar.find(
+    (row) => row.kind === "category" && row.id === category,
+  );
+  return folder ? folder.channels : [];
+}
+
+/// Moves `channel` into `category`, landing before `before` or at the end.
+///
+/// **Positions are chosen sparsely and split at the midpoint**, so an ordinary
+/// drag writes one governance entry rather than renumbering the folder. When
+/// there is no room between two neighbours — or when a sibling has never been
+/// positioned, which sorts it last and leaves nothing to measure against — the
+/// folder is spaced out once and the drag retried. That pass costs an entry per
+/// channel, and it happens once per folder rather than once per drag.
+async function moveChannelTo(channel, category, before) {
+  const siblings = siblingsIn(category).filter((c) => c.id !== channel);
+  const index =
+    before === null || before === undefined
+      ? siblings.length
+      : Math.max(
+          0,
+          siblings.findIndex((c) => c.id === before),
+        );
+
+  const at = index < siblings.length ? index : siblings.length;
+  const unpositioned = siblings.some((c) => c.position === null);
+  let position = null;
+
+  if (!unpositioned) {
+    const lo = at > 0 ? siblings[at - 1].position : null;
+    const hi = at < siblings.length ? siblings[at].position : null;
+    if (lo === null && hi === null) position = 1024;
+    else if (lo === null) position = hi > 0 ? Math.floor(hi / 2) : null;
+    else if (hi === null) position = lo + 1024;
+    else {
+      const mid = Math.floor((lo + hi) / 2);
+      position = mid > lo && mid < hi ? mid : null;
+    }
+  }
+
+  await act(async () => {
+    if (position === null) {
+      // Space the folder out, then place into the gap we just guaranteed.
+      let next = 0;
+      for (const sibling of siblings) {
+        await invoke("move_channel", {
+          channel: sibling.id,
+          category: category ?? null,
+          position: next,
+        });
+        next += 1024;
+      }
+      position = at * 1024 + (at < siblings.length ? 512 : 0);
+    }
+    await invoke("move_channel", {
+      channel,
+      category: category ?? null,
+      position,
+    });
+    await refresh();
+  });
+}
+
+// ── menus ──────────────────────────────────────────────────────────────
+
+/// A small menu at the pointer. Closes on the next click anywhere.
+function popMenu(event, entries) {
+  event.preventDefault();
+  document.querySelector(".pop-menu")?.remove();
+
+  const menu = document.createElement("div");
+  menu.className = "pop-menu";
+  menu.style.left = `${event.clientX}px`;
+  menu.style.top = `${event.clientY}px`;
+
+  for (const [label, run] of entries) {
+    const button = document.createElement("button");
+    button.textContent = label;
+    button.addEventListener("click", async () => {
+      menu.remove();
+      await run();
+    });
+    menu.append(button);
+  }
+
+  document.body.append(menu);
+  setTimeout(() => {
+    document.addEventListener("click", () => menu.remove(), { once: true });
+  }, 0);
+}
+
+function channelMenu(event, channel, category) {
+  const folders = state.sidebar.filter((row) => row.kind === "category");
+  const entries = [
+    [
+      "rename",
+      async () => {
+        const name = prompt("channel name", channel.name);
+        if (!name) return;
+        await act(async () => {
+          await invoke("rename_channel", { channel: channel.id, name });
+          await refresh();
+        });
+      },
+    ],
+    [
+      "set topic",
+      async () => {
+        const topic = prompt("channel topic", channel.topic ?? "");
+        if (topic === null) return;
+        await act(async () => {
+          await invoke("set_channel_topic", { channel: channel.id, topic });
+          await refresh();
+        });
+      },
+    ],
+    [
+      channel.archived ? "archived" : "archive",
+      async () => {
+        if (channel.archived) return;
+        await act(async () => {
+          await invoke("archive_channel", { channel: channel.id });
+          await refresh();
+        });
+      },
+    ],
+  ];
+
+  if (category !== null && category !== "") {
+    entries.push([
+      "move out of folder",
+      async () => moveChannelTo(channel.id, null, null),
+    ]);
+  }
+  for (const folder of folders) {
+    if (folder.id === category) continue;
+    entries.push([
+      `move to ${folder.name || "unnamed folder"}`,
+      async () => moveChannelTo(channel.id, folder.id, null),
+    ]);
+  }
+
+  entries.push([
+    "delete",
+    async () => {
+      // `01` §6: hidden, not erased. The confirmation says so rather than
+      // implying this reaches anything anybody already fetched.
+      if (
+        !confirm(
+          `Delete #${channel.name}?\n\nIt is hidden from listings, not erased — records already fetched stay fetched.`,
+        )
+      )
+        return;
+      await act(async () => {
+        await invoke("delete_channel", { channel: channel.id });
+        await refresh();
+      });
+    },
+  ]);
+
+  popMenu(event, entries);
+}
+
+/// Moves a folder one place up or down.
+///
+/// Positions are rewritten only for the two folders that swap, so reordering
+/// costs two governance entries rather than renumbering the sidebar. Where a
+/// neighbour has never been positioned there is nothing to swap with, so both
+/// ends of the pair are given spaced positions instead.
+async function nudgeFolder(row, direction) {
+  const folders = state.sidebar.filter((r) => r.kind === "category");
+  const at = folders.findIndex((r) => r.id === row.id);
+  const to = at + direction;
+  if (at < 0 || to < 0 || to >= folders.length) return;
+
+  const other = folders[to];
+  const mine = row.position;
+  const theirs = other.position;
+
+  await act(async () => {
+    if (mine === null || theirs === null) {
+      let next = 0;
+      const reordered = folders.slice();
+      reordered.splice(at, 1);
+      reordered.splice(to, 0, row);
+      for (const folder of reordered) {
+        await invoke("move_category", { category: folder.id, position: next });
+        next += 1024;
+      }
+    } else {
+      await invoke("move_category", { category: row.id, position: theirs });
+      await invoke("move_category", { category: other.id, position: mine });
+    }
+    await refresh();
+  });
+}
+
+function folderMenu(event, row) {
+  popMenu(event, [
+    ["move up", async () => nudgeFolder(row, -1)],
+    ["move down", async () => nudgeFolder(row, 1)],
+    [
+      "rename",
+      async () => {
+        const name = prompt("folder name", row.name);
+        if (!name) return;
+        await act(async () => {
+          await invoke("rename_category", { category: row.id, name });
+          await refresh();
+        });
+      },
+    ],
+    [
+      "delete folder",
+      async () => {
+        // Spec 07 §1.8: this removes a name and a sort key, never a scope. The
+        // channels stay in it and resolve exactly what they did before, so the
+        // wording must not suggest they are being deleted or moved.
+        if (
+          !confirm(
+            `Delete the folder "${row.name || "unnamed folder"}"?\n\nIts ${row.channels.length} channel(s) keep their permissions and stay grouped — the folder just loses its name.`,
+          )
+        )
+          return;
+        await act(async () => {
+          await invoke("delete_category", { category: row.id });
+          await refresh();
+        });
+      },
+    ],
+  ]);
 }
 
 /// Runs a command and redraws, putting a refusal where the user is looking.
@@ -738,8 +1124,8 @@ async function refreshReplayed() {
   const me = await invoke("me");
   if (signatureOfMe(me) !== state.meSignature) drawMe(me);
 
-  const channels = await invoke("channels");
-  if (signatureOfChannels(channels) !== state.channelsSignature) drawChannels(channels);
+  const rows = await invoke("sidebar");
+  if (signatureOfSidebar(rows) !== state.sidebarSignature) drawSidebar(rows);
 }
 
 /// What this member may do, and is called. Not the network id, which cannot
@@ -750,18 +1136,13 @@ function signatureOfMe(me) {
     me.has_key,
     me.may_post,
     me.may_create_channel,
+    me.may_manage_channel,
     me.may_invite,
     me.may_moderate,
     me.may_set_relays,
   ].join(":");
 }
 
-/// Enough of the channel list to tell whether the sidebar would change.
-function signatureOfChannels(channels) {
-  return channels
-    .map((channel) => `${channel.id}|${channel.name}|${channel.topic}|${channel.archived}`)
-    .join(",");
-}
 
 /// Re-reads the open channel on a timer, whatever the events did.
 ///
@@ -839,7 +1220,7 @@ async function openChannel(id) {
     rememberUnread();
   }
   state.current = id;
-  drawChannels(state.channels);
+  drawSidebar(state.sidebar);
 
   const opened = await invoke("open_channel", { channel: id });
   drawMessages(opened);
@@ -854,7 +1235,7 @@ async function openChannel(id) {
 }
 
 async function refresh() {
-  drawChannels(await invoke("channels"));
+  drawSidebar(await invoke("sidebar"));
   // Somebody redeeming an invite is one of the things an event means, and a
   // waiting room nobody redraws is a person standing at a door that never
   // opens.
@@ -996,6 +1377,20 @@ el("namer").addEventListener("submit", async (event) => {
   }
 });
 
+el("new-folder").addEventListener("click", async () => {
+  const name = prompt("folder name");
+  if (!name) return;
+  // Placed at the end: the last existing position plus a gap, so the first drag
+  // that reorders anything has room to split without renumbering.
+  const last = state.sidebar
+    .filter((row) => row.kind === "category")
+    .reduce((most, row) => Math.max(most, row.position ?? 0), 0);
+  await act(async () => {
+    await invoke("create_category", { name, position: last + 1024 });
+    await refresh();
+  });
+});
+
 el("new-channel").addEventListener("click", async () => {
   const name = prompt("channel name");
   if (!name) return;
@@ -1100,7 +1495,7 @@ async function watch() {
     if (messages && channel !== state.current) {
       state.unread[channel] = (state.unread[channel] ?? 0) + 1;
       rememberUnread();
-      drawChannels(state.channels);
+      drawSidebar(state.sidebar);
     }
     if (state.current) await openChannel(state.current);
   });
@@ -1109,7 +1504,7 @@ async function watch() {
   // moved the log may have made the sidebar and the header stale.
   await listen("kols://governance", async () => {
     drawMe(await invoke("me"));
-    drawChannels(await invoke("channels"));
+    drawSidebar(await invoke("sidebar"));
     // Relays are policy, so an entry that moved the log may have changed them —
     // which is how a member learns of a relay designated after they joined. The
     // only place that passes `act`: a change learned from the log is the case
@@ -1170,8 +1565,9 @@ async function start() {
   recallUnread();
   watchRelay();
   watchChannel();
-  const channels = await invoke("channels");
-  drawChannels(channels);
+  const rows = await invoke("sidebar");
+  drawSidebar(rows);
+  const channels = state.channels;
   if (channels.length > 0) await openChannel(channels[0].id);
 }
 

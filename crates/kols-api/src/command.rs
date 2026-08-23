@@ -1,7 +1,7 @@
 //! What the interface may ask for, and how much a request costs in consent.
 
 use kols_core::{
-    Attachment, CategoryId, ChannelChange, ChannelId, Hlc, MessageId, Privacy,
+    Attachment, CategoryChange, CategoryId, ChannelChange, ChannelId, Hlc, MessageId, Privacy,
 };
 
 /// One thing the interface can ask the core to do.
@@ -94,6 +94,23 @@ pub enum Command {
         channel: ChannelId,
         /// What about it changes.
         change: ChannelChange,
+    },
+    /// Names and positions a category — spec 07 §1.8.
+    ///
+    /// The id is minted by the executor, like a channel's, because it derives
+    /// from the network and a nonce rather than from anything a caller holds.
+    CreateCategory {
+        /// What to call it.
+        name: String,
+        /// Where it sits among the other categories.
+        position: u32,
+    },
+    /// Renames, repositions or deletes a category — spec 07 §1.8.
+    UpdateCategory {
+        /// Which category.
+        category: CategoryId,
+        /// What about it changes.
+        change: CategoryChange,
     },
     /// Claim a display name in this network.
     ///
@@ -191,6 +208,11 @@ impl Command {
             | Self::CreateInvite { .. }
             | Self::SetBootstrapRelays { .. }
             | Self::UpdateChannel { .. }
+            // Governs rather than Signs, and not because creating a folder feels
+            // weighty: D26 says a command's class follows the tier of the
+            // capability it needs, and category entries need `manage-channel`.
+            | Self::CreateCategory { .. }
+            | Self::UpdateCategory { .. }
             | Self::AdmitMember { .. }
             | Self::RevokeMember { .. } => Sensitivity::Governs,
         }
@@ -217,7 +239,9 @@ impl Command {
             Self::Pin { .. } => Some("moderate"),
             Self::CreateChannel { .. } => Some("create-channel"),
             Self::SetName { .. } => Some("set-name"),
-            Self::UpdateChannel { .. } => Some("manage-channel"),
+            Self::UpdateChannel { .. }
+            | Self::CreateCategory { .. }
+            | Self::UpdateCategory { .. } => Some("manage-channel"),
             Self::CreateInvite { .. }
             | Self::SetBootstrapRelays { .. }
             | Self::AdmitMember { .. }
@@ -237,6 +261,8 @@ impl Command {
             Self::CreateChannel { .. } => "create-channel",
             Self::SetName { .. } => "set-name",
             Self::UpdateChannel { .. } => "update-channel",
+            Self::CreateCategory { .. } => "create-category",
+            Self::UpdateCategory { .. } => "update-category",
             Self::CreateInvite { .. } => "create-invite",
             Self::SetBootstrapRelays { .. } => "set-bootstrap-relays",
             Self::AdmitMember { .. } => "admit-member",

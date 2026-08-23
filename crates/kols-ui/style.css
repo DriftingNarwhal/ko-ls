@@ -816,3 +816,64 @@ body {
 #joiner { border-bottom: 1px solid var(--line); margin-bottom: 20px; padding-bottom: 20px; }
 #joiner button[disabled] { opacity: 0.6; cursor: default; }
 .picker-error { line-height: 1.6; white-space: pre-wrap; }
+
+/* ── folders and moving things (spec 07 §1.6, §1.8) ─────────────────── */
+
+.folder { margin: 2px 0; }
+
+.folder-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px;
+  color: var(--dim);
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  cursor: default;
+  user-select: none;
+}
+
+.folder-name { flex: 1 1 auto; min-width: 0; overflow-wrap: anywhere; }
+
+/* A category a channel names but nothing ever defined. Saying so beats an empty
+   row nobody can account for. */
+.folder-name.unnamed { font-style: italic; opacity: 0.7; text-transform: none; }
+
+.folder-channels { list-style: none; margin: 0; padding: 0 0 0 10px; border-left: 1px solid var(--line); }
+.folder-channels li.empty { color: var(--dim); font-size: 12px; padding: 4px 8px; }
+
+/* Where a drop would land. Two marks because they mean different things: a line
+   is "before this row", a wash is "into this folder, at the end". */
+.drop-before { box-shadow: inset 0 2px 0 0 var(--accent); }
+.drop-into { background: var(--sunken); border-radius: var(--radius); }
+
+#channel-list button[draggable="true"] { cursor: grab; }
+#channel-list button[draggable="true"]:active { cursor: grabbing; }
+
+.pop-menu {
+  position: fixed;
+  z-index: 60;
+  min-width: 168px;
+  padding: 4px;
+  background: var(--raised);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  box-shadow: 0 8px 24px var(--veil);
+  display: flex;
+  flex-direction: column;
+}
+
+.pop-menu button {
+  text-align: left;
+  padding: 6px 10px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.pop-menu button:hover { background: var(--hover); }

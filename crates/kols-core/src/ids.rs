@@ -8,8 +8,10 @@
 use intranet_crypto::{Enc, Hash, hash_bytes, to_hex};
 use intranet_governance::PointerId;
 use intranet_identity::{NetworkId, PerNetworkIdentityId};
+use crate::CategoryId;
 
 const CHANNEL_DOMAIN: &str = "intranet.chat-channel-id.v1";
+const CATEGORY_DOMAIN: &str = "intranet.chat-category-id.v1";
 const CONVERSATION_DOMAIN: &str = "intranet.chat-conversation-id.v1";
 const THREAD_DOMAIN: &str = "intranet.chat-thread-id.v1";
 const LOG_POINTER_DOMAIN: &str = "intranet.chat-log-pointer.v1";
@@ -78,6 +80,19 @@ fn derive(domain: &str, build: impl FnOnce(&mut Enc)) -> [u8; 32] {
 /// A declared channel's id, in a `server`-profile network.
 pub fn server_channel_id(network: &NetworkId, nonce: &[u8; 32]) -> ChannelId {
     ChannelId(derive(CHANNEL_DOMAIN, |e| {
+        network.encode(e);
+        e.fixed(nonce);
+    }))
+}
+
+/// A declared category's id — spec 07 §3.6.
+///
+/// Derived over the same inputs as a channel id and separated only by its domain
+/// tag, which is the whole reason §3.2 requires one: without separation the two
+/// would be the same hash, and a capability scoped to a category would resolve
+/// against a channel.
+pub fn category_id(network: &NetworkId, nonce: &[u8; 32]) -> CategoryId {
+    CategoryId::from_bytes(derive(CATEGORY_DOMAIN, |e| {
         network.encode(e);
         e.fixed(nonce);
     }))
