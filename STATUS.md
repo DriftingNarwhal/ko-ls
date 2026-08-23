@@ -1,6 +1,6 @@
 # ko-ls — Implementation Status
 
-**Updated:** 2026-08-23 (a relay is deployed, so the two-machine test has the standing dependency it was waiting on; and this file's own header date and release reference had gone stale)
+**Updated:** 2026-08-23 (a relay is deployed, so the two-machine test has the standing dependency it was waiting on; `v0.11.0` is cut; and the DCO requirement no licence asked for is gone from all three repos)
 **Phase:** P1 — two nodes talk live and durably, a joiner reads back through sealed
 history, and the boundary carries commands in and events out
 **Design:** [`design/`](design/) — `00`–`08` at v1.0, `09` at v0.3. **`distributed-intranet/specs/07` is normative** where it and the design set overlap.
@@ -256,14 +256,40 @@ design changes before anything else is built.
   is a service by definition, so a licence triggering only on distribution would never trigger.
   Note it does not reach the network served: a relay holds no state, so running one places no
   licence condition on anybody's client or content. **`specs/` in the protocol repo is CC BY
-  4.0**, not MPL. All three repos require a DCO sign-off (`CONTRIBUTING.md`), and **anything
-  depending on the protocol by tag must use `v1.0.1` or later** — `v1.0.0` predates the licence.
+  4.0**, not MPL. **Anything depending on the protocol by tag must use `v1.0.1` or later** —
+  `v1.0.0` predates the licence.
 
 ---
 
 ## 9. Log
 
 Newest first. One line per change that moved the state above.
+
+- **2026-08-23** — **A relay is deployed, `v0.11.0` is cut, and the DCO requirement is gone.**
+
+  The two-machine test's one standing dependency is met. **Deployed is not proven**: nothing
+  has reserved a circuit through it and its address is not recorded here, so §0 says that
+  rather than implying the test is now routine.
+
+  `v0.11.0` covers the three commits that had accumulated past `v0.10.0` — abuse limits
+  enforced at the reader, the current relay ceilings, and the daemon-orphan diagnosis — plus
+  the correction of this file's own header date, which had lagged a day behind its own body,
+  and a release reference that named `v0.1.0` nine tags after the fact.
+  `crates/kols-app/tauri.conf.json` moves with the workspace version because it names the
+  installer `docs/two-machine-test.md` tells you to download; bumping only `Cargo.toml` would
+  have published a `v0.11.0` release containing an installer labelled `0.10.0`.
+
+  **The DCO requirement is removed from all three `CONTRIBUTING.md`.** It was never once
+  followed — 0 of 197 commits across the three repos carried a `Signed-off-by`, including
+  every one of the sole contributor's own. No licence here requires it: AGPL-3.0, MPL-2.0 and
+  CC BY 4.0 all impose no contributor-certification obligation. And the rationale as written
+  oversold what it bought, which is why it went rather than being enforced: a DCO does **not**
+  grant relicensing rights, so relicensing would still need every copyright holder's
+  permission individually — that is a CLA's job, and this deliberately was not one. What
+  actually carries the inbound grant is the "Licensing of contributions" section, which stays
+  in all three. Worth re-adding *and* enforcing in CI if these repos ever take an outside
+  contribution, where certifying provenance is the real thing a DCO is for. Left in this log
+  above as it was written, because the log records what happened rather than what is true now.
 
 - **2026-08-22** — **The flaky daemon test was orphaned processes, and three separate defects
   kept that invisible.**
