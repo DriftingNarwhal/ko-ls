@@ -139,6 +139,16 @@
 
         <ol class="messages" id="messages" data-kols="messages"></ol>
 
+        <!-- A healed fork undid something. Persistent rather than transient,
+             and dismissed by hand: a voided revocation puts a removed member
+             back, and the whole reason Core §2.7.1 requires the report is that
+             nobody was assigned to notice. -->
+        <div class="reorg" id="reorg" hidden data-kols="reorg">
+          <p id="reorg-text"></p>
+          <ul id="reorg-list"></ul>
+          <button id="reorg-dismiss" type="button">dismiss</button>
+        </div>
+
         <div class="refused" id="refused" hidden data-kols="refused"></div>
 
         <form class="composer" id="composer" data-kols="composer" hidden>

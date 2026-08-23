@@ -51,5 +51,5 @@ pub use authorize::{
     Actor, Authorized, Channels, PlacementMap, Refusal, authorize, placement,
 };
 pub use command::{Command, Sensitivity};
-pub use event::{Arrival, Event};
+pub use event::{Arrival, Event, VoidedAction};
 pub use outcome::Outcome;

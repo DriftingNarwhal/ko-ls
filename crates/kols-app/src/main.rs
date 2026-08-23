@@ -82,6 +82,12 @@ struct App {
     /// So the event stays, for liveness, and this is the answer to the
     /// question. A consumer that can *ask* cannot miss the reply.
     relay: Mutex<Option<RelayStanding>>,
+    /// The last voided-actions report, or `None` if no fork has healed here.
+    ///
+    /// Held for the same reason `relay` is, and one more: this report is not in
+    /// the projection. Replayed state is the *winning* branch, so a consumer
+    /// that missed the event has nowhere else to learn that something lost.
+    reorg: Mutex<Option<dto::Reorg>>,
     /// The node running for the open network.
     ///
     /// Dropping the handle aborts it, which is the whole shutdown protocol:
@@ -345,6 +351,18 @@ fn sidebar(app: tauri::State<'_, App>) -> Result<Vec<dto::SidebarRow>, String> {
             })
             .collect())
     })
+}
+
+/// The last voided-actions report, if a fork has healed here — Core §2.7.1.
+///
+/// A question rather than only an event, because the answer is not in replayed
+/// state: replay follows the winning branch, so what lost leaves no trace there.
+#[tauri::command]
+fn reorg(app: tauri::State<'_, App>) -> Result<Option<dto::Reorg>, String> {
+    app.reorg
+        .lock()
+        .map(|held| held.clone())
+        .map_err(|_| "the reorg record is poisoned".to_owned())
 }
 
 /// Names and positions a category.
@@ -956,6 +974,24 @@ fn start_node(handle: &tauri::AppHandle, app: tauri::State<'_, App>, root: std::
                     "kols://keys"
                 }
                 kols_api::Event::JoinAnswered { .. } => "kols://joins",
+                kols_api::Event::GovernanceReorg { mine, others } => {
+                    // Recorded before it is emitted, like the relay standing:
+                    // the emit makes it prompt, the record makes it reliable.
+                    if let Ok(mut held) = emitter.state::<App>().reorg.lock() {
+                        *held = Some(dto::Reorg {
+                            mine: mine
+                                .iter()
+                                .map(|action| dto::VoidedAction {
+                                    kind: action.kind.clone(),
+                                    security_relevant: action.security_relevant,
+                                })
+                                .collect(),
+                            others: *others,
+                        });
+                    }
+                    let _ = emitter.emit("kols://reorg", ());
+                    continue;
+                }
                 kols_api::Event::Degraded { reason } => {
                     let _ = emitter.emit("kols://degraded", reason.clone());
                     continue;
@@ -1056,11 +1092,13 @@ fn main() {
             open: Mutex::new(open),
             node: Mutex::new(None),
             relay: Mutex::new(None),
+            reorg: Mutex::new(None),
         })
         .invoke_handler(tauri::generate_handler![
             me,
             channels,
             sidebar,
+            reorg,
             create_category,
             rename_category,
             move_category,

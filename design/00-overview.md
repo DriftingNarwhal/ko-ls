@@ -220,11 +220,11 @@ next. Estimates are deliberately absent — sequence is the useful part.
     `kols_core::sidebar_order` and drawn as given, rather than sorted again in the webview.
   - **A network name** — D32. Read back by `kols-core`; **no surface yet**, because the place it
     belongs is the settings section above.
-  - **The voided-actions report.** Not interface work, and listed here because it belongs before
-    a lock rather than after one: Core §2.7.1 point 5 requires it, `intranet-governance`
-    implements it, and this client never calls `reconcile` — so a revocation voided by a heal
-    silently restores a member, which is the case the report exists to make somebody's job.
-    `05` §3 already names the event it surfaces as.
+  - ~~**The voided-actions report.**~~ **Done.** The node reconciles when governance arrives,
+    separates this member's voided actions from everybody else's, and says so once per heal —
+    loudly where something that *removed* an access was undone. The window keeps the notice until
+    it is dismissed by hand, because a banner that faded would be the only warning anybody got,
+    gone.
   - Threads and presence, which were the original two.
 
   The abuse limits became enforced rather than merely readable policy on 2026-08-22 — the rate

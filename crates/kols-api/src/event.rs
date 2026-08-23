@@ -152,4 +152,35 @@ pub enum Event {
         /// What happened, in words a user can act on.
         reason: String,
     },
+    /// Reconciliation voided actions after a fork healed — Core §2.7.1 point 5.
+    ///
+    /// **This exists so that noticing is somebody's job.** When a partition
+    /// heals, every entry on the losing branch is treated as if it never
+    /// happened. For most kinds that is merely annoying. For a revocation it is
+    /// not: the member removed on the losing branch is a fully current member
+    /// again on the winning one, entitled to its epoch key, for as long as it
+    /// takes somebody to realise — and without this event, nobody is assigned to.
+    GovernanceReorg {
+        /// This member's own voided actions, which are the ones they can resubmit.
+        mine: Vec<VoidedAction>,
+        /// How many other members' actions the same reconciliation voided.
+        ///
+        /// Carried because it is the difference between "your action lost" and
+        /// "a partition healed and a lot of things lost", which want different
+        /// reactions from a person.
+        others: usize,
+    },
+}
+
+/// One action reconciliation undid.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct VoidedAction {
+    /// A short label for what it was.
+    pub kind: String,
+    /// Whether losing it re-opens a gap rather than merely losing an edit.
+    ///
+    /// True for revocations, moderation and epoch rotations: each *removed* an
+    /// access or a piece of content, so voiding one silently restores what was
+    /// taken away. This is the flag Core §2.7.1 expects a client to watch.
+    pub security_relevant: bool,
 }

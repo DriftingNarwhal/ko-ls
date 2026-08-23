@@ -1,6 +1,6 @@
 # Client Architecture
 
-**Document status:** v1.3 — §1 and §2 corrected to the layout that was built: `kols-node` holds the executor, the daemon and the event loop, and `kols-net` is publish and fetch over it. §3's vocabulary now separates what exists from what is designed and unbuilt. The store and media crates still do not exist
+**Document status:** v1.4 — §1 and §2 describe the layout that was built: `kols-node` holds the executor, the daemon and the event loop, and `kols-net` is publish and fetch over it. §3 separates what crosses the boundary from what is designed and unbuilt, and `GovernanceReorg` has moved into the first list. The store and media crates still do not exist
 **Depends on:** all preceding documents; App Hosting Spec §1–§3 for the sandbox path
 **Consumed by:** implementation; `09` for the interface built on §3's boundary
 
@@ -105,6 +105,7 @@ Command  = OpenChannel { channel_id, before: Option<Hlc>, limit }
 Event    = Records { channel_id, records }        — live and backfilled alike
          | Backfill | Governance | Adopted | EpochRotated | MemberKeyed
          | JoinAnswered | Relay { reserved, designated } | Degraded { reason }
+         | GovernanceReorg { mine: [VoidedAction], others }  — §4, Core §2.7.1 pt 5
 
 Designed here and not built:
 
@@ -115,8 +116,7 @@ Command  | SetPermission | Search { scope, query }
          | AcceptDirectMessage | DeclineDirectMessage
          | SetContribution { storage_offered, bandwidth_cap, relay_willing }
 
-Event    | GovernanceReorg { voided: [Action] }    — §4; required by Core §2.7.1 point 5
-         | ChannelState | PermissionsChanged | MemberPresence
+Event    | ChannelState | PermissionsChanged | MemberPresence
          | VoiceState { participants, topology, transport: Delivery }
          | KeyStatus { channel_id, have_key: bool }
          | DirectMessageRequest { from: identity, link_verified: bool }

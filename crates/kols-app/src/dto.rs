@@ -79,6 +79,28 @@ pub enum SidebarRow {
     },
 }
 
+/// One action a reconciliation undid — Core §2.7.1 point 5.
+#[derive(Debug, Clone, Serialize)]
+pub struct VoidedAction {
+    /// A short label for what it was.
+    pub kind: String,
+    /// Whether losing it re-opens a gap rather than merely losing an edit.
+    pub security_relevant: bool,
+}
+
+/// What a healed fork undid.
+///
+/// Not derived from replayed state and it cannot be: replay follows the winning
+/// branch, so an action that lost leaves nothing there to find. This is the only
+/// record of it that reaches the interface.
+#[derive(Debug, Clone, Serialize)]
+pub struct Reorg {
+    /// This member's own voided actions, which are the ones they can resubmit.
+    pub mine: Vec<VoidedAction>,
+    /// How many other members' actions the same reconciliation voided.
+    pub others: usize,
+}
+
 /// One reaction, collapsed to a count.
 ///
 /// The domain carries *who* reacted; this carries how many. A roster of

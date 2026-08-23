@@ -853,6 +853,45 @@ function folderMenu(event, row) {
   ]);
 }
 
+/// What a healed fork undid — Core §2.7.1 point 5.
+///
+/// **Asked for rather than only listened for.** Replay follows the winning
+/// branch, so an action that lost leaves no trace in the projection: if this
+/// only rendered a pushed event, a window that was not listening yet would never
+/// learn that a revocation had been undone. The node holds the last report and
+/// this asks for it.
+async function drawReorg() {
+  let report = null;
+  try {
+    report = await invoke("reorg");
+  } catch {
+    return;
+  }
+  if (!report) return;
+
+  const risky = report.mine.filter((action) => action.security_relevant);
+  const box = el("reorg");
+  box.hidden = false;
+  box.classList.toggle("severe", risky.length > 0);
+
+  const mine = report.mine.length;
+  el("reorg-text").textContent =
+    mine === 0
+      ? `A partition healed. ${report.others} action(s) by other members were undone.`
+      : `A partition healed and ${mine} of your action(s) were undone` +
+        (report.others > 0 ? `, along with ${report.others} of other members'.` : ".");
+
+  const list = el("reorg-list");
+  list.replaceChildren();
+  for (const action of risky) {
+    const item = document.createElement("li");
+    // Named plainly. "Voided" is the log's word; what a person needs to know is
+    // that whatever this removed is back until they do it again.
+    item.textContent = `${action.kind} was undone — whatever it removed is in effect again until you repeat it.`;
+    list.append(item);
+  }
+}
+
 /// Runs a command and redraws, putting a refusal where the user is looking.
 ///
 /// Every one of these is authorized on receipt, so a refusal here is an answer —
@@ -1236,6 +1275,10 @@ async function openChannel(id) {
 
 async function refresh() {
   drawSidebar(await invoke("sidebar"));
+  // Asked on every refresh, not only on the event. A window that opened after
+  // the node reported would otherwise never hear about a healed fork, and the
+  // whole point of the report is that somebody hears about it.
+  await drawReorg();
   // Somebody redeeming an invite is one of the things an event means, and a
   // waiting room nobody redraws is a person standing at a door that never
   // opens.
@@ -1375,6 +1418,13 @@ el("namer").addEventListener("submit", async (event) => {
     el("refused").hidden = false;
     el("refused").textContent = String(err);
   }
+});
+
+el("reorg-dismiss").addEventListener("click", () => {
+  // Dismissed by hand and never on a timer. The node does not re-report a heal
+  // it has already announced, so a banner that faded would be the only notice
+  // anybody got, gone.
+  el("reorg").hidden = true;
 });
 
 el("new-folder").addEventListener("click", async () => {
@@ -1536,6 +1586,10 @@ async function watch() {
     // it, so the event's only job is to say "ask again now" rather than to be
     // the answer itself. That is what makes a missed one harmless.
     await drawRelays();
+  });
+
+  await listen("kols://reorg", async () => {
+    await drawReorg();
   });
 
   await listen("kols://degraded", (event) => {

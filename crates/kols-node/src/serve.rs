@@ -334,6 +334,11 @@ pub async fn serve(
     let mut connected: BTreeSet<PeerId> = BTreeSet::new();
     // Records already broadcast, so republishing does not rebroadcast history
     // every couple of seconds.
+    // Voided entries already reported, so a heal is announced once rather than
+    // on every sync that follows it. In memory rather than in the store: a
+    // restart re-reporting is *correct*, because nothing here knows whether the
+    // member ever acted on it.
+    let mut reorged: BTreeSet<intranet_crypto::Hash> = BTreeSet::new();
     let mut broadcast: BTreeSet<kols_core::MessageId> = BTreeSet::new();
     let mut announced = BTreeSet::new();
     let mut fetched = BTreeSet::new();
@@ -672,6 +677,11 @@ pub async fn serve(
                 let learned = persist_governance(&store, &node)?;
                 if learned > 0 {
                     sink(&[Event::Governance { learned }]);
+                    // A heal is exactly when a losing branch appears, so this is
+                    // where the voided-actions report is worth asking for.
+                    if let Some(reorg) = voided_report(&store, &identity.id(), &mut reorged) {
+                        sink(&[reorg]);
+                    }
                     // The entries that just arrived may include rotations this
                     // node was not present for.
                     catch_up_epochs(&store, &mut node)?;
@@ -1074,6 +1084,66 @@ fn wrap_for(
 }
 
 /// Writes any governance entries the node learned into the store.
+/// The voided-actions report, if reconciliation undid anything not yet reported.
+///
+/// **Core §2.7.1 point 5 makes producing this mandatory and acting on it a
+/// client's job**, and until now nothing here asked. The consequence is not
+/// abstract: an entry that removed somebody — a revocation, a moderation, an
+/// epoch rotation — is treated as never having happened once its branch loses,
+/// so the member it removed is current again and holds the key, for as long as
+/// it takes a person to notice. This is what assigns the noticing.
+///
+/// `None` when nothing was voided, or when everything voided has already been
+/// reported once. Reporting the same heal on every subsequent sync would train
+/// somebody to ignore it, which is worse than not reporting it.
+fn voided_report(
+    store: &Store,
+    me: &intranet_identity::PerNetworkIdentityId,
+    reported: &mut BTreeSet<intranet_crypto::Hash>,
+) -> Option<Event> {
+    let mut log = store.log().ok()?;
+    let reconciliation = log.reconcile(Timestamp::from_millis(crate::chat::now_millis()));
+
+    report_of(&reconciliation.voided, me, reported)
+}
+
+/// Turns a voided list into the event, or nothing if it is all old news.
+///
+/// Split out from [`voided_report`] so the rules that matter here — whose
+/// actions these were, and not saying the same thing twice — can be tested
+/// without a partitioned store to produce them.
+fn report_of(
+    voided: &[intranet_governance::VoidedEntry],
+    me: &intranet_identity::PerNetworkIdentityId,
+    reported: &mut BTreeSet<intranet_crypto::Hash>,
+) -> Option<Event> {
+    let fresh: Vec<_> = voided
+        .iter()
+        .filter(|entry| !reported.contains(&entry.hash))
+        .collect();
+    if fresh.is_empty() {
+        return None;
+    }
+    for entry in &fresh {
+        reported.insert(entry.hash);
+    }
+
+    let mine: Vec<kols_api::VoidedAction> = fresh
+        .iter()
+        .filter(|entry| &entry.author == me)
+        .map(|entry| kols_api::VoidedAction {
+            kind: entry.kind.to_owned(),
+            security_relevant: entry.security_relevant,
+        })
+        .collect();
+    let others = fresh.len() - mine.len();
+
+    // Reported even when none of it is this member's. Somebody else's voided
+    // revocation restores a member here too, and a node that stayed quiet about
+    // it would be keeping the more useful half to itself.
+    Some(Event::GovernanceReorg { mine, others })
+}
+
 fn persist_governance(store: &Store, node: &MemberNode) -> Result<usize, String> {
     let held = store.log().map_err(|e| e.to_string())?;
     let known: BTreeSet<_> = held.canonical_chain().into_iter().collect();
@@ -1373,6 +1443,23 @@ fn render(events: &[Event]) {
                 ),
             },
             Event::Governance { learned } => println!("learned {learned} governance entr(ies)"),
+            Event::GovernanceReorg { mine, others } => {
+                // Loud on purpose. A voided revocation restores a member nobody
+                // meant to restore, and the whole reason this event exists is
+                // that it used to happen with nobody assigned to notice.
+                let risky = mine.iter().filter(|a| a.security_relevant).count();
+                println!(
+                    "a fork healed: {} of your action(s) were voided ({risky} security-relevant), \
+                     and {others} of other members'",
+                    mine.len()
+                );
+                for action in mine.iter().filter(|a| a.security_relevant) {
+                    println!(
+                        "  {} was undone — resubmit it, or whatever it removed is back",
+                        action.kind
+                    );
+                }
+            }
             Event::Adopted { entries } => {
                 println!("picked up {entries} locally written governance entr(ies)");
             }
@@ -2079,5 +2166,98 @@ mod tests {
         // content the moment somebody's clock is fast.
         let now = 10 * DAY;
         assert!(!retires(&Retention::Days(1), now + 5 * DAY, now));
+    }
+}
+
+#[cfg(test)]
+mod voided_tests {
+    use super::report_of;
+    use intranet_crypto::{Hash, Timestamp};
+    use intranet_governance::VoidedEntry;
+    use intranet_identity::{MasterSeed, NetworkId, PerNetworkIdentityId};
+    use std::collections::BTreeSet;
+
+    fn who(seed: u8) -> PerNetworkIdentityId {
+        MasterSeed::from_entropy([seed; 32])
+            .identity_for(&NetworkId::from_bytes([4u8; 32]))
+            .expect("derives")
+            .id()
+    }
+
+    fn voided(hash: u8, author: PerNetworkIdentityId, security_relevant: bool) -> VoidedEntry {
+        VoidedEntry {
+            hash: Hash::from_bytes([hash; 32]),
+            author,
+            timestamp: Timestamp::from_millis(0),
+            kind: "MembershipChange",
+            security_relevant,
+        }
+    }
+
+    #[test]
+    fn nothing_voided_says_nothing() {
+        let mut seen = BTreeSet::new();
+        assert!(report_of(&[], &who(1), &mut seen).is_none());
+    }
+
+    #[test]
+    fn my_own_actions_are_separated_from_everybody_elses() {
+        // Core §2.7.1 point 5 makes watching for *your own* the client's job,
+        // because those are the ones this member can resubmit. The rest is
+        // counted rather than dropped: it is the difference between "your action
+        // lost" and "a partition healed and took a lot with it".
+        let me = who(1);
+        let mut seen = BTreeSet::new();
+        let report = report_of(
+            &[
+                voided(1, me, true),
+                voided(2, who(2), true),
+                voided(3, who(3), false),
+            ],
+            &me,
+            &mut seen,
+        );
+
+        let Some(kols_api::Event::GovernanceReorg { mine, others }) = report else {
+            panic!("expected a report");
+        };
+        assert_eq!(mine.len(), 1);
+        assert!(mine[0].security_relevant);
+        assert_eq!(others, 2);
+    }
+
+    #[test]
+    fn a_heal_is_announced_once_rather_than_on_every_sync_after_it() {
+        // Repeating it would train somebody to ignore it, and this is the one
+        // notice they get that a removed member is current again.
+        let me = who(1);
+        let mut seen = BTreeSet::new();
+        let entries = [voided(1, me, true)];
+
+        assert!(report_of(&entries, &me, &mut seen).is_some());
+        assert!(report_of(&entries, &me, &mut seen).is_none());
+    }
+
+    #[test]
+    fn a_second_fork_is_reported_even_after_a_first_one_was() {
+        // The dedupe is per entry, not a latch. A node that healed once and then
+        // went quiet about every heal after it would be worse than one that
+        // never reported at all, because the silence would look like safety.
+        let me = who(1);
+        let mut seen = BTreeSet::new();
+        assert!(report_of(&[voided(1, me, true)], &me, &mut seen).is_some());
+        assert!(report_of(&[voided(2, me, true)], &me, &mut seen).is_some());
+    }
+
+    #[test]
+    fn a_report_with_none_of_mine_is_still_a_report() {
+        // Somebody else's voided revocation restores that member here too.
+        let mut seen = BTreeSet::new();
+        let report = report_of(&[voided(9, who(7), true)], &who(1), &mut seen);
+        let Some(kols_api::Event::GovernanceReorg { mine, others }) = report else {
+            panic!("expected a report");
+        };
+        assert!(mine.is_empty());
+        assert_eq!(others, 1);
     }
 }

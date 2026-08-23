@@ -877,3 +877,40 @@ body {
 }
 
 .pop-menu button:hover { background: var(--hover); }
+
+/* ── a healed fork undid something (Core §2.7.1 point 5) ────────────── */
+
+/* Persistent, and dismissed by hand. A voided revocation puts a removed member
+   back holding the current key; the failure this exists to end is that nobody
+   was assigned to notice, so it must not fade on its own. */
+.reorg {
+  margin: var(--gap);
+  padding: 10px 12px;
+  border: 1px solid var(--warn);
+  border-radius: var(--radius);
+  background: var(--pinned);
+  color: var(--text);
+  font-size: 13px;
+}
+
+/* Something that *removed* an access or a piece of content was undone. A louder
+   border because the two cases want different reactions from a person. */
+.reorg.severe { border-color: var(--bad); }
+
+.reorg p { margin: 0 0 6px; }
+.reorg ul { margin: 0 0 8px; padding-left: 18px; }
+.reorg li { margin: 2px 0; color: var(--warn); }
+.reorg.severe li { color: var(--bad); }
+
+.reorg button {
+  padding: 4px 10px;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  background: var(--raised);
+  color: var(--text);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.reorg button:hover { background: var(--hover); }
