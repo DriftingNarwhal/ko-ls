@@ -110,6 +110,18 @@ fn every_channel_entry_round_trips() {
         ),
         ChannelEntry::new(
             channel(),
+            ChannelEntryBody::Update {
+                change: ChannelChange::SetPosition(0),
+            },
+        ),
+        ChannelEntry::new(
+            channel(),
+            ChannelEntryBody::Update {
+                change: ChannelChange::SetPosition(u32::MAX),
+            },
+        ),
+        ChannelEntry::new(
+            channel(),
             ChannelEntryBody::Membership {
                 action: MembershipAction::Add,
                 identity: identity(2),
@@ -713,4 +725,43 @@ fn a_truncated_payload_is_refused_rather_than_half_applied() {
         ),
         Err(ChannelRefusal::Malformed(_))
     ));
+}
+
+#[test]
+fn an_unallocated_change_discriminant_is_refused_rather_than_skipped() {
+    // Spec 07 §3.8: unallocated discriminants are refused, not ignored. A channel
+    // entry carries structure a reader either applies correctly or must not apply
+    // at all — skipping one silently leaves two nodes with different channel
+    // state, which is a cost a record kind can absorb (§3.7) and this cannot.
+    let mut payload = ChannelEntry::new(
+        channel(),
+        ChannelEntryBody::Update {
+            change: ChannelChange::SetPosition(1),
+        },
+    )
+    .encode();
+
+    let tag = payload
+        .iter()
+        .rposition(|b| *b == 0x07)
+        .expect("the SetPosition discriminant is in there");
+    payload[tag] = 0x08;
+
+    assert!(ChannelEntry::decode_payload(&payload).is_err());
+}
+
+#[test]
+fn set_position_agrees_with_the_kind_string_it_travels_under() {
+    // The discriminant and the `kind` string arrive from different places — the
+    // string from the entry's envelope, the discriminant from bytes the protocol
+    // never decodes — so a new change has to satisfy both.
+    let entry = ChannelEntry::new(
+        channel(),
+        ChannelEntryBody::Update {
+            change: ChannelChange::SetPosition(7),
+        },
+    );
+    let decoded = ChannelEntry::decode("channel-update", &entry.encode()).expect("round trips");
+    assert_eq!(decoded, entry);
+    assert!(ChannelEntry::decode("channel-definition", &entry.encode()).is_err());
 }

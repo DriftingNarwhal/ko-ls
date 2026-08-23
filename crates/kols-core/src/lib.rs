@@ -35,7 +35,7 @@ mod view;
 pub use channel::{
     CHAT_NAMESPACE, ChannelChange, ChannelEntry, ChannelEntryBody, ChannelKind, ChannelRefusal,
     MAX_CHANNEL_NAME_BYTES, MAX_CHANNEL_TOPIC_BYTES, MAX_ROTATION_REASON_BYTES, MembershipAction,
-    Privacy, admit,
+    Privacy, SidebarCategory, SidebarChannel, SidebarRow, admit, sidebar_order,
 };
 pub use hlc::Hlc;
 pub use live::{LivePayload, channel_content_key};
@@ -55,7 +55,8 @@ pub use record::{
 };
 pub use permissions::{Authority, CategoryId, Placement, StateAuthority, holds, holds_in_scope};
 pub use policy::{
-    ChatPolicy, NetworkProfile, Retention, conversation_genesis_values, defaults, keys,
+    ChatPolicy, MAX_NETWORK_NAME_BYTES, NetworkProfile, Retention, conversation_genesis_values,
+    defaults, keys,
 };
 pub use segment::{MAX_RECORDS_PER_SEGMENT, Segment};
 pub use limits::{RATE_WINDOW_MILLIS, ReaderLimits, Withheld, withheld};

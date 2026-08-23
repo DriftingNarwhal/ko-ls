@@ -472,7 +472,15 @@ fn check_change(change: &ChannelChange, policy: &ChatPolicy<'_>) -> Result<(), R
         // Recategorising is bounded by the capability check alone: a category is
         // an id, not a value with a range, and `chat:manage-channel` is what
         // decides whether this actor may move the channel at all.
-        ChannelChange::Recategorise(_) | ChannelChange::Archive | ChannelChange::Delete => Ok(()),
+        //
+        // A position has no range to violate either — every `u32` is a legitimate
+        // one, and two channels sharing a position is explicitly not an error
+        // (spec 07 §1.6), because concurrent managers can produce it and the
+        // tie-break is what keeps readers agreeing rather than a refusal.
+        ChannelChange::Recategorise(_)
+        | ChannelChange::Archive
+        | ChannelChange::Delete
+        | ChannelChange::SetPosition(_) => Ok(()),
     }
 }
 

@@ -17,6 +17,14 @@
 
 use intranet_governance::{NetworkPolicy, PolicyValue};
 
+/// Longest network name a reader accepts — spec 07 §1.7.
+///
+/// Bounded because it is replayed by every node and rendered in chrome, so an
+/// unbounded one is both replayed bloat and a denial-of-display. Concrete now so
+/// there is something to enforce, and revisable from real use, in the same
+/// spirit as every other default here.
+pub const MAX_NETWORK_NAME_BYTES: usize = 128;
+
 /// What kind of network this is — spec 07 §1.2.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum NetworkProfile {
@@ -31,6 +39,8 @@ pub enum NetworkProfile {
 pub mod keys {
     /// `server` or `conversation`.
     pub const PROFILE: &str = "chat:network-profile";
+    /// The network's display name — spec 07 §1.7. Not an identifier.
+    pub const NETWORK_NAME: &str = "chat:network-name";
     /// Messages, edits and withdrawals per author per channel per minute.
     pub const MESSAGE_RATE: &str = "chat:message-rate-per-minute";
     /// Reactions and pins per author per channel per minute.
@@ -130,6 +140,29 @@ impl<'a> ChatPolicy<'a> {
     /// Reads the chat settings out of a network's policy.
     pub const fn of(policy: &'a NetworkPolicy) -> Self {
         Self { policy }
+    }
+
+    /// The network's name, or `None` — spec 07 §1.7.
+    ///
+    /// **Not an identifier, and a caller must not use it as one.** Nothing makes
+    /// these unique: any founder may name their network exactly what somebody
+    /// else named theirs. Selecting, matching or trusting a network by name would
+    /// be a phishing surface whose attacker-side cost is typing. The network id
+    /// is the identity — it is what an invite carries and what a channel id
+    /// derives from.
+    ///
+    /// A name longer than [`MAX_NETWORK_NAME_BYTES`] is **refused**, and refusing
+    /// it means reading the network as unnamed rather than erroring: a name is
+    /// display, so an over-long one degrades to nothing to draw. That matches how
+    /// [`Self::profile`] treats a value it does not recognise, and for the same
+    /// reason — a policy map a stranger can write must not be able to stop a
+    /// replay.
+    ///
+    /// `None` also means **no name**, and a caller must not invent one. What to
+    /// show instead is a client's decision and is not replayed state.
+    pub fn network_name(&self) -> Option<&str> {
+        let name = self.policy.app_policy_text(keys::NETWORK_NAME, "");
+        (!name.is_empty() && name.len() <= MAX_NETWORK_NAME_BYTES).then_some(name)
     }
 
     /// This network's profile.

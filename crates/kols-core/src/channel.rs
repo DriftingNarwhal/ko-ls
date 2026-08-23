@@ -36,6 +36,7 @@
 //! leave two nodes with different channel state, which is the divergence replay
 //! exists to prevent.
 
+use std::collections::BTreeMap;
 use crate::{CategoryId, ChannelId, CoreError, NetworkProfile};
 use intranet_crypto::{Dec, Enc, Hash, VerifyingKey, to_hex};
 use intranet_governance::{Capability, EntryBody, GovernanceState, is_valid_app_entry_name};
@@ -111,6 +112,13 @@ pub enum ChannelChange {
     /// Hidden, not erased. Records already fetched stay fetched, exactly as
     /// `design/01` §6 says of message deletion, and the UI must not imply more.
     Delete,
+    /// A new position among its siblings — spec 07 §1.6.
+    ///
+    /// A change rather than a field on the definition, and deliberately: adding
+    /// it to the definition body would re-encode every channel definition
+    /// already written, and "never positioned" has to stay distinct from
+    /// "positioned at zero" so that a new channel sorts last rather than first.
+    SetPosition(u32),
 }
 
 impl ChannelChange {
@@ -122,6 +130,7 @@ impl ChannelChange {
             Self::SetSlowmode(_) => 0x04,
             Self::Archive => 0x05,
             Self::Delete => 0x06,
+            Self::SetPosition(_) => 0x07,
         }
     }
 }
@@ -342,6 +351,9 @@ impl ChannelEntry {
                     ChannelChange::SetSlowmode(seconds) => {
                         e.u32(*seconds);
                     }
+                    ChannelChange::SetPosition(position) => {
+                        e.u32(*position);
+                    }
                     ChannelChange::Archive | ChannelChange::Delete => {}
                 }
             }
@@ -413,6 +425,7 @@ impl ChannelEntry {
                     0x04 => ChannelChange::SetSlowmode(d.u32()?),
                     0x05 => ChannelChange::Archive,
                     0x06 => ChannelChange::Delete,
+                    0x07 => ChannelChange::SetPosition(d.u32()?),
                     other => return Err(CoreError::UnknownChannelField("channel change", other)),
                 },
             },
@@ -664,4 +677,115 @@ impl ChannelEntry {
         admit(&entry, namespace, required, profile, category)?;
         Ok(entry)
     }
+}
+
+/// A channel, as the sidebar needs it in order to sort — spec 07 §1.6.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SidebarChannel {
+    /// Which channel.
+    pub id: ChannelId,
+    /// The category it sits in, if any.
+    pub category: Option<CategoryId>,
+    /// Its position among its siblings. `None` means never positioned.
+    pub position: Option<u32>,
+}
+
+/// A category, as the sidebar needs it in order to sort — spec 07 §1.6.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SidebarCategory {
+    /// Which category.
+    pub id: CategoryId,
+    /// Its position among the other categories. `None` means never positioned.
+    pub position: Option<u32>,
+}
+
+/// One row of the computed default order.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SidebarRow {
+    /// A channel in no category. These come before every category.
+    Channel(ChannelId),
+    /// A category, and the channels inside it in their own order.
+    Category {
+        /// Which category.
+        id: CategoryId,
+        /// Its channels, ordered.
+        channels: Vec<ChannelId>,
+    },
+}
+
+/// Orders siblings: positioned before unpositioned, then by position, then by id.
+///
+/// Ties are **not** an error and must never be refused. Two managers may set the
+/// same position concurrently and the log has no way to stop them, so refusing
+/// the second entry would mean refusing something valid after the fact. The
+/// tie-break is what keeps every reader's answer identical instead — the same
+/// move spec 07 §2.9 already makes for concurrent pointer versions.
+fn cmp_siblings(a: (Option<u32>, &[u8; 32]), b: (Option<u32>, &[u8; 32])) -> std::cmp::Ordering {
+    a.0.is_none()
+        .cmp(&b.0.is_none())
+        .then_with(|| a.0.unwrap_or(0).cmp(&b.0.unwrap_or(0)))
+        .then_with(|| a.1.cmp(b.1))
+}
+
+/// The network's default sidebar order — spec 07 §1.6.
+///
+/// Two-level, and total: uncategorised channels first, then categories by
+/// position, then each category's channels within it. Positions compare only
+/// among siblings, so a channel's position says nothing about where its category
+/// sits and two channels in different categories are never compared at all.
+///
+/// **Uncategorised sorts first, not last**, and that is normative rather than
+/// taste: a channel whose category is removed then has somewhere obvious to
+/// appear. Sorting that group last would make recategorising to no category
+/// indistinguishable from deletion on any network with more than a screenful.
+///
+/// **A channel may name a category with no definition**, which is not an error
+/// (spec 07 §1.8). It sorts as a category with no position, and what a client
+/// labels it is a client's decision rather than replayed state.
+///
+/// This is the *default*. A member's own arrangement overrides all of it, is
+/// carried by no entry and reaches nobody, so it has no business in here.
+pub fn sidebar_order(
+    channels: &[SidebarChannel],
+    categories: &[SidebarCategory],
+) -> Vec<SidebarRow> {
+    // BTreeMap rather than a hashed one: this order is normative, and a
+    // hash-ordered collection would make it depend on a seed.
+    let mut grouped: BTreeMap<CategoryId, Vec<&SidebarChannel>> = BTreeMap::new();
+    let mut loose: Vec<&SidebarChannel> = Vec::new();
+    for channel in channels {
+        match channel.category {
+            Some(category) => grouped.entry(category).or_default().push(channel),
+            None => loose.push(channel),
+        }
+    }
+
+    let mut positions: BTreeMap<CategoryId, Option<u32>> = BTreeMap::new();
+    for category in categories {
+        positions.insert(category.id, category.position);
+    }
+    // A category nothing defined still sorts, because a channel names it.
+    for category in grouped.keys() {
+        positions.entry(*category).or_insert(None);
+    }
+
+    loose.sort_by(|a, b| {
+        cmp_siblings((a.position, a.id.as_bytes()), (b.position, b.id.as_bytes()))
+    });
+
+    let mut ordered: Vec<(CategoryId, Option<u32>)> = positions.into_iter().collect();
+    ordered.sort_by(|a, b| cmp_siblings((a.1, a.0.as_bytes()), (b.1, b.0.as_bytes())));
+
+    let mut rows: Vec<SidebarRow> = loose.iter().map(|c| SidebarRow::Channel(c.id)).collect();
+    for (id, _) in ordered {
+        let mut inner = grouped.remove(&id).unwrap_or_default();
+        inner.sort_by(|a, b| {
+            cmp_siblings((a.position, a.id.as_bytes()), (b.position, b.id.as_bytes()))
+        });
+        rows.push(SidebarRow::Category {
+            id,
+            channels: inner.into_iter().map(|c| c.id).collect(),
+        });
+    }
+    rows
 }

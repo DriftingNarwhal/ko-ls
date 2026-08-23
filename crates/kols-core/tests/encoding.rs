@@ -377,6 +377,61 @@ fn an_unrecognised_profile_reads_as_a_server() {
     assert_eq!(ChatPolicy::of(&policy).profile(), NetworkProfile::Server);
 }
 
+// ── a network's name (spec 07 §1.7) ────────────────────────────────────
+
+fn named(name: &str) -> intranet_governance::NetworkPolicy {
+    let mut policy = intranet_governance::NetworkPolicy::conservative_default();
+    policy.app_policy.insert(
+        keys::NETWORK_NAME.to_owned(),
+        intranet_governance::PolicyValue::Text(name.to_owned()),
+    );
+    policy
+}
+
+#[test]
+fn a_network_with_no_name_declared_has_none() {
+    let policy = intranet_governance::NetworkPolicy::conservative_default();
+    // And no invented one. What a client shows instead is its own decision and
+    // is not replayed state, so there is nothing to substitute here.
+    assert_eq!(ChatPolicy::of(&policy).network_name(), None);
+}
+
+#[test]
+fn a_declared_name_is_read_back() {
+    let policy = named("Marketing");
+    assert_eq!(ChatPolicy::of(&policy).network_name(), Some("Marketing"));
+}
+
+#[test]
+fn a_name_at_the_bound_is_kept_and_one_past_it_is_refused() {
+    let at = "n".repeat(MAX_NETWORK_NAME_BYTES);
+    let policy = named(&at);
+    assert_eq!(ChatPolicy::of(&policy).network_name(), Some(at.as_str()));
+
+    // Refused means read as unnamed rather than erroring: a name is display, so
+    // an over-long one degrades to nothing to draw. A policy map a stranger can
+    // write must not be able to stop a replay.
+    let over = "n".repeat(MAX_NETWORK_NAME_BYTES + 1);
+    assert_eq!(ChatPolicy::of(&named(&over)).network_name(), None);
+}
+
+#[test]
+fn the_bound_is_bytes_rather_than_characters() {
+    // Four bytes each, so 32 of them sit exactly on a 128-byte bound and 33 do
+    // not. Counting characters would have let a name four times the budget past.
+    let at = "\u{1F600}".repeat(MAX_NETWORK_NAME_BYTES / 4);
+    assert_eq!(at.len(), MAX_NETWORK_NAME_BYTES);
+    assert!(ChatPolicy::of(&named(&at)).network_name().is_some());
+
+    let over = "\u{1F600}".repeat(MAX_NETWORK_NAME_BYTES / 4 + 1);
+    assert!(ChatPolicy::of(&named(&over)).network_name().is_none());
+}
+
+#[test]
+fn an_empty_name_is_the_same_as_no_name() {
+    assert_eq!(ChatPolicy::of(&named("")).network_name(), None);
+}
+
 #[test]
 fn a_negative_size_falls_back_rather_than_wrapping() {
     let mut policy = intranet_governance::NetworkPolicy::conservative_default();

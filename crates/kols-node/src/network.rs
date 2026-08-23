@@ -99,6 +99,10 @@ pub struct Channel {
     pub slowmode: u32,
     /// Whether it has been archived.
     pub archived: bool,
+    /// Its position among its siblings — spec 07 §1.6. `None` means it has never
+    /// been given one, which sorts it after every sibling that has rather than
+    /// at zero, so a new channel lands at the end instead of the top.
+    pub position: Option<u32>,
 }
 
 /// Replays the chat namespace into current channel state.
@@ -159,6 +163,7 @@ pub fn channels(
                         topic,
                         slowmode,
                         archived: false,
+                        position: None,
                     },
                 );
             }
@@ -172,6 +177,9 @@ pub fn channels(
                     kols_core::ChannelChange::Recategorise(category) => channel.category = category,
                     kols_core::ChannelChange::SetTopic(topic) => channel.topic = topic,
                     kols_core::ChannelChange::SetSlowmode(seconds) => channel.slowmode = seconds,
+                    kols_core::ChannelChange::SetPosition(position) => {
+                        channel.position = Some(position);
+                    }
                     kols_core::ChannelChange::Archive => channel.archived = true,
                     kols_core::ChannelChange::Delete => {
                         channels.remove(&channel_entry.channel);
