@@ -53,7 +53,7 @@ What that needs, and where it stands:
 
 ### Start here tomorrow
 
-1. `cargo test` — **213 here, 655 in `../distributed-intranet`** — and
+1. `cargo test` — **247 here, 655 in `../distributed-intranet`** — and
    `cargo clippy --workspace --all-targets` clean in both. Both trees were left green; if they
    are not, fix that before anything else. Clippy on the Windows target is a *second* run,
    `cargo clippy -p kols-node --target x86_64-pc-windows-gnu`, and it caught something the
@@ -131,7 +131,7 @@ complete and a failure can be reproduced in the same minute it appears.
 |---|---|
 | **Working on** | Milestone: a client two people on separate networks can use, **tested through the window alone**. E14 landed, so a joiner that goes unanswered now keeps asking instead of stranding. Both binaries build for Windows and macOS in CI and v0.11.0 publishes them. The window now does relay setup too (O12/O13 closed 2026-08-21), so no step of the flow needs a terminal. The window has now been run through a whole flow on two machines at once: they met through the deployed relay, messages crossed both ways, and it survives the relay going down. What is left is this milestone's own case — the two ends on **separate** networks |
 | **Blocked on** | Nothing |
-| **Runnable** | **`kols-desktop`** — *the product* (D30). A window that creates a network or joins one by invite, runs a node for it, **generates a relay identity**, designates relays and reports whether one granted a circuit, lists channels, renders one, posts, **reacts, revises, withdraws and pins**, mints an invite and admits from the waiting room, updating as records arrive. Every step of the two-machine test is reachable from it and none needs a terminal. **Run through a whole flow on two machines on one LAN — met through the deployed relay, messages both ways, and it survives the relay going down (§0.2). Not yet across separate networks.** **`kols`** — *a development tool, not a product surface*: init (with `--relay`), relay list/set, invite, join, waiting, attach, admit, revoke, name, serve, post, read, edit, delete, react, pin, and channel create/list/rename/topic/slowmode/archive. `cargo test` — 213 tests here and 655 in `../distributed-intranet`, clippy clean in both; `scripts/cross-check.sh` for big-endian, `taskset -c 0,1` for the starved case |
+| **Runnable** | **`kols-desktop`** — *the product* (D30). A window that creates a network or joins one by invite, runs a node for it, **generates a relay identity**, designates relays and reports whether one granted a circuit, lists channels in the order the network agrees on, renders one, posts, **reacts, revises, withdraws and pins**, **renames, retopics, archives, deletes and refiles channels, and makes, renames, reorders and deletes folders**, mints an invite and admits from the waiting room, and **says so when a healed fork undid something**, updating as records arrive. Every step of the two-machine test is reachable from it and none needs a terminal. **Run through a whole flow on two machines on one LAN — met through the deployed relay, messages both ways, and it survives the relay going down (§0.2). Not yet across separate networks.** **`kols`** — *a development tool, not a product surface*: init (with `--relay`), relay list/set, invite, join, waiting, attach, admit, revoke, name, serve, post, read, edit, delete, react, pin, and channel create/list/rename/topic/slowmode/archive. `cargo test` — 247 tests here and 655 in `../distributed-intranet`, clippy clean in both; `scripts/cross-check.sh` for big-endian, `taskset -c 0,1` for the starved case |
 | **Next decision needed from the user** | Nothing blocking |
 
 ---
@@ -180,11 +180,11 @@ both green.
 
 | Crate | State |
 |---|---|
-| `kols-core` | **Encoding, author logs, merge, collision recovery, chat policy, channel structure** — records/segments/ids, `AuthorLog` incl. `rebase`, `ChannelView`, permissions, capability vocabulary, `ChatPolicy`, `ChannelEntry`, and `ReaderLimits`/`withheld` — spec 07 §4.3's ceilings and §2.6's hold, applied over the sorted set so the verdict cannot depend on arrival order. 104 tests |
+| `kols-core` | **Encoding, author logs, merge, collision recovery, chat policy, channel structure** — records/segments/ids, `AuthorLog` incl. `rebase`, `ChannelView`, permissions, capability vocabulary, `ChatPolicy`, `ChannelEntry`, and `ReaderLimits`/`withheld` — spec 07 §4.3's ceilings and §2.6's hold, applied over the sorted set so the verdict cannot depend on arrival order. Also `sidebar_order`, which is the tested implementation of spec 07 §1.6's default and the only one — the webview draws what it computes rather than sorting again. 126 tests |
 | `kols-net` | **Publish and fetch** — stores/announces chunks, accepts pointers, reassembles segments. Two live two-node tests |
-| `kols-api` | **The whole boundary** — `Command`, `Sensitivity`, `Refusal` and `authorize` returning an `Authorized` nothing else can construct, going in; `Outcome` and `Event` coming out. All three of `design/05` §3's properties are now held. 26 tests |
-| `kols-node` | **`kols`, its node daemon, and the executor** — a library now, with the binary as argument parsing and rendering over it. Creates a network, admits and keys in joiners, serves and fetches content, writes every record kind, renders a merged view across authors. `secret` restricts a written seed to this user on both platforms and refuses when it cannot. Tests that drive the real binaries, ten of them over a live wire between two processes |
-| `kols-app` | **The desktop shell** — a Tauri v2 window over the boundary, holding a *workspace* of networks and an `Executor` for whichever is open, with the view types the webview receives and the handlers that build commands from plain arguments — including minting an invite, reading the waiting room and admitting from it. `kols-desktop`. 7 tests |
+| `kols-api` | **The whole boundary** — `Command`, `Sensitivity`, `Refusal` and `authorize` returning an `Authorized` nothing else can construct, going in; `Outcome` and `Event` coming out. All three of `design/05` §3's properties are now held. 33 tests |
+| `kols-node` | **`kols`, its node daemon, and the executor** — a library now, with the binary as argument parsing and rendering over it. Creates a network, admits and keys in joiners, serves and fetches content, writes every record kind, renders a merged view across authors. `secret` restricts a written seed to this user on both platforms and refuses when it cannot. `serve` reconciles when governance arrives and reports what a healed fork undid, which is Core §2.7.1 point 5's client obligation. Tests that drive the real binaries, ten of them over a live wire between two processes |
+| `kols-app` | **The desktop shell** — a Tauri v2 window over the boundary, holding a *workspace* of networks and an `Executor` for whichever is open, with the view types the webview receives and the handlers that build commands from plain arguments — including minting an invite, reading the waiting room and admitting from it, managing channels and categories, and holding the last voided-actions report so a window that missed the event can still ask for it. `kols-desktop`. 7 tests |
 | `kols-ui` | **The interface** — HTML, CSS and one script, holding no keys, no sockets and no files. Draws the sidebar in the order the core computes rather than sorting again, manages channels and folders through a menu and a drag, and gates all of it on `chat:manage-channel`. Creates and picks networks, answers `design/09` §4's first two questions, gates its chrome on permission, and carries the doorway an `approve-node` holder uses to invite and admit |
 | `kols-store` | Not created |
 | `kols-media` | Not created |
@@ -276,6 +276,23 @@ design changes before anything else is built.
 ## 9. Log
 
 Newest first. One line per change that moved the state above.
+
+- **2026-08-23** — **A closing sweep, which found the same defect twice in one session.**
+
+  Counts corrected: 247 here and 655 upstream, `kols-core` at 126 and `kols-api` at 33, all of
+  which this file had at their pre-session values. §1's list of what the window can do now
+  includes managing channels and folders and reporting a healed fork.
+
+  **And `design/05` §3 was missing two commands again.** `CreateCategory` and `UpdateCategory`
+  went into the boundary this session and never reached the page that describes it — which is
+  precisely the failure the same section was corrected for earlier today, when `SetBootstrapRelays`
+  turned out to have arrived with O12 and stayed unrecorded. Both were caught by the mechanical
+  sweep rather than by anybody remembering, which is the useful part: a boundary document is
+  worth checking against its code by machine, because intention has now failed at it twice.
+
+  The identifier sweep across all seventeen documents is otherwise stable, every remaining miss
+  attributable to an unbuilt `SetPermission`, a P3/P4 media type, or a name kept deliberately in
+  a note about a rename. No broken links anywhere in the set.
 
 - **2026-08-23** — **The settings sheet is designed, and a question I raised as open turns out
   to have been answered a week ago.**

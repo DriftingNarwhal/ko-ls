@@ -1,7 +1,7 @@
 # ko-ls — Design Overview
 
 **Project:** ko-ls (working name, may be replaced; nothing in the design depends on it)
-**Document status:** v1.2 — §3 carries D31–D35; §5 is sequenced against the interface and account work; §6 no longer claims nothing is open.
+**Document status:** v1.3 — §3 carries D31–D37; §5 is sequenced against the interface and account work, with the channel, folder and voided-report items struck through as built; §6 carries four open questions, one having been withdrawn as answered by `09` §6.2 all along.
 **Precedence:** `distributed-intranet/specs/07` is normative where it and this set overlap; this set owns client design, rationale and sequencing.
 **Depends on:** Distributed Intranet Protocol v1.0 (specs `01`–`06`) and the Chat Application Spec (`07`)
 **Consumed by:** every other document in this set

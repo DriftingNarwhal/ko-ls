@@ -1,6 +1,6 @@
 # Client Architecture
 
-**Document status:** v1.4 — §1 and §2 describe the layout that was built: `kols-node` holds the executor, the daemon and the event loop, and `kols-net` is publish and fetch over it. §3 separates what crosses the boundary from what is designed and unbuilt, and `GovernanceReorg` has moved into the first list. The store and media crates still do not exist
+**Document status:** v1.5 — §3 lists `CreateCategory` and `UpdateCategory`, which landed in the code before they reached this page. Previously v1.4 — §1 and §2 describe the layout that was built: `kols-node` holds the executor, the daemon and the event loop, and `kols-net` is publish and fetch over it. §3 separates what crosses the boundary from what is designed and unbuilt, and `GovernanceReorg` has moved into the first list. The store and media crates still do not exist
 **Depends on:** all preceding documents; App Hosting Spec §1–§3 for the sandbox path
 **Consumed by:** implementation; `09` for the interface built on §3's boundary
 
@@ -99,6 +99,7 @@ Command  = OpenChannel { channel_id, before: Option<Hlc>, limit }
          | SendMessage { channel_id, body, attachments, reply_to }
          | EditMessage | DeleteMessage | React | Pin
          | CreateChannel { .., category: Option<CategoryId> } | UpdateChannel
+         | CreateCategory { name, position } | UpdateCategory      — spec 07 §1.8
          | SetName | CreateInvite | AdmitMember | RevokeMember
          | SetBootstrapRelays
 
@@ -130,7 +131,11 @@ and intended together, reads as a description of the boundary and is not one —
 existed under that name because redemption happens in `join` rather than at this boundary, and
 four commands arrived without being written down here: `SetName`, `CreateInvite`,
 `SetBootstrapRelays` and `AdmitMember`. The relay one came in with `STATUS` O12 and never came
-back to this page, which is how a boundary document stops describing its boundary.
+back to this page, which is how a boundary document stops describing its boundary — and the
+same thing happened again the day this paragraph was written, when `CreateCategory` and
+`UpdateCategory` landed and were caught only by a sweep at the end of the session. The lesson is
+not that people should remember. It is that a boundary is worth checking against its code
+mechanically, which is cheap, rather than by intention, which is not reliable.
 
 Three properties this boundary must hold, because the sandbox path (§7) depends on all
 three and retrofitting any of them is expensive:
