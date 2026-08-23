@@ -1,6 +1,6 @@
 # ko-ls — Implementation Status
 
-**Updated:** 2026-08-21 (documentation pass — `design/06` described the opposite of what E2 landed, and a divergence from Core §1.1 had never been written down)
+**Updated:** 2026-08-23 (a relay is deployed, so the two-machine test has the standing dependency it was waiting on; and this file's own header date and release reference had gone stale)
 **Phase:** P1 — two nodes talk live and durably, a joiner reads back through sealed
 history, and the boundary carries commands in and events out
 **Design:** [`design/`](design/) — `00`–`08` at v1.0, `09` at v0.3. **`distributed-intranet/specs/07` is normative** where it and the design set overlap.
@@ -57,14 +57,15 @@ What that needs, and where it stands:
    are not, fix that before anything else. Clippy on the Windows target is a *second* run,
    `cargo clippy -p kols-node --target x86_64-pc-windows-gnu`, and it caught something the
    Linux one cannot see, so it is worth making when `src/secret.rs` changes.
-2. **The two-machine test is the only thing left, and it needs a relay nobody has deployed.**
+2. **The two-machine test is the only thing left, and the relay it was waiting on is deployed.**
    [`docs/two-machine-test.md`](docs/two-machine-test.md) is the step-by-step, written to be
    followed on two machines and deleted once it is either routine or wrong.
    Both machines are behind NAT, so they cannot reach each other directly (Core §5.5) — one
    bootstrap relay on a routable address is a standing dependency, not a convenience.
-   DI-Relay deploys one; `intranet-harness relay` is the local equivalent and is useless
-   here, because it has to be reachable from both. Everything either end does after that is
-   built and unproven across real networks.
+   DI-Relay is what was deployed; `intranet-harness relay` is the local equivalent and is
+   useless here, because it has to be reachable from both. **Deployed is not proven**: its
+   address is not recorded here, and nothing has reserved a circuit through it yet, so
+   everything either end does after that is still built and unproven across real networks.
 3. **`kols-desktop` builds in CI and ships in the release** — Windows and Apple Silicon macOS,
    installer and portable binary each. It cannot be *built* in this container (Tauri wants a
    platform toolchain here) but that stopped being a blocker when the workflow started building
@@ -119,7 +120,7 @@ complete and a failure can be reproduced in the same minute it appears.
 
 | | |
 |---|---|
-| **Working on** | Milestone: a client two people on separate networks can use, **tested through the window alone**. E14 landed, so a joiner that goes unanswered now keeps asking instead of stranding. Both binaries build for Windows and macOS in CI and v0.1.0 publishes them. The window now does relay setup too (O12/O13 closed 2026-08-21), so no step of the flow needs a terminal. Honest caveat: the window **has** been launched and rendered roughly correctly, but that was before anything was wired to it, so no flow has ever been exercised through it. What is left is a relay reachable from both machines |
+| **Working on** | Milestone: a client two people on separate networks can use, **tested through the window alone**. E14 landed, so a joiner that goes unanswered now keeps asking instead of stranding. Both binaries build for Windows and macOS in CI and v0.11.0 publishes them. The window now does relay setup too (O12/O13 closed 2026-08-21), so no step of the flow needs a terminal. Honest caveat: the window **has** been launched and rendered roughly correctly, but that was before anything was wired to it, so no flow has ever been exercised through it. What is left is running the test through the relay now deployed for it |
 | **Blocked on** | Nothing |
 | **Runnable** | **`kols-desktop`** — *the product* (D30). A window that creates a network or joins one by invite, runs a node for it, **generates a relay identity**, designates relays and reports whether one granted a circuit, lists channels, renders one, posts, **reacts, revises, withdraws and pins**, mints an invite and admits from the waiting room, updating as records arrive. Every step of the two-machine test is reachable from it and none needs a terminal. **Launched once, before it was wired — it rendered, and no flow has been run through it.** **`kols`** — *a development tool, not a product surface*: init (with `--relay`), relay list/set, invite, join, waiting, attach, admit, revoke, name, serve, post, read, edit, delete, react, pin, and channel create/list/rename/topic/slowmode/archive. `cargo test` — 213 tests here and 655 in `../distributed-intranet`, clippy clean in both; `scripts/cross-check.sh` for big-endian, `taskset -c 0,1` for the starved case |
 | **Next decision needed from the user** | Nothing blocking |
