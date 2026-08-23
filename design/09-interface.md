@@ -1,6 +1,6 @@
 # Interface
 
-**Document status:** v0.4 — D29 (a relay is never shared between networks) and what it does and does not mean for §3's direct-message bootstrap;  an interface now exists and is a first pass, not a settled one: it
+**Document status:** v0.5 — §4.2 fixes what settings is and how it is divided, §6.4 and §6.5 settle reset and the two things that must leave the document before a theme can reach them (D36, D37). Theming remains designed and unbuilt. Previously v0.4 — D29 (a relay is never shared between networks) and what it does and does not mean for §3's direct-message bootstrap;  an interface now exists and is a first pass, not a settled one: it
 creates and joins networks, runs a node, renders a channel, brings the next member in, and gates
 its chrome on permission. §1's workspace, **both halves of §5**, §4's first two questions and
 most of §7's second are built; §2's tiering, §4.1's presence and §6's theming are not, and §7's
@@ -267,6 +267,46 @@ So the roster distinguishes **heard recently** from **no signal**, and never cla
 is offline. The wording carries more weight than the colour of the dot: an interface that
 renders "Offline" is stating something it does not know.
 
+### 4.2 Settings, and the Line Down the Middle of It
+
+Settings is one sheet with sections, and the sections are arranged around a distinction this
+application cares about more than most: **some of what lives here is mine, and some of it is
+the network's.**
+
+Changing a font is local, private and undoable. Changing the network's name writes a
+governance entry that every member replays and nobody can unwrite — it is the same act as
+renaming a channel, arriving through a quieter door. A sheet that mixed the two would teach
+people that everything in it is a preference, which is wrong about half of it. So the grouping
+is by *what a click costs*, not by topic:
+
+**Mine — local, private, never broadcast, undoable.**
+
+- **Appearance** — the theme (§6): background, fonts, sizes, colours. Import, switch, and the
+  reset D37 requires.
+- **This device** — anything nothing else needs to know. Empty today, and named so that the
+  first local preference has somewhere obvious to land instead of being filed under the
+  network's business.
+
+**The network's — signed, replayed by every joiner, permanent.**
+
+- **Identity** — the display name this member claims. Filed here rather than beside appearance
+  precisely because it *feels* local and is not: D27 makes a name a governance-log claim, and
+  a member who thought it was a preference would be surprised by the one property that matters,
+  which is that it is never released.
+- **Network** — its name (D32) and its bootstrap relays. Gated on `define-policy` per §5, so
+  for most members this section is absent rather than disabled.
+- **Permissions** — roles and what they hold.
+
+**Permissions is here provisionally, and the reason is worth writing down.** It is not a
+setting. It is network governance, and it belongs with membership, moderation and the waiting
+room in a surface that does not exist yet. It sits in this sheet because that surface does not
+exist, not because this is where it goes — §7 carries the question, and an item parked in the
+wrong room should say so rather than settle in.
+
+**What may join this sheet later** is bounded by the same line: anything whose change is local
+goes under *mine*, anything that writes to the log goes under *the network's*, and anything
+that does neither is not a setting and wants a different home.
+
 ---
 
 ## 5. Chrome Follows Permission
@@ -362,6 +402,50 @@ Sharing theme files is fine — the CSP is what makes it safe, not the provenanc
 — but **importing one is an explicit action**, never silent, because a theme that
 rearranges the interface is something a user should choose deliberately.
 
+### 6.4 Reset Takes Two Doors, Because One of Them Is Inside the Room
+
+§6.1 makes reset mandatory and requires it to work without the theme's cooperation. That is a
+stronger constraint than it first reads: a theme may hide, move, cover, or shrink to nothing
+any element in the document, so **no control inside the document can be the way out of a
+theme.** A "reset" button a theme can `display: none` is not a reset, it is a reassurance.
+
+Two doors are required, because they survive different failures (D37):
+
+1. **A native application menu item.** Outside the document, unstyleable, and the ordinary
+   path — this is the one people will actually use. It survives a theme that hides things.
+2. **A launch flag that applies no theme at all.** It survives a theme that makes the window
+   unusable before a menu can be reached, which a menu item cannot help with.
+
+A keyboard shortcut is worth offering and is **not** the guarantee: it is undiscoverable at the
+moment it is needed, which is the moment somebody is looking at an unreadable window and has
+not read this document.
+
+The same reasoning already exists one layer down. D30 keeps the terminal as the reference path
+when the window misbehaves; this is that principle applied to the window's own appearance.
+
+### 6.5 What Must Leave the Document Before a Theme Can Reach It
+
+§6.2's structural fix is a **precondition of shipping theming**, not a follow-up to it. Two
+things have to be true first.
+
+**The network a member is looking at must not be themeable.** This is the spoof that matters
+here, and it is specific to this application rather than general UI caution: networks are the
+privacy boundary D29 exists to protect, so a theme that makes one network resemble another does
+not cause confusion — it causes a message written into the wrong network, which is the exact
+failure the unlinkability design is built to prevent. The remedy is cheap: **the window title
+carries the network and the identity**, it is native chrome, and no stylesheet reaches it.
+
+**Anything that asks a member to authorise something must be a native dialog.** Today the
+confirmations are `window.confirm`, which is browser chrome rather than document, so this
+already holds — by accident rather than by decision, which is worth converting into a decision
+before a theme is around to test it. When App Hosting §3.3's consent prompt arrives for the
+sandbox path, it inherits this requirement rather than discovering it.
+
+Note what is *not* on this list. Permission-gated chrome (§5) stays in the document and stays
+themeable: a theme that hides a control the member holds is self-inflicted, and a theme that
+fabricates one grants nothing, because every command is re-checked on receipt and a button is
+not a capability.
+
 ---
 
 ## 7. Open Questions
@@ -382,3 +466,7 @@ rearranges the interface is something a user should choose deliberately.
 6. **Search surface** — `05` §3 has the command; where results live is undecided.
 7. **Multi-device** (`05` §6) is designed and unbuilt; read state becomes shared when it
    lands, and the interface should not assume it is local forever.
+8. **A governance surface.** Roles, membership, moderation and the waiting room are one
+   subject and currently live in three places, with permissions parked in §4.2's settings
+   sheet because nowhere better exists. What that surface is, and whether settings keeps a
+   pointer to it or loses the section entirely, is undecided.

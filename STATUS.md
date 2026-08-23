@@ -1,6 +1,6 @@
 # ko-ls — Implementation Status
 
-**Updated:** 2026-08-23 (the design set read against the code, D31–D35 carried through design → spec → build and into the window, and the voided-actions report built. Both of the audit's gaps, O17 and O18, are closed)
+**Updated:** 2026-08-23 (O17 and O18 both closed; the channel and folder work reaches the window; settings and theming designed in `09` §4.2 and §6.4–§6.5, and one open question withdrawn because `09` had answered it already)
 **Phase:** P1 — two nodes talk live and durably, a joiner reads back through sealed
 history, and the boundary carries commands in and events out
 **Design:** [`design/`](design/) — **each document's version lives in its own status header, and is stated there and nowhere else.** This line used to restate them and was wrong about four; a version in two places drifts in one of them, which is O14's lesson at documentation scale. `09` is the only document still below v1.0. **`distributed-intranet/specs/07` is normative** where it and the design set overlap.
@@ -276,6 +276,36 @@ design changes before anything else is built.
 ## 9. Log
 
 Newest first. One line per change that moved the state above.
+
+- **2026-08-23** — **The settings sheet is designed, and a question I raised as open turns out
+  to have been answered a week ago.**
+
+  `09` §4.2 divides settings by **what a click costs** rather than by topic: changing a font is
+  local, private and undoable; changing the network's name writes a governance entry every
+  joiner replays and nobody can unwrite. A sheet that mixed them would teach people everything
+  in it is a preference, which is wrong about half of it. The display name is the instructive
+  case — it *feels* local and D27 makes it a governance claim that is never released, so it
+  files under the network's side.
+
+  Permissions is parked there provisionally and says so. It is governance, not a setting, and it
+  belongs with membership and moderation in a surface that does not exist; `09` §7 now carries
+  that as its eighth question rather than letting it settle in quietly.
+
+  **The custom-CSS question was withdrawn, because it was never open.** `09` §6.2 had already
+  argued it in full: CSS leaks only by causing a network request, `url()`, `@import` and
+  `@font-face src` are the complete set of ways to cause one, and this app's CSP permits no
+  remote origin — so arbitrary user CSS *cannot* phone home. I raised it in `00` §6 by reasoning
+  from `05` §3's "no keys, no sockets, no files" instead of reading the document that owns the
+  interface. That is precisely the mistake the audit which produced that section was written to
+  catch, and it is recorded rather than quietly deleted.
+
+  What was actually unsettled is smaller and is now decided. **D36**: CSP does nothing about
+  spoofing, and the spoof that matters here is specific — networks are the privacy boundary D29
+  protects, so a theme making one network resemble another does not confuse somebody, it puts
+  their message in the wrong network. The title bar carries network and identity as native
+  chrome; everything else stays fully themeable, hiding and layout included. **D37**: reset
+  takes a native menu item *and* a launch flag, because a control inside the document is not a
+  reset when a theme can hide it.
 
 - **2026-08-23** — **A healed fork now tells somebody. O17 closed.**
 

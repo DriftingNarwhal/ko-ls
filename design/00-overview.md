@@ -158,6 +158,8 @@ the document named.
 | D33 | **One local account over all networks, with per-network credentials deferred rather than rejected.** `02` §6.3's keyring is unlocked by a single password. The argument against that is real, and it is D28's argument one level up: a single password over every network is itself an object linking them. It is deferred because the global path has to work before a second mode is worth designing — not because the objection was answered | `02` §6.3 |
 | D34 | **A category definition is metadata over a scope that already exists.** It carries a name and a position and nothing else — permission resolution binds against `cat:<id>` from the *channel's* own field and never consults the definition. So a category needs no definition to work, naming them changes no existing network's permissions, and **deleting one cannot widen or narrow access**: it removes a label and a sort key, not a scope. Governance-tier under `chat:manage-channel`, with a definition scoped `*` because nothing encloses a category | `01` §2.3, `02` §4 |
 | D35 | **The sidebar sorts two-level, not flat.** Uncategorised channels first, then categories by position, then channels within their own category — ties broken by id at every level, and a never-positioned sibling sorting after every positioned one. This corrects D31, which fixed channel order before categories were orderable and so assumed one flat sequence. Uncategorised sorts first so that a channel losing its category appears somewhere obvious rather than looking deleted | `01` §2.4 |
+| D36 | **A theme may not decide which network you are looking at.** CSP closes CSS exfiltration completely (`09` §6.2); it does nothing about spoofing, and in this application the spoof that matters is specific: networks are the privacy boundary D29 exists to protect, so a theme that makes one network resemble another does not cause confusion, it causes a message posted into the wrong network. The network and identity indicator is therefore native chrome — the window title — and no stylesheet reaches it. Everything else in the document stays fully themeable, layout and hiding included | `09` §6.5 |
+| D37 | **Reset takes two doors, because one of them is inside the room.** A theme may hide, move, cover or shrink any element, so no control in the document can be the way out of a theme. A native menu item survives a theme that hides things; a launch flag that applies no theme at all survives one that makes the window unusable before a menu can be reached. A keyboard shortcut is offered as convenience and is not the guarantee | `09` §6.4 |
 
 ---
 
@@ -209,9 +211,10 @@ next. Estimates are deliberately absent — sequence is the useful part.
   the release gate below.** Most of it is surface over models that already exist, and the
   application is unusable without it in a way it is not unusable without a lock.
 
-  - **Settings as sections rather than one panel.** The relay controls that already exist move
-    into one; interface customisation — font size, colour — sits beside them; channel
-    permissions get a home there until they earn a better one.
+  - **Settings as sections rather than one panel**, designed in `09` §4.2 and divided by what a
+    click costs: what is mine and local on one side, what is signed and replayed forever on the
+    other. Relay controls and the network's name (D32) sit on the second; appearance sits on the
+    first; permissions are parked there provisionally and say so.
   - ~~**Channel management.**~~ **Done in the window**: rename, topic, archive and delete, each
     gated on `chat:manage-channel` and each re-checked on receipt. What is still owed is
     permissions themselves — `SetPermission`, which `05` §3 specifies and nothing implements.
@@ -266,7 +269,7 @@ next. Estimates are deliberately absent — sequence is the useful part.
 Implementation-level tuning is listed where it belongs: media rate control, stage mixing
 limits and echo cancellation in `04` §8, and the measurement list in §4 above.
 
-**Five architectural questions are open.** This section previously said none were, which
+**Four architectural questions are open.** This section previously said none were, which
 stopped being true as the interface grew a surface and the account layer acquired a shape.
 
 - **What a client does with a locally-discovered peer.** `06` §12 settles that mDNS *runs* on a
@@ -276,10 +279,15 @@ stopped being true as the interface grew a surface and the account layer acquire
   room apart still need a routable third party to meet. Dialling them is not obviously right:
   a node that dials LAN peers makes two of a member's networks correlatable by a watcher on that
   network, which is D29's concern one layer down. `STATUS` O16.
-- **Whether the interface may load a stylesheet the user supplies.** `05` §3 keeps `kols-ui`
-  holding no keys, no sockets and no files, and an imported CSS file breaks the last of those.
-  CSS is not inert — it fetches URLs — so a stylesheet is an exfiltration path out of a window
-  rendering other people's private messages. The question is not whether people want it.
+- ~~**Whether the interface may load a stylesheet the user supplies.**~~ **Withdrawn: it was
+  never open.** `09` §6 decided it, and §6.2 carries the argument in full — CSS leaks only by
+  causing a network request, `url()`/`@import`/`@font-face src` are the complete set of ways to
+  cause one, and a CSP permitting no remote origin closes all three. Arbitrary user CSS is
+  therefore safe *conditionally*, and the condition is the whole of it. What was actually
+  unsettled is smaller and is now D36 and D37: the spoof CSP does not solve, and how a reset
+  survives a theme that hides it. Raised here by reasoning from `05` §3 instead of reading the
+  document that owns the interface — the same mistake the audit that produced this section was
+  written to catch.
 - **What logging out means for a node that is running.** A member who logs out is still a
   member: their node holds a reservation, serves content and answers for them. Stopping it makes
   them look offline when what they chose was privacy; leaving it running means a locked window is
