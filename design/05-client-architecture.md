@@ -1,11 +1,11 @@
 # Client Architecture
 
-**Document status:** v1.2 — `kols-core`, `kols-net`, §3's boundary in both directions, an executor behind it, and a `kols-app`/`kols-ui` window that runs a node and brings a member in; the store and media do not
+**Document status:** v1.3 — §1 and §2 corrected to the layout that was built: `kols-node` holds the executor, the daemon and the event loop, and `kols-net` is publish and fetch over it. §3's vocabulary now separates what exists from what is designed and unbuilt. The store and media crates still do not exist
 **Depends on:** all preceding documents; App Hosting Spec §1–§3 for the sandbox path
 **Consumed by:** implementation; `09` for the interface built on §3's boundary
 
 This document is the client's *architecture*. What the interface looks like and how it
-behaves is `09` — including the one thing §1's diagram leaves open, that `kols-net` owns one
+behaves is `09` — including the one thing §1's diagram leaves open, that `kols-node` owns one
 `MemberNode` **per network**, and a user belongs to several.
 
 ---
@@ -24,8 +24,10 @@ and an HTML/CSS/JS interface rendered in a webview, with **Tauri v2** as the she
 ┌───────────────────────────┴─────────────────────────────┐
 │  kols-core      domain: channels, records, merge order, │
 │                 permissions, keys, retention, search    │
-│  kols-store     SQLite projection + blob cache          │
-│  kols-net       owns the MemberNode event loop          │
+│  kols-node      the executor, the node daemon, and a    │
+│                 file-backed store — owns the event loop │
+│  kols-net       publish and fetch over a running node   │
+│  kols-store     not built — kols-node stands in for it  │
 └───────────────────────────┬─────────────────────────────┘
                             │
               intranet-* crates (protocol v1.0)
@@ -49,12 +51,20 @@ than Electron's ecosystem advantage.
 | Crate | Owns | Deliberately does not own |
 |---|---|---|
 | `kols-core` | Record types and canonical encoding, merge ordering, permission resolution, channel/session key management, retention policy, local search | Any I/O, any libp2p type |
-| `kols-store` | SQLite schema and queries, blob cache, migrations | Domain rules |
-| `kols-net` | The `MemberNode` event loop, gossip subscriptions, publish/fetch scheduling, sync back-off | Domain rules, UI state |
-| `kols-media` | Capture, encode, jitter buffer, playback, `MediaTransport` impls (`04` §5) | Signalling policy |
+| `kols-node` | The executor behind §3's boundary, the `kols` binary, the `MemberNode` event loop, gossip subscriptions and sync back-off, and the file-backed store standing in for `kols-store` | The interface, and any view shape |
+| `kols-net` | Publishing and fetching over a running node — chunk store and announce, pointer accept, segment reassembly | The event loop, domain rules, UI state |
+| `kols-store` | **Not built.** SQLite schema and queries, blob cache, migrations | Domain rules |
+| `kols-media` | **Not built.** Capture, encode, jitter buffer, playback, `MediaTransport` impls (`04` §5) | Signalling policy |
 | `kols-api` | The command/event surface (§3) and its consent decorators | Anything else |
 | `kols-app` | Tauri shell, window/tray/notifications, OS keychain, and the view shapes the webview receives | Domain rules |
 | `kols-ui` | The interface | Everything above |
+
+**`kols-node` is not in the original drawing, and that is the correction rather than an
+addition.** This layout was drawn before there was an executor. When one arrived it needed the
+store, the daemon and the event loop in the same place — an executor that cannot reach the log
+cannot refuse an edit aimed at somebody else's message — and `kols-net` kept only what does not
+need the loop. `kols-store` remains the intended projection (`STATUS` O4); until it exists,
+saying `kols-net` owns the event loop describes a client nobody built.
 
 **`kols-app` converts rather than deriving.** The domain's records have exactly one
 serialization and it is normative — spec 07 §3's canonical encoding, hand-written because a
@@ -83,27 +93,44 @@ arrives as an event. No shared memory, no callbacks holding protocol types, no k
 material crossing in either direction, ever.
 
 ```
+Built, and crossing the boundary today:
+
 Command  = OpenChannel { channel_id, before: Option<Hlc>, limit }
          | SendMessage { channel_id, body, attachments, reply_to }
          | EditMessage | DeleteMessage | React | Pin
-         | CreateChannel | UpdateChannel | SetPermission
-         | JoinVoice { channel_id } | LeaveVoice | SetMute | SetDeafen
-         | StartStage | PromoteSpeaker
-         | Search { scope, query }
-         | StartDirectMessage { with: identity, in_network }   — creates a network, `03` §4.3
-         | AcceptDirectMessage | DeclineDirectMessage
-         | InviteCreate | InviteRedeem | AdmitWaitingMember | RevokeMember
-         | SetContribution { storage_offered, bandwidth_cap, relay_willing }
-         | …
+         | CreateChannel { .., category: Option<CategoryId> } | UpdateChannel
+         | SetName | CreateInvite | AdmitMember | RevokeMember
+         | SetBootstrapRelays
 
 Event    = Records { channel_id, records }        — live and backfilled alike
+         | Backfill | Governance | Adopted | EpochRotated | MemberKeyed
+         | JoinAnswered | Relay { reserved, designated } | Degraded { reason }
+
+Designed here and not built:
+
+Command  | SetPermission | Search { scope, query }
+         | JoinVoice { channel_id } | LeaveVoice | SetMute | SetDeafen
+         | StartStage | PromoteSpeaker
+         | StartDirectMessage { with: identity, in_network }   — creates a network, `03` §4.3
+         | AcceptDirectMessage | DeclineDirectMessage
+         | SetContribution { storage_offered, bandwidth_cap, relay_willing }
+
+Event    | GovernanceReorg { voided: [Action] }    — §4; required by Core §2.7.1 point 5
          | ChannelState | PermissionsChanged | MemberPresence
          | VoiceState { participants, topology, transport: Delivery }
-         | GovernanceReorg { voided: [Action] }    — §4
          | KeyStatus { channel_id, have_key: bool }
          | DirectMessageRequest { from: identity, link_verified: bool }
-         | SyncProgress | Degraded { reason }
+         | SyncProgress
 ```
+
+**The split is the point, and this document used to blur it.** One list of everything, built
+and intended together, reads as a description of the boundary and is not one — it named
+`SetPermission` beside `SendMessage` as though both worked. Two names changed on the way
+(`InviteCreate` → `CreateInvite`, `AdmitWaitingMember` → `AdmitMember`), `InviteRedeem` never
+existed under that name because redemption happens in `join` rather than at this boundary, and
+four commands arrived without being written down here: `SetName`, `CreateInvite`,
+`SetBootstrapRelays` and `AdmitMember`. The relay one came in with `STATUS` O12 and never came
+back to this page, which is how a boundary document stops describing its boundary.
 
 Three properties this boundary must hold, because the sandbox path (§7) depends on all
 three and retrofitting any of them is expensive:
@@ -166,7 +193,7 @@ which is a missing consumer rather than a missing contract.
 
 ## 4. Sync Engine
 
-`kols-net` runs one `MemberNode` per joined network on a single-threaded event loop —
+`kols-node` runs one `MemberNode` per joined network on a single-threaded event loop —
 and because a direct message conversation *is* a network (`03` §4), a user with fifty
 conversations is running fifty of them. They are cheap (two members, no relay duty, a
 governance log of a handful of entries) but they are not free, so node lifecycle is a
