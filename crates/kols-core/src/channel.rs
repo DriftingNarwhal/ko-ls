@@ -48,6 +48,12 @@ pub(crate) const CHANNEL_ENTRY_DOMAIN: &str = "intranet.chat-channel-entry.v1";
 /// The namespace every entry in this module belongs to.
 pub const CHAT_NAMESPACE: &str = "chat";
 
+/// Largest category name, in bytes of UTF-8.
+///
+/// The bound a channel name gets, for the same reason: replayed by every node
+/// and rendered in chrome.
+pub const MAX_CATEGORY_NAME_BYTES: usize = 256;
+
 /// Largest channel name, in bytes of UTF-8.
 pub const MAX_CHANNEL_NAME_BYTES: usize = 256;
 
@@ -56,6 +62,86 @@ pub const MAX_CHANNEL_TOPIC_BYTES: usize = 1024;
 
 /// Largest rotation reason, in bytes of UTF-8.
 pub const MAX_ROTATION_REASON_BYTES: usize = 256;
+
+/// What an entry is about — spec 07 §3.8's `subject_id`.
+///
+/// Thirty-two bytes either way, and which kind it is follows from the entry's
+/// discriminant rather than being declared beside it. That is deliberate:
+/// decoding derives the subject from the tag, so an entry naming a category
+/// while carrying a channel body cannot survive a decode at all.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum EntrySubject {
+    /// A channel — kinds `0x01`–`0x04`.
+    Channel(ChannelId),
+    /// A category — kinds `0x05`–`0x06`.
+    Category(CategoryId),
+}
+
+impl EntrySubject {
+    /// The raw id bytes, whichever kind it is.
+    pub const fn as_bytes(&self) -> &[u8; 32] {
+        match self {
+            Self::Channel(id) => id.as_bytes(),
+            Self::Category(id) => id.as_bytes(),
+        }
+    }
+
+    /// The channel this is about, if it is about one.
+    pub const fn channel(&self) -> Option<ChannelId> {
+        match self {
+            Self::Channel(id) => Some(*id),
+            Self::Category(_) => None,
+        }
+    }
+
+    /// The category this is about, if it is about one.
+    pub const fn category(&self) -> Option<CategoryId> {
+        match self {
+            Self::Category(id) => Some(*id),
+            Self::Channel(_) => None,
+        }
+    }
+}
+
+impl From<ChannelId> for EntrySubject {
+    fn from(id: ChannelId) -> Self {
+        Self::Channel(id)
+    }
+}
+
+impl From<CategoryId> for EntrySubject {
+    fn from(id: CategoryId) -> Self {
+        Self::Category(id)
+    }
+}
+
+/// A change to a category's definition — spec 07 §3.8, kind `0x06`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CategoryChange {
+    /// A new name.
+    Rename(String),
+    /// A new position among the other categories.
+    SetPosition(u32),
+    /// Deleted.
+    ///
+    /// Removes a name and a sort key, **not a scope**. Channels naming this
+    /// category stay in it and resolve exactly the capabilities they did
+    /// before, because resolution binds against the id the channel itself
+    /// carries and never consults a definition (spec 07 §1.8). A client meaning
+    /// "and move its channels out" writes a `Recategorise` per channel beside
+    /// this one — the log has no transaction to do both in.
+    Delete,
+}
+
+impl CategoryChange {
+    const fn tag(&self) -> u8 {
+        match self {
+            Self::Rename(_) => 0x01,
+            Self::SetPosition(_) => 0x02,
+            Self::Delete => 0x03,
+        }
+    }
+}
 
 /// What a channel is for.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -175,6 +261,21 @@ pub enum ChannelEntryBody {
         /// Why it rotated, for the audit trail.
         reason: String,
     },
+    /// A category is named and positioned — spec 07 §1.8.
+    ///
+    /// Metadata over a scope that already exists. A category functions without
+    /// one: channels carry the id, and permissions bind against that.
+    CategoryDefinition {
+        /// What to call it.
+        name: String,
+        /// Where it sits among the other categories.
+        position: u32,
+    },
+    /// A category's definition changes.
+    CategoryUpdate {
+        /// What changes.
+        change: CategoryChange,
+    },
 }
 
 impl ChannelEntryBody {
@@ -185,6 +286,8 @@ impl ChannelEntryBody {
             Self::Update { .. } => 0x02,
             Self::Membership { .. } => 0x03,
             Self::Rotation { .. } => 0x04,
+            Self::CategoryDefinition { .. } => 0x05,
+            Self::CategoryUpdate { .. } => 0x06,
         }
     }
 
@@ -200,6 +303,8 @@ impl ChannelEntryBody {
             Self::Update { .. } => "channel-update",
             Self::Membership { .. } => "channel-membership",
             Self::Rotation { .. } => "channel-rotation",
+            Self::CategoryDefinition { .. } => "category-definition",
+            Self::CategoryUpdate { .. } => "category-update",
         }
     }
 
@@ -213,9 +318,16 @@ impl ChannelEntryBody {
     pub const fn required_verb(&self) -> &'static str {
         match self {
             Self::Definition { .. } => "create-channel",
-            Self::Update { .. } | Self::Membership { .. } | Self::Rotation { .. } => {
-                "manage-channel"
-            }
+            // Categories are governance-tier though a definition widens nothing,
+            // which departs from the tier-by-what-it-widens rule this comment
+            // opens with. Spec 07 §1.8 argues it: they are deliberately few, and
+            // channel *structural* mutation already rides this capability with
+            // rename, topic and archive, none of which widens access either.
+            Self::Update { .. }
+            | Self::Membership { .. }
+            | Self::Rotation { .. }
+            | Self::CategoryDefinition { .. }
+            | Self::CategoryUpdate { .. } => "manage-channel",
         }
     }
 }
@@ -223,20 +335,33 @@ impl ChannelEntryBody {
 /// One piece of channel structure, as carried in a `chat` application entry.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ChannelEntry {
-    /// The channel this concerns.
+    /// What this entry is about — a channel, or a category.
     ///
     /// Inside the payload rather than only in the entry's envelope, so the
     /// governance entry's hash covers it and nothing relaying the entry can
-    /// change which channel it applies to.
-    pub channel: ChannelId,
+    /// change what it applies to.
+    pub subject: EntrySubject,
     /// What it says.
     pub body: ChannelEntryBody,
 }
 
 impl ChannelEntry {
+    /// The channel this is about, if it is about one.
+    ///
+    /// `None` for a category entry, which is not a shortfall to work around: a
+    /// caller reaching for a channel id on one is asking the wrong question.
+    pub const fn channel(&self) -> Option<ChannelId> {
+        self.subject.channel()
+    }
+
+    /// The category this is about, if it is about one.
+    pub const fn category(&self) -> Option<CategoryId> {
+        self.subject.category()
+    }
+
     /// Builds an entry.
-    pub const fn new(channel: ChannelId, body: ChannelEntryBody) -> Self {
-        Self { channel, body }
+    pub fn new(subject: impl Into<EntrySubject>, body: ChannelEntryBody) -> Self {
+        Self { subject: subject.into(), body }
     }
 
     /// The narrowest capability that authorizes this entry.
@@ -266,9 +391,19 @@ impl ChannelEntry {
                 "chat:{verb}:cat:{}",
                 to_hex(category.as_bytes())
             )),
+            // A category definition can only ever be authorized network-wide:
+            // nothing encloses a category, so there is no narrower grant to hold
+            // (spec 07 §1.8).
+            ChannelEntryBody::CategoryDefinition { .. } => {
+                Capability::extension(format!("chat:{verb}:*"))
+            }
+            ChannelEntryBody::CategoryUpdate { .. } => Capability::extension(format!(
+                "chat:{verb}:cat:{}",
+                to_hex(self.subject.as_bytes())
+            )),
             _ => Capability::extension(format!(
                 "chat:{verb}:{}",
-                to_hex(self.channel.as_bytes())
+                to_hex(self.subject.as_bytes())
             )),
         }
     }
@@ -282,9 +417,24 @@ impl ChannelEntry {
     /// exact-name matching gives directly.
     pub fn acceptable(&self, category: Option<&CategoryId>) -> Vec<Capability> {
         let verb = self.body.required_verb();
+        // A category definition accepts the network-wide grant and nothing else.
+        // Scoping one to the category it is about would be circular — that scope
+        // becomes grantable only once this entry exists.
+        if matches!(self.body, ChannelEntryBody::CategoryDefinition { .. }) {
+            return vec![Capability::extension(format!("chat:{verb}:*"))];
+        }
+        if matches!(self.body, ChannelEntryBody::CategoryUpdate { .. }) {
+            return vec![
+                Capability::extension(format!(
+                    "chat:{verb}:cat:{}",
+                    to_hex(self.subject.as_bytes())
+                )),
+                Capability::extension(format!("chat:{verb}:*")),
+            ];
+        }
         let mut out = vec![Capability::extension(format!(
             "chat:{verb}:{}",
-            to_hex(self.channel.as_bytes())
+            to_hex(self.subject.as_bytes())
         ))];
         // A definition's category comes from the entry itself: the channel does
         // not exist in replayed state yet, so there is nothing else to ask. Every
@@ -307,7 +457,7 @@ impl ChannelEntry {
     /// The payload's canonical bytes — spec 07 §3.8.
     pub fn encode(&self) -> Vec<u8> {
         let mut e = Enc::domain(CHANNEL_ENTRY_DOMAIN);
-        self.channel.encode(&mut e);
+        e.fixed(self.subject.as_bytes());
         e.variant(self.body.tag());
         match &self.body {
             ChannelEntryBody::Definition {
@@ -368,6 +518,22 @@ impl ChannelEntry {
                 e.fixed(commit_ref.as_bytes());
                 e.str(reason);
             }
+            ChannelEntryBody::CategoryDefinition { name, position } => {
+                e.str(name);
+                e.u32(*position);
+            }
+            ChannelEntryBody::CategoryUpdate { change } => {
+                e.variant(change.tag());
+                match change {
+                    CategoryChange::Rename(name) => {
+                        e.str(name);
+                    }
+                    CategoryChange::SetPosition(position) => {
+                        e.u32(*position);
+                    }
+                    CategoryChange::Delete => {}
+                }
+            }
         }
         e.finish()
     }
@@ -393,8 +559,14 @@ impl ChannelEntry {
     /// Reads an entry from a payload alone.
     pub fn decode_payload(payload: &[u8]) -> Result<Self, CoreError> {
         let mut d = Dec::domain(payload, CHANNEL_ENTRY_DOMAIN)?;
-        let channel = ChannelId::from_bytes(d.fixed::<32>()?);
+        let id = d.fixed::<32>()?;
         let tag = d.variant()?;
+        // The subject's kind follows from the discriminant rather than being
+        // declared beside it, so a decoded entry cannot disagree with itself.
+        let subject = match tag {
+            0x05 | 0x06 => EntrySubject::Category(CategoryId::from_bytes(id)),
+            _ => EntrySubject::Channel(ChannelId::from_bytes(id)),
+        };
         let body = match tag {
             0x01 => ChannelEntryBody::Definition {
                 name: d.str()?.to_owned(),
@@ -446,10 +618,22 @@ impl ChannelEntry {
                 commit_ref: Hash::from_bytes(d.fixed::<32>()?),
                 reason: d.str()?.to_owned(),
             },
+            0x05 => ChannelEntryBody::CategoryDefinition {
+                name: d.str()?.to_owned(),
+                position: d.u32()?,
+            },
+            0x06 => ChannelEntryBody::CategoryUpdate {
+                change: match d.variant()? {
+                    0x01 => CategoryChange::Rename(d.str()?.to_owned()),
+                    0x02 => CategoryChange::SetPosition(d.u32()?),
+                    0x03 => CategoryChange::Delete,
+                    other => return Err(CoreError::UnknownChannelField("category change", other)),
+                },
+            },
             other => return Err(CoreError::UnknownChannelField("channel entry kind", other)),
         };
         d.finish()?;
-        Ok(Self { channel, body })
+        Ok(Self { subject, body })
     }
 
     /// Checks field bounds a network cannot loosen.
@@ -487,7 +671,29 @@ impl ChannelEntry {
             ChannelEntryBody::Rotation { reason, .. } => {
                 check("rotation reason", reason, MAX_ROTATION_REASON_BYTES)?;
             }
+            ChannelEntryBody::CategoryDefinition { name, .. } => {
+                check("category name", name, MAX_CATEGORY_NAME_BYTES)?;
+            }
+            ChannelEntryBody::CategoryUpdate { change } => {
+                if let CategoryChange::Rename(name) = change {
+                    check("category name", name, MAX_CATEGORY_NAME_BYTES)?;
+                }
+            }
             ChannelEntryBody::Membership { .. } => {}
+        }
+        // A subject decoded from bytes always agrees with its body, because the
+        // tag chooses both. One built in memory can disagree, and this is where
+        // that is caught — before it is signed, rather than by every reader.
+        let agrees = match &self.body {
+            ChannelEntryBody::CategoryDefinition { .. } | ChannelEntryBody::CategoryUpdate { .. } => {
+                self.subject.category().is_some()
+            }
+            _ => self.subject.channel().is_some(),
+        };
+        if !agrees {
+            return Err(CoreError::SubjectMismatch {
+                kind: self.body.kind(),
+            });
         }
         Ok(())
     }

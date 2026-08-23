@@ -143,6 +143,11 @@ pub fn channels(
             }
         };
 
+        // Every channel kind decodes to a channel subject, because the
+        // discriminant chooses both. Guarded rather than unwrapped so that a
+        // future kind cannot turn a wrong assumption into a panic.
+        let subject = channel_entry.channel();
+
         match channel_entry.body {
             ChannelEntryBody::Definition {
                 name,
@@ -152,10 +157,14 @@ pub fn channels(
                 topic,
                 slowmode,
             } => {
+                let Some(id) = subject else {
+                    refused.push("channel definition naming a category".to_owned());
+                    continue;
+                };
                 channels.insert(
-                    channel_entry.channel,
+                    id,
                     Channel {
-                        id: channel_entry.channel,
+                        id,
                         name,
                         category,
                         kind,
@@ -168,7 +177,7 @@ pub fn channels(
                 );
             }
             ChannelEntryBody::Update { change } => {
-                let Some(channel) = channels.get_mut(&channel_entry.channel) else {
+                let Some(channel) = subject.and_then(|id| channels.get_mut(&id)) else {
                     refused.push("update for a channel never defined".to_owned());
                     continue;
                 };
@@ -182,25 +191,123 @@ pub fn channels(
                     }
                     kols_core::ChannelChange::Archive => channel.archived = true,
                     kols_core::ChannelChange::Delete => {
-                        channels.remove(&channel_entry.channel);
+                        if let Some(id) = subject {
+                            channels.remove(&id);
+                        }
                     }
                 }
             }
             // Roster and rotation state belong to the keying layer, which is P2
             // work. Skipped rather than mis-modelled: pretending to track a
             // roster that nothing enforces would be worse than not showing one.
-            ChannelEntryBody::Membership { .. } | ChannelEntryBody::Rotation { .. } => {}
+            //
+            // Category entries are replayed by `categories` instead. They are a
+            // different subject with a different id space, and folding them in
+            // here would mean a map keyed by something that is not a channel.
+            ChannelEntryBody::Membership { .. }
+            | ChannelEntryBody::Rotation { .. }
+            | ChannelEntryBody::CategoryDefinition { .. }
+            | ChannelEntryBody::CategoryUpdate { .. } => {}
         }
     }
 
     Ok((channels, refused))
 }
 
+/// A category as replay currently understands it — spec 07 §1.8.
+///
+/// Name and position, because that is all a category definition carries. It is
+/// **not** where permissions live: those bind against the id a channel itself
+/// names, so a category with no definition still scopes capabilities exactly as
+/// one with a definition does.
+#[derive(Debug, Clone)]
+pub struct Category {
+    /// Its id.
+    pub id: CategoryId,
+    /// What to call it.
+    pub name: String,
+    /// Where it sits among the other categories.
+    pub position: Option<u32>,
+}
+
+/// Replays the chat namespace into current category state — spec 07 §1.8.
+///
+/// A second pass over the same log rather than a second return value from
+/// [`channels`], so that nine existing callers keep the shape they have. Both
+/// walks are the cost `STATUS` O4's projection exists to remove, and neither is
+/// worth optimising before it is measured (O5).
+pub fn categories(
+    store: &Store,
+    state: &GovernanceState,
+) -> Result<(BTreeMap<CategoryId, Category>, Vec<String>), StoreError> {
+    let log = store.log()?;
+    let profile = ChatPolicy::of(&state.policy).profile();
+    let mut categories: BTreeMap<CategoryId, Category> = BTreeMap::new();
+    let mut refused = Vec::new();
+
+    for hash in log.canonical_chain() {
+        let Some(entry) = log.get(&hash) else { continue };
+        let EntryBody::AppEntry { namespace, .. } = &entry.body else {
+            continue;
+        };
+        if namespace != kols_core::CHAT_NAMESPACE {
+            continue;
+        }
+        // No known category to supply: a category entry is scoped `*` or to its
+        // own id, never to an enclosing one, because nothing encloses a category.
+        let category_entry = match ChannelEntry::read(&entry.body, profile, None) {
+            Ok(entry) => entry,
+            Err(refusal) => {
+                refused.push(refusal.to_string());
+                continue;
+            }
+        };
+        let Some(id) = category_entry.category() else {
+            continue;
+        };
+        match category_entry.body {
+            ChannelEntryBody::CategoryDefinition { name, position } => {
+                categories.insert(
+                    id,
+                    Category {
+                        id,
+                        name,
+                        position: Some(position),
+                    },
+                );
+            }
+            ChannelEntryBody::CategoryUpdate { change } => {
+                let Some(category) = categories.get_mut(&id) else {
+                    refused.push("update for a category never defined".to_owned());
+                    continue;
+                };
+                match change {
+                    kols_core::CategoryChange::Rename(name) => category.name = name,
+                    kols_core::CategoryChange::SetPosition(position) => {
+                        category.position = Some(position);
+                    }
+                    // Removes a name and a sort key, never a scope: channels
+                    // naming this category stay in it and resolve exactly what
+                    // they did before (spec 07 §1.8).
+                    kols_core::CategoryChange::Delete => {
+                        categories.remove(&id);
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
+    Ok((categories, refused))
+}
+
 fn channel_of(body: &EntryBody) -> Option<ChannelId> {
     let EntryBody::AppEntry { payload, .. } = body else {
         return None;
     };
-    ChannelEntry::decode_payload(payload).ok().map(|e| e.channel)
+    ChannelEntry::decode_payload(payload)
+        .ok()
+        .and_then(|e| e.channel())
 }
 
 /// Finds a channel by name, or by the leading hex of its id.

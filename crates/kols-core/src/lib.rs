@@ -35,7 +35,8 @@ mod view;
 pub use channel::{
     CHAT_NAMESPACE, ChannelChange, ChannelEntry, ChannelEntryBody, ChannelKind, ChannelRefusal,
     MAX_CHANNEL_NAME_BYTES, MAX_CHANNEL_TOPIC_BYTES, MAX_ROTATION_REASON_BYTES, MembershipAction,
-    Privacy, SidebarCategory, SidebarChannel, SidebarRow, admit, sidebar_order,
+    CategoryChange, EntrySubject, MAX_CATEGORY_NAME_BYTES, Privacy, SidebarCategory,
+    SidebarChannel, SidebarRow, admit, sidebar_order,
 };
 pub use hlc::Hlc;
 pub use live::{LivePayload, channel_content_key};
@@ -91,6 +92,15 @@ pub enum CoreError {
     /// entry carries structure, and applying part of it would leave two nodes
     /// with different channel state.
     UnknownChannelField(&'static str, u8),
+    /// An entry's subject disagrees with what its body is about.
+    ///
+    /// Unreachable from a decode, where the discriminant chooses both. Reachable
+    /// from a value built in memory, which is what this catches — before it is
+    /// signed, rather than at every reader that would have to refuse it.
+    SubjectMismatch {
+        /// The kind whose subject was wrong.
+        kind: &'static str,
+    },
     /// A record carried a discriminant this build does not recognise.
     ///
     /// Not an error at the reader level — `design/08` §9 requires unknown kinds
@@ -135,6 +145,9 @@ impl std::fmt::Display for CoreError {
             ),
             Self::UnknownChannelField(field, tag) => {
                 write!(f, "unknown {field} discriminant {tag:#04x}")
+            }
+            Self::SubjectMismatch { kind } => {
+                write!(f, "a {kind} entry names the wrong kind of subject")
             }
             Self::NonMonotonicClock { previous, offered } => write!(
                 f,

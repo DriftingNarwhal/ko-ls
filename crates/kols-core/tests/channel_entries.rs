@@ -765,3 +765,162 @@ fn set_position_agrees_with_the_kind_string_it_travels_under() {
     assert_eq!(decoded, entry);
     assert!(ChannelEntry::decode("channel-definition", &entry.encode()).is_err());
 }
+
+// ── categories (spec 07 §1.8, §3.8) ────────────────────────────────────
+
+fn category_definition() -> ChannelEntry {
+    ChannelEntry::new(
+        category(),
+        ChannelEntryBody::CategoryDefinition {
+            name: "Ops".to_owned(),
+            position: 3,
+        },
+    )
+}
+
+#[test]
+fn category_entries_round_trip_and_keep_their_discriminants() {
+    for (entry, tag, kind) in [
+        (category_definition(), 0x05, "category-definition"),
+        (
+            ChannelEntry::new(
+                category(),
+                ChannelEntryBody::CategoryUpdate {
+                    change: CategoryChange::Rename("Operations".to_owned()),
+                },
+            ),
+            0x06,
+            "category-update",
+        ),
+        (
+            ChannelEntry::new(
+                category(),
+                ChannelEntryBody::CategoryUpdate {
+                    change: CategoryChange::SetPosition(9),
+                },
+            ),
+            0x06,
+            "category-update",
+        ),
+        (
+            ChannelEntry::new(
+                category(),
+                ChannelEntryBody::CategoryUpdate {
+                    change: CategoryChange::Delete,
+                },
+            ),
+            0x06,
+            "category-update",
+        ),
+    ] {
+        assert_eq!(entry.body.tag(), tag);
+        assert_eq!(entry.body.kind(), kind);
+        let decoded = ChannelEntry::decode(kind, &entry.encode()).expect("round trips");
+        assert_eq!(decoded, entry);
+    }
+}
+
+#[test]
+fn decoding_takes_the_subject_from_the_tag() {
+    // The discriminant chooses the subject's kind, so a decoded entry cannot
+    // disagree with itself about what it is describing.
+    let decoded =
+        ChannelEntry::decode_payload(&category_definition().encode()).expect("round trips");
+    assert_eq!(decoded.category(), Some(category()));
+    assert_eq!(decoded.channel(), None);
+
+    let channel_entry = ChannelEntry::decode_payload(&definition(None).encode()).expect("decodes");
+    assert_eq!(channel_entry.channel(), Some(channel()));
+    assert_eq!(channel_entry.category(), None);
+}
+
+#[test]
+fn a_category_definition_accepts_only_the_network_wide_grant() {
+    // Scoping one to the category it defines would be circular: that scope
+    // becomes grantable only once this very entry exists (spec 07 §1.8).
+    let entry = category_definition();
+    let acceptable = entry.acceptable(None);
+
+    assert_eq!(
+        acceptable,
+        vec![Capability::extension("chat:manage-channel:*".to_owned())],
+    );
+    assert_eq!(entry.required(), acceptable[0]);
+}
+
+#[test]
+fn a_category_update_accepts_its_own_scope_or_the_network_wide_one() {
+    let entry = ChannelEntry::new(
+        category(),
+        ChannelEntryBody::CategoryUpdate {
+            change: CategoryChange::SetPosition(1),
+        },
+    );
+    let acceptable = entry.acceptable(None);
+
+    assert!(acceptable.contains(&Capability::extension("chat:manage-channel:*".to_owned())));
+    assert!(acceptable.iter().any(|c| format!("{c:?}").contains("cat:")));
+    // And never a create-channel grant, however broadly held.
+    assert!(!acceptable.contains(&Capability::extension("chat:create-channel:*".to_owned())));
+}
+
+#[test]
+fn categories_are_governance_tier() {
+    // Departs from tier-by-what-it-widens, which spec 07 §1.8 argues for: they
+    // are few, and channel structural mutation already rides this capability.
+    assert_eq!(
+        category_definition().body.required_verb(),
+        "manage-channel",
+    );
+}
+
+#[test]
+fn a_subject_disagreeing_with_its_body_is_refused_before_it_is_signed() {
+    // Unreachable from a decode, where the tag chooses both. Reachable in memory,
+    // which is what this catches — at the author rather than at every reader.
+    let wrong = ChannelEntry::new(
+        channel(),
+        ChannelEntryBody::CategoryDefinition {
+            name: "Ops".to_owned(),
+            position: 0,
+        },
+    );
+    assert!(wrong.check_bounds().is_err());
+
+    let also_wrong = ChannelEntry::new(
+        category(),
+        ChannelEntryBody::Update {
+            change: ChannelChange::Archive,
+        },
+    );
+    assert!(also_wrong.check_bounds().is_err());
+
+    assert!(category_definition().check_bounds().is_ok());
+}
+
+#[test]
+fn an_unallocated_category_change_is_refused() {
+    let mut payload = ChannelEntry::new(
+        category(),
+        ChannelEntryBody::CategoryUpdate {
+            change: CategoryChange::Delete,
+        },
+    )
+    .encode();
+    let tag = payload.iter().rposition(|b| *b == 0x03).expect("the Delete discriminant");
+    payload[tag] = 0x04;
+    assert!(ChannelEntry::decode_payload(&payload).is_err());
+}
+
+#[test]
+fn a_category_name_is_bounded() {
+    let over = "n".repeat(MAX_CATEGORY_NAME_BYTES + 1);
+    let entry = ChannelEntry::new(
+        category(),
+        ChannelEntryBody::CategoryDefinition {
+            name: over,
+            position: 0,
+        },
+    );
+    assert!(entry.check_bounds().is_err());
+}

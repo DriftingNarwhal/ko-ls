@@ -1,6 +1,6 @@
 # Messaging Model
 
-**Document status:** v1.1 — §2.3 makes categories nameable and ordered, §2.4 fixes the sidebar's two-level order. Neither is implemented; spec 07 is normative where they overlap
+**Document status:** v1.2 — §2.3 makes categories nameable and ordered, §2.4 fixes the sidebar's two-level order. Both are implemented in `kols-core`; spec 07 is normative where they overlap
 **Depends on:** Core Protocol Spec §2 (governance log), Storage Spec §1–§5, Search Spec §3
 **Consumed by:** `02-membership-and-permissions`, `03-confidentiality`, `05-client-architecture`
 
