@@ -1,6 +1,6 @@
 # Messaging Model
 
-**Document status:** v1.0 — implemented in `kols-core`; spec 07 is normative where they overlap
+**Document status:** v1.1 — §2.3 makes categories nameable and ordered, §2.4 fixes the sidebar's two-level order. Neither is implemented; spec 07 is normative where they overlap
 **Depends on:** Core Protocol Spec §2 (governance log), Storage Spec §1–§5, Search Spec §3
 **Consumed by:** `02-membership-and-permissions`, `03-confidentiality`, `05-client-architecture`
 
@@ -108,6 +108,81 @@ at all — the first reply creates it implicitly, and its existence is discovera
 the root message. This keeps a busy server from writing a governance entry every time
 somebody replies in a side conversation, which is exactly the log-growth pressure `00` §6
 flags as the risk with D4.
+
+### 2.3 Categories are named and ordered, and are not channels
+
+Today a category is an id and nothing else. A `CategoryId` is referenced by a channel
+definition and used as a permission scope (`02` §4) — it has no name, no definition entry and
+no order anywhere. That is not a gap anybody chose; it is why the folders `00` §5 promises
+cannot be drawn, since there is nothing to put on the label.
+
+**A category gets a definition entry carrying a name and a position, and nothing else.** No
+membership, no content, no keying, no privacy. It is furniture, not a channel, and the entry
+that describes it should not be able to grow into one.
+
+**The definition is metadata over a scope that already exists.** This is the part a reader will
+get wrong if it is not said plainly. Permission resolution reads the *channel's* `category`
+field and binds against `cat:<id>` (`02` §4, spec 07 §4.2). It does not consult a category
+definition today and **must not start**. The definition supplies a label and a sort key; the
+scope is the id, and the id is carried by the channels themselves.
+
+Two things follow, and both are the reason to build it this way:
+
+- **Deleting a category cannot widen or narrow anybody's access.** It removes a name and a
+  position, not a scope. A channel whose category definition is gone is still in that category,
+  still resolves exactly the same permissions, and merely has no label to render. If deletion
+  *could* move access, tidying the sidebar would be an access-control act wearing a cosmetic
+  disguise — which is precisely what §2.4 refuses to let reordering become.
+- **A category needs no definition to work.** Every network that exists today has categories in
+  this sense already. Naming them is additive, and no existing network's permissions change when
+  the feature lands.
+
+A client that means "delete this folder and move its channels out" issues `Recategorise(None)`
+for each channel alongside the delete. That is a client's compound action and belongs to no
+single entry, because the log has no transactions and pretending otherwise would be a lie about
+atomicity.
+
+**Category entries are governance-tier, under `chat:manage-channel`.** Not `create-channel`,
+though a definition widens nothing and that capability's tier is argued from what an action can
+widen. Two reasons override the analogy. Categories are deliberately few — `02` §4 sizes them at
+roughly one per role, against hundreds of channels — so they are not the routine act
+`create-channel` is tuned for. And channel *structural* mutation is already tiered exactly this
+way: rename, topic, slowmode, archive and delete all require `manage-channel` and none of them
+widens access either. A category is the furniture permissions bind to by default; the entries
+that name and order it belong with the rest of the structure.
+
+Scope has one wrinkle worth stating, because it is not symmetric with channels. A category
+definition must be scoped `*`, network-wide: nothing encloses a category, so there is no
+narrower grant that could authorize creating one. An update may be scoped `*` or to the
+category's own id, which is grantable once the category exists.
+
+A category id derives the way a channel id does — `H(domain ‖ network id ‖ nonce)`, spec 07
+§3.6 — so a category entry cannot be replayed into another network.
+
+### 2.4 The order of the sidebar
+
+D31 fixed channel order as a network default a member may override locally. Categories need the
+same, and adding them makes the sort **two-level rather than flat**, which is a correction to
+what D31 assumed rather than an addition to it.
+
+The network default is computed like this, and every node reaches the same answer:
+
+1. **Uncategorised channels sort before every category**, as an implicit top-level group.
+2. **Categories sort among themselves** ascending by position, ties broken by category id.
+3. **Channels sort within their own category** ascending by position, ties broken by channel id.
+
+At every level, a sibling that has never been given a position sorts after every sibling that
+has. Positions are comparable only among siblings: a channel's position says nothing about where
+its category sits, and two channels in different categories are never compared at all.
+
+**Uncategorised first, rather than last, and the reason is not tradition.** It matches the
+clients people have used, which is worth something — but the load-bearing reason is that a
+channel which loses its category has somewhere obvious to appear. Sorting the uncategorised
+group last would make `Recategorise(None)` look like deletion to anybody with more than a
+screenful of channels.
+
+The local override still overrides all of it, still writes nothing, and still reaches nobody.
+What the network agrees on is the default; what a member sees is theirs.
 
 ---
 

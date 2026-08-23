@@ -1,7 +1,7 @@
 # ko-ls — Design Overview
 
 **Project:** ko-ls (working name, may be replaced; nothing in the design depends on it)
-**Document status:** v1.1 — §5 sequenced against the interface and account work, §3 carries D31–D33, and §6 no longer claims nothing is open.
+**Document status:** v1.2 — §3 carries D31–D35; §5 is sequenced against the interface and account work; §6 no longer claims nothing is open.
 **Precedence:** `distributed-intranet/specs/07` is normative where it and this set overlap; this set owns client design, rationale and sequencing.
 **Depends on:** Distributed Intranet Protocol v1.0 (specs `01`–`06`) and the Chat Application Spec (`07`)
 **Consumed by:** every other document in this set
@@ -156,6 +156,8 @@ the document named.
 | D31 | **Channel order is a network default with a per-member local override.** A founder can curate the layout a newcomer arrives to, and nobody is stuck with it. The default is network state and costs a governance entry per reorder, which is exactly why it is a *default* rather than the only order — §4's log-growth budget is there for structure, not for somebody tidying their own sidebar. The override is local, written nowhere and broadcast to nobody | `01` §2.1, spec 07 §1.6 and §3.8 |
 | D32 | **A network has a name, and it is network-wide.** `chat:network-name` in E9's app-policy map, set by `define-policy` holders like any other policy, so every member sees one name and it travels with the network rather than being retyped per installation. A per-member local override may follow it; the broadcast name is the one that exists first | `03` §4.1, spec 07 §1.7 |
 | D33 | **One local account over all networks, with per-network credentials deferred rather than rejected.** `02` §6.3's keyring is unlocked by a single password. The argument against that is real, and it is D28's argument one level up: a single password over every network is itself an object linking them. It is deferred because the global path has to work before a second mode is worth designing — not because the objection was answered | `02` §6.3 |
+| D34 | **A category definition is metadata over a scope that already exists.** It carries a name and a position and nothing else — permission resolution binds against `cat:<id>` from the *channel's* own field and never consults the definition. So a category needs no definition to work, naming them changes no existing network's permissions, and **deleting one cannot widen or narrow access**: it removes a label and a sort key, not a scope. Governance-tier under `chat:manage-channel`, with a definition scoped `*` because nothing encloses a category | `01` §2.3, `02` §4 |
+| D35 | **The sidebar sorts two-level, not flat.** Uncategorised channels first, then categories by position, then channels within their own category — ties broken by id at every level, and a never-positioned sibling sorting after every positioned one. This corrects D31, which fixed channel order before categories were orderable and so assumed one flat sequence. Uncategorised sorts first so that a channel losing its category appears somewhere obvious rather than looking deleted | `01` §2.4 |
 
 ---
 
@@ -213,8 +215,9 @@ next. Estimates are deliberately absent — sequence is the useful part.
   - **Channel management.** `Rename`, `Delete`, `Archive` and `Recategorise` are already
     `ChannelChange` variants with no surface at all. Permissions need `SetPermission`, which
     `05` §3 specifies and nothing implements.
-  - **A sidebar with folders.** Categories are already in the data model, so a folder *is*
-    `Recategorise` and drag-and-drop is its interface. Ordering is the genuinely new part — D31.
+  - **A sidebar with folders.** Channels already carry a category, so dragging one between
+    folders *is* `Recategorise`. What was missing is that a category had no name and no order at
+    all — D34 gives it both, D35 makes the sort two-level, and both want spec text before code.
   - **A network name** — D32.
   - **The voided-actions report.** Not interface work, and listed here because it belongs before
     a lock rather than after one: Core §2.7.1 point 5 requires it, `intranet-governance`
