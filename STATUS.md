@@ -19,16 +19,18 @@ It is updated in the same change that moves work, never afterwards from memory.
 A Discord-shaped chat client on the Distributed Intranet protocol. A "server" is a network:
 its own governance log, membership, epoch key chain and DHT namespace.
 
-Two repositories, side by side, both on `main` and pushed:
+Three repositories, side by side, all on `main` and pushed:
 
 | Repo | Remote | What it is |
 |---|---|---|
 | `ko-ls` (this one) | `DriftingNarwhal/ko-ls` | The client. AGPL-3.0-only |
 | `../distributed-intranet` | `DriftingNarwhal/distributed-intranet` | Protocol and specs. MPL-2.0, specs CC BY 4.0 |
+| `../DI-Relay` | `DriftingNarwhal/DI-Relay` | The bootstrap relay of Core §5.5, deployed and operational. AGPL-3.0-only |
 
-The client builds against the sibling checkout by **path dependency** while the extensions
-still move, so a fresh machine needs both cloned as siblings. `.devcontainer/` lives in *this*
-repo and builds both, plus the Tauri toolchain — open the `ko-ls` folder in it, not the parent.
+The client builds against `../distributed-intranet` by **path dependency** while the
+extensions still move, so a fresh machine needs those two cloned as siblings.
+`.devcontainer/` lives in *this* repo and builds both, plus the Tauri toolchain — open the
+`ko-ls` folder in it, not the parent.
 
 ### Which document owns what
 
