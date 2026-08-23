@@ -1,9 +1,9 @@
 # ko-ls — Implementation Status
 
-**Updated:** 2026-08-23 (two machines met through the deployed relay and messages crossed both ways — the first time any of this has run outside a harness. What is unproven is now *separate networks*, and a LAN pair still cannot cold-start without the relay: O16)
+**Updated:** 2026-08-23 (the design set read against the code: `05` described a client nobody built, `00` §5 gained the interface and account work and `00` §6 stopped claiming nothing was open. O17 is the audit's one build gap)
 **Phase:** P1 — two nodes talk live and durably, a joiner reads back through sealed
 history, and the boundary carries commands in and events out
-**Design:** [`design/`](design/) — `00`–`08` at v1.0, `09` at v0.3. **`distributed-intranet/specs/07` is normative** where it and the design set overlap.
+**Design:** [`design/`](design/) — **each document's version lives in its own status header, and is stated there and nowhere else.** This line used to restate them and was wrong about four; a version in two places drifts in one of them, which is O14's lesson at documentation scale. `09` is the only document still below v1.0. **`distributed-intranet/specs/07` is normative** where it and the design set overlap.
 
 This file is the answer to "where are we?". It is updated in the same change that moves
 work, never afterwards from memory — a status file that lags is worse than none, because
@@ -142,7 +142,7 @@ complete and a failure can be reproduced in the same minute it appears.
 |---|---|---|
 | F1 record encoding | **Done** | `design/08-record-encoding.md`, normative |
 | F2 spec 07 in protocol repo | **Done** | `distributed-intranet/specs/07-chat-application-spec.md`, committed there. README and CLAUDE.md updated — the repo no longer claims six specs |
-| F3 design set → v1.0 | **Done** | `00`–`08` at v1.0. The review pass demoted `08` from normative (its content is upstream now), refreshed the roadmap and scale claims, and turned `05` §8's test plan into a table with real state per row. `09` was written after that pass and is at v0.3 — it describes an interface that is a first pass rather than a settled one, so v1.0 would be a claim about work that has not been reviewed |
+| F3 design set → v1.0 | **Done** | The review pass demoted `08` from normative (its content is upstream now), refreshed the roadmap and scale claims, and turned `05` §8's test plan into a table with real state per row. Documents have moved past v1.0 since, as they should — each states its own version, and this file no longer repeats them. `09` remains the one below it: it describes an interface that is a first pass rather than a settled one, so v1.0 would be a claim about work that has not been reviewed |
 
 ## 3. Setup
 
@@ -220,6 +220,7 @@ somebody forgot.
 | ~~O14~~ | ~~**The client still lets a relayed circuit carry payload, which Core §5.2 now forbids.**~~ **Closed 2026-08-22** upstream (`45578b3`): a relayed connection no longer triggers a sync, a failed hole punch disconnects the peer, and the ceilings are sized for a negotiation (60s/256KB) rather than a session. **The third part reached no running relay until later that day**, and the review that found it is worth the entry: `DI-Relay` depends on the protocol by *tag* and was pinned at `v1.0.1`, which predates every one of these commits — so the source said 60s/256KB and all deployed relays went on enforcing 120s/8MB. Nothing in that repository mentions the ceilings (they arrive through `..defaults`), which is exactly why nothing noticed. Tagged `v1.0.2`, repointed, and `ceiling_tests::a_circuit_cannot_carry_a_conversation` is the guard that was missing — asserting a range, and confirmed to fail against the old pin. Original entry: ** Corrected in the spec on 2026-08-21/22 (upstream `0b085e4`): there is no third tier, a circuit carries the DCUtR negotiation and is closed when the upgrade fails. Today a failed punch leaves the circuit open and everything keeps flowing over it | Three parts, in order of how much they buy. **Close the circuit on `HolePunchFailed`** — the direct expression of the rule, and it makes the failure visible instead of silent. **Refuse to send payload over a circuit**, so a circuit that exists for a negotiation cannot be used by anything else even transiently. **Lower DI-Relay's ceilings** from 120s/8MB toward the negotiation's own cost, so a relay enforces this itself rather than trusting every client — §5.3 now says exactly that. Not done at once because v0.6.0 is under test and changing transport behaviour underneath it would waste the run | Core §5.2, §5.3; `design/09` §3 |
 | O15 | **Content routing has never been observed working.** The DHT is bootstrapped now (`8c0e2c8`) and `fetch_chunks` pulls from whichever holder answers, so a member should be able to read another's records through a third — but nothing has demonstrated it. Two nodes cannot: with nobody to route *through*, a one-hop table and a working DHT behave identically, which is precisely why the gap survived this long | Needs three nodes with a **forced** indirect path — A and B unable to reach each other directly while both reach C — and an assertion that A ends up holding B's records. The harness scenarios in spec 06 §2.3 are where this belongs, since they already simulate NAT. Until then the routing layer is verified by construction and by 655 passing tests, neither of which would have caught `bootstrap` being absent | Core §5.1, §5.2; Storage §3 |
 | O16 | **Two members on one network still cannot find each other without the relay.** mDNS runs — the client never names a `Discovery`, so it takes `Discovery::Full`, which includes it — and the transport does discover LAN peers and cache their addresses. But its own comment on `discovered_addresses` says they are "cached but never auto-dialled": it emits `NodeEvent::LocallyDiscovered` and leaves the dial to the client. **Nothing in `ko-ls` handles that event**; only `intranet-harness` does. So a pair on one network cold-starts through a routable third party or not at all | Found by testing rather than by reading, on 2026-08-23 — and it is the reason that test is worth something, since it means two machines on one LAN exercised the relay path rather than a shortcut around it. Small to close: handle one event and dial what it names. It is the difference between a relay outage costing a reconnection, which Core §5.5 allows, and costing a cold start, which is a harder failure to explain to somebody whose network is one room | `intranet-transport::Node::discovered_addresses`, `NodeEvent::LocallyDiscovered`; Core §5.5 |
+| O17 | **The voided-actions report is never read, so a voided revocation restores a member silently.** Core §2.7.1 point 5 makes the report mandatory *and* names the client's job: watch for your own submitted actions appearing in it and resubmit. `intranet-governance` implements it — `GovernanceLog::reconcile` returns `Reconciliation { canonical, voided, finalized }`, with conformance tests — and `design/05` §3 names the event it surfaces as. This client builds the log in `kols-node::store`, replays it, and never calls `reconcile` | Found by reading `design/05` §3 against `kols-api::Event` during the 2026-08-23 audit, not by a failure. Nothing has exercised it because it needs a fork: a partition in which a revocation lands on the losing branch. The window is real rather than theoretical — the spec spells it out, that a member revoked on the losing branch is "a fully current member again on the winning branch, entitled to its epoch key," until somebody notices. Both the design and the spec are already settled, so this is a build gap and not a question | Core §2.7.1 point 5; `design/05` §3, §4; `design/00` §5 |
 
 **Closed since this register was written:** the executor, the two checks `authorize`
 deliberately could not make, and the event half of the boundary. The first two were owed
@@ -274,6 +275,33 @@ design changes before anything else is built.
 ## 9. Log
 
 Newest first. One line per change that moved the state above.
+
+- **2026-08-23** — **The design set was read against the code, and the architecture document
+  described a client nobody built.**
+
+  A two-pass audit: a mechanical sweep of every backticked identifier, numeric constant and
+  cross-link in all seventeen documents, then a deep read of what the sweep flagged. Most of
+  the set held. Constants match spec 07 §4.3 exactly, `design/06`'s extension states agree with
+  §4 here on every row, and no relative link is broken. The drift was concentrated.
+
+  **`design/05` was the bad one.** It gave `kols-net` the `MemberNode` event loop, gave
+  `kols-store` the projection, and did not mention `kols-node` — the executor, the daemon, the
+  store and the `kols` binary — in either its diagram or its crate table. §3 had drifted both
+  ways: it named `SetPermission` beside `SendMessage` as though both worked, and omitted four
+  commands that do, `SetBootstrapRelays` among them, which arrived with O12 and never came back
+  to the page. Of the ten events it named, the code has two. Corrected at `9a515d9`, with the
+  reason the layout changed recorded rather than the table quietly rewritten.
+
+  **O17 is the one build gap the audit found**, and it is the kind worth finding this way: it
+  fails only under a partition, so nothing was ever going to surface it by running.
+
+  **This file's version line was wrong about four documents**, and the fix is to stop stating
+  them here at all. Each document carries its own version; restating them in a second place is
+  O14's failure mode at documentation scale, and it had already happened.
+
+  `design/00` §5 now carries the interface and channel-management work — most of it surface over
+  models that already exist — sequenced ahead of the release gate, with D31–D33 recording what
+  was decided. §6 no longer says no architectural questions remain open, because five do.
 
 - **2026-08-23** — **Two machines met through the deployed relay, and messages crossed both
   ways.** The first time any of this has run outside a test harness. This supersedes the
