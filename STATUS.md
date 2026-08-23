@@ -1,6 +1,6 @@
 # ko-ls — Implementation Status
 
-**Updated:** 2026-08-23 (the design set read against the code: `05` described a client nobody built, `00` §5 gained the interface and account work and `00` §6 stopped claiming nothing was open. O17 is the audit's one build gap)
+**Updated:** 2026-08-23 (the design set read against the code, then D31 and D32 carried into spec 07 §1.6/§1.7. O17 and O18 are what is owed: one gap the audit found, one spec landed ahead of its code on purpose)
 **Phase:** P1 — two nodes talk live and durably, a joiner reads back through sealed
 history, and the boundary carries commands in and events out
 **Design:** [`design/`](design/) — **each document's version lives in its own status header, and is stated there and nowhere else.** This line used to restate them and was wrong about four; a version in two places drifts in one of them, which is O14's lesson at documentation scale. `09` is the only document still below v1.0. **`distributed-intranet/specs/07` is normative** where it and the design set overlap.
@@ -221,6 +221,7 @@ somebody forgot.
 | O15 | **Content routing has never been observed working.** The DHT is bootstrapped now (`8c0e2c8`) and `fetch_chunks` pulls from whichever holder answers, so a member should be able to read another's records through a third — but nothing has demonstrated it. Two nodes cannot: with nobody to route *through*, a one-hop table and a working DHT behave identically, which is precisely why the gap survived this long | Needs three nodes with a **forced** indirect path — A and B unable to reach each other directly while both reach C — and an assertion that A ends up holding B's records. The harness scenarios in spec 06 §2.3 are where this belongs, since they already simulate NAT. Until then the routing layer is verified by construction and by 655 passing tests, neither of which would have caught `bootstrap` being absent | Core §5.1, §5.2; Storage §3 |
 | O16 | **Two members on one network still cannot find each other without the relay.** mDNS runs — the client never names a `Discovery`, so it takes `Discovery::Full`, which includes it — and the transport does discover LAN peers and cache their addresses. But its own comment on `discovered_addresses` says they are "cached but never auto-dialled": it emits `NodeEvent::LocallyDiscovered` and leaves the dial to the client. **Nothing in `ko-ls` handles that event**; only `intranet-harness` does. So a pair on one network cold-starts through a routable third party or not at all | Found by testing rather than by reading, on 2026-08-23 — and it is the reason that test is worth something, since it means two machines on one LAN exercised the relay path rather than a shortcut around it. Small to close: handle one event and dial what it names. It is the difference between a relay outage costing a reconnection, which Core §5.5 allows, and costing a cold start, which is a harder failure to explain to somebody whose network is one room | `intranet-transport::Node::discovered_addresses`, `NodeEvent::LocallyDiscovered`; Core §5.5 |
 | O17 | **The voided-actions report is never read, so a voided revocation restores a member silently.** Core §2.7.1 point 5 makes the report mandatory *and* names the client's job: watch for your own submitted actions appearing in it and resubmit. `intranet-governance` implements it — `GovernanceLog::reconcile` returns `Reconciliation { canonical, voided, finalized }`, with conformance tests — and `design/05` §3 names the event it surfaces as. This client builds the log in `kols-node::store`, replays it, and never calls `reconcile` | Found by reading `design/05` §3 against `kols-api::Event` during the 2026-08-23 audit, not by a failure. Nothing has exercised it because it needs a fork: a partition in which a revocation lands on the losing branch. The window is real rather than theoretical — the spec spells it out, that a member revoked on the losing branch is "a fully current member again on the winning branch, entitled to its epoch key," until somebody notices. Both the design and the spec are already settled, so this is a build gap and not a question | Core §2.7.1 point 5; `design/05` §3, §4; `design/00` §5 |
+| O18 | **Channel order and a network's name are specified and unimplemented.** Spec 07 §1.6 fixes the default order — ascending by position, never-positioned last, ties by `channel_id` — and allocates `SetPosition` as channel-update `0x07` (§3.8). §1.7 fixes `chat:network-name`, bounded at 128 bytes, explicitly not an identifier. `kols-core` has neither: `ChannelChange` stops at `0x06` Delete, and `ChatPolicy` has no name accessor | Deliberate, and the shape the spec's own header describes: spec 07 is normative, and where it and the implementation differ the divergence is recorded here. Landed as spec first because D31 and D32 were design decisions before they were code, and writing the bytes down is what caught that `SetPosition` had to be a change rather than a definition field — the alternative re-encodes every channel definition already written | spec 07 §1.6, §1.7, §3.8; `design/00` D31, D32 |
 
 **Closed since this register was written:** the executor, the two checks `authorize`
 deliberately could not make, and the event half of the boundary. The first two were owed
@@ -275,6 +276,23 @@ design changes before anything else is built.
 ## 9. Log
 
 Newest first. One line per change that moved the state above.
+
+- **2026-08-23** — **D31 and D32 reached the document that is normative for them.**
+
+  Spec 07 §1.6 fixes channel order and §1.7 a network's name, with `SetPosition` allocated as
+  channel-update `0x07`. Upstream `1697b2a`; neither is implemented, which is O18.
+
+  **Writing the bytes down changed one of the decisions.** `SetPosition` was going to be a field
+  on the channel definition, which is where `slowmode` lives and where it looks like it belongs
+  — except that adding it to the `0x01` body re-encodes every channel definition already
+  written. As a change discriminant it costs nothing already stored, and it keeps "never
+  positioned" distinct from "positioned at zero", which the sort rule needs. This is the
+  argument for the spec step existing rather than going design straight to code.
+
+  **And it found a gap neither the design nor the audit had.** A category is an id and nothing
+  else — no name, no definition entry, no position. Channels can be ordered now; the folders
+  §5 promises cannot be named or ordered at all, because there is no entry kind to carry it.
+  That is a design question, not a spec one, so it is not answered here.
 
 - **2026-08-23** — **The design set was read against the code, and the architecture document
   described a client nobody built.**
