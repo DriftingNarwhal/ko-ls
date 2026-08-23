@@ -1,6 +1,6 @@
 # ko-ls — Implementation Status
 
-**Updated:** 2026-08-23 (a relay is deployed, so the two-machine test has the standing dependency it was waiting on; `v0.11.0` is cut; and the DCO requirement no licence asked for is gone from all three repos)
+**Updated:** 2026-08-23 (two machines met through the deployed relay and messages crossed both ways — the first time any of this has run outside a harness. What is unproven is now *separate networks*, and a LAN pair still cannot cold-start without the relay: O16)
 **Phase:** P1 — two nodes talk live and durably, a joiner reads back through sealed
 history, and the boundary carries commands in and events out
 **Design:** [`design/`](design/) — `00`–`08` at v1.0, `09` at v0.3. **`distributed-intranet/specs/07` is normative** where it and the design set overlap.
@@ -49,6 +49,7 @@ What that needs, and where it stands:
 | A window that creates, joins, opens and runs a node for a network | **done** |
 | **A Windows build** | **Both binaries cross-compile**, and `kols.exe` runs — network created, seed correctly restricted. `kols-desktop.exe` is built and unrun |
 | Minting an invite from the window | **done**, with the waiting room and admitting beside it. No step of the flow now needs a terminal |
+| **Two nodes meeting through the deployed relay** | **Done, on one LAN** — both ends ran the window, connected and reconnected several times, and messages crossed both ways. An established connection survives the relay going down. **Not yet across separate networks**, which is this milestone's own case |
 
 ### Start here tomorrow
 
@@ -57,21 +58,29 @@ What that needs, and where it stands:
    are not, fix that before anything else. Clippy on the Windows target is a *second* run,
    `cargo clippy -p kols-node --target x86_64-pc-windows-gnu`, and it caught something the
    Linux one cannot see, so it is worth making when `src/secret.rs` changes.
-2. **The two-machine test is the only thing left, and the relay it was waiting on is deployed.**
+2. **The relay is deployed and proven. What is left is doing it across separate networks.**
    [`docs/two-machine-test.md`](docs/two-machine-test.md) is the step-by-step, written to be
    followed on two machines and deleted once it is either routine or wrong.
-   Both machines are behind NAT, so they cannot reach each other directly (Core §5.5) — one
-   bootstrap relay on a routable address is a standing dependency, not a convenience.
    DI-Relay is what was deployed; `intranet-harness relay` is the local equivalent and is
-   useless here, because it has to be reachable from both. **Deployed is not proven**: its
-   address is not recorded here, and nothing has reserved a circuit through it yet, so
-   everything either end does after that is still built and unproven across real networks.
+   useless for the real case, because it has to be reachable from both.
+   **Observed 2026-08-23:** two machines **on one LAN**, both running the window, met through
+   the relay and exchanged messages in both directions — connecting and reconnecting several
+   times. The relay was load-bearing even there, because nothing dials a locally-discovered
+   peer (**O16**), so this exercised the real path rather than a shortcut around it. An
+   established connection now **survives** the relay going down, which is Core §5.5's promise
+   and the clearest evidence so far that the DCUtR upgrade works: a pair still talking with
+   the relay gone is a pair that went direct, since §5.2 closes the circuit after the
+   negotiation.
+   **Still unproven is this milestone's own case** — the two ends behind *different* NATs,
+   one on a mobile hotspot. A hole punch across one LAN is the easy version of the problem
+   Core §5.5 exists for, and passing it says little about the hard one.
 3. **`kols-desktop` builds in CI and ships in the release** — Windows and Apple Silicon macOS,
    installer and portable binary each. It cannot be *built* in this container (Tauri wants a
    platform toolchain here) but that stopped being a blocker when the workflow started building
-   it. What is unproven is the window as a window: it has been opened once, before it was wired,
-   and no flow has been run through it. `design/07` §2 S3 records what the Linux toolchain
-   needed.
+   it. The window as a window is no longer unproven: it has since been run through a whole
+   flow on two machines at once — creating and joining, connecting through the relay, posting
+   and reading both ways. What it has not been run across is separate networks.
+   `design/07` §2 S3 records what the Linux toolchain needed.
 
 ### Building, and where tests run
 
@@ -120,9 +129,9 @@ complete and a failure can be reproduced in the same minute it appears.
 
 | | |
 |---|---|
-| **Working on** | Milestone: a client two people on separate networks can use, **tested through the window alone**. E14 landed, so a joiner that goes unanswered now keeps asking instead of stranding. Both binaries build for Windows and macOS in CI and v0.11.0 publishes them. The window now does relay setup too (O12/O13 closed 2026-08-21), so no step of the flow needs a terminal. Honest caveat: the window **has** been launched and rendered roughly correctly, but that was before anything was wired to it, so no flow has ever been exercised through it. What is left is running the test through the relay now deployed for it |
+| **Working on** | Milestone: a client two people on separate networks can use, **tested through the window alone**. E14 landed, so a joiner that goes unanswered now keeps asking instead of stranding. Both binaries build for Windows and macOS in CI and v0.11.0 publishes them. The window now does relay setup too (O12/O13 closed 2026-08-21), so no step of the flow needs a terminal. The window has now been run through a whole flow on two machines at once: they met through the deployed relay, messages crossed both ways, and it survives the relay going down. What is left is this milestone's own case — the two ends on **separate** networks |
 | **Blocked on** | Nothing |
-| **Runnable** | **`kols-desktop`** — *the product* (D30). A window that creates a network or joins one by invite, runs a node for it, **generates a relay identity**, designates relays and reports whether one granted a circuit, lists channels, renders one, posts, **reacts, revises, withdraws and pins**, mints an invite and admits from the waiting room, updating as records arrive. Every step of the two-machine test is reachable from it and none needs a terminal. **Launched once, before it was wired — it rendered, and no flow has been run through it.** **`kols`** — *a development tool, not a product surface*: init (with `--relay`), relay list/set, invite, join, waiting, attach, admit, revoke, name, serve, post, read, edit, delete, react, pin, and channel create/list/rename/topic/slowmode/archive. `cargo test` — 213 tests here and 655 in `../distributed-intranet`, clippy clean in both; `scripts/cross-check.sh` for big-endian, `taskset -c 0,1` for the starved case |
+| **Runnable** | **`kols-desktop`** — *the product* (D30). A window that creates a network or joins one by invite, runs a node for it, **generates a relay identity**, designates relays and reports whether one granted a circuit, lists channels, renders one, posts, **reacts, revises, withdraws and pins**, mints an invite and admits from the waiting room, updating as records arrive. Every step of the two-machine test is reachable from it and none needs a terminal. **Run through a whole flow on two machines on one LAN — met through the deployed relay, messages both ways, and it survives the relay going down (§0.2). Not yet across separate networks.** **`kols`** — *a development tool, not a product surface*: init (with `--relay`), relay list/set, invite, join, waiting, attach, admit, revoke, name, serve, post, read, edit, delete, react, pin, and channel create/list/rename/topic/slowmode/archive. `cargo test` — 213 tests here and 655 in `../distributed-intranet`, clippy clean in both; `scripts/cross-check.sh` for big-endian, `taskset -c 0,1` for the starved case |
 | **Next decision needed from the user** | Nothing blocking |
 
 ---
@@ -210,6 +219,7 @@ somebody forgot.
 | ~~O13~~ | ~~**In the window a working relay is invisible; only a broken one reports.**~~ **Closed 2026-08-21.** New `Event::Relay { reserved, designated }`, emitted at startup in every case including success. It carries the count as well as the address so that "designates none" stays distinguishable from "designates some, none usable" — both leave a node reachable only on its own addresses, and only the second is a fault | The terminal keeps its `println!` and ignores the event, since it already said this where it happened | `crates/kols-api/src/event.rs`, `crates/kols-node/src/serve.rs` |
 | ~~O14~~ | ~~**The client still lets a relayed circuit carry payload, which Core §5.2 now forbids.**~~ **Closed 2026-08-22** upstream (`45578b3`): a relayed connection no longer triggers a sync, a failed hole punch disconnects the peer, and the ceilings are sized for a negotiation (60s/256KB) rather than a session. **The third part reached no running relay until later that day**, and the review that found it is worth the entry: `DI-Relay` depends on the protocol by *tag* and was pinned at `v1.0.1`, which predates every one of these commits — so the source said 60s/256KB and all deployed relays went on enforcing 120s/8MB. Nothing in that repository mentions the ceilings (they arrive through `..defaults`), which is exactly why nothing noticed. Tagged `v1.0.2`, repointed, and `ceiling_tests::a_circuit_cannot_carry_a_conversation` is the guard that was missing — asserting a range, and confirmed to fail against the old pin. Original entry: ** Corrected in the spec on 2026-08-21/22 (upstream `0b085e4`): there is no third tier, a circuit carries the DCUtR negotiation and is closed when the upgrade fails. Today a failed punch leaves the circuit open and everything keeps flowing over it | Three parts, in order of how much they buy. **Close the circuit on `HolePunchFailed`** — the direct expression of the rule, and it makes the failure visible instead of silent. **Refuse to send payload over a circuit**, so a circuit that exists for a negotiation cannot be used by anything else even transiently. **Lower DI-Relay's ceilings** from 120s/8MB toward the negotiation's own cost, so a relay enforces this itself rather than trusting every client — §5.3 now says exactly that. Not done at once because v0.6.0 is under test and changing transport behaviour underneath it would waste the run | Core §5.2, §5.3; `design/09` §3 |
 | O15 | **Content routing has never been observed working.** The DHT is bootstrapped now (`8c0e2c8`) and `fetch_chunks` pulls from whichever holder answers, so a member should be able to read another's records through a third — but nothing has demonstrated it. Two nodes cannot: with nobody to route *through*, a one-hop table and a working DHT behave identically, which is precisely why the gap survived this long | Needs three nodes with a **forced** indirect path — A and B unable to reach each other directly while both reach C — and an assertion that A ends up holding B's records. The harness scenarios in spec 06 §2.3 are where this belongs, since they already simulate NAT. Until then the routing layer is verified by construction and by 655 passing tests, neither of which would have caught `bootstrap` being absent | Core §5.1, §5.2; Storage §3 |
+| O16 | **Two members on one network still cannot find each other without the relay.** mDNS runs — the client never names a `Discovery`, so it takes `Discovery::Full`, which includes it — and the transport does discover LAN peers and cache their addresses. But its own comment on `discovered_addresses` says they are "cached but never auto-dialled": it emits `NodeEvent::LocallyDiscovered` and leaves the dial to the client. **Nothing in `ko-ls` handles that event**; only `intranet-harness` does. So a pair on one network cold-starts through a routable third party or not at all | Found by testing rather than by reading, on 2026-08-23 — and it is the reason that test is worth something, since it means two machines on one LAN exercised the relay path rather than a shortcut around it. Small to close: handle one event and dial what it names. It is the difference between a relay outage costing a reconnection, which Core §5.5 allows, and costing a cold start, which is a harder failure to explain to somebody whose network is one room | `intranet-transport::Node::discovered_addresses`, `NodeEvent::LocallyDiscovered`; Core §5.5 |
 
 **Closed since this register was written:** the executor, the two checks `authorize`
 deliberately could not make, and the event half of the boundary. The first two were owed
@@ -264,6 +274,34 @@ design changes before anything else is built.
 ## 9. Log
 
 Newest first. One line per change that moved the state above.
+
+- **2026-08-23** — **Two machines met through the deployed relay, and messages crossed both
+  ways.** The first time any of this has run outside a test harness. This supersedes the
+  "deployed is not proven" caveat in the entry below it, which was written hours earlier.
+
+  **What was run.** Two machines **on one LAN**, both running the window, meeting through the
+  deployed DI-Relay: connected several times, reconnected several times, and chat content
+  crossed in both directions.
+
+  **The relay was load-bearing even on one network**, which is what keeps this from being a
+  shortcut: nothing in the client dials a locally-discovered peer, so the two ends had no way
+  to find each other without it. That gap is now **O16** — mDNS runs and the transport caches
+  what it finds, but it never auto-dials and the client ignores the event it emits.
+
+  **Two defects found by taking the relay away, both since fixed.** Bringing the relay down
+  broke an established connection, and bringing it back did not restore one. The first
+  contradicts Core §5.5, under which a vanishing relay costs a reconnection rather than a
+  network; the second left a node stuck rather than merely disconnected, which is worse,
+  because a stuck node looks like a working one. The behaviour now is the specified one: the
+  relay is needed to *establish* a connection, and an established connection survives it going
+  down. That is also the best evidence so far that the DCUtR upgrade works — a pair still
+  talking with the relay gone is a pair that went direct, since §5.2 closes the circuit once
+  the negotiation is done.
+
+  **What it does not prove, stated because this file is believed.** Both ends were on one
+  network. The milestone's own case is two ends behind *different* NATs, one on a mobile
+  hotspot, and a hole punch across a single LAN is the easy version of the problem Core §5.5
+  exists for. O15 is untouched: two nodes cannot demonstrate content routing on any network.
 
 - **2026-08-23** — **A relay is deployed, `v0.11.0` is cut, and the DCO requirement is gone.**
 
