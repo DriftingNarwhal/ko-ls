@@ -9,8 +9,8 @@
 //! # Why this is a module rather than three lines in `store`
 //!
 //! It was three lines, and they were `#[cfg(unix)]` — so on Windows the chmod
-//! was skipped and the file inherited whatever its directory granted, silently
-//! (`STATUS` §6, O8). Silence is the part that matters: a seed under the wrong
+//! was skipped and the file inherited whatever its directory granted, silently.
+//! Silence is the part that matters: a seed under the wrong
 //! ACL looks exactly like a seed under the right one, and nothing in the client
 //! would ever have said otherwise.
 //!
@@ -101,13 +101,21 @@ fn restrict_to_owner(path: &Path) -> Result<(), (&'static str, io::Error)> {
 /// profile directory picks up whatever that directory grants, which on a shared
 /// or administrator-configured machine is not necessarily one account.
 ///
-/// # Verification owed
+/// # How this is verified
 ///
-/// This is written against the API contract and compiles for
-/// `x86_64-pc-windows-gnu`; nothing in this repository has *run* it, because no
-/// Windows machine has been near this work yet. `STATUS` §6 carries that as the
-/// outstanding half of O8. Cross-compilation proves the calls exist with the
-/// shapes assumed here and proves nothing about the ACL that results.
+/// Cross-compilation proves the calls exist with the shapes assumed here and
+/// proves nothing about the ACL that results, so this has been run rather than
+/// only built: a seed written by `kols.exe` on NTFS shows this account and
+/// nothing else in its Security tab, with no inherited `SYSTEM` or
+/// `Administrators` entry — which is what the *protected* flag is for and the
+/// one thing no build could demonstrate. The refusal path was confirmed the
+/// same way, from a `\\wsl$\` path that has no permissions to set.
+///
+/// It stays outside `cargo test` because this module's tests are
+/// `#[cfg(all(test, unix))]`
+/// and this function compiles out of it entirely; CI checks the built artifact
+/// on a Windows runner instead. A test that looks complete and is not is worse
+/// than none.
 #[cfg(windows)]
 fn restrict_to_owner(path: &Path) -> Result<(), (&'static str, io::Error)> {
     use std::os::windows::ffi::OsStrExt;

@@ -630,23 +630,28 @@ pub async fn serve(
                 continue;
             }
             NodeEvent::HolePunchFailed { peer } => {
-                // **Core §5.2 says these two peers do not connect**, and this
-                // client does not yet enforce that: the circuit stays open and
-                // carries traffic, which the spec forbids outright rather than
-                // caps. Recorded as `STATUS` O14 and said out loud meanwhile,
-                // because a node quietly living on a relay is the exact failure
-                // the rule exists to prevent — and it looks like success.
+                // **Core §5.2 says these two peers do not connect**, and the
+                // transport enforces it: the circuit existed to carry this
+                // negotiation, so it is closed and the peer disconnected rather
+                // than left to become the path. Nothing is owed here beyond
+                // saying so, and saying so matters — a pair that silently keeps
+                // talking over a relay is the exact failure the rule prevents,
+                // and it looks like success from both ends.
+                //
+                // This is not a partition from the network. Everything here is
+                // pull-based and content-addressed, so the two converge through
+                // any member both can reach; what they have lost is each other.
                 println!(
-                    "  direct    could not hole-punch to {peer} — anything now going through \
-                     the relay violates Core §5.2 (STATUS O14)"
+                    "  direct    could not hole-punch to {peer} — the circuit is closed \
+                     (Core §5.2). You still converge through any member you both reach"
                 );
                 sink(&[Event::Degraded {
                     reason: format!(
                         "no direct connection to {peer}. Core §5.2: a pair that cannot \
                          hole-punch reaches each other over IPv6 or not at all, and a relay \
-                         carries the negotiation and nothing else. This client does not \
-                         enforce that yet, so traffic is crossing a relay that should not be \
-                         carrying it"
+                         carries the negotiation and nothing else — so the circuit has been \
+                         closed. You are not cut off from the network: anything either of you \
+                         publishes still reaches the other through any member you both reach"
                     ),
                 }]);
                 continue;
@@ -1404,8 +1409,9 @@ fn record_waiting(
 fn record_connected(store: &Store, connected: &BTreeSet<PeerId>, sink: &Sink) {
     // Replayed once for the whole set, not once per peer. `peer_identity` reads
     // and replays the entire governance log, so mapping five peers through it
-    // would be five replays for one answer — the shape of `STATUS` O5, and not
-    // worth introducing again on a path that fires on every connection.
+    // would be five replays for one answer — the repeated-replay cost `design/05`
+    // §5 carries, and not worth introducing again on a path that fires on every
+    // connection.
     let Some(state) = replayable(store) else {
         return;
     };
