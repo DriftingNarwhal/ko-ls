@@ -1,6 +1,6 @@
 # Required Protocol Extensions
 
-**Document status:** v2.0 — **E14 landed**, as leaf replacement rather than the re-delivery this document asked for;  E1 and E3 withdrawn, **E9, E2, E5, E4, E11 and E12 landed**; E12 narrowed to its protocol half on landing, E13 added from `09`, E14 added from a bug, **E15 added from a divergence this document should have been carrying already**. §2's branch-length and profile-enforcement claims corrected to what landed
+**Document status:** v2.1 — §13 records that D29 turned E13 from a friction item into the mechanism, and §12 records that `Discovery::Off` is a privacy requirement rather than a saving; both were being carried in a status file. Previously v2.0 — **E14 landed**, as leaf replacement rather than the re-delivery this document asked for;  E1 and E3 withdrawn, **E9, E2, E5, E4, E11 and E12 landed**; E12 narrowed to its protocol half on landing, E13 added from `09`, E14 added from a bug, **E15 added from a divergence this document should have been carrying already**. §2's branch-length and profile-enforcement claims corrected to what landed
 **Depends on:** all preceding documents
 **Consumed by:** work in `distributed-intranet`
 
@@ -38,7 +38,7 @@ Two rules govern this list:
 | E10 | Direct member-to-member delivery for DM invitations | P2 | Small |
 | ~~E11~~ | Namespace registration for extension capabilities — **landed**, Core §2.2.1 | — | Done |
 | ~~E12~~ | Optional peer discovery — **landed**, Core §5.1.1. Asked as tiered liveness; only the behaviour set was the protocol's, and the tiering stayed in the client | — | Done |
-| E13 | Cross-network connection bootstrap, for direct messages | P2 | Medium |
+| E13 | Cross-network connection bootstrap, for direct messages — **load-bearing since D29, not merely convenient**: without it a conversation across NAT needs its own relay, so there are no DMs at all (§13) | P2 | Medium |
 | ~~E14~~ | Idempotent epoch-key delivery — **landed**, Core §3.5.1. Asked as key re-delivery; landed as leaf replacement, because re-delivery restores no group state and re-adding silently breaks revocation | — | Done |
 | E15 | Independent per-network seeds — Core §1.1's master seed is not what this client implements (D28) | Nothing; conformance rather than function | Spec text only |
 
@@ -542,6 +542,14 @@ storing, serving and announcing content are unaffected. `crates/intranet-transpo
 **What the client still owes** (`09` §2, not this document): choosing `Discovery::Off` for a
 conversation-profile network, and the hot/warm/cold policy over reservations.
 
+**Neither is built, and the first stopped being an efficiency item.** `kols init` writes no
+`chat:network-profile` key, so every network the client creates is a `server` and there is no
+conversation network to build the leaner node for — `kols_core::policy::conversation_genesis_values`
+exists for one and only a test calls it. What changed the weight of that is D29: with discovery
+on, a DM node meeting a peer at the shared network's relay lands in that relay's routing table,
+which is the shared-routing-table correlation D29 forbids. So `Discovery::Off` for a conversation
+network is a **privacy requirement** rather than a saving, and `09` §3 depends on it being one.
+
 **Note on the wake path, recorded because it was nearly specified as its own mechanism.** No
 wake-up message is needed. Being dialable is what a reservation provides, and the dial *is* the
 signal — an inbound stream wakes the handler. Core §5.3's separation of reservation limits from
@@ -557,6 +565,15 @@ lowered 2026-08-22, which strengthens the argument rather than changing it.)*
 **Two people starting a conversation cannot be asked to stand up a relay first** (`09` §3).
 The DM network is fresh, has two members and no infrastructure, and the friction of
 provisioning any would make the feature unusable.
+
+**This item was scoped as removing friction, and D29 turned it into the mechanism.** The
+escalation is recorded here rather than left in a status note, because it changes what
+failing to build this costs. A relay may not be shared between two of a member's networks
+(D29, `09` §3), and every direct message is its own network (D10). Those two together mean a
+conversation between two NATed people would need **its own deployed relay** — which nobody
+will do. So without E13 there are no direct messages across NAT at all, rather than
+direct messages that are tiresome to start. It is a P2 item whose absence removes a feature,
+not one that degrades it.
 
 The material already exists. `03` §4.3 delivers the DM invite over a direct peer-to-peer
 stream *inside a shared network*, carrying a voluntary identity link — a signed
@@ -721,19 +738,22 @@ P0   — nothing; E3 turned out to need no protocol change
 P1   E2 → E4 ✅ ; E9 ✅, E11 ✅ (independent, small).  E5 landed here, ahead of its phase
 P1   E12 ✅ (independent of everything else; landed as its protocol half only)
 P1   E14 ✅ (independent, small — and a joiner stalls forever without it)
-P2   E7   (depends on E2's ChannelRotation) ; E10 (independent, small) ; E13 (pairs with E10)
+P2   E7   (depends on E2's ChannelRotation) ; E10 (independent, small) ; E13 (pairs with E10,
+          and gates DMs across NAT entirely rather than easing them — §13)
 P3   E6   — lands when it lands
 P4   E8
-—    E15  (blocks nothing; land it beside the credentials work O7, which is what it describes)
+—    E15  (blocks nothing; land it beside the credentials and backup work `00` §5 carries as a
+          release gate and `02` §6.3 shapes, which is what it describes)
 ```
 
 E9 is small and unblocks the rest. E2 is the first item requiring real spec work.
 
 **E15 carries no phase deliberately.** It blocks nothing and nothing waits on it, because
 the divergence costs conformance rather than function — so sequencing it against a phase
-would overstate its urgency. It belongs next to O7, since credentials and backup are where
-the client finally has to say what a per-network seed means to a user, and amending the
-spec while writing that is cheaper than amending it twice.
+would overstate its urgency. It belongs next to the credentials and backup work (`00` §5's
+release gate, shaped by `02` §6.3), since that is where the client finally has to say what a
+per-network seed means to a user, and amending the spec while writing that is cheaper than
+amending it twice.
 
 **E5 was pulled forward out of P3 and landed in P1**, which the sequencing above always
 permitted: it was scoped as a protocol bug fix independent of the chat client, and it

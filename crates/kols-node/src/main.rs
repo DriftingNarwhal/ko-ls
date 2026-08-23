@@ -670,7 +670,7 @@ fn waiting(root: std::path::PathBuf) -> Result<(), String> {
 /// Lists channels as replay understands them.
 ///
 /// Outside the command vocabulary because there is no event surface yet for
-/// channel state to arrive on (`STATUS` §6). It reads replayed state and
+/// channel state to arrive on (`design/05` §3). It reads replayed state and
 /// signs nothing, so it is a local question like `whoami`.
 fn list_channels(root: std::path::PathBuf) -> Result<(), String> {
     let store = Store::open(root).map_err(|e| e.to_string())?;

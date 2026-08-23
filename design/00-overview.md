@@ -151,8 +151,8 @@ the document named.
 | D26 | A command's **consent class follows the tier of the capability it needs**, not how consequential the action looks — so pinning prompts harder than posting, because `chat:moderate` is governance-tier and `chat:post` is not | `05` §3 |
 | D28 | **One seed per network, not one master seed** — so no single secret links every identity a member holds, and one phrase leaked exposes one network rather than all of them. The cost is that a backup is a set the client exports rather than a phrase somebody writes down | `02` §6.3 |
 | D27 | A **display name is a governance-log claim, not part of the profile object** — uniqueness needs a total order and a single-writer pointer has none. It binds the entry's author, compares on a normalized key, and is **never released**, because history resolves names at display time and an inherited name relabels somebody else's past | `02` §7, spec 07 §3.9 |
-| D29 | **A relay is never shared between two networks.** Reuse puts two of a member's identities on one relay and — since `kad` runs under the default protocol name and `PROTOCOL_VERSION` is one string for every network — in one routing table, which is the correlation Core §1.2 exists to prevent. Not currently enforced: the separation would have to be structural, in the protocol names. The DM bootstrap is **not** an exception to this, for the reasons `09` §3 sets out | `09` §3, `STATUS` O11 |
-| D30 | **The terminal is a development tool, not a product surface.** `kols` exists to be the seam — one front end over `kols-api` that could be driven before a window existed, and the reference path when a window misbehaves. Nobody is expected to use this application from a command line, so the terminal owes the window **no feature parity**, no discoverability and no end-user documentation. What it must keep is the property that makes it useful: crossing the same boundary a window does, so that "works in `kols`, not in the window" localises a fault to the interface | `05` §1, `STATUS` §2 |
+| D29 | **A relay is never shared between two networks.** Reuse puts two of a member's identities on one relay and — since `kad` runs under the default protocol name and `PROTOCOL_VERSION` is one string for every network — in one routing table, which is the correlation Core §1.2 exists to prevent. Not currently enforced: the separation would have to be structural, in the protocol names. The DM bootstrap is **not** an exception to this, for the reasons `09` §3 sets out | `09` §3 |
+| D30 | **The terminal is a development tool, not a product surface.** `kols` exists to be the seam — one front end over `kols-api` that could be driven before a window existed, and the reference path when a window misbehaves. Nobody is expected to use this application from a command line, so the terminal owes the window **no feature parity**, no discoverability and no end-user documentation. What it must keep is the property that makes it useful: crossing the same boundary a window does, so that "works in `kols`, not in the window" localises a fault to the interface | `05` §1 |
 | D31 | **Channel order is a network default with a per-member local override.** A founder can curate the layout a newcomer arrives to, and nobody is stuck with it. The default is network state and costs a governance entry per reorder, which is exactly why it is a *default* rather than the only order — §4's log-growth budget is there for structure, not for somebody tidying their own sidebar. The override is local, written nowhere and broadcast to nobody | `01` §2.1, spec 07 §1.6 and §3.8 |
 | D32 | **A network has a name, and it is network-wide.** `chat:network-name` in E9's app-policy map, set by `define-policy` holders like any other policy, so every member sees one name and it travels with the network rather than being retyped per installation. A per-member local override may follow it; the broadcast name is the one that exists first | `03` §4.1, spec 07 §1.7 |
 | D33 | **One local account over all networks, with per-network credentials deferred rather than rejected.** `02` §6.3's keyring is unlocked by a single password. The argument against that is real, and it is D28's argument one level up: a single password over every network is itself an object linking them. It is deferred because the global path has to work before a second mode is worth designing — not because the objection was answered | `02` §6.3 |
@@ -232,8 +232,7 @@ next. Estimates are deliberately absent — sequence is the useful part.
 
   The abuse limits became enforced rather than merely readable policy on 2026-08-22 — the rate
   ceilings, the size bounds, §4's skew hold and per-channel slowmode, at the writer and at the
-  reader both, which is what `01` §10.1 means by calling them validity rules. `STATUS.md` §6 is
-  the current debt list.
+  reader both, which is what `01` §10.1 means by calling them validity rules.
 - **P2 — Private channels and direct messages.** Per-channel MLS subgroups and channel
   membership entries; the DM flow (network creation, direct invite delivery, voluntary
   identity link) and a DM inbox spanning networks; moderation redactions; search — network
@@ -278,7 +277,7 @@ stopped being true as the interface grew a surface and the account layer acquire
   `LocallyDiscovered` for a client that has an opinion. This client has none, so two members one
   room apart still need a routable third party to meet. Dialling them is not obviously right:
   a node that dials LAN peers makes two of a member's networks correlatable by a watcher on that
-  network, which is D29's concern one layer down. `STATUS` O16.
+  network, which is D29's concern one layer down.
 - ~~**Whether the interface may load a stylesheet the user supplies.**~~ **Withdrawn: it was
   never open.** `09` §6 decided it, and §6.2 carries the argument in full — CSS leaks only by
   causing a network request, `url()`/`@import`/`@font-face src` are the complete set of ways to

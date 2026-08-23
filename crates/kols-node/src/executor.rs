@@ -767,7 +767,7 @@ impl Executor {
     /// Rebuilt per submit rather than cached, for the same reason the CLI
     /// replays the governance log on every invocation: a cache is a second
     /// answer to a question replay already answers, and the two disagree
-    /// exactly when it matters. `STATUS` §6's projection is where this stops
+    /// exactly when it matters. `design/05` §5's projection is where this stops
     /// being recomputed.
     pub fn names(&self, state: &intranet_governance::GovernanceState) -> Result<Names, ExecuteError> {
         let log = self.store.log()?;

@@ -18,7 +18,7 @@ use kols_core::{
 /// on purpose. Direct messages and search (`00` §5, P2), voice (P3) and stage
 /// (P4) each have a command in `design/05` §3 and no code behind them; adding
 /// the variants now would put a claim in a type that nothing could serve, which
-/// is the same reason `STATUS` §5 refuses to create empty crates.
+/// is the same reason `design/05` §2 refuses to create empty crates.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Command {
     /// Render a channel, or a page of its history.

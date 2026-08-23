@@ -234,8 +234,8 @@ pub struct Category {
 ///
 /// A second pass over the same log rather than a second return value from
 /// [`channels`], so that nine existing callers keep the shape they have. Both
-/// walks are the cost `STATUS` O4's projection exists to remove, and neither is
-/// worth optimising before it is measured (O5).
+/// walks are the cost `design/05` §5's projection exists to remove, and neither
+/// is worth optimising before it is measured.
 pub fn categories(
     store: &Store,
     state: &GovernanceState,

@@ -26,7 +26,7 @@
 //! Everything that touches a disk or a network. `kols-core` is I/O-free on
 //! purpose, and `kols-api` reaches no store by design, so the composition has to
 //! land somewhere and this is it — until `design/05` §5's `kols-store` exists and
-//! takes the persistence half (`STATUS` §6).
+//! takes the persistence half.
 
 #![deny(missing_docs)]
 

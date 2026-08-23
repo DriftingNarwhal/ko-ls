@@ -274,7 +274,7 @@ pub struct Member {
 /// Both, because they answer different questions and disagree in exactly the
 /// case that is hard to debug: a node whose cache names a relay that is gone
 /// behaves differently from one that never had a relay, and only the pair shows
-/// which you have (`STATUS.md` O13).
+/// which you have.
 #[derive(Debug, Serialize)]
 pub struct Relays {
     /// What replay says this network uses, in order.

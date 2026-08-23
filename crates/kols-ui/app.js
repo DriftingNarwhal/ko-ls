@@ -1193,7 +1193,7 @@ function signatureOfMe(me) {
 ///
 /// Cheap because it compares before it draws: replaying a channel is local, and
 /// the DOM work is what actually costs, so an unchanged channel does nothing.
-/// `STATUS` O4's projection is what makes the replay itself cheap later.
+/// `design/05` §5's projection is what makes the replay itself cheap later.
 function watchChannel() {
   if (state.channelPoll) clearInterval(state.channelPoll);
   state.channelPoll = setInterval(async () => {

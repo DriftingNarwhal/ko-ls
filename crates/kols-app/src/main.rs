@@ -200,7 +200,7 @@ fn relays(app: tauri::State<'_, App>) -> Result<dto::Relays, String> {
 /// The gap this closes: the command, its gate and its executor have existed
 /// since the terminal had them, and the window simply never submitted it — so a
 /// founder who made a network here could not invite anybody and could not fix
-/// it without a terminal (`STATUS.md` O12).
+/// it without a terminal.
 ///
 /// Replaces rather than appends, which is what `SetBootstrapRelays` means and
 /// what the interface has to say plainly: this is the set, not an addition to

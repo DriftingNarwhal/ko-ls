@@ -314,7 +314,7 @@ epoch-key delivery, pointer sync, segment fetch and a merged view between two no
 never been on the same machine.
 
 **It tests two unproven things at once, and that is worth going in knowing.** The window has
-been opened once and rendered, but nothing was wired to it then (`STATUS.md` §0), so every path
+been opened once and rendered, but nothing was wired to it then, so every path
 through it is unexercised — as is the network path across real machines. A failure could be
 either. When something does not work, the question to ask first is whether the *other* window
 shows the state you expect: if A's says B was admitted and keyed, and B's shows nothing, the

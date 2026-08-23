@@ -194,13 +194,13 @@ lists channels, renders one, posts to it, and, for a member holding `approve-nod
 invite and admits whoever redeems it. No step of the flow needs a terminal any more.
 
 Only one process may run a node per network, so `kols serve` on a store the window has open is
-refused, and the other way round. The claim expires after thirty seconds without a heartbeat,
+refused, and the other way round. The claim expires after six seconds without a heartbeat,
 because a window is closed by the window manager and that runs no destructors — a crash costs a
 pause rather than a stuck store.
 
 What it does **not** do is presence: `design/09` §4's third question, who is here and are they
 around, has no answer in the interface yet, because nothing implements the ephemeral gossip it
-needs. [`STATUS.md`](STATUS.md) §6 carries that as O6.
+needs. `design/09` §4.1 carries what is owed there, and why it is last.
 
 ## What exists
 
@@ -259,8 +259,8 @@ can read it is worse than a secret not written, because the second is an error s
 What does not exist yet: no private-channel keying, no voice, no search, no presence, and no
 credentials — seeds are unencrypted on disk with no way to back them up, which is fine while
 you are testing between machines you own and is a release gate before anything else.
-[`STATUS.md`](STATUS.md) is the honest inventory, its §0 is where to start, and its §6 is the
-list of what this client owes and why.
+[`STATUS.md`](STATUS.md) is where to start: it says where the work stands and points at the
+document that owns each part of it.
 
 ## The one number worth knowing
 

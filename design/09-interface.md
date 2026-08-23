@@ -1,6 +1,6 @@
 # Interface
 
-**Document status:** v0.5 — §4.2 fixes what settings is and how it is divided, §6.4 and §6.5 settle reset and the two things that must leave the document before a theme can reach them (D36, D37). Theming remains designed and unbuilt. Previously v0.4 — D29 (a relay is never shared between networks) and what it does and does not mean for §3's direct-message bootstrap;  an interface now exists and is a first pass, not a settled one: it
+**Document status:** v0.6 — §4.1 says plainly that presence is unbuilt, why it is last, and what the window shows instead; that was being carried in a status file. Previously v0.5 — §4.2 fixes what settings is and how it is divided, §6.4 and §6.5 settle reset and the two things that must leave the document before a theme can reach them (D36, D37). Theming remains designed and unbuilt. Previously v0.4 — D29 (a relay is never shared between networks) and what it does and does not mean for §3's direct-message bootstrap;  an interface now exists and is a first pass, not a settled one: it
 creates and joins networks, runs a node, renders a channel, brings the next member in, and gates
 its chrome on permission. §1's workspace, **both halves of §5**, §4's first two questions and
 most of §7's second are built; §2's tiering, §4.1's presence and §6's theming are not, and §7's
@@ -226,8 +226,8 @@ the earlier flag.
 
 **One dependency follows, and it is easy to miss: `Discovery::Off` for conversation networks stops
 being a resource optimisation and becomes a privacy requirement.** It is what keeps the fallback
-from putting a DM node into the shared relay's routing table. `STATUS` carries it as O2, filed as
-an efficiency item; it is load-bearing for this.
+from putting a DM node into the shared relay's routing table. `06` §12 carries it as an item the
+client still owes, filed there as an efficiency measure; it is load-bearing for this.
 
 **Scope, recorded because it bounds what relay work is ever worth doing: there are no shared
 relays and none are planned.** A relay here is a member of the network it serves, volunteered
@@ -266,6 +266,18 @@ perfectly online and simply not reachable from here.
 So the roster distinguishes **heard recently** from **no signal**, and never claims a member
 is offline. The wording carries more weight than the colour of the dot: an interface that
 renders "Offline" is stating something it does not know.
+
+**None of this is built, and it is last deliberately.** Neither front end implements the
+ephemeral gossip `01` §9 specifies, so §4's third question — who is here, and are they around
+— has no answer in the interface. That ordering is the point rather than an accident: the
+mechanism has to exist before the dot does, because a dot drawn without it would be reporting
+reachability from this node and calling it presence, which is precisely the claim the section
+above forbids.
+
+What the window shows instead is narrower and honest about being narrower: a roster marking
+who is **connected to you right now**, drawn as an empty ring rather than an unlit light,
+with the wording saying so where it is shown. An unmarked member may be away, unreachable
+from here, or never dialled, and nothing on this machine distinguishes them.
 
 ### 4.2 Settings, and the Line Down the Middle of It
 

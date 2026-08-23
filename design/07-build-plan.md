@@ -1,6 +1,6 @@
 # Finalization and P0 Build Plan
 
-**Document status:** v1.0 — **complete.** Every item in it is done; P1 is under way and tracked in `STATUS.md`, not here
+**Document status:** v1.1 — **complete.** Every one-off item here is done: F2 and S1 now carry the done markers they had earned elsewhere, and S2 is named as the standing practice it is rather than an item left unfinished. P1 is under way and tracked in `STATUS.md`, not here
 **Depends on:** `00`–`06`
 **Consumed by:** whoever starts building
 
@@ -49,7 +49,7 @@ alternatives are worse.
 
 It folds into spec 07 (F2) as written.
 
-### F2 — Write the seventh specification document
+### F2 — Write the seventh specification document ✅ **done**
 
 `distributed-intranet/specs/07-chat-application-spec.md`, consuming the platform the way
 App Hosting and Search do. It carries: the channel and record model (`01`), the extension
@@ -60,6 +60,10 @@ Not optional bookkeeping: the repository's central claim is that the specs are
 authoritative and the code implements them. Adding entry types, a capability vocabulary
 and two wire protocols without writing them down would make that claim false, and the
 README says so in its own words.
+
+**Delivered** as `distributed-intranet/specs/07-chat-application-spec.md`, committed to the
+protocol repository. It is normative where it and this design set overlap, and it is the
+document that took F1's encoding over — which is why `08` stopped being normative in F3.
 
 ### F3 — Mark the design set reviewed ✅ **done**
 
@@ -77,7 +81,7 @@ them had since been measured.
 
 ## 2. Set Up (Parallel With Finalization)
 
-### S1 — Repository layout
+### S1 — Repository layout ✅ **done**
 
 The client is its own git repository. Suggested shape, with the protocol as a **path
 dependency** during development so protocol changes and client changes can be made and
@@ -102,7 +106,7 @@ So the folder to open is `ko-ls`, and the tree you land in is the one above. The
 repo carried a second, older config until S3; two configs for one workspace is the same
 drift this project objects to elsewhere, so there is now one.
 
-### S2 — Protocol changes land on `main`, one at a time
+### S2 — Protocol changes land on `main`, one at a time — **a standing practice, not a task**
 
 The protocol repo is clean and on `main` at `DriftingNarwhal/distributed-intranet`. Each
 extension lands as its own change carrying **spec text, implementation and tests
@@ -114,6 +118,11 @@ Order for P1: **E9** (app policy map, small) → **E2** (channel entry variants)
 **E4** (gossipsub). E3 was dropped from this list — deriving pointer ids needs no
 protocol change, since `PointerId::from_bytes` is already public (`06` §3). **P0 therefore
 requires no protocol change at all**, which is a better position than the plan assumed.
+
+**This item never completes, and that is not it being unfinished.** F1, F3, S1 and S3 were
+each done once. S2 describes how every protocol change lands, so it holds for as long as
+extensions are still landing. Which of them have is `06` §0's table, which is the one place
+that state is kept.
 
 ### S3 — Development environment ✅ **done**
 

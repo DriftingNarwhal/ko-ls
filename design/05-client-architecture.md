@@ -1,6 +1,6 @@
 # Client Architecture
 
-**Document status:** v1.5 — §3 lists `CreateCategory` and `UpdateCategory`, which landed in the code before they reached this page. Previously v1.4 — §1 and §2 describe the layout that was built: `kols-node` holds the executor, the daemon and the event loop, and `kols-net` is publish and fetch over it. §3 separates what crosses the boundary from what is designed and unbuilt, and `GovernanceReorg` has moved into the first list. The store and media crates still do not exist
+**Document status:** v1.6 — §4 takes the single-node-per-network claim and its six-second expiry, §5 takes what the missing projection costs, and §8 gains the content-routing row; all three moved here from a status file that was carrying them. Previously v1.5 — §3 lists `CreateCategory` and `UpdateCategory`, which landed in the code before they reached this page. Previously v1.4 — §1 and §2 describe the layout that was built: `kols-node` holds the executor, the daemon and the event loop, and `kols-net` is publish and fetch over it. §3 separates what crosses the boundary from what is designed and unbuilt, and `GovernanceReorg` has moved into the first list. The store and media crates still do not exist
 **Depends on:** all preceding documents; App Hosting Spec §1–§3 for the sandbox path
 **Consumed by:** implementation; `09` for the interface built on §3's boundary
 
@@ -63,7 +63,7 @@ than Electron's ecosystem advantage.
 addition.** This layout was drawn before there was an executor. When one arrived it needed the
 store, the daemon and the event loop in the same place — an executor that cannot reach the log
 cannot refuse an edit aimed at somebody else's message — and `kols-net` kept only what does not
-need the loop. `kols-store` remains the intended projection (`STATUS` O4); until it exists,
+need the loop. `kols-store` remains the intended projection (§5); until it exists,
 saying `kols-net` owns the event loop describes a client nobody built.
 
 **`kols-app` converts rather than deriving.** The domain's records have exactly one
@@ -130,8 +130,8 @@ and intended together, reads as a description of the boundary and is not one —
 (`InviteCreate` → `CreateInvite`, `AdmitWaitingMember` → `AdmitMember`), `InviteRedeem` never
 existed under that name because redemption happens in `join` rather than at this boundary, and
 four commands arrived without being written down here: `SetName`, `CreateInvite`,
-`SetBootstrapRelays` and `AdmitMember`. The relay one came in with `STATUS` O12 and never came
-back to this page, which is how a boundary document stops describing its boundary — and the
+`SetBootstrapRelays` and `AdmitMember`. The relay one came in with the window's relay panel and
+never came back to this page, which is how a boundary document stops describing its boundary — and the
 same thing happened again the day this paragraph was written, when `CreateCategory` and
 `UpdateCategory` landed and were caught only by a sweep at the end of the session. The lesson is
 not that people should remember. It is that a boundary is worth checking against its code
@@ -190,8 +190,8 @@ node's transport, because a sandboxed build gets no ambient host access (App Hos
 and the startup report, because that is what the node *is* rather than something that happened.
 
 **What is still designed rather than built.** The commands for direct messages, search, voice
-and stage, each of which has a line above and no code behind it. `STATUS.md` §6 tracks those,
-along with the fact that events currently reach a terminal and no projection-holding client —
+and stage, each of which has a line above and no code behind it. `00` §5 sequences them by
+phase. Note also that events currently reach a terminal and no projection-holding client —
 which is a missing consumer rather than a missing contract.
 
 ---
@@ -204,6 +204,27 @@ conversations is running fifty of them. They are cheap (two members, no relay du
 governance log of a handful of entries) but they are not free, so node lifecycle is a
 real concern: idle DM networks should be suspended and woken on demand rather than all
 held live. *Flagged: the suspend/wake threshold wants measurement, not a guess.*
+
+**Exactly one process may run a node for a given network, and the store enforces it.** The
+MLS group is live state, so two nodes would each advance it without seeing the other, after
+which whichever saved last decides the network's key — with no symptom at the moment it
+happens. So a store carries a claim: `kols serve` on a store the window has open is refused,
+and the other way round.
+
+**The claim expires rather than only releasing on drop**, after six seconds without a
+heartbeat (`kols_node::store::NODE_CLAIM_STALE`), and the expiry is the load-bearing half. A
+window is closed by the window manager, which runs no destructors, so a claim released only
+on `Drop` would leak on the *normal* way this application ends. A crash therefore costs a
+pause rather than a stuck store. A pid check is the obvious alternative and is worse:
+liveness is a different question on every platform, and a reused pid looks alive while
+belonging to somebody else. Claiming also waits a stale claim out rather than refusing on
+sight, since a restart is ordinary.
+
+*Owed: a node suspended past the window can have its claim taken over while it still believes
+it holds one — the check is wall-clock, so a sleeping laptop is indistinguishable from a dead
+one. Making it impossible needs the holder to re-check ownership as it beats. Rare rather than
+impossible today, because taking over requires somebody to start a second node inside that
+window.*
 
 Each loop, DM or server, is structured identically, with the domain layer talking to it
 through channels. Care is needed with one implemented invariant: `next_swarm_event` drains its `pending` queue only on entry, so an event pushed
@@ -253,6 +274,19 @@ HLC, body, flags), reactions, channel and role state from replay, read watermark
 attachment cache metadata, and the local FTS index (`03` §6 — the only search available
 for private channels). It can be deleted and rebuilt from the network.
 
+**None of that projection exists yet, and `kols-node` carries a file-backed store instead.**
+Nothing has needed one: the terminal replays the governance log on every invocation, which is
+slow and correct, and the window re-reads on a two-second tick. The projection is worth
+building when something renders fast enough to notice it is not there.
+
+Two costs sit against it meanwhile, and both are the same work being repeated rather than a
+defect. Replay walks the log once per question, so reading channels and reading categories are
+two walks over the same entries. And **the executor rebuilds an author's whole log to append
+one record** — `rebuild_log` replays every record this member has written in a channel on every
+write, which is correct, because a segment is a pure function of its record sequence (`01`
+§3.1), and is linear in a log that only grows. Both want measuring before they are optimised
+rather than after; the projection is where they stop being recomputed.
+
 **Blob cache** holds fetched chunks, which is simultaneously how this node participates in
 swarm serving (Storage §4.2): anything fetched makes this node a source. That should be
 visible in settings, with a size cap the user sets, because it is their disk.
@@ -270,8 +304,8 @@ do not derive around it.
 exists today is a seed written to a file, unencrypted, restricted to the account that wrote it —
 a `chmod 0600` on Unix, a protected DACL on Windows — and refused outright where it cannot be
 restricted, since a secret another account can read is worse than one that was not written. So
-anything with read access to that user's disk is that member. This is `STATUS` §6's O7, and it
-is a release gate rather than a feature (`00` §5).
+anything with read access to that user's disk is that member. `02` §6.3 settles the shape it
+must take, and `00` §5 carries it as a release gate rather than a feature.
 
 **Two UI honesty requirements**, carried from the guarantees the protocol actually makes:
 
@@ -349,6 +383,7 @@ boundary, which is worth having regardless.
 | Keying | A removed member must fail to decrypt content wrapped after the rotation, and must still decrypt what they held. Assert the honest guarantee, not a stronger one | Not started (P2) |
 | Platform | The code that differs per operating system, run where it differs: the seed's permissions and the home directory's resolution. Not the daemon suite, which tests merge and gossip and is platform-neutral | **Partial** — the store's resolution is a pure function with cases; the seed's permissions are asserted on Unix by `cargo test` and on Windows only against the **built artifact** in CI, because the Rust test for it is `#[cfg(unix)]` and compiles out |
 | Multi-node | Extend the existing Docker NAT harness with chat scenarios: partition two members over a real network, heal, assert identical history | Not started — the in-process partition test is not this |
+| Content routing | Three nodes with a **forced** indirect path — A and B unable to reach each other directly while both reach C — asserting A ends up holding B's records. Two nodes cannot demonstrate this: with nobody to route *through*, a one-hop table and a working DHT behave identically | Not started, and **never once observed**. The DHT is bootstrapped and `fetch_chunks` pulls from whichever holder answers, so this should work; nothing has shown that it does. Belongs with the NAT scenarios in harness spec §2.3, which already simulate the topology |
 | Media | Loss and jitter injection against both `MediaTransport` impls; the fallback is expected to degrade badly and the test should record how badly, not skip it | Not started (P3) |
 
 The protocol repo's gate applies to this work too: `cargo test --workspace` and
