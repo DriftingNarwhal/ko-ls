@@ -1,7 +1,7 @@
 # ko-ls — Design Overview
 
 **Project:** ko-ls (working name, may be replaced; nothing in the design depends on it)
-**Document status:** v1.0 — reviewed against a working P0 implementation.
+**Document status:** v1.1 — §5 sequenced against the interface and account work, §3 carries D31–D33, and §6 no longer claims nothing is open.
 **Precedence:** `distributed-intranet/specs/07` is normative where it and this set overlap; this set owns client design, rationale and sequencing.
 **Depends on:** Distributed Intranet Protocol v1.0 (specs `01`–`06`) and the Chat Application Spec (`07`)
 **Consumed by:** every other document in this set
@@ -153,6 +153,9 @@ the document named.
 | D27 | A **display name is a governance-log claim, not part of the profile object** — uniqueness needs a total order and a single-writer pointer has none. It binds the entry's author, compares on a normalized key, and is **never released**, because history resolves names at display time and an inherited name relabels somebody else's past | `02` §7, spec 07 §3.9 |
 | D29 | **A relay is never shared between two networks.** Reuse puts two of a member's identities on one relay and — since `kad` runs under the default protocol name and `PROTOCOL_VERSION` is one string for every network — in one routing table, which is the correlation Core §1.2 exists to prevent. Not currently enforced: the separation would have to be structural, in the protocol names. The DM bootstrap is **not** an exception to this, for the reasons `09` §3 sets out | `09` §3, `STATUS` O11 |
 | D30 | **The terminal is a development tool, not a product surface.** `kols` exists to be the seam — one front end over `kols-api` that could be driven before a window existed, and the reference path when a window misbehaves. Nobody is expected to use this application from a command line, so the terminal owes the window **no feature parity**, no discoverability and no end-user documentation. What it must keep is the property that makes it useful: crossing the same boundary a window does, so that "works in `kols`, not in the window" localises a fault to the interface | `05` §1, `STATUS` §2 |
+| D31 | **Channel order is a network default with a per-member local override.** A founder can curate the layout a newcomer arrives to, and nobody is stuck with it. The default is network state and costs a governance entry per reorder, which is exactly why it is a *default* rather than the only order — §4's log-growth budget is there for structure, not for somebody tidying their own sidebar. The override is local, written nowhere and broadcast to nobody | `01` §2.1, spec 07 §3.8 |
+| D32 | **A network has a name, and it is network-wide.** `chat:network-name` in E9's app-policy map, set by `define-policy` holders like any other policy, so every member sees one name and it travels with the network rather than being retyped per installation. A per-member local override may follow it; the broadcast name is the one that exists first | `03` §4.1, spec 07 §4.3 |
+| D33 | **One local account over all networks, with per-network credentials deferred rather than rejected.** `02` §6.3's keyring is unlocked by a single password. The argument against that is real, and it is D28's argument one level up: a single password over every network is itself an object linking them. It is deferred because the global path has to work before a second mode is worth designing — not because the objection was answered | `02` §6.3 |
 
 ---
 
@@ -200,15 +203,38 @@ next. Estimates are deliberately absent — sequence is the useful part.
   network, runs a node for it, renders a channel and brings the next member in. It builds for
   Windows and macOS as well as Linux.
 
-  Not yet: threads and presence. The abuse limits became enforced rather than merely readable
-  policy on 2026-08-22 — the rate ceilings, the size bounds, §4's skew hold and per-channel
-  slowmode, at the writer and at the reader both, which is what `01` §10.1 means by calling them
-  validity rules. `STATUS.md` §6 is the current debt list, and the release gate below is the
-  thing that matters most in it.
+  Not yet, and sequenced deliberately: **the interface and channel-management set comes before
+  the release gate below.** Most of it is surface over models that already exist, and the
+  application is unusable without it in a way it is not unusable without a lock.
+
+  - **Settings as sections rather than one panel.** The relay controls that already exist move
+    into one; interface customisation — font size, colour — sits beside them; channel
+    permissions get a home there until they earn a better one.
+  - **Channel management.** `Rename`, `Delete`, `Archive` and `Recategorise` are already
+    `ChannelChange` variants with no surface at all. Permissions need `SetPermission`, which
+    `05` §3 specifies and nothing implements.
+  - **A sidebar with folders.** Categories are already in the data model, so a folder *is*
+    `Recategorise` and drag-and-drop is its interface. Ordering is the genuinely new part — D31.
+  - **A network name** — D32.
+  - **The voided-actions report.** Not interface work, and listed here because it belongs before
+    a lock rather than after one: Core §2.7.1 point 5 requires it, `intranet-governance`
+    implements it, and this client never calls `reconcile` — so a revocation voided by a heal
+    silently restores a member, which is the case the report exists to make somebody's job.
+    `05` §3 already names the event it surfaces as.
+  - Threads and presence, which were the original two.
+
+  The abuse limits became enforced rather than merely readable policy on 2026-08-22 — the rate
+  ceilings, the size bounds, §4's skew hold and per-channel slowmode, at the writer and at the
+  reader both, which is what `01` §10.1 means by calling them validity rules. `STATUS.md` §6 is
+  the current debt list.
 - **P2 — Private channels and direct messages.** Per-channel MLS subgroups and channel
   membership entries; the DM flow (network creation, direct invite delivery, voluntary
   identity link) and a DM inbox spanning networks; moderation redactions; search — network
   index for public channels, local index for private.
+- **Deeper channel customisation — not before P2.** Channel descriptions distinct from topics,
+  and onboarding paths that grant permissions as somebody moves through them (§6). This is the
+  Discord-parity work, and it is a phase item rather than polish because the automated-granting
+  half is a governance change rather than an interface one.
 - **P3 — Voice.** Call sessions bound to voice channels, mesh and relay topologies,
   Opus, jitter buffer, the datagram-shaped media interface over the reliable fallback.
 - **P4 — Video and stage.** Video and screen-share tracks; stage/broadcast mode on the
@@ -219,7 +245,12 @@ next. Estimates are deliberately absent — sequence is the useful part.
   moment somebody else's identity depends on it. The shape is settled in `02` §6.3: a local
   account whose password *wraps* a keyring of per-network seeds rather than deriving them,
   and an export bundle carrying phrase, network id and relay per network. Listed here rather
-  than in a phase because it is a release gate, not a feature that competes with others.
+  than in a phase because it is a release gate, not a feature that competes with others —
+  though it is now **next after P1's interface set**, since the window has no lock at all and
+  launches straight into every network on the disk. What `02` §6.3 does not settle, and what
+  has to be designed before this is built, is the **session**: what logging out means for a
+  node that is running, holding a reservation and answering for its member (§6). Per-network
+  credentials are deferred by D33.
 
 - **P5 — Multi-device and sandbox packaging.** Device enrollment UX, cross-device read
   state, and the app-bundle build of the same UI against a consent-decorated API.
@@ -228,9 +259,37 @@ next. Estimates are deliberately absent — sequence is the useful part.
 
 ## 6. Open Questions
 
-No architectural questions remain open. What is left is implementation-level tuning, and
-it is listed where it belongs: media rate control, stage mixing limits and echo
-cancellation in `04` §8, and the measurement list in §4 above.
+Implementation-level tuning is listed where it belongs: media rate control, stage mixing
+limits and echo cancellation in `04` §8, and the measurement list in §4 above.
+
+**Five architectural questions are open.** This section previously said none were, which
+stopped being true as the interface grew a surface and the account layer acquired a shape.
+
+- **What a client does with a locally-discovered peer.** `06` §12 settles that mDNS *runs* on a
+  `Discovery::Full` node; nothing settles whether to dial what it finds. The transport declines
+  to decide on the client's behalf — it caches discovered addresses, never auto-dials, and emits
+  `LocallyDiscovered` for a client that has an opinion. This client has none, so two members one
+  room apart still need a routable third party to meet. Dialling them is not obviously right:
+  a node that dials LAN peers makes two of a member's networks correlatable by a watcher on that
+  network, which is D29's concern one layer down. `STATUS` O16.
+- **Whether the interface may load a stylesheet the user supplies.** `05` §3 keeps `kols-ui`
+  holding no keys, no sockets and no files, and an imported CSS file breaks the last of those.
+  CSS is not inert — it fetches URLs — so a stylesheet is an exfiltration path out of a window
+  rendering other people's private messages. The question is not whether people want it.
+- **What logging out means for a node that is running.** A member who logs out is still a
+  member: their node holds a reservation, serves content and answers for them. Stopping it makes
+  them look offline when what they chose was privacy; leaving it running means a locked window is
+  still publishing. Both are visible to other members, so this is not a local decision.
+- **How an account reaches a second device.** `05` §6 and Core §1.3 settle device *enrolment* —
+  certificates, per-network, and deliberately no single object that grants every network at once.
+  An account unlocking a keyring of every seed is precisely such an object, so syncing one to a
+  new device would undo the property enrolment was shaped to protect. D33 defers per-network
+  credentials; it does not answer this.
+- **How an onboarding path grants permissions without a person.** Capabilities come from signed
+  governance entries, so "automatic" still needs an authorised signer. Either a rule is evaluated
+  by every reader at replay — a new entry kind, and a protocol extension — or something holds a
+  capability and acts on its own, which is a bot with a seed. The first is work; the second is a
+  member whose password is a program.
 
 **Resolved since the first draft:**
 
