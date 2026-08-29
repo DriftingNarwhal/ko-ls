@@ -155,6 +155,76 @@ pub enum Command {
         /// Who.
         identity: intranet_identity::PerNetworkIdentityId,
     },
+    /// Name this network, for every member — D32, spec 07 §1.7.
+    ///
+    /// A policy value rather than a local label, so one name travels with the
+    /// network instead of being retyped per installation. **Not an identifier**:
+    /// names are not unique and nothing makes them so, so nothing may select,
+    /// match or trust a network by one.
+    SetNetworkName {
+        /// The name, or empty to leave the network unnamed.
+        name: String,
+    },
+    /// Create a role, holding nothing.
+    ///
+    /// A role is a group (`design/02` §1), and a new one starts empty in both
+    /// senses — no members, no capabilities — because `define-group` and
+    /// `manage-membership` are separate acts at separate bars and collapsing
+    /// them here would hide that.
+    CreateRole {
+        /// What to call it.
+        group: intranet_governance::GroupId,
+    },
+    /// Grant or withdraw one chat verb, at one scope, for one role.
+    ///
+    /// The command `design/05` §3 has carried as designed-and-unbuilt. It is
+    /// deliberately one verb at one scope rather than a whole capability set:
+    /// a set-shaped command makes every edit a read-modify-write of somebody
+    /// else's concurrent edit, and the loser silently reverts a grant nobody
+    /// meant to withdraw.
+    SetPermission {
+        /// Which role.
+        group: intranet_governance::GroupId,
+        /// Which verb, from the vocabulary of `design/02` §2.2.
+        verb: String,
+        /// Where it applies.
+        scope: kols_core::Scope,
+        /// Whether this grants it or takes it back.
+        grant: bool,
+    },
+    /// Change one of this network's chat settings — spec 07 §4.3, §2.8.
+    ///
+    /// One setting at a time rather than a whole policy record, for the reason
+    /// [`Command::SetPermission`] is one grant at a time: `PolicyChange` carries
+    /// the entire policy, so every edit is a read-modify-write, and a
+    /// record-shaped command would make each edit overwrite whatever a
+    /// concurrent holder had just written.
+    SetChatSetting {
+        /// Which setting.
+        setting: kols_core::ChatSetting,
+        /// Its new value. What zero means differs per setting —
+        /// `ChatSetting::zero_means`.
+        value: i64,
+    },
+    /// Choose how joiners are admitted — Core §2.4.
+    ///
+    /// Network-wide rather than per invite, deliberately: mixing admission
+    /// postures within one network blurs who is accountable for its admission
+    /// stance, and "some invites bypass scrutiny" is a property of who gets an
+    /// invite rather than of the invite itself.
+    SetAdmissionMode {
+        /// Auto-admit, or the explicit-intake waiting room.
+        mode: intranet_governance::AdmissionMode,
+    },
+    /// Put an identity in a role, or take them out.
+    SetRoleMember {
+        /// Which role.
+        group: intranet_governance::GroupId,
+        /// Who.
+        identity: intranet_identity::PerNetworkIdentityId,
+        /// Whether this adds them or removes them.
+        member: bool,
+    },
 }
 
 /// How much consent a command needs before it runs.
@@ -214,7 +284,21 @@ impl Command {
             | Self::CreateCategory { .. }
             | Self::UpdateCategory { .. }
             | Self::AdmitMember { .. }
-            | Self::RevokeMember { .. } => Sensitivity::Governs,
+            | Self::RevokeMember { .. }
+            | Self::SetNetworkName { .. }
+            | Self::SetChatSetting { .. }
+            | Self::SetAdmissionMode { .. }
+            | Self::CreateRole { .. }
+            | Self::SetPermission { .. }
+            // `manage-membership:<group>` is the one capability whose tier is
+            // *dynamic* — governance-tier exactly when the target group holds
+            // governance power (Core §2.4) — and this is a `const fn` with no
+            // state to resolve that against. So it takes the stricter reading
+            // unconditionally, on the rule this classification already states:
+            // a finer class is never a weaker one. The cost is prompting a
+            // little harder than necessary for a powerless role; the cost of
+            // guessing the other way is not prompting at all for a powerful one.
+            | Self::SetRoleMember { .. } => Sensitivity::Governs,
         }
     }
 
@@ -245,7 +329,13 @@ impl Command {
             Self::CreateInvite { .. }
             | Self::SetBootstrapRelays { .. }
             | Self::AdmitMember { .. }
-            | Self::RevokeMember { .. } => None,
+            | Self::RevokeMember { .. }
+            | Self::SetNetworkName { .. }
+            | Self::SetChatSetting { .. }
+            | Self::SetAdmissionMode { .. }
+            | Self::CreateRole { .. }
+            | Self::SetPermission { .. }
+            | Self::SetRoleMember { .. } => None,
         }
     }
 
@@ -267,6 +357,12 @@ impl Command {
             Self::SetBootstrapRelays { .. } => "set-bootstrap-relays",
             Self::AdmitMember { .. } => "admit-member",
             Self::RevokeMember { .. } => "revoke-member",
+            Self::SetNetworkName { .. } => "set-network-name",
+            Self::SetChatSetting { .. } => "set-chat-setting",
+            Self::SetAdmissionMode { .. } => "set-admission-mode",
+            Self::CreateRole { .. } => "create-role",
+            Self::SetPermission { .. } => "set-permission",
+            Self::SetRoleMember { .. } => "set-role-member",
         }
     }
 }

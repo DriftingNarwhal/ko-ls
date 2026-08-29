@@ -183,7 +183,14 @@
          then never think about — Core §5.5 calls a bootstrap relay scaffolding,
          and scaffolding does not belong in the frame you look at all day. Still
          one keystroke away, because when it *is* wanted it is usually because
-         nothing else works. -->
+         nothing else works.
+
+         Sections, and grouped by *what a click costs* rather than by topic
+         (`design/09` §4.2). Changing a font is local, private and undoable;
+         changing the network's name writes a governance entry every member
+         replays and nobody can unwrite. A sheet that mixed the two would teach
+         people that everything in it is a preference, which is wrong about half
+         of it. -->
     <section class="settings" id="settings" data-kols="settings" hidden>
       <div class="settings-sheet">
         <header class="settings-head">
@@ -191,7 +198,155 @@
           <button type="button" id="close-settings" title="close">done</button>
         </header>
 
-        <div class="settings-body">
+        <div class="settings-layout">
+          <nav class="settings-nav" data-kols="settings-nav">
+            <h3>mine</h3>
+            <p class="settings-nav-note">local, private, undoable</p>
+            <button type="button" class="settings-tab" data-tab="appearance">appearance</button>
+            <button type="button" class="settings-tab" data-tab="device">this device</button>
+
+            <h3>the network's</h3>
+            <p class="settings-nav-note">signed, replayed by every joiner, permanent</p>
+            <button type="button" class="settings-tab" data-tab="identity">identity</button>
+            <button type="button" class="settings-tab" data-tab="network">network</button>
+            <button type="button" class="settings-tab" data-tab="permissions">permissions</button>
+          </nav>
+
+          <div class="settings-body">
+
+          <!-- ── mine ──────────────────────────────────────────────────── -->
+
+          <section class="settings-panel" data-panel="appearance" data-kols="appearance" hidden>
+            <h3>appearance</h3>
+            <p class="dim">
+              This client is themeable by you, in the spirit of a personal page
+              rather than a colour picker — a theme may restyle anything in this
+              window, layout and hiding included.
+            </p>
+            <p class="dim">
+              <strong>Not built yet, and the order is deliberate.</strong> A theme
+              can hide the control that would undo it, so reset has to work
+              without the theme's cooperation before themes exist at all: a
+              native menu item, and a launch flag that applies no theme. Two
+              doors, because they survive different failures.
+            </p>
+            <p class="dim">
+              Themes are CSS and never HTML, and this window loads no remote
+              origin of any kind — which is what makes a theme you were handed
+              safe to run rather than merely unlikely to misbehave.
+            </p>
+          </section>
+
+          <section class="settings-panel" data-panel="device" data-kols="device" hidden>
+            <h3>this device</h3>
+            <p class="dim">
+              Anything nothing else needs to know. Empty today, and named so the
+              first local preference has somewhere obvious to land instead of
+              being filed under the network's business.
+            </p>
+          </section>
+
+          <!-- ── the network's ─────────────────────────────────────────── -->
+
+          <section class="settings-panel" data-panel="identity" data-kols="identity" hidden>
+            <h3>identity</h3>
+            <p class="dim">
+              Filed here rather than beside appearance precisely because it
+              <em>feels</em> local and is not: a display name is a claim in the
+              governance log, unique in this network, and <strong>never
+              released</strong> — it stays bound to you even after you claim
+              another, so nobody inherits it along with what you wrote under it.
+            </p>
+
+            <form id="identity-form">
+              <label for="identity-name">display name</label>
+              <div class="row">
+                <input id="identity-name" type="text" autocomplete="off" placeholder="a name" />
+                <button type="submit">claim</button>
+              </div>
+            </form>
+            <p class="dim">
+              Shown beside enough of your identity to tell two similar names
+              apart, which is an obligation rather than a flourish: uniqueness is
+              decided on a key that deliberately does not fold lookalikes.
+            </p>
+            <p class="settings-error" id="identity-error" hidden></p>
+          </section>
+
+          <section class="settings-panel" data-panel="network" data-kols="network-settings" hidden>
+            <h3>network</h3>
+
+            <form id="network-name-form">
+              <label for="network-name-input">name</label>
+              <div class="row">
+                <input
+                  id="network-name-input"
+                  type="text"
+                  autocomplete="off"
+                  placeholder="the workshop"
+                />
+                <button type="submit">set</button>
+              </div>
+            </form>
+            <p class="dim">
+              Every member sees this one, and it travels with the network rather
+              than being retyped per installation. <strong>It is not an
+              identifier.</strong> Names are not unique and nothing makes them
+              so — the network id below is what you actually joined, and is the
+              only thing that should ever be trusted to say which network this
+              is.
+            </p>
+            <p class="settings-error" id="network-name-error" hidden></p>
+
+            <!-- How joiners arrive. Core §2.4 makes this network-wide rather
+                 than per invite: mixing postures within one network blurs who is
+                 accountable for its admission stance. -->
+            <h4 class="perm-head">letting people in</h4>
+            <div class="admission" id="admission">
+              <label class="choice">
+                <input type="radio" name="admission" value="intake" />
+                <span>
+                  <strong>review each joiner</strong>
+                  An invite buys a connection and an identity and nothing else —
+                  no groups, no key, nothing served — until a member admits them
+                  from the waiting room.
+                </span>
+              </label>
+              <label class="choice">
+                <input type="radio" name="admission" value="auto" />
+                <span>
+                  <strong>admit on a valid invite</strong>
+                  Whoever holds an invite becomes a member the moment they redeem
+                  it, and is keyed in. Lower friction, and nobody reviews anyone.
+                </span>
+              </label>
+            </div>
+            <p class="dim small" id="admission-note" hidden></p>
+            <p class="settings-error" id="admission-error" hidden></p>
+
+            <!-- Abuse limits, then retention. Two groups rather than one,
+                 because only the first refuses anything (spec 07 §4.3). -->
+            <h4 class="perm-head">limits</h4>
+            <p class="dim small">
+              Validity rules, not suggestions: a record past one of these is
+              refused by every reader, so they are the network's and not yours.
+              They also spend other members' disks and bandwidth, which is why
+              they sit with whoever is accountable for the network rather than
+              with whoever is uploading.
+            </p>
+            <ul class="setting-list" id="limit-list"></ul>
+
+            <h4 class="perm-head">what this network keeps</h4>
+            <p class="dim small">
+              <strong>Retention is not deletion, and refuses nothing.</strong>
+              Past its window, content stops being re-wrapped and goes dark to
+              anyone who did not already hold it — but a member who already
+              fetched it keeps it, permanently, and no rotation takes that back.
+              Content allowed to go dark cannot be brought back, which is why
+              both windows ship as <em>forever</em>.
+            </p>
+            <ul class="setting-list" id="retention-list"></ul>
+            <p class="settings-error" id="setting-error" hidden></p>
         <!-- The relay, which is the one part of setting a network up that has an
              order you cannot guess: the relay will not boot without this
              network's id, and this network cannot invite anybody before it has
@@ -270,7 +425,43 @@
             <p class="relay-error" id="relay-error" hidden></p>
           </details>
         </section>
+          </section>
 
+          <!-- Roles, and what each one can do. Parked in this sheet
+               provisionally and saying so: this is not a setting, it is network
+               governance, and it belongs with membership, moderation and the
+               waiting room in a surface that does not exist yet. -->
+          <section class="settings-panel" data-panel="permissions" data-kols="permissions" hidden>
+            <h3>permissions</h3>
+
+            <p class="dim">
+              Permissions are held by <strong>roles</strong>, never by people.
+              There is no per-person grant anywhere in this protocol, so giving
+              one person access means making a role, granting it what they need,
+              and putting only them in it. That is three steps rather than one,
+              and it is the shape of the thing rather than a detour around it.
+            </p>
+
+            <div class="perms">
+              <div class="perms-roles">
+                <h4 class="perm-head">roles</h4>
+                <ul class="role-list" id="role-list"></ul>
+                <button type="button" id="new-role" hidden>+ new role</button>
+                <p class="dim small">
+                  A role cannot be deleted — nothing in the governance log
+                  expresses removal, so what a role holds can be emptied and its
+                  members taken out, and the name stays in replayed history.
+                </p>
+              </div>
+
+              <div class="perms-detail" id="perms-detail">
+                <p class="dim">Choose a role.</p>
+              </div>
+            </div>
+            <p class="settings-error" id="perms-error" hidden></p>
+          </section>
+
+          </div>
         </div>
       </div>
     </section>

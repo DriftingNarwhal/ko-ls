@@ -1,6 +1,6 @@
 # Interface
 
-**Document status:** v0.6 — §4.1 says plainly that presence is unbuilt, why it is last, and what the window shows instead; that was being carried in a status file. Previously v0.5 — §4.2 fixes what settings is and how it is divided, §6.4 and §6.5 settle reset and the two things that must leave the document before a theme can reach them (D36, D37). Theming remains designed and unbuilt. Previously v0.4 — D29 (a relay is never shared between networks) and what it does and does not mean for §3's direct-message bootstrap;  an interface now exists and is a first pass, not a settled one: it
+**Document status:** v0.8 — §4.2's Network section takes admission mode, the abuse limits and the retention windows, and says the three things a number on screen does not carry. Previously v0.7 — §4.2's settings sections are built, and it says what shape they took and which of them is a panel over a feature that does not exist yet; §5 gains the line between asking *whether* and asking *what*, which is what decides whether a dialog may live in the document a theme can reach. Previously v0.6 — §4.1 says plainly that presence is unbuilt, why it is last, and what the window shows instead; that was being carried in a status file. Previously v0.5 — §4.2 fixes what settings is and how it is divided, §6.4 and §6.5 settle reset and the two things that must leave the document before a theme can reach them (D36, D37). Theming remains designed and unbuilt. Previously v0.4 — D29 (a relay is never shared between networks) and what it does and does not mean for §3's direct-message bootstrap;  an interface now exists and is a first pass, not a settled one: it
 creates and joins networks, runs a node, renders a channel, brings the next member in, and gates
 its chrome on permission. §1's workspace, **both halves of §5**, §4's first two questions and
 most of §7's second are built; §2's tiering, §4.1's presence and §6's theming are not, and §7's
@@ -291,10 +291,17 @@ renaming a channel, arriving through a quieter door. A sheet that mixed the two 
 people that everything in it is a preference, which is wrong about half of it. So the grouping
 is by *what a click costs*, not by topic:
 
+**Built**, as a nav of two headed groups beside a panel. The headings carry the distinction
+rather than merely labelling it: each says what a change on that side *costs*, because
+without that they are two words and the line between them is the whole point.
+
 **Mine — local, private, never broadcast, undoable.**
 
 - **Appearance** — the theme (§6): background, fonts, sizes, colours. Import, switch, and the
-  reset D37 requires.
+  reset D37 requires. **The panel exists and the feature does not**, and it says which: §6.5
+  makes reset-without-the-theme's-cooperation a precondition of shipping theming at all, so
+  the section describes what is coming and why the order is that way round rather than
+  offering a control that would be a reassurance instead of a reset.
 - **This device** — anything nothing else needs to know. Empty today, and named so that the
   first local preference has somewhere obvious to land instead of being filed under the
   network's business.
@@ -305,8 +312,33 @@ is by *what a click costs*, not by topic:
   precisely because it *feels* local and is not: D27 makes a name a governance-log claim, and
   a member who thought it was a preference would be surprised by the one property that matters,
   which is that it is never released.
-- **Network** — its name (D32) and its bootstrap relays. Gated on `define-policy` per §5, so
-  for most members this section is absent rather than disabled.
+- **Network** — its name (D32), its bootstrap relays, how joiners are admitted, and the
+  limits and retention windows spec 07 §4.3 and §2.8 carry. Gated on `define-policy` per §5,
+  so for most members these controls are absent rather than disabled.
+
+  **Three things this section has to say rather than merely show**, each because the number
+  on screen does not carry it:
+
+  - **A limit is a validity rule, not a preference.** A record past one is refused by every
+    reader, so these are the network's rather than a member's — and they spend other people's
+    disks, which is why they sit with whoever is accountable for the network rather than with
+    whoever is uploading.
+  - **Zero does not mean one thing.** A rate ceiling of zero is *no limit*; a retention window
+    of zero is *forever*; a size of zero is a real bound of zero. Opposite readings of the same
+    number, so the interface names the consequence before writing it rather than after.
+  - **Retention is not deletion**, and is grouped apart from the limits for that reason:
+    nothing is ever refused for exceeding it. Past the window content stops being re-wrapped
+    and goes dark to anyone who did not already hold it, while a member who already fetched it
+    keeps it permanently. Both windows ship as forever, because content allowed to go dark
+    cannot be brought back.
+
+  **A setting the network has not touched is marked as riding the default**, rather than
+  rendered identically to one set to the same number. The two behave differently — only the
+  first picks up a revised default — and nothing else on screen distinguishes them.
+
+  **Auto-admit is disabled rather than hidden on a member-vote network**, with the reason
+  beside it. Core §2.6 refuses that pairing, and hiding the option would leave somebody
+  hunting for a setting the client had silently decided not to offer.
 - **Permissions** — roles and what they hold.
 
 **Permissions is here provisionally, and the reason is worth writing down.** It is not a
@@ -314,6 +346,31 @@ setting. It is network governance, and it belongs with membership, moderation an
 room in a surface that does not exist yet. It sits in this sheet because that surface does not
 exist, not because this is where it goes — §7 carries the question, and an item parked in the
 wrong room should say so rather than settle in.
+
+**It is built, and it is role-first, because the protocol leaves no other honest shape.**
+Capabilities are held by groups and never by individuals (`02` §1), so a person-first surface
+would be a lie about what the log can express — there is no per-user grant to render. A role
+is chosen, and its members and its grants sit beside each other, each grant naming a verb and
+the scope it binds at. Three things the surface has to get right, all of them consequences
+rather than choices:
+
+- **Scope is offered categories-first**, because `02` §4 makes the category the scope a grant
+  is expected to bind at and the channel the override. Ordering the picker is the cheapest
+  place to say so.
+- **A governance-tier verb is marked, and is not offered for `everyone` at all.** Core §2.4
+  hardcodes that ceiling, so the two verbs that would violate it are absent from that role's
+  picker — shown as a property of the vocabulary rather than discovered as a refusal.
+  Withdrawing one is still offered, since refusing both directions would make a network that
+  somehow held such a grant unable to repair itself.
+- **The one-person case is three steps, and the surface says so rather than pretending
+  otherwise.** `02` §1 asks for a first-class "give access to…" action that makes and manages
+  a single-member group behind the scenes; that is not built, and the panel describes the
+  three steps instead of claiming a shortcut it does not have. Worth building — it is the
+  case people will reach for most — and worth not lying about meanwhile.
+- **Capabilities the chat vocabulary does not define are listed and not edited.**
+  `approve-node`, `publish:chat-log` and the rest are the network's own governance, and a grid
+  built for chat verbs would present them as the same kind of thing. Listing them is still
+  necessary: a role whose powers were half displayed reads as weaker than it is.
 
 **What may join this sheet later** is bounded by the same line: anything whose change is local
 goes under *mine*, anything that writes to the log goes under *the network's*, and anything
@@ -342,6 +399,26 @@ second copy of the answer.** The shell resolves each capability against replayed
 the interface a flag per control — `may_post`, `may_create_channel`, `may_invite` — so a member
 without `approve-node` is shown no door, and a member without `chat:create-channel` no `+`.
 There is no second permission model in the front end to drift from the first.
+
+### 5.1 Asking *whether* is native; asking *what* is not
+
+§6.5 requires that anything asking a member to **authorise** something be a native dialog,
+outside the document a theme can reach — a theme may hide, move, cover or shrink any element,
+so a confirmation it can conceal is not one. That is a rule about approval, and the
+destructive confirmations keep `window.confirm`, which is browser chrome and outside the DOM
+by construction.
+
+**Asking what to do is a different act, and collapsing the two costs something real.** Naming
+a channel, choosing a verb, picking a scope, typing a new name into a sidebar row — none of it
+approves anything, and a theme that restyled it can at worst make its owner's client awkward.
+Held to the native rule, all of that becomes the operating system's idea of a text field: the
+`prompt` this client used for every one of them rendered as a grey box titled *"JavaScript —
+tauri://localhost"*, which is both unthemeable and unrecognisable as part of the application.
+
+So the line runs between the two questions rather than around every dialog. Data entry lives
+in the document, styled like the rest of the interface and fully themeable. Approval stays
+native. Stated here because the rule is easy to read as *"dialogs are native"*, which is
+stricter than §6.5 asks and makes the interface worse for nothing.
 
 **One thing the interface must not get wrong about hiding, learned by getting it wrong.**
 `hidden` is an attribute, and the browser's `[hidden] { display: none }` is the weakest rule

@@ -287,6 +287,162 @@ impl<'a> ChatPolicy<'a> {
     }
 }
 
+/// One network setting a `define-policy` holder can change — spec 07 §4.3, §2.8.
+///
+/// # Why an enum rather than a key string at the boundary
+///
+/// Every one of these is an integer under a namespaced key, so a command could
+/// carry the key as text and the interface could name it. That is the shape
+/// `Scope` was given a type to avoid, and here the failure is quieter still: an
+/// unrecognised app-policy key is **not** refused — Core §2.6.2 makes absent mean
+/// the consuming spec's default, deliberately unlike the capability registry — so
+/// a mistyped key would be written, replayed and ignored forever, with the
+/// setting it was meant to change still reading as its default and nothing
+/// anywhere reporting a problem.
+///
+/// An enum makes that unsayable, and keeps [`ChatSetting::key`] the one place a
+/// key name is built: read by the accessors above, written by the command.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum ChatSetting {
+    /// Messages, edits and withdrawals per author per channel per minute.
+    MessageRate,
+    /// Reactions and pins per author per channel per minute.
+    ReactionRate,
+    /// Largest message or edit body, in bytes.
+    MessageMaxBytes,
+    /// Largest single attachment, in bytes.
+    AttachmentMaxBytes,
+    /// Most attachments on one message.
+    AttachmentMaxCount,
+    /// Largest publishable segment, in bytes.
+    SegmentMaxBytes,
+    /// How far ahead of local time a record may claim to be, in milliseconds.
+    MaxFutureSkewMillis,
+    /// The largest slowmode a channel manager may set, in seconds.
+    SlowmodeMaxSeconds,
+    /// Days a message segment stays maintained. Zero means forever.
+    RetainMessagesDays,
+    /// Days an attachment stays maintained. Zero means forever.
+    RetainAttachmentsDays,
+}
+
+impl ChatSetting {
+    /// Every setting, in the order an interface should present them.
+    ///
+    /// Ceilings first, then the two retention windows — last because they are
+    /// the only ones here that refuse nothing (spec 07 §4.3). Listing them among
+    /// the rate limits would suggest a record can exceed one.
+    pub const ALL: [Self; 10] = [
+        Self::MessageRate,
+        Self::ReactionRate,
+        Self::MessageMaxBytes,
+        Self::AttachmentMaxBytes,
+        Self::AttachmentMaxCount,
+        Self::SegmentMaxBytes,
+        Self::MaxFutureSkewMillis,
+        Self::SlowmodeMaxSeconds,
+        Self::RetainMessagesDays,
+        Self::RetainAttachmentsDays,
+    ];
+
+    /// The policy key this setting is stored under.
+    pub const fn key(&self) -> &'static str {
+        match self {
+            Self::MessageRate => keys::MESSAGE_RATE,
+            Self::ReactionRate => keys::REACTION_RATE,
+            Self::MessageMaxBytes => keys::MESSAGE_MAX_BYTES,
+            Self::AttachmentMaxBytes => keys::ATTACHMENT_MAX_BYTES,
+            Self::AttachmentMaxCount => keys::ATTACHMENT_MAX_COUNT,
+            Self::SegmentMaxBytes => keys::SEGMENT_MAX_BYTES,
+            Self::MaxFutureSkewMillis => keys::MAX_FUTURE_SKEW_MILLIS,
+            Self::SlowmodeMaxSeconds => keys::SLOWMODE_MAX_SECONDS,
+            Self::RetainMessagesDays => keys::RETAIN_MESSAGES_DAYS,
+            Self::RetainAttachmentsDays => keys::RETAIN_ATTACHMENTS_DAYS,
+        }
+    }
+
+    /// The shipped default, which is also what an absent key reads as.
+    pub const fn default_value(&self) -> i64 {
+        match self {
+            Self::MessageRate => defaults::MESSAGE_RATE,
+            Self::ReactionRate => defaults::REACTION_RATE,
+            Self::MessageMaxBytes => defaults::MESSAGE_MAX_BYTES,
+            Self::AttachmentMaxBytes => defaults::ATTACHMENT_MAX_BYTES,
+            Self::AttachmentMaxCount => defaults::ATTACHMENT_MAX_COUNT,
+            Self::SegmentMaxBytes => defaults::SEGMENT_MAX_BYTES,
+            Self::MaxFutureSkewMillis => defaults::MAX_FUTURE_SKEW_MILLIS,
+            Self::SlowmodeMaxSeconds => defaults::SLOWMODE_MAX_SECONDS,
+            Self::RetainMessagesDays => defaults::RETAIN_MESSAGES_DAYS,
+            Self::RetainAttachmentsDays => defaults::RETAIN_ATTACHMENTS_DAYS,
+        }
+    }
+
+    /// What the number counts, for an interface to render beside it.
+    pub const fn unit(&self) -> Unit {
+        match self {
+            Self::MessageRate | Self::ReactionRate => Unit::PerMinute,
+            Self::MessageMaxBytes | Self::AttachmentMaxBytes | Self::SegmentMaxBytes => Unit::Bytes,
+            Self::AttachmentMaxCount => Unit::Count,
+            Self::MaxFutureSkewMillis => Unit::Millis,
+            Self::SlowmodeMaxSeconds => Unit::Seconds,
+            Self::RetainMessagesDays | Self::RetainAttachmentsDays => Unit::Days,
+        }
+    }
+
+    /// **What zero means here**, which is not one answer across these settings.
+    ///
+    /// The asymmetry is real and is the thing most likely to be got wrong, so it
+    /// is a function rather than a comment. A rate ceiling of zero is *no limit*,
+    /// because the writer's check returns early on a non-positive ceiling. A
+    /// retention window of zero is *forever*, by spec 07 §2.8's sentinel rule —
+    /// the opposite direction, and deliberately so, since content allowed to go
+    /// dark cannot be brought back. A size or count of zero is a real bound of
+    /// zero, which is a legitimate way to forbid attachments and, for a message
+    /// body, a way to stop the network carrying text at all.
+    pub const fn zero_means(&self) -> ZeroMeaning {
+        match self {
+            Self::MessageRate | Self::ReactionRate => ZeroMeaning::NoLimit,
+            Self::RetainMessagesDays | Self::RetainAttachmentsDays => ZeroMeaning::Forever,
+            Self::MessageMaxBytes => ZeroMeaning::RefusesEverything,
+            Self::AttachmentMaxBytes
+            | Self::AttachmentMaxCount
+            | Self::SegmentMaxBytes
+            | Self::MaxFutureSkewMillis
+            | Self::SlowmodeMaxSeconds => ZeroMeaning::Zero,
+        }
+    }
+}
+
+/// What a setting's number counts.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Unit {
+    /// A ceiling per author per channel per minute.
+    PerMinute,
+    /// A size in bytes.
+    Bytes,
+    /// A plain count.
+    Count,
+    /// A duration in milliseconds.
+    Millis,
+    /// A duration in seconds.
+    Seconds,
+    /// A window in days.
+    Days,
+}
+
+/// What setting a value of zero actually does, which differs per setting.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ZeroMeaning {
+    /// The ceiling stops applying entirely.
+    NoLimit,
+    /// The window never closes — spec 07 §2.8's sentinel.
+    Forever,
+    /// A genuine bound of zero.
+    Zero,
+    /// A genuine bound of zero, which happens to refuse every message.
+    RefusesEverything,
+}
+
 /// The policy entries a `conversation`-profile network must carry at genesis.
 ///
 /// Only the profile: every other setting has a default, and writing defaults

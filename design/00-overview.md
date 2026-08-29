@@ -1,7 +1,7 @@
 # ko-ls — Design Overview
 
 **Project:** ko-ls (working name, may be replaced; nothing in the design depends on it)
-**Document status:** v1.3 — §3 carries D31–D37; §5 is sequenced against the interface and account work, with the channel, folder and voided-report items struck through as built; §6 carries four open questions, one having been withdrawn as answered by `09` §6.2 all along.
+**Document status:** v1.4 — §5's interface set is struck through as built: settings sections, the network's name, and permissions. Previously v1.3 — §3 carries D31–D37; §5 is sequenced against the interface and account work, with the channel, folder and voided-report items struck through as built; §6 carries four open questions, one having been withdrawn as answered by `09` §6.2 all along.
 **Precedence:** `distributed-intranet/specs/07` is normative where it and this set overlap; this set owns client design, rationale and sequencing.
 **Depends on:** Distributed Intranet Protocol v1.0 (specs `01`–`06`) and the Chat Application Spec (`07`)
 **Consumed by:** every other document in this set
@@ -211,18 +211,26 @@ next. Estimates are deliberately absent — sequence is the useful part.
   the release gate below.** Most of it is surface over models that already exist, and the
   application is unusable without it in a way it is not unusable without a lock.
 
-  - **Settings as sections rather than one panel**, designed in `09` §4.2 and divided by what a
-    click costs: what is mine and local on one side, what is signed and replayed forever on the
-    other. Relay controls and the network's name (D32) sit on the second; appearance sits on the
-    first; permissions are parked there provisionally and say so.
+  - ~~**Settings as sections rather than one panel**~~, designed in `09` §4.2 and divided by what
+    a click costs: what is mine and local on one side, what is signed and replayed forever on the
+    other. **Done** — five sections, with each heading saying what a change on that side costs
+    rather than merely naming it. The network's section carries its name, its relays, its
+    admission mode and every limit and retention window §10 and `01` §8 define, which were
+    enforced policy with no surface to set them from. Appearance is a panel over a feature that does not exist and
+    says so, because §6.5 gates theming on a reset that survives a theme.
   - ~~**Channel management.**~~ **Done in the window**: rename, topic, archive and delete, each
-    gated on `chat:manage-channel` and each re-checked on receipt. What is still owed is
-    permissions themselves — `SetPermission`, which `05` §3 specifies and nothing implements.
+    gated on `chat:manage-channel` and each re-checked on receipt. ~~What is still owed is
+    permissions themselves.~~ **`SetPermission` is built**, and landed as three commands rather
+    than one — a permissions surface needs roles to exist and to hold members, and Core §2.2
+    keeps defining what a role can do at a higher bar than deciding who holds it. Role-first,
+    since capabilities are held by groups and never by people (`02` §1), so no other shape is
+    honest about what the log can express.
   - ~~**A sidebar with folders.**~~ **Done**: folders can be made, renamed, reordered and
     deleted, and channels drag between them. The order the network agrees on is computed by
     `kols_core::sidebar_order` and drawn as given, rather than sorted again in the webview.
-  - **A network name** — D32. Read back by `kols-core`; **no surface yet**, because the place it
-    belongs is the settings section above.
+  - ~~**A network name** — D32.~~ **Done**, in the settings section above, with the honest
+    warning spec 07 §1.7 requires: a name is display and never an identifier, since names are
+    not unique and nothing makes them so.
   - ~~**The voided-actions report.**~~ **Done.** The node reconciles when governance arrives,
     separates this member's voided actions from everybody else's, and says so once per heal —
     loudly where something that *removed* an access was undone. The window keeps the notice until

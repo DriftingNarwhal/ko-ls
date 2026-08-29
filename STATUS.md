@@ -1,6 +1,6 @@
 # ko-ls — Status
 
-**Updated:** 2026-08-23
+**Updated:** 2026-08-29
 **Phase:** P1 — two nodes talk live and durably, a joiner reads back through sealed history,
 and the boundary carries commands in and events out.
 
@@ -73,7 +73,7 @@ Where that milestone stands:
 | One string to join | **done** |
 | A window that creates, joins, opens and runs a node for a network | **done** |
 | Minting an invite from the window, with the waiting room and admitting beside it | **done** — no step of the flow needs a terminal |
-| Windows and macOS builds | **done**, in CI. `kols.exe` runs; `kols-desktop.exe` is built and unrun |
+| Windows and macOS builds | **done**, in CI. `kols.exe` runs; `kols-desktop.exe` is built and unrun. It no longer opens a console behind the window — and the attribute that does that had to land with `kols_node::Report`, since a GUI-subsystem process has no stdout and Rust *panics* on the write rather than dropping it |
 | Two nodes meeting through the deployed relay | **Done, on one LAN.** Both ends ran the window, connected and reconnected several times, messages crossed both ways, and an established connection survived the relay going down |
 | **Two nodes on separate networks** | **Unproven, and it is this milestone's own case.** A hole punch across one LAN is the easy version of the problem Core §5.5 exists for |
 
@@ -84,11 +84,15 @@ over the same `kols-api` boundary, owed no feature parity and no end-user docume
   identity and designates relays, lists and renders channels in the order the network agrees
   on, posts, reacts, revises, withdraws and pins, manages channels and folders, mints an
   invite and admits from the waiting room, and says so when a healed fork undid something.
+  Settings is five sections split by what a click costs (`design/09` §4.2), and carries the
+  network's name (D32), a **role-first permissions surface** — roles, what each holds and at
+  which scope, and who is in them — and the network's own policy: admission mode, the abuse
+  limits of spec 07 §4.3 and the two retention windows of §2.8.
 - **`kols`** — init, relay list/set, invite, join, waiting, attach, admit, revoke, name,
   serve, post, read, edit, delete, react, pin, and channel
   create/list/rename/topic/slowmode/archive.
 
-**Gates green as of this date:** 247 tests here, 655 in `../distributed-intranet`, clippy
+**Gates green as of this date:** 276 tests here, 655 in `../distributed-intranet`, clippy
 clean in both.
 
 ---
@@ -114,6 +118,8 @@ not, the dependency is named in the owning document.
 | O11 | A relay may not be shared between two of a member's networks, and **nothing enforces it**. Enforcing it means network-scoping the protocol names, which is a wire change rather than a client fix | `design/00` D29, `design/09` §3 |
 | O15 | Content routing has never been observed working. Two nodes cannot demonstrate it: with nobody to route *through*, a one-hop table and a working DHT behave identically | `design/05` §8 |
 | O16 | Two members on one network still cannot find each other without the relay. mDNS runs and the transport caches what it finds, but never auto-dials, and nothing here handles the event it emits | `design/00` §6 |
+| O19 | **A role cannot be deleted.** `EntryBody` expresses no group removal, so what a role holds can be emptied and its members taken out, and the name stays in replayed history forever. The interface says so rather than offering a control that cannot work. Not a protocol change being asked for — nobody has needed one — but a limit somebody will meet and should not have to discover | `design/05` §3 |
+| O20 | **The daemon suite run starved is unreliable**, and `CONTRIBUTING.md` asks for exactly that run. One or two of eleven time out in `wait_for` under `taskset -c 0,1`; each passes alone. Measured at `main` on 2026-08-29, so it is the suite rather than any change — but it makes the starved run a signal to isolate rather than a gate, which is weaker than what it was added for | `CONTRIBUTING.md`, `tests/common::patience` |
 
 O8, O10, O12, O13, O14, O17 and O18 are closed. What each was, and what closing it turned up,
 is in [`docs/log.md`](docs/log.md). The numbers are retired rather than reused, so the log
@@ -127,10 +133,10 @@ stays readable.
 
 | Crate | State |
 |---|---|
-| `kols-core` | Encoding, author logs, merge, collision recovery, chat policy, channel structure, `sidebar_order`, reader-side limits. 126 tests |
+| `kols-core` | Encoding, author logs, merge, collision recovery, chat policy, channel structure, `sidebar_order`, reader-side limits, and `Scope` — the one construction of a capability's name, used by the writer and the resolver alike. 126 tests |
 | `kols-net` | Publish and fetch over a running node. Two live two-node tests |
-| `kols-api` | The whole boundary — all three of `design/05` §3's properties held. 33 tests |
-| `kols-node` | `kols`, its node daemon, the executor, the store and the workspace — the window's entire backend. Ten tests over a live wire between two processes |
+| `kols-api` | The whole boundary — all three of `design/05` §3's properties held. 39 tests, and the consent drift test is now guarded at both ends: a new command stops the suite compiling until it is sampled |
+| `kols-node` | `kols`, its node daemon, the executor, the store and the workspace — the window's entire backend. Ten tests over a live wire between two processes, and eight in-process over roles and grants |
 | `kols-app` | The Tauri shell, holding a workspace and an executor for whichever network is open. Builds `kols-desktop`. 7 tests |
 | `kols-ui` | The interface: HTML, CSS and one script, holding no keys, no sockets and no files |
 | `kols-store`, `kols-media` | Not created. A crate is made when there is code for it — an empty one is a claim that something exists |

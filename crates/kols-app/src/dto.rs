@@ -342,6 +342,158 @@ pub struct Me {
     /// they come apart for everybody else: `approve-node` can be delegated to a
     /// moderator who has no business rewriting policy.
     pub may_set_relays: bool,
+    /// Whether this member may create roles and change what they hold — `define-group`.
+    ///
+    /// Deliberately not the same question as [`Me::may_assign_role`]. Core §2.2
+    /// makes defining what a role *can do* a higher bar than deciding *who holds
+    /// it*, and `design/02` §1 asks the interface to reflect that asymmetry
+    /// rather than flatten it into one "admin" flag.
+    pub may_define_group: bool,
+    /// Whether this member may put anybody in any role at all.
+    ///
+    /// True when at least one role's `manage-membership` resolves for them, so
+    /// the tab is offered rather than hidden. Which roles specifically is per
+    /// role and answered by [`Role::may_assign`], because the tier of
+    /// `manage-membership:<group>` is dynamic (Core §2.4) and one flag cannot
+    /// carry it.
+    pub may_assign_role: bool,
+    /// How joiners are admitted — `auto` or `intake` (Core §2.4).
+    pub admission_mode: String,
+    /// Whether this network decides admission by member vote — Core §2.6.
+    ///
+    /// Carried because it is what makes auto-admit unavailable: the two cannot
+    /// be combined, and an interface that offered the choice anyway would be
+    /// offering a change the protocol refuses on replay.
+    pub member_vote: bool,
+    /// This network's name as every member sees it — D32, spec 07 §1.7.
+    ///
+    /// Distinct from [`Me::label`], which is local and this installation's alone.
+    /// `None` means no name is declared, which is a real state: clients must not
+    /// invent one.
+    pub network_name: Option<String>,
+}
+
+/// One role, what it holds, and who is in it — `design/02` §1.
+///
+/// "Role" rather than "group" at this boundary on purpose. The protocol's word
+/// is group and this is the same object; the interface says role because that is
+/// what the concept maps to for somebody who has used a chat server, and
+/// `design/00` §1 makes that mapping the whole design.
+#[derive(Debug, Serialize)]
+pub struct Role {
+    /// Its name, which is also its identifier — group ids are names (Core §2.1).
+    pub id: String,
+    /// Whether this is one of the two groups genesis creates (Core §2.3, §2.4).
+    ///
+    /// `Founders` and `everyone` cannot be created or removed, and `everyone`
+    /// additionally may never hold a governance-tier capability. Marked so the
+    /// interface can say why a control is missing rather than just omitting it.
+    pub implicit: bool,
+    /// Whether it holds every capability there is — `Founders`, by default.
+    ///
+    /// Its grants cannot be edited one at a time: there is no explicit set to
+    /// take a verb out of, and replacing `All` with whatever a checkbox
+    /// enumerates would silently drop everything nobody listed.
+    pub unrestricted: bool,
+    /// Whether this is the `everyone` group, which carries Core §2.4's ceiling.
+    pub everyone: bool,
+    /// The chat verbs it holds, with the scope each is held at.
+    pub grants: Vec<Grant>,
+    /// Capabilities it holds that are the protocol's own rather than chat's.
+    ///
+    /// Shown, never edited here. `approve-node` and the rest are the network's
+    /// governance rather than this application's vocabulary, and a checkbox
+    /// grid built for chat verbs would misrepresent them as the same kind of
+    /// thing. Listing them is still necessary — a role whose powers were half
+    /// displayed would read as weaker than it is.
+    pub protocol_grants: Vec<String>,
+    /// Who holds it.
+    pub members: Vec<Member>,
+    /// Whether this member may add or remove its members.
+    ///
+    /// Per role, because `manage-membership:<group>` is the one capability whose
+    /// tier is dynamic (Core §2.4) — governance-tier exactly when the target
+    /// role holds governance power — so the answer genuinely differs per row.
+    pub may_assign: bool,
+}
+
+/// One chat verb held at one scope.
+#[derive(Debug, Serialize)]
+pub struct Grant {
+    /// The verb, from `design/02` §2.2.
+    pub verb: String,
+    /// `network`, `category` or `channel`.
+    pub scope: String,
+    /// Hex of the category or channel id, or empty at network scope.
+    pub scope_id: String,
+    /// What to call the scope on screen, resolved from replayed state.
+    ///
+    /// A grant can name a channel or category that no longer exists — deleting
+    /// either leaves grants against its id untouched, since a capability is a
+    /// string in a group's set and nothing sweeps them. Resolved here so the
+    /// interface can say *"a channel that is gone"* rather than rendering a
+    /// bare hash nobody can place.
+    pub scope_label: String,
+    /// Whether the verb is governance-tier — `design/02` §2.2.
+    pub governance: bool,
+}
+
+/// A scope a grant can be bound at, for the picker.
+#[derive(Debug, Serialize)]
+pub struct ScopeOption {
+    /// `network`, `category` or `channel`.
+    pub kind: String,
+    /// Hex of the id, or empty at network scope.
+    pub id: String,
+    /// What to call it.
+    pub label: String,
+}
+
+/// One network setting, as it currently stands — spec 07 §4.3, §2.8.
+#[derive(Debug, Serialize)]
+pub struct Setting {
+    /// A stable handle the interface passes back, matching `ChatSetting`.
+    pub id: String,
+    /// The policy key, shown so a value can be matched against the spec.
+    pub key: String,
+    /// A short human label.
+    pub label: String,
+    /// What it bounds, in a sentence.
+    pub summary: String,
+    /// Its value now, which is the default when nothing was ever set.
+    pub value: i64,
+    /// The shipped default, so the interface can offer a way back to it.
+    pub default: i64,
+    /// Whether the network has actually set it, or is riding the default.
+    ///
+    /// Worth distinguishing: a network that never chose a number picks up a
+    /// revised default, and one that wrote the same number does not. The
+    /// interface should not make those look identical.
+    pub explicit: bool,
+    /// `per-minute`, `bytes`, `count`, `millis`, `seconds` or `days`.
+    pub unit: String,
+    /// What setting this to zero would do, in a few words.
+    ///
+    /// Carried per setting because the answer differs — no limit, forever, or a
+    /// real bound of zero — and that asymmetry is the thing most likely to be
+    /// got wrong (`ChatSetting::zero_means`).
+    pub zero_means: String,
+    /// Whether this is a retention window rather than a ceiling.
+    ///
+    /// Retention refuses nothing: it decides what a network keeps maintaining.
+    /// Grouped separately so it never reads as something a record can exceed.
+    pub retention: bool,
+}
+
+/// One verb in the vocabulary, with what it means and what it costs.
+#[derive(Debug, Serialize)]
+pub struct Verb {
+    /// The verb itself.
+    pub name: String,
+    /// Whether it is governance-tier.
+    pub governance: bool,
+    /// What holding it lets somebody do, in a sentence.
+    pub summary: String,
 }
 
 impl Message {

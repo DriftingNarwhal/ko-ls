@@ -30,6 +30,54 @@
 
 #![deny(missing_docs)]
 
+/// Where a node's own lifecycle lines go — the relay, the dial, the hole punch.
+///
+/// # Why this exists beside `serve::Sink`
+///
+/// `Sink` already carries *events*, and `design/05` §3 deliberately leaves this
+/// out of that vocabulary: the startup report is what the node **is** rather
+/// than something that happened, and a sandboxed build gets no ambient host
+/// access to report transport with. So these lines are not events and were
+/// simply printed — which made [`serve::serve`] a layer that decides how
+/// something looks, the one thing `Sink`'s own documentation says a second
+/// interface cannot reuse.
+///
+/// **It stopped being only an inelegance on Windows.** A GUI-subsystem binary
+/// launched from Explorer has no console, `GetStdHandle` hands back null, and
+/// Rust's `print_to` panics on the write error rather than dropping it. So a
+/// window that suppressed its console would have crashed on its first line of
+/// output, and the fix for a stray terminal would have been worse than the
+/// terminal. A front end with nowhere to print now passes [`quiet`].
+pub type Report = std::sync::Arc<dyn Fn(&str) + Send + Sync>;
+
+/// A report that prints, for the terminal.
+pub fn printing_report() -> Report {
+    std::sync::Arc::new(|line: &str| println!("{line}"))
+}
+
+/// A report that goes nowhere, for a front end with no console to print to.
+///
+/// Not a loss of diagnostics in practice: what a window actually needs from
+/// these — its relay standing, a degradation, whether it is keyed — already
+/// reaches it as events, and reaches it more usefully than as text it would
+/// have to parse.
+pub fn quiet() -> Report {
+    std::sync::Arc::new(|_line: &str| {})
+}
+
+/// Sends one line to a [`Report`], with `format!`'s syntax.
+///
+/// A macro rather than a call so a multi-line message stays a multi-line
+/// message: every one of these was a `println!` and the conversion is a single
+/// token at each site, which is what kept a mechanical change from becoming a
+/// rewrite of twenty-five strings the daemon tests wait on.
+#[macro_export]
+macro_rules! say {
+    ($report:expr, $($arg:tt)*) => {
+        ($report)(&format!($($arg)*))
+    };
+}
+
 pub mod chat;
 pub mod executor;
 pub mod invite;

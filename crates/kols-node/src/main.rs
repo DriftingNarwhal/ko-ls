@@ -609,7 +609,24 @@ fn render(outcome: &Outcome, names: &kols_core::Names) {
                 &to_hex(category.as_bytes())[..12]
             );
         }
-        Outcome::MembershipChanged { identity, admitted } => {
+        Outcome::MembershipChanged {
+            identity,
+            admitted,
+            group,
+        } if !group.is_everyone() => {
+            // A role, not the network. Said differently on purpose: somebody
+            // taken out of Moderators is still a member, and printing the
+            // revocation wording would claim they had been removed from the
+            // network — which is the one sentence here that would matter.
+            if *admitted {
+                println!("added {} to {group}", who(identity, names));
+            } else {
+                println!("removed {} from {group}", who(identity, names));
+            }
+        }
+        Outcome::MembershipChanged {
+            identity, admitted, ..
+        } => {
             if *admitted {
                 println!("admitted {}", who(identity, names));
                 println!("They can read and post once they have synced this log.");
@@ -621,6 +638,42 @@ fn render(outcome: &Outcome, names: &kols_core::Names) {
                     "`kols serve` rotates the epoch to exclude them — until it runs, they can"
                 );
                 println!("still decrypt newly published content with the key they already hold.");
+            }
+        }
+        Outcome::NetworkNamed { name } => {
+            if name.is_empty() {
+                println!("this network is now unnamed");
+            } else {
+                println!("this network is now called {name}");
+            }
+        }
+        Outcome::ChatSettingSet { key, value } => {
+            println!("{key} is now {value}");
+        }
+        Outcome::AdmissionModeSet { mode } => match mode {
+            intranet_governance::AdmissionMode::AutoAdmit => {
+                println!("a valid invite now admits somebody straight away");
+                println!("Nobody reviews a joiner, and `everyone`'s capabilities are what");
+                println!("they arrive holding.");
+            }
+            intranet_governance::AdmissionMode::ExplicitIntake => {
+                println!("a valid invite now buys a connection and an identity, nothing more");
+                println!("Joiners wait in the room until a member admits them: `kols waiting`.");
+            }
+        },
+        Outcome::RoleCreated { group } => {
+            println!("created the role {group}, holding nothing");
+            println!("Grant it something before adding anybody, or it confers nothing.");
+        }
+        Outcome::PermissionSet {
+            group,
+            capability,
+            granted,
+        } => {
+            if *granted {
+                println!("{group} now holds {capability}");
+            } else {
+                println!("{group} no longer holds {capability}");
             }
         }
     }

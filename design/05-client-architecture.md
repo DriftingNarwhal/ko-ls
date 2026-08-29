@@ -101,7 +101,12 @@ Command  = OpenChannel { channel_id, before: Option<Hlc>, limit }
          | CreateChannel { .., category: Option<CategoryId> } | UpdateChannel
          | CreateCategory { name, position } | UpdateCategory      — spec 07 §1.8
          | SetName | CreateInvite | AdmitMember | RevokeMember
-         | SetBootstrapRelays
+         | SetBootstrapRelays | SetNetworkName                     — D32, spec 07 §1.7
+         | SetChatSetting { setting, value }                       — spec 07 §4.3, §2.8
+         | SetAdmissionMode { mode }                               — Core §2.4
+         | CreateRole { group }                                    — `02` §1
+         | SetPermission { group, verb, scope, grant }
+         | SetRoleMember { group, identity, member }
 
 Event    = Records { channel_id, records }        — live and backfilled alike
          | Backfill | Governance | Adopted | EpochRotated | MemberKeyed
@@ -110,7 +115,7 @@ Event    = Records { channel_id, records }        — live and backfilled alike
 
 Designed here and not built:
 
-Command  | SetPermission | Search { scope, query }
+Command  | Search { scope, query }
          | JoinVoice { channel_id } | LeaveVoice | SetMute | SetDeafen
          | StartStage | PromoteSpeaker
          | StartDirectMessage { with: identity, in_network }   — creates a network, `03` §4.3
@@ -136,6 +141,50 @@ same thing happened again the day this paragraph was written, when `CreateCatego
 `UpdateCategory` landed and were caught only by a sweep at the end of the session. The lesson is
 not that people should remember. It is that a boundary is worth checking against its code
 mechanically, which is cheap, rather than by intention, which is not reliable.
+
+**That check now exists, and writing it found the drift it was written to prevent.**
+`kols-api`'s consent suite carries a sample of every command, and the sample list had fallen
+four behind the enum — so the drift test that gives `Sensitivity` its meaning was silently
+classifying eleven commands out of fifteen. Two guards replace the intention: an exhaustive
+`match` with no wildcard arm, which stops the suite compiling until a new variant is named,
+and an assertion that the sample list covers every name. Neither alone is enough, since the
+first compiles happily with the list untouched.
+
+**`SetPermission` landed with three commands rather than one**, which is what building it
+showed. A permissions surface needs roles to exist and to have members, and `define-group`
+and `manage-membership` are separate acts at separate bars (Core §2.2) — collapsing them into
+one command would have flattened the asymmetry `02` §1 asks the interface to reflect. There
+is deliberately **no `DeleteRole`**: `EntryBody` expresses no group removal, so a role's
+capabilities and members can be emptied and its name stays in replayed history. The interface
+says so rather than offering a control that cannot work.
+
+**One grant at a time, not a capability set.** `DefineGroup` carries a whole set, so every
+edit is a read-modify-write; a set-shaped command would make each edit overwrite whatever a
+concurrent manager had just written, and the loser would silently revert a grant nobody meant
+to withdraw.
+
+**A setting is a value, not a key.** `SetChatSetting` carries a `ChatSetting` rather than a
+policy key string, and the reason is quieter than `Scope`'s: an unrecognised app-policy key
+is **not** refused. Core §2.6.2 makes absent mean the consuming spec's default, deliberately
+unlike the capability registry — so a mistyped key would be written, replayed by every joiner
+forever, and ignored, with the setting it was meant to change still reading as its default
+and nothing anywhere reporting a problem. An enum makes that unsayable.
+
+Writing a setting *back to its default removes the key* rather than storing the number. The
+default is the same thing as absence, so writing it explicitly would freeze today's value
+into a network that would otherwise pick up a revised one.
+
+**The append lock is therefore held across the read as well as the write**, which is where
+the first version of this had it wrong. Every other command reads the state `submit` replayed
+and then locks only to append, and that is right for them, because none of them writes a value
+derived from what it read. This one does, so a lock taken after the read leaves the window it
+was meant to close: two managers each build a set from what they saw, the second lands, and the
+first's grant is gone. **The verify-by-replay does not catch it** — it asks about the capability
+this call changed, which is exactly the one that survived. Reading inside the lock makes the
+pair atomic on this node, and what remains is the genuinely distributed case, which nothing
+here can repair and the log records in an order every reader agrees on. `SetChatSetting` and
+`SetAdmissionMode` take the same shape for the same reason, since `PolicyChange` carries the
+whole policy record and is therefore read-modify-write by construction.
 
 Three properties this boundary must hold, because the sandbox path (§7) depends on all
 three and retrofitting any of them is expensive:
@@ -167,6 +216,24 @@ three and retrofitting any of them is expensive:
    otherwise: a record pushed over gossip is *also* inside the segment that follows it, so
    duplicate delivery is the normal case. Merge — by record id, through `ChannelView` —
    never append.
+
+**The node loop prints nothing either, and that took a second seam.** `Sink` carries
+*events* and `design/05` §3 deliberately keeps the startup report out of that vocabulary —
+it is what the node *is* rather than something that happened — so those lines were simply
+`println!`ed from inside `serve`, which made the loop a layer that decides how something
+looks. Exactly what `Sink`'s own justification says a second interface cannot reuse.
+
+**It stopped being an inelegance and became a crash on Windows.** A GUI-subsystem binary
+launched from Explorer has no console: `GetStdHandle` returns null, Rust's stdio turns that
+into a write error, and `print_to` *panics* rather than dropping the line. So suppressing the
+console — which is all the window ever needed — would have made the window crash on the
+node's first line of output, on the one platform that cannot be run from the development
+container. The fix for a stray terminal would have been strictly worse than the terminal.
+
+`kols_node::Report` is the seam: the loop hands its lifecycle lines to whoever is listening,
+`kols` prints them, and the window passes `quiet`. No diagnostics are actually lost — what a
+window needs from those lines (relay standing, degradation, whether it is keyed) already
+reaches it as events, and reaches it more usefully than as text it would have to parse.
 
 **A command produces an `Outcome`, and the thing that produces it prints nothing.** An
 executor that rendered would be one no interface could reuse, which is the whole reason this

@@ -102,6 +102,53 @@ pub enum Refusal {
     /// channel entry in it is invalid on replay (`design/03` §4.1), so refusing
     /// here saves writing an entry every node would reject.
     NotAServer,
+    /// A verb outside the vocabulary `design/02` §2.2 defines.
+    ///
+    /// Refused rather than written, because an unregistered extension name is
+    /// refused by the protocol at replay (Core §2.2.1) — so a mistyped verb
+    /// produces a grant that resolves for nobody, and an absent grant and a
+    /// misspelled one look identical from every side.
+    UnknownVerb(String),
+    /// A governance-tier verb was aimed at `everyone`.
+    ///
+    /// Core §2.4 hardcodes this: `everyone` may never hold a governance-tier
+    /// capability under *any* configuration, because admission would otherwise
+    /// confer governance power. The protocol refuses it too — this refuses it
+    /// before an entry every node would reject is signed and replayed forever.
+    EveryoneCeiling {
+        /// The verb that cannot go there.
+        verb: String,
+    },
+    /// A role's capability set is unrestricted, so it cannot be edited a verb at a time.
+    ///
+    /// `Founders` holds [`intranet_governance::CapabilitySet::All`] — every
+    /// capability, including ones defined later (Core §2.3). Withdrawing one
+    /// verb from it means replacing `All` with an explicit set, which is a
+    /// different and much larger act than the checkbox that asked for it: it
+    /// would silently drop every capability nobody happened to enumerate.
+    Unrestricted {
+        /// Which role.
+        group: String,
+    },
+    /// A setting was given a negative value.
+    ///
+    /// Refused rather than written, because every reader of these falls back to
+    /// the default on a value it cannot use — so a negative would be replayed
+    /// forever and read as the number it was meant to replace.
+    Negative {
+        /// Which setting.
+        field: &'static str,
+    },
+    /// Auto-admit was asked for on a network whose governance is member-vote.
+    ///
+    /// Core §2.6's one incompatible pairing: admission cannot be both automatic
+    /// and deliberated. The protocol refuses it on replay; this refuses it
+    /// before a governance entry is spent finding that out.
+    IncoherentAdmission,
+    /// No role by that name.
+    NoSuchRole(String),
+    /// A role by that name already exists.
+    RoleExists(String),
 }
 
 impl std::fmt::Display for Refusal {
@@ -128,6 +175,33 @@ impl std::fmt::Display for Refusal {
             Self::NotAServer => {
                 write!(f, "this network is a conversation, which has no channels to manage")
             }
+            Self::UnknownVerb(verb) => write!(
+                f,
+                "{verb:?} is not one of this application's permissions, and granting it \
+                 would produce an entry no node resolves"
+            ),
+            Self::EveryoneCeiling { verb } => write!(
+                f,
+                "chat:{verb} is governance-tier, and everyone may never hold one — \
+                 otherwise being admitted would itself confer it. Put it on a role instead"
+            ),
+            Self::Unrestricted { group } => write!(
+                f,
+                "{group} holds every capability there is, so there is no set to take one \
+                 out of. Narrowing it means replacing that with an explicit list"
+            ),
+            Self::Negative { field } => write!(
+                f,
+                "{field} cannot be negative — every reader would fall back to the default, \
+                 so the change would be recorded forever and do nothing"
+            ),
+            Self::IncoherentAdmission => write!(
+                f,
+                "this network decides admission by member vote, so it cannot also admit \
+                 automatically. Change the governance model first, or keep explicit intake"
+            ),
+            Self::NoSuchRole(group) => write!(f, "there is no role called {group:?} here"),
+            Self::RoleExists(group) => write!(f, "a role called {group:?} already exists here"),
         }
     }
 }
@@ -459,10 +533,169 @@ pub fn authorize<A: Authority, C: Channels>(
             name,
             "revoke-node",
         )?,
+
+        Command::SetNetworkName { name: network_name } => {
+            require(
+                actor
+                    .state
+                    .identity_holds(&actor.identity, &Capability::DefinePolicy),
+                name,
+                "define-policy",
+            )?;
+            // Empty is legitimate and means unnamed (spec 07 §1.7: a network
+            // with no name declared has no name, and clients must not invent
+            // one), so only the ceiling is checked.
+            bound(
+                "network name",
+                network_name.len(),
+                kols_core::MAX_NETWORK_NAME_BYTES,
+            )?;
+        }
+
+        Command::SetChatSetting { setting, value } => {
+            require(
+                actor
+                    .state
+                    .identity_holds(&actor.identity, &Capability::DefinePolicy),
+                name,
+                "define-policy",
+            )?;
+            // **Negative is refused rather than stored**, and the reason is that
+            // storing it does nothing visible. Every reader of these falls back
+            // to the default on a value it cannot use — `ChatPolicy::non_negative`
+            // for the sizes, the retention sentinel for the windows — so a
+            // negative would be written, replayed by every joiner forever, and
+            // read as the number it was meant to replace. A setting that reports
+            // success and changes nothing is worse than a refusal.
+            //
+            // Zero is *not* refused, because it means something for every one of
+            // these — and not the same something (`ChatSetting::zero_means`).
+            // Refusing it would take away a network's only way to say "no
+            // attachments" or "no ceiling".
+            if *value < 0 {
+                return Err(Refusal::Negative {
+                    field: setting.key(),
+                });
+            }
+        }
+
+        Command::SetAdmissionMode { mode } => {
+            require(
+                actor
+                    .state
+                    .identity_holds(&actor.identity, &Capability::DefinePolicy),
+                name,
+                "define-policy",
+            )?;
+            // Core §2.6: auto-admit says a valid invite grants membership
+            // immediately, member-vote says a quorum decides it, and a network
+            // cannot do both. The protocol refuses this pairing on replay, so
+            // this is not the enforcement — it is refusing to spend a governance
+            // entry, replayed by every joiner forever, on a change that will be
+            // rejected. Refused where policy is set rather than where a joiner
+            // is turned away, which is §2.6's own point.
+            if *mode == intranet_governance::AdmissionMode::AutoAdmit
+                && matches!(
+                    actor.state.policy.governance_model,
+                    intranet_governance::GovernanceModel::MemberVote { .. }
+                )
+            {
+                return Err(Refusal::IncoherentAdmission);
+            }
+        }
+
+        Command::CreateRole { group } => {
+            require(
+                actor
+                    .state
+                    .identity_holds(&actor.identity, &Capability::DefineGroup),
+                name,
+                "define-group",
+            )?;
+            if group.as_str().trim().is_empty() {
+                return Err(Refusal::Empty("role name"));
+            }
+            bound("role name", group.as_str().len(), MAX_ROLE_NAME_BYTES)?;
+            // `DefineGroup` both creates and redefines, so without this a
+            // "create" would silently replace an existing role's capability set
+            // with an empty one — the destructive reading of a button that says
+            // it adds something.
+            if actor.state.groups.contains_key(group) {
+                return Err(Refusal::RoleExists(group.to_string()));
+            }
+        }
+
+        Command::SetPermission {
+            group, verb, grant, ..
+        } => {
+            require(
+                actor
+                    .state
+                    .identity_holds(&actor.identity, &Capability::DefineGroup),
+                name,
+                "define-group",
+            )?;
+            if !kols_core::is_verb(verb) {
+                return Err(Refusal::UnknownVerb(verb.clone()));
+            }
+            let target = actor
+                .state
+                .groups
+                .get(group)
+                .ok_or_else(|| Refusal::NoSuchRole(group.to_string()))?;
+            if matches!(
+                target.capabilities,
+                intranet_governance::CapabilitySet::All
+            ) {
+                return Err(Refusal::Unrestricted {
+                    group: group.to_string(),
+                });
+            }
+            // Core §2.4's hardcoded ceiling, applied before anything is signed.
+            // Only granting is checked: taking a governance-tier verb *off*
+            // `everyone` is the repair for a network that somehow has one, and
+            // refusing that would make the invariant unfixable.
+            if *grant
+                && group.is_everyone()
+                && kols_core::capabilities::VERBS
+                    .iter()
+                    .any(|(candidate, tier)| {
+                        candidate == verb && *tier == intranet_governance::Tier::Governance
+                    })
+            {
+                return Err(Refusal::EveryoneCeiling { verb: verb.clone() });
+            }
+        }
+
+        Command::SetRoleMember { group, .. } => {
+            // The dynamic-tier capability (Core §2.4): whether this is a
+            // governance-tier act depends on what the *target* role holds, and
+            // `identity_holds` resolves that against replayed state rather than
+            // against anything the interface supplied.
+            require(
+                actor.state.identity_holds(
+                    &actor.identity,
+                    &Capability::manage_membership(group.clone()),
+                ),
+                name,
+                "manage-membership for that role",
+            )?;
+            if !actor.state.groups.contains_key(group) {
+                return Err(Refusal::NoSuchRole(group.to_string()));
+            }
+        }
     }
 
     Ok(Authorized(command))
 }
+
+/// The longest a role's name may be.
+///
+/// A group name is replayed by every joiner and rendered in chrome, so it is
+/// bounded for the reason spec 07 §1.7 bounds a network's: an unbounded one is
+/// both replayed bloat and a denial-of-display. The protocol sets no ceiling of
+/// its own, so this is the client's and is stated rather than assumed.
+pub const MAX_ROLE_NAME_BYTES: usize = 64;
 
 fn placement_of<A: Authority, C: Channels>(
     actor: &Actor<'_, A, C>,

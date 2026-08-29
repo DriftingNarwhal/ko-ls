@@ -377,13 +377,358 @@ impl Executor {
             }
 
             Command::AdmitMember { identity: who } => {
-                self.change_membership(who, true, identity)
+                self.change_membership(who, true, identity, GroupId::everyone())
             }
 
             Command::RevokeMember { identity: who } => {
-                self.change_membership(who, false, identity)
+                self.change_membership(who, false, identity, GroupId::everyone())
             }
+
+            Command::SetNetworkName { name } => self.set_network_name(name, identity, state),
+
+            Command::SetChatSetting { setting, value } => {
+                self.set_chat_setting(setting, value, identity)
+            }
+
+            Command::SetAdmissionMode { mode } => self.set_admission_mode(mode, identity),
+
+            Command::CreateRole { group } => self.create_role(group, identity),
+
+            Command::SetPermission {
+                group,
+                verb,
+                scope,
+                grant,
+            } => self.set_permission(group, &verb, scope, grant, identity),
+
+            Command::SetRoleMember {
+                group,
+                identity: who,
+                member,
+            } => self.change_membership(who, member, identity, group),
         }
+    }
+
+    /// Writes this network's name into app-layer policy — D32, spec 07 §1.7.
+    fn set_network_name(
+        &self,
+        name: String,
+        identity: &intranet_identity::PerNetworkIdentity,
+        state: &intranet_governance::GovernanceState,
+    ) -> Result<Outcome, ExecuteError> {
+        let mut policy = state.policy.clone();
+        let trimmed = name.trim().to_owned();
+        if trimmed.is_empty() {
+            // Removed rather than stored empty. Spec 07 §1.7: a network with no
+            // name declared *has* no name, and an empty string sitting in policy
+            // is a declaration that it is called nothing — a different claim,
+            // and one every joiner would replay forever.
+            policy.app_policy.remove(kols_core::keys::NETWORK_NAME);
+        } else {
+            policy.app_policy.insert(
+                kols_core::keys::NETWORK_NAME.to_owned(),
+                intranet_governance::PolicyValue::Text(trimmed.clone()),
+            );
+        }
+
+        self.append_policy(policy, identity)?;
+
+        let after = self.store.state()?;
+        let bound = kols_core::ChatPolicy::of(&after.policy)
+            .network_name()
+            .unwrap_or_default()
+            .to_owned();
+        if bound != trimmed {
+            return Err(ExecuteError::Rejected(
+                "the change was written but replay did not apply it".to_owned(),
+            ));
+        }
+        Ok(Outcome::NetworkNamed { name: trimmed })
+    }
+
+    /// Writes one chat setting into app-layer policy — spec 07 §4.3, §2.8.
+    ///
+    /// The lock is held across the read as well as the write, for the reason
+    /// [`Executor::set_permission`] holds it: `PolicyChange` carries the whole
+    /// record, so building the new one from state replayed before the lock would
+    /// let two concurrent holders each write a policy derived from what they
+    /// saw, and the second would silently revert the first's setting. The verify
+    /// below cannot catch that — it asks about the key this call changed, which
+    /// is the one that survived.
+    fn set_chat_setting(
+        &self,
+        setting: kols_core::ChatSetting,
+        value: i64,
+        identity: &intranet_identity::PerNetworkIdentity,
+    ) -> Result<Outcome, ExecuteError> {
+        let _lock = self.store.lock()?;
+        let state = self.store.state()?;
+
+        let key = setting.key();
+        // The default is the same thing as absence (Core §2.6.2), so writing it
+        // explicitly would freeze today's number into a network that would
+        // otherwise pick up a revised one. Removing the key is the honest way to
+        // say "whatever this application ships".
+        let mut policy = state.policy.clone();
+        let already = policy
+            .app_policy_int(key, setting.default_value());
+        if value == setting.default_value() {
+            policy.app_policy.remove(key);
+        } else {
+            policy
+                .app_policy
+                .insert(key.to_owned(), intranet_governance::PolicyValue::Int(value));
+        }
+
+        // A no-op entry is not free: every governance entry is replayed by every
+        // joiner forever. The same reasoning `set_permission` and `move_channel`
+        // apply.
+        if already == value && policy.app_policy == state.policy.app_policy {
+            return Ok(Outcome::ChatSettingSet { key, value });
+        }
+
+        self.write_policy(policy, identity)?;
+
+        let after = self.store.state()?;
+        if after.policy.app_policy_int(key, setting.default_value()) != value {
+            return Err(ExecuteError::Rejected(
+                "the change was written but replay did not apply it".to_owned(),
+            ));
+        }
+        Ok(Outcome::ChatSettingSet { key, value })
+    }
+
+    /// Chooses how joiners are admitted — Core §2.4.
+    fn set_admission_mode(
+        &self,
+        mode: intranet_governance::AdmissionMode,
+        identity: &intranet_identity::PerNetworkIdentity,
+    ) -> Result<Outcome, ExecuteError> {
+        let _lock = self.store.lock()?;
+        let state = self.store.state()?;
+        if state.policy.admission_mode == mode {
+            return Ok(Outcome::AdmissionModeSet { mode });
+        }
+
+        let mut policy = state.policy.clone();
+        policy.admission_mode = mode;
+        self.write_policy(policy, identity)?;
+
+        // Replay rather than trust, and here it is load-bearing rather than
+        // belt-and-braces: the protocol refuses an incoherent pairing on replay
+        // (Core §2.6), so a change the gate let through can still be dropped —
+        // and reporting success would tell somebody their network now admits
+        // automatically when it does not.
+        let after = self.store.state()?;
+        if after.policy.admission_mode != mode {
+            return Err(ExecuteError::Rejected(
+                "the change was written but replay did not apply it — this network's \
+                 governance model does not permit that admission mode"
+                    .to_owned(),
+            ));
+        }
+        Ok(Outcome::AdmissionModeSet { mode })
+    }
+
+    /// Creates a role holding nothing — `design/02` §1.
+    fn create_role(
+        &self,
+        group: GroupId,
+        identity: &intranet_identity::PerNetworkIdentity,
+    ) -> Result<Outcome, ExecuteError> {
+        self.append_group(
+            group.clone(),
+            intranet_governance::CapabilitySet::explicit([]),
+            identity,
+        )?;
+
+        let after = self.store.state()?;
+        if !after.groups.contains_key(&group) {
+            return Err(ExecuteError::Rejected(
+                "the entry was written but replay did not produce the role".to_owned(),
+            ));
+        }
+        Ok(Outcome::RoleCreated { group })
+    }
+
+    /// Grants or withdraws one verb at one scope — `design/05` §3's `SetPermission`.
+    ///
+    /// # Read, modify, write, and why the window is held shut
+    ///
+    /// `DefineGroup` carries a whole capability set, so changing one grant means
+    /// reading the current set and writing it back with one member added or
+    /// removed. Two managers doing that concurrently would each write a set
+    /// built from what they read, and the one that lands second silently
+    /// reverts the other's change — the log would not fork, and nothing would
+    /// report a lost grant.
+    ///
+    /// The store's append lock is what closes that window on this node, and the
+    /// verify-by-replay below is what catches the case it cannot: a manager on
+    /// another node writing between this read and this append. It cannot repair
+    /// that — nothing here can — but it refuses to report success for it.
+    fn set_permission(
+        &self,
+        group: GroupId,
+        verb: &str,
+        scope: kols_core::Scope,
+        grant: bool,
+        identity: &intranet_identity::PerNetworkIdentity,
+    ) -> Result<Outcome, ExecuteError> {
+        let capability = scope.capability(verb);
+
+        // **Taken before the set is read, not merely before it is written.** The
+        // state this was authorized against was replayed at the top of `submit`,
+        // and building the new set from *that* would make this a read-modify-write
+        // straddling the lock: two managers on this node would each write a set
+        // built from what they read, the second would land, and the first's grant
+        // would be gone with nothing reporting it. The verify below cannot catch
+        // that either — it asks about the capability this call changed, which is
+        // exactly the one that survived.
+        //
+        // So the read moves inside. Held across read and append, the pair is
+        // atomic on this node, and what remains is the genuinely distributed
+        // case: a manager on another node writing in the same window. Nothing
+        // here can repair that, and the log records both entries in an order
+        // every reader agrees on.
+        let _lock = self.store.lock()?;
+        let state = self.store.state()?;
+
+        let current = state
+            .groups
+            .get(&group)
+            .ok_or_else(|| ExecuteError::NotFound(format!("no role called {group:?} here")))?;
+
+        let mut set = match &current.capabilities {
+            intranet_governance::CapabilitySet::Explicit(held) => held.clone(),
+            // Refused at the gate already; refused again rather than silently
+            // replacing `All` with whatever this happens to enumerate.
+            intranet_governance::CapabilitySet::All => {
+                return Err(ExecuteError::Rejected(format!(
+                    "{group} holds every capability, so there is no set to edit"
+                )));
+            }
+        };
+
+        let changed = if grant {
+            set.insert(capability.clone())
+        } else {
+            set.remove(&capability)
+        };
+        // A no-op entry is not free: every governance entry is replayed by every
+        // joiner forever, so writing one that changes nothing spends everybody's
+        // replay to record that somebody clicked a checkbox that was already in
+        // that position. The same reasoning `move_channel` applies to a channel
+        // that did not move.
+        if !changed {
+            return Ok(Outcome::PermissionSet {
+                group,
+                capability: scope.name(verb),
+                granted: grant,
+            });
+        }
+
+        self.write_group(
+            group.clone(),
+            intranet_governance::CapabilitySet::Explicit(set),
+            identity,
+        )?;
+
+        // Replay rather than trust. An entry the log accepts structurally is
+        // still refused by replay if the author did not hold `define-group`, and
+        // — the case this is really for — Core §2.4's `everyone` ceiling is
+        // enforced by the protocol, so a governance-tier grant that slipped past
+        // the gate is dropped here rather than reported as applied.
+        let after = self.store.state()?;
+        let holds = after
+            .groups
+            .get(&group)
+            .is_some_and(|found| found.capabilities.grants(&capability));
+        if holds != grant {
+            return Err(ExecuteError::Rejected(
+                "the entry was written but replay did not apply it — the network refused \
+                 that grant"
+                    .to_owned(),
+            ));
+        }
+
+        Ok(Outcome::PermissionSet {
+            group,
+            capability: scope.name(verb),
+            granted: grant,
+        })
+    }
+
+    /// Appends a `DefineGroup` entry, taking the store's append lock.
+    fn append_group(
+        &self,
+        group: GroupId,
+        capabilities: intranet_governance::CapabilitySet,
+        identity: &intranet_identity::PerNetworkIdentity,
+    ) -> Result<(), ExecuteError> {
+        let _lock = self.store.lock()?;
+        self.write_group(group, capabilities, identity)
+    }
+
+    /// The append itself, for a caller already holding the lock.
+    ///
+    /// Split out because [`Executor::set_permission`] has to hold the lock
+    /// across its own read as well as its write, and taking it twice would
+    /// deadlock or — worse, depending on the lock — quietly not.
+    fn write_group(
+        &self,
+        group: GroupId,
+        capabilities: intranet_governance::CapabilitySet,
+        identity: &intranet_identity::PerNetworkIdentity,
+    ) -> Result<(), ExecuteError> {
+        let head = self
+            .store
+            .head()?
+            .ok_or_else(|| ExecuteError::Rejected("this network has no genesis".to_owned()))?;
+        let entry = LogEntry::create(
+            identity,
+            Some(head),
+            Timestamp::from_millis(now_millis()),
+            EntryBody::DefineGroup {
+                group,
+                capabilities,
+            },
+        );
+        self.store.append_entry(&entry)?;
+        Ok(())
+    }
+
+    /// Appends a `PolicyChange` entry, taking the store's append lock.
+    fn append_policy(
+        &self,
+        policy: intranet_governance::NetworkPolicy,
+        identity: &intranet_identity::PerNetworkIdentity,
+    ) -> Result<(), ExecuteError> {
+        let _lock = self.store.lock()?;
+        self.write_policy(policy, identity)
+    }
+
+    /// The append itself, for a caller already holding the lock.
+    ///
+    /// Split for the reason `write_group` is: a policy edit derived from what it
+    /// read has to hold the lock across both, and taking it twice would deadlock
+    /// or — depending on the lock — quietly not.
+    fn write_policy(
+        &self,
+        policy: intranet_governance::NetworkPolicy,
+        identity: &intranet_identity::PerNetworkIdentity,
+    ) -> Result<(), ExecuteError> {
+        let head = self
+            .store
+            .head()?
+            .ok_or_else(|| ExecuteError::Rejected("this network has no genesis".to_owned()))?;
+        let entry = LogEntry::create(
+            identity,
+            Some(head),
+            Timestamp::from_millis(now_millis()),
+            EntryBody::PolicyChange { policy },
+        );
+        self.store.append_entry(&entry)?;
+        Ok(())
     }
 
     fn open_channel(
@@ -604,13 +949,24 @@ impl Executor {
         Ok(())
     }
 
+    /// Adds or removes an identity from one group.
+    ///
+    /// `group` rather than always `everyone`, since a role is a group like any
+    /// other (`design/02` §1) and assigning one is the same act as admitting
+    /// somebody to the network — the difference is entirely which group and
+    /// therefore which `manage-membership` the gate asked for.
     fn change_membership(
         &self,
         target: PerNetworkIdentityId,
         admit: bool,
         identity: &intranet_identity::PerNetworkIdentity,
+        group: GroupId,
     ) -> Result<Outcome, ExecuteError> {
-        if !admit && target == identity.id() {
+        // Only for network membership. Taking yourself out of a *role* is
+        // ordinary — stepping down from Moderators is a thing people do, and
+        // `design/02` §5 says plainly there is no hierarchy protecting anyone —
+        // whereas leaving `everyone` is leaving the network, which strands it.
+        if !admit && target == identity.id() && group.is_everyone() {
             return Err(ExecuteError::Rejected(
                 "that is you. Removing yourself would leave the network unmanaged \
                  by the only node that can rotate its key"
@@ -628,7 +984,7 @@ impl Executor {
             Some(head),
             Timestamp::from_millis(now_millis()),
             EntryBody::MembershipChange {
-                group: GroupId::everyone(),
+                group: group.clone(),
                 identity: target,
                 action: if admit {
                     MembershipAction::Add { via_invite: None }
@@ -647,8 +1003,17 @@ impl Executor {
         // still refused by replay if the actor did not hold the capability, and
         // reporting success there would tell somebody they had admitted a person
         // who is not a member.
+        //
+        // Asked of the *group* rather than of network membership, because those
+        // are different questions once roles exist: somebody removed from
+        // Moderators is still a member, so `is_member` would report the removal
+        // as having failed when it landed exactly as asked.
         let after = self.store.state()?;
-        if after.is_member(&target) != admit {
+        let in_group = after
+            .groups
+            .get(&group)
+            .is_some_and(|found| found.contains(&target));
+        if in_group != admit {
             return Err(ExecuteError::Rejected(
                 "the entry was written but replay did not apply it".to_owned(),
             ));
@@ -657,6 +1022,7 @@ impl Executor {
         Ok(Outcome::MembershipChanged {
             identity: target,
             admitted: admit,
+            group,
         })
     }
 
@@ -683,7 +1049,8 @@ impl Executor {
         match found {
             Some(record) if &record.author == actor => Ok(()),
             Some(_) => Err(ExecuteError::Rejected(
-                "that message is somebody else's. You can only revise or withdraw your own —                  a moderator hides another member's with a redaction instead"
+                "that message is somebody else's. You can only revise or withdraw your own — \
+                 a moderator hides another member's with a redaction instead"
                     .to_owned(),
             )),
             None => Err(ExecuteError::NotFound(
@@ -756,7 +1123,8 @@ impl Executor {
 
         if recent as i64 >= ceiling {
             return Err(ExecuteError::Rejected(format!(
-                "you're going too fast — this network allows {ceiling} of these a minute,                  and you have written {recent} in the last one"
+                "you're going too fast — this network allows {ceiling} of these a minute, \
+                 and you have written {recent} in the last one"
             )));
         }
         Ok(())

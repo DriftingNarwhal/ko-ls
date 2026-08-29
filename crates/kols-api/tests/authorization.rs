@@ -440,6 +440,395 @@ fn a_conversation_network_has_no_channels_to_create() {
     );
 }
 
+// ------------------------------------------------------------- permissions
+
+#[test]
+fn granting_needs_define_group() {
+    // `design/02` §1's asymmetry, at the gate: deciding what a role *can do* is
+    // a higher bar than deciding who holds it, and holding every chat verb in
+    // the vocabulary buys neither.
+    let member = person(2);
+    let state = network_granting(&member, [extension("chat:manage-channel:*")]);
+    assert!(matches!(
+        check(
+            &state,
+            &member,
+            Command::SetPermission {
+                group: GroupId::new("grantees"),
+                verb: "post".to_owned(),
+                scope: kols_core::Scope::Network,
+                grant: true,
+            },
+        ),
+        Err(Refusal::NotPermitted { .. })
+    ));
+}
+
+#[test]
+fn a_define_group_holder_may_grant() {
+    let member = person(2);
+    let state = network_granting(&member, [Capability::DefineGroup]);
+    assert!(
+        check(
+            &state,
+            &member,
+            Command::SetPermission {
+                group: GroupId::new("grantees"),
+                verb: "post".to_owned(),
+                scope: kols_core::Scope::Network,
+                grant: true,
+            },
+        )
+        .is_ok()
+    );
+}
+
+#[test]
+fn everyone_may_never_be_granted_a_governance_tier_verb() {
+    // Core §2.4's hardcoded ceiling, refused before an entry every node would
+    // reject is signed. The protocol enforces it too — this is the client
+    // declining to spend a governance entry finding that out.
+    let member = person(2);
+    let state = network_granting(&member, [Capability::DefineGroup]);
+    for verb in ["manage-channel", "moderate"] {
+        assert!(
+            matches!(
+                check(
+                    &state,
+                    &member,
+                    Command::SetPermission {
+                        group: GroupId::everyone(),
+                        verb: verb.to_owned(),
+                        scope: kols_core::Scope::Network,
+                        grant: true,
+                    },
+                ),
+                Err(Refusal::EveryoneCeiling { .. })
+            ),
+            "chat:{verb} is governance-tier and must not reach everyone"
+        );
+    }
+}
+
+#[test]
+fn everyone_may_be_granted_an_ordinary_verb() {
+    // The other half, and the one that would be lost by refusing on the group
+    // rather than on the tier: `everyone` holding `chat:post` is the ordinary
+    // configuration, not an exception to a rule.
+    let member = person(2);
+    let state = network_granting(&member, [Capability::DefineGroup]);
+    assert!(
+        check(
+            &state,
+            &member,
+            Command::SetPermission {
+                group: GroupId::everyone(),
+                verb: "post".to_owned(),
+                scope: kols_core::Scope::Network,
+                grant: true,
+            },
+        )
+        .is_ok()
+    );
+}
+
+#[test]
+fn a_governance_tier_verb_may_be_taken_off_everyone() {
+    // Withdrawal is not refused where granting is. Refusing both would make the
+    // invariant unfixable on a network that somehow has such a grant — the
+    // repair would be the one action the client would not perform.
+    let member = person(2);
+    let state = network_granting(&member, [Capability::DefineGroup]);
+    assert!(
+        check(
+            &state,
+            &member,
+            Command::SetPermission {
+                group: GroupId::everyone(),
+                verb: "moderate".to_owned(),
+                scope: kols_core::Scope::Network,
+                grant: false,
+            },
+        )
+        .is_ok()
+    );
+}
+
+#[test]
+fn a_verb_outside_the_vocabulary_is_refused() {
+    // An unregistered extension name is refused at replay (Core §2.2.1), so a
+    // typo would otherwise produce a grant that resolves for nobody and reports
+    // nothing — an absent grant and a misspelled one are the same observation.
+    let member = person(2);
+    let state = network_granting(&member, [Capability::DefineGroup]);
+    assert!(matches!(
+        check(
+            &state,
+            &member,
+            Command::SetPermission {
+                group: GroupId::new("grantees"),
+                verb: "pots".to_owned(),
+                scope: kols_core::Scope::Network,
+                grant: true,
+            },
+        ),
+        Err(Refusal::UnknownVerb(_))
+    ));
+}
+
+#[test]
+fn an_unrestricted_role_is_not_edited_a_verb_at_a_time() {
+    // `Founders` holds `CapabilitySet::All`, which includes capabilities defined
+    // later. There is no explicit set to take one out of, and replacing `All`
+    // with whatever a checkbox enumerated would silently drop the rest.
+    let member = person(2);
+    let state = network_granting(&member, [Capability::DefineGroup]);
+    assert!(matches!(
+        check(
+            &state,
+            &member,
+            Command::SetPermission {
+                group: GroupId::founders(),
+                verb: "post".to_owned(),
+                scope: kols_core::Scope::Network,
+                grant: false,
+            },
+        ),
+        Err(Refusal::Unrestricted { .. })
+    ));
+}
+
+#[test]
+fn creating_a_role_that_exists_is_refused() {
+    // `DefineGroup` both creates and redefines, so without this a "create" would
+    // replace an existing role's capability set with an empty one — the
+    // destructive reading of a button that says it adds something.
+    let member = person(2);
+    let state = network_granting(&member, [Capability::DefineGroup]);
+    assert!(matches!(
+        check(
+            &state,
+            &member,
+            Command::CreateRole {
+                group: GroupId::new("grantees"),
+            },
+        ),
+        Err(Refusal::RoleExists(_))
+    ));
+}
+
+#[test]
+fn assigning_a_role_needs_manage_membership_for_that_role() {
+    // The dynamically-tiered capability (Core §2.4). `define-group` is the
+    // higher bar and deliberately does not imply this one: what a role can do
+    // and who holds it are separate questions with separate answers.
+    let member = person(2);
+    let state = network_granting(&member, [Capability::DefineGroup]);
+    assert!(matches!(
+        check(
+            &state,
+            &member,
+            Command::SetRoleMember {
+                group: GroupId::new("grantees"),
+                identity: person(3).id(),
+                member: true,
+            },
+        ),
+        Err(Refusal::NotPermitted { .. })
+    ));
+
+    let holder = person(4);
+    let state = network_granting(
+        &holder,
+        [Capability::manage_membership(GroupId::new("grantees"))],
+    );
+    assert!(
+        check(
+            &state,
+            &holder,
+            Command::SetRoleMember {
+                group: GroupId::new("grantees"),
+                identity: person(3).id(),
+                member: true,
+            },
+        )
+        .is_ok()
+    );
+}
+
+#[test]
+fn a_grant_is_named_the_way_resolution_reads_it() {
+    // The property the whole feature rests on, and the one nothing else would
+    // catch: a grant that spelled its scope differently from the resolver would
+    // resolve for nobody, and an absent grant looks exactly like a misspelled
+    // one. `Scope::capability` is the single construction both sides use, so
+    // this pins that they agree rather than that the string looks right.
+    let member = person(2);
+    for (scope, expected) in [
+        (kols_core::Scope::Network, "chat:post:*".to_owned()),
+        (
+            kols_core::Scope::Category(category()),
+            format!("chat:post:cat:{}", intranet_crypto::to_hex(category().as_bytes())),
+        ),
+        (
+            kols_core::Scope::Channel(channel(2)),
+            format!("chat:post:{}", intranet_crypto::to_hex(channel(2).as_bytes())),
+        ),
+    ] {
+        assert_eq!(scope.name("post"), expected);
+
+        // And the resolver finds it, granted under exactly that name.
+        let state = network_granting(&member, [scope.capability("post"), poster()[1].clone()]);
+        assert!(
+            kols_core::holds(
+                &state,
+                &member.id(),
+                "post",
+                &placement(channel(2), Some(category())),
+            ),
+            "a grant at {scope:?} must resolve for the channel it covers"
+        );
+    }
+}
+
+#[test]
+fn a_network_name_is_bounded() {
+    let member = person(2);
+    let state = network_granting(&member, [Capability::DefinePolicy]);
+    assert!(matches!(
+        check(
+            &state,
+            &member,
+            Command::SetNetworkName {
+                name: "n".repeat(kols_core::MAX_NETWORK_NAME_BYTES + 1),
+            },
+        ),
+        Err(Refusal::TooLarge { .. })
+    ));
+    // Empty is a real state rather than a refusal: spec 07 §1.7 says a network
+    // with no name declared has no name, and clients must not invent one.
+    assert!(
+        check(
+            &state,
+            &member,
+            Command::SetNetworkName {
+                name: String::new(),
+            },
+        )
+        .is_ok()
+    );
+}
+
+#[test]
+fn changing_a_setting_needs_define_policy() {
+    let member = person(2);
+    let state = network_granting(&member, [extension("chat:manage-channel:*")]);
+    assert!(matches!(
+        check(
+            &state,
+            &member,
+            Command::SetChatSetting {
+                setting: kols_core::ChatSetting::MessageRate,
+                value: 10,
+            },
+        ),
+        Err(Refusal::NotPermitted { .. })
+    ));
+}
+
+#[test]
+fn a_negative_setting_is_refused_and_zero_is_not() {
+    // Negative is refused because storing it does nothing visible: every reader
+    // falls back to the default on a value it cannot use, so the change would be
+    // replayed forever and read as the number it was meant to replace.
+    //
+    // Zero is allowed for every one of these, and means something different for
+    // each — no ceiling, forever, or a real bound of zero. Refusing it would
+    // take away the only way a network can say "no attachments".
+    let member = person(2);
+    let state = network_granting(&member, [Capability::DefinePolicy]);
+
+    for setting in kols_core::ChatSetting::ALL {
+        assert!(
+            matches!(
+                check(
+                    &state,
+                    &member,
+                    Command::SetChatSetting { setting, value: -1 },
+                ),
+                Err(Refusal::Negative { .. })
+            ),
+            "{setting:?} must refuse a negative"
+        );
+        assert!(
+            check(
+                &state,
+                &member,
+                Command::SetChatSetting { setting, value: 0 },
+            )
+            .is_ok(),
+            "{setting:?} must accept zero"
+        );
+    }
+}
+
+#[test]
+fn every_setting_has_a_distinct_namespaced_key() {
+    // The property `ChatSetting` exists for. An app-policy key is *not* refused
+    // when unrecognised (Core §2.6.2), so a duplicated or mistyped key would be
+    // written, replayed and silently ignored — with the setting it was meant to
+    // change still reading as its default. Nothing else would catch it.
+    let mut keys = std::collections::BTreeSet::new();
+    for setting in kols_core::ChatSetting::ALL {
+        assert!(
+            keys.insert(setting.key()),
+            "{setting:?} shares a key with another setting"
+        );
+        assert!(
+            setting.key().starts_with("chat:"),
+            "{setting:?} must be namespaced, or two applications collide"
+        );
+    }
+    assert_eq!(keys.len(), kols_core::ChatSetting::ALL.len());
+}
+
+#[test]
+fn auto_admit_is_refused_where_a_vote_decides_admission() {
+    // Core §2.6's one incompatible pairing, refused where policy is set rather
+    // than where a joiner is turned away. The protocol refuses it on replay too;
+    // this is the client declining to spend a governance entry finding out.
+    let member = person(2);
+    let mut state = network_granting(&member, [Capability::DefinePolicy]);
+    state.policy.governance_model = intranet_governance::GovernanceModel::MemberVote {
+        electorate: GroupId::everyone(),
+        quorum: 2,
+        window_millis: 72 * 3_600_000,
+    };
+
+    assert!(matches!(
+        check(
+            &state,
+            &member,
+            Command::SetAdmissionMode {
+                mode: intranet_governance::AdmissionMode::AutoAdmit,
+            },
+        ),
+        Err(Refusal::IncoherentAdmission)
+    ));
+    // Explicit intake is the coherent pairing and stays available — refusing
+    // both would leave a member-vote network unable to state its own mode.
+    assert!(
+        check(
+            &state,
+            &member,
+            Command::SetAdmissionMode {
+                mode: intranet_governance::AdmissionMode::ExplicitIntake,
+            },
+        )
+        .is_ok()
+    );
+}
+
 // ------------------------------------------------------------------ consent
 
 fn every_command() -> Vec<Command> {
@@ -484,13 +873,113 @@ fn every_command() -> Vec<Command> {
         Command::SetName {
             name: "ada".to_owned(),
         },
+        Command::CreateCategory {
+            name: "staff".to_owned(),
+            position: 0,
+        },
+        Command::UpdateCategory {
+            category: CategoryId::from_bytes([4u8; 32]),
+            change: kols_core::CategoryChange::Delete,
+        },
+        Command::CreateInvite {
+            uses: 1,
+            valid_for_hours: 24,
+        },
+        Command::SetBootstrapRelays {
+            relays: vec!["/ip4/198.51.100.7/tcp/4001".to_owned()],
+        },
         Command::AdmitMember {
             identity: person(3).id(),
         },
         Command::RevokeMember {
             identity: person(3).id(),
         },
+        Command::SetNetworkName {
+            name: "the workshop".to_owned(),
+        },
+        Command::SetChatSetting {
+            setting: kols_core::ChatSetting::MessageRate,
+            value: 20,
+        },
+        Command::SetAdmissionMode {
+            mode: intranet_governance::AdmissionMode::AutoAdmit,
+        },
+        Command::CreateRole {
+            group: GroupId::new("Moderators"),
+        },
+        Command::SetPermission {
+            group: GroupId::new("Moderators"),
+            verb: "moderate".to_owned(),
+            scope: kols_core::Scope::Network,
+            grant: true,
+        },
+        Command::SetRoleMember {
+            group: GroupId::new("Moderators"),
+            identity: person(3).id(),
+            member: true,
+        },
     ]
+}
+
+/// Fails to compile when a variant is added to `Command`.
+///
+/// `every_command` above is hand-written and can therefore drift from the enum
+/// it claims to sample — which it had, silently, by four commands, until this
+/// was written. That is the same drift `design/05` §3 records against its own
+/// boundary list, and it has the same fix: check it mechanically, which is
+/// cheap, rather than by intention, which is not reliable.
+///
+/// The match is exhaustive and carries no wildcard arm, so a new command stops
+/// this suite compiling until somebody has read this. **If you added an arm
+/// here, add a sample to `every_command`** — the consent classification is only
+/// tested for the commands that list contains.
+fn _every_variant_is_sampled(command: &Command) {
+    match command {
+        Command::OpenChannel { .. }
+        | Command::SendMessage { .. }
+        | Command::EditMessage { .. }
+        | Command::DeleteMessage { .. }
+        | Command::React { .. }
+        | Command::Pin { .. }
+        | Command::CreateChannel { .. }
+        | Command::UpdateChannel { .. }
+        | Command::CreateCategory { .. }
+        | Command::UpdateCategory { .. }
+        | Command::SetName { .. }
+        | Command::CreateInvite { .. }
+        | Command::SetBootstrapRelays { .. }
+        | Command::AdmitMember { .. }
+        | Command::RevokeMember { .. }
+        | Command::SetNetworkName { .. }
+        | Command::SetChatSetting { .. }
+        | Command::SetAdmissionMode { .. }
+        | Command::CreateRole { .. }
+        | Command::SetPermission { .. }
+        | Command::SetRoleMember { .. } => (),
+    }
+}
+
+#[test]
+fn every_command_has_a_sample() {
+    // The other half of `_every_variant_is_sampled`: that one makes adding a
+    // variant impossible to miss, and this one makes leaving it out of the list
+    // impossible to miss. Neither alone is enough — the first compiles happily
+    // with the sample list untouched.
+    let mut seen: std::collections::BTreeSet<&str> = std::collections::BTreeSet::new();
+    for command in every_command() {
+        assert!(
+            seen.insert(command.name()),
+            "{} is sampled twice, which hides whichever one drifts",
+            command.name()
+        );
+    }
+    assert_eq!(
+        seen.len(),
+        21,
+        "every_command samples {} of Command's variants — update both this count \
+         and the list when the boundary grows",
+        seen.len()
+    );
 }
 
 #[test]

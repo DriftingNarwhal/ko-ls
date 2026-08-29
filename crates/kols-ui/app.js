@@ -38,6 +38,11 @@ const state = {
   // What the open channel looked like when it was last drawn, so a poll that
   // finds nothing new does no DOM work.
   channelSignature: null,
+  // Which settings panel is showing, and which role is expanded in it. Both are
+  // local view state that reaches nobody: `design/09` §4.2's line runs between
+  // what a *change* costs, and looking at a panel costs nothing.
+  settingsTab: "network",
+  role: null,
 };
 
 /// How often to re-read the open channel.
@@ -711,24 +716,77 @@ function popMenu(event, entries) {
   }, 0);
 }
 
+/// Turns a sidebar row into a text field, in place.
+///
+/// Renaming is data entry rather than authorisation, which is why it is allowed
+/// to live in the document at all: `design/09` §6.5 keeps anything that asks a
+/// member to *authorise* something in native chrome, outside what a theme can
+/// reach, and the destructive confirmations below still do. Editing the name you
+/// are about to sign is not that, and a modal for it was worse than the thing it
+/// was protecting.
+///
+/// Committed on Enter or on blur, abandoned on Escape. Blur commits rather than
+/// cancels because the alternative loses typing to a stray click, and a rename
+/// is recoverable by renaming again.
+function renameInPlace(node, current, commit) {
+  const input = document.createElement("input");
+  input.type = "text";
+  input.className = "rename";
+  input.value = current;
+  input.setAttribute("aria-label", "new name");
+
+  let done = false;
+  const finish = async (save) => {
+    if (done) return;
+    done = true;
+    const name = input.value.trim();
+    input.replaceWith(node);
+    if (!save || !name || name === current) return;
+    await act(async () => {
+      await commit(name);
+      await refresh();
+    });
+  };
+
+  input.addEventListener("keydown", (event) => {
+    if (event.key === "Enter") {
+      event.preventDefault();
+      void finish(true);
+    }
+    if (event.key === "Escape") {
+      event.preventDefault();
+      void finish(false);
+    }
+  });
+  input.addEventListener("blur", () => void finish(true));
+
+  node.replaceWith(input);
+  input.focus();
+  input.select();
+}
+
 function channelMenu(event, channel, category) {
   const folders = state.sidebar.filter((row) => row.kind === "category");
+  const row = event.currentTarget;
   const entries = [
     [
       "rename",
       async () => {
-        const name = prompt("channel name", channel.name);
-        if (!name) return;
-        await act(async () => {
-          await invoke("rename_channel", { channel: channel.id, name });
-          await refresh();
-        });
+        const label = row.querySelector(".channel-name") ?? row;
+        renameInPlace(label, channel.name, (name) =>
+          invoke("rename_channel", { channel: channel.id, name }),
+        );
       },
     ],
     [
       "set topic",
       async () => {
-        const topic = prompt("channel topic", channel.topic ?? "");
+        const topic = await askFor(`Topic for #${channel.name}`, {
+          value: channel.topic ?? "",
+          placeholder: "what this channel is for",
+        });
+        // Cancelling is not clearing: null is the member deciding not to, and
+        // an empty topic is a topic somebody chose to remove.
         if (topic === null) return;
         await act(async () => {
           await invoke("set_channel_topic", { channel: channel.id, topic });
@@ -818,18 +876,17 @@ async function nudgeFolder(row, direction) {
 }
 
 function folderMenu(event, row) {
+  const head = event.currentTarget;
   popMenu(event, [
     ["move up", async () => nudgeFolder(row, -1)],
     ["move down", async () => nudgeFolder(row, 1)],
     [
       "rename",
       async () => {
-        const name = prompt("folder name", row.name);
-        if (!name) return;
-        await act(async () => {
-          await invoke("rename_category", { category: row.id, name });
-          await refresh();
-        });
+        const label = head.querySelector(".folder-name") ?? head;
+        renameInPlace(label, row.name ?? "", (name) =>
+          invoke("rename_category", { category: row.id, name }),
+        );
       },
     ],
     [
@@ -994,12 +1051,12 @@ function actions(channel, message) {
   };
 
   if (message.mine && !message.withdrawn) {
-    button("edit", "revise this", () => {
-      const body = prompt("revise this message", message.body);
+    button("edit", "revise this", async () => {
+      const body = await askFor("Revise this message", { value: message.body });
       // Distinguished deliberately: cancelling is not the same as clearing, and
       // an empty edit is refused by the gate rather than silently dropped here.
-      if (body === null) return Promise.resolve();
-      return invoke("edit_message", { channel, message: message.id, body });
+      if (body === null) return;
+      await invoke("edit_message", { channel, message: message.id, body });
     });
     button("withdraw", "hidden, not unsent — everybody who has it keeps it", () =>
       confirm("Withdraw this message?\n\nIt is hidden, not unsent: anybody who already has it keeps the bytes.")
@@ -1428,8 +1485,8 @@ el("reorg-dismiss").addEventListener("click", () => {
 });
 
 el("new-folder").addEventListener("click", async () => {
-  const name = prompt("folder name");
-  if (!name) return;
+  const name = await askFor("Name the new folder", { placeholder: "staff" });
+  if (!name?.trim()) return;
   // Placed at the end: the last existing position plus a gap, so the first drag
   // that reorders anything has room to split without renumbering.
   const last = state.sidebar
@@ -1442,8 +1499,8 @@ el("new-folder").addEventListener("click", async () => {
 });
 
 el("new-channel").addEventListener("click", async () => {
-  const name = prompt("channel name");
-  if (!name) return;
+  const name = await askFor("Name the new channel", { placeholder: "general" });
+  if (!name?.trim()) return;
   try {
     await invoke("create_channel", { name, topic: "" });
     await refresh();
@@ -1503,11 +1560,239 @@ el("joiner").addEventListener("submit", async (event) => {
 
 el("switcher").addEventListener("click", drawPicker);
 
+/// Shows one settings panel and marks its tab.
+///
+/// The sections are grouped by what a click costs rather than by topic
+/// (`design/09` §4.2): a font is local and undoable, a network's name is a
+/// governance entry every member replays and nobody can unwrite. Which side of
+/// that line a panel sits on is the nav's job to say, so switching tabs never
+/// changes the grouping — only which panel is open.
+function showSettings(tab) {
+  state.settingsTab = tab;
+  for (const panel of document.querySelectorAll(".settings-panel")) {
+    panel.hidden = panel.dataset.panel !== tab;
+  }
+  for (const button of document.querySelectorAll(".settings-tab")) {
+    button.classList.toggle("current", button.dataset.tab === tab);
+  }
+}
+
+/// Fills whichever panel is open with what it needs.
+///
+/// Per panel rather than all at once: roles are a governance replay and the
+/// relay panel asks the node for its standing, and neither is worth doing for
+/// a tab nobody is looking at.
+async function drawSettings() {
+  const me = state.me;
+  if (!me) return;
+
+  el("identity-name").value = me.name ?? "";
+  el("network-name-input").value = me.network_name ?? "";
+  // Gated on the capability, like every other control here. Hiding is
+  // presentation only — the command is re-checked on receipt regardless.
+  el("network-name-form").hidden = !me.may_set_relays;
+  el("new-role").hidden = !me.may_define_group;
+
+  if (state.settingsTab === "network") {
+    await drawRelays();
+    drawAdmission(me);
+    await drawNetworkSettings();
+  }
+  if (state.settingsTab === "permissions") await drawRoles();
+}
+
+// ── what the network runs on ───────────────────────────────────────────
+
+/// Which admission mode is in force, and whether it may be changed.
+///
+/// Auto-admit is *disabled rather than absent* on a member-vote network, with
+/// the reason beside it. Hiding it would leave somebody looking for a setting
+/// the client had silently decided not to offer; saying why is what turns Core
+/// §2.6's incompatible pairing into something a person can act on.
+function drawAdmission(me) {
+  const box = el("admission");
+  const note = el("admission-note");
+  for (const input of box.querySelectorAll("input")) {
+    input.checked = input.value === me.admission_mode;
+    // The command is re-checked on receipt regardless — `design/09` §5. This
+    // decides what is offered, never what is allowed.
+    input.disabled = !me.may_set_relays || (input.value === "auto" && me.member_vote);
+  }
+  note.hidden = !me.member_vote;
+  note.textContent = me.member_vote
+    ? "This network decides admission by member vote, so it cannot also admit automatically — a quorum has to be able to decide something."
+    : "";
+}
+
+/// Every chat setting, split into the ones that refuse and the ones that do not.
+async function drawNetworkSettings() {
+  let settings;
+  try {
+    settings = await invoke("settings");
+  } catch (err) {
+    el("setting-error").hidden = false;
+    el("setting-error").textContent = String(err);
+    return;
+  }
+  const may = Boolean(state.me?.may_set_relays);
+  fillSettings(el("limit-list"), settings.filter((s) => !s.retention), may);
+  fillSettings(el("retention-list"), settings.filter((s) => s.retention), may);
+}
+
+function fillSettings(list, settings, may) {
+  list.replaceChildren();
+  for (const setting of settings) {
+    const item = document.createElement("li");
+    item.className = "setting";
+
+    const head = document.createElement("div");
+    head.className = "setting-head";
+
+    const label = document.createElement("span");
+    label.className = "setting-label";
+    label.textContent = setting.label;
+
+    const value = document.createElement("span");
+    value.className = "setting-value";
+    value.textContent = renderSetting(setting);
+    head.append(label, value);
+
+    if (may) {
+      const edit = document.createElement("button");
+      edit.className = "perm-add";
+      edit.textContent = "change";
+      edit.addEventListener("click", () => changeSetting(setting));
+      head.append(edit);
+    }
+    item.append(head);
+
+    const why = document.createElement("p");
+    why.className = "dim small";
+    why.textContent = setting.summary;
+    item.append(why);
+
+    // A network riding the default picks up a revised one; a network that wrote
+    // the same number does not. Saying which is cheap and the two are otherwise
+    // indistinguishable on screen.
+    const source = document.createElement("p");
+    source.className = "dim small";
+    source.textContent = setting.explicit
+      ? `set by this network — the shipped default is ${plain(setting, setting.default)}`
+      : "the shipped default, never set here";
+    item.append(source);
+
+    list.append(item);
+  }
+}
+
+/// A setting's current value, said the way it actually behaves.
+function renderSetting(setting) {
+  if (setting.value === 0) {
+    // Zero does not mean one thing across these, and the difference is the part
+    // worth spelling out rather than rendering as a bare `0`.
+    if (setting.zero_means.startsWith("no limit")) return "no limit";
+    if (setting.zero_means.startsWith("kept forever")) return "forever";
+  }
+  return plain(setting, setting.value);
+}
+
+/// A number with its unit, sizes folded to KiB or MiB.
+function plain(setting, value) {
+  switch (setting.unit) {
+    case "bytes":
+      return bytes(value);
+    case "per-minute":
+      return `${value} a minute`;
+    case "millis":
+      return value % 1000 === 0 ? `${value / 1000}s` : `${value}ms`;
+    case "seconds":
+      return value % 3600 === 0 && value !== 0 ? `${value / 3600}h` : `${value}s`;
+    case "days":
+      return value === 0 ? "forever" : `${value} days`;
+    default:
+      return String(value);
+  }
+}
+
+function bytes(value) {
+  if (value >= 1024 * 1024 && value % (1024 * 1024) === 0)
+    return `${value / (1024 * 1024)} MiB`;
+  if (value >= 1024 && value % 1024 === 0) return `${value / 1024} KiB`;
+  return `${value} bytes`;
+}
+
+/// Changes one setting, asking for a plain number in the unit it is stored in.
+async function changeSetting(setting) {
+  const typed = await askFor(`${setting.label} — ${unitWord(setting)}`, {
+    value: String(setting.value),
+    placeholder: String(setting.default),
+  });
+  if (typed === null) return;
+
+  const value = Number(typed.trim());
+  if (!Number.isInteger(value)) {
+    await settingsAct("setting-error", () => {
+      throw new Error("that needs to be a whole number");
+    });
+    return;
+  }
+  // Said before it is written rather than discovered afterwards. Zero is a
+  // legitimate value for every one of these and means something different for
+  // each, so the confirmation names the actual consequence — native, because
+  // this asks whether to sign rather than what to write (`design/09` §5.1).
+  if (
+    value === 0 &&
+    !confirm(`Set ${setting.label} to zero?\n\nThat means ${setting.zero_means}.`)
+  )
+    return;
+
+  await settingsAct("setting-error", async () => {
+    await invoke("set_chat_setting", { setting: setting.id, value });
+    await drawNetworkSettings();
+  });
+}
+
+/// What unit a setting's box wants, so nobody types "8 KiB" into a byte count.
+function unitWord(setting) {
+  switch (setting.unit) {
+    case "bytes":
+      return "in bytes";
+    case "per-minute":
+      return "per minute";
+    case "millis":
+      return "in milliseconds";
+    case "seconds":
+      return "in seconds";
+    case "days":
+      return "in days, or 0 for forever";
+    default:
+      return "a whole number";
+  }
+}
+
+for (const input of document.querySelectorAll('#admission input')) {
+  input.addEventListener("change", async () => {
+    await settingsAct("admission-error", async () => {
+      await invoke("set_admission_mode", { mode: input.value });
+      drawMe(await invoke("me"));
+      drawAdmission(state.me);
+    });
+  });
+}
+
+for (const button of document.querySelectorAll(".settings-tab")) {
+  button.addEventListener("click", async () => {
+    showSettings(button.dataset.tab);
+    await drawSettings();
+  });
+}
+
 el("open-settings").addEventListener("click", async () => {
   el("settings").hidden = false;
+  showSettings(state.settingsTab ?? "network");
   // Asked for on open rather than kept warm: the panel is closed almost always,
   // and a relay's standing is only interesting when somebody is looking at it.
-  await drawRelays();
+  await drawSettings();
 });
 
 el("close-settings").addEventListener("click", () => {
@@ -1519,6 +1804,500 @@ el("close-settings").addEventListener("click", () => {
 document.addEventListener("keydown", (event) => {
   if (event.key === "Escape" && !el("settings").hidden) el("settings").hidden = true;
 });
+
+el("identity-form").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const name = el("identity-name").value.trim();
+  if (!name) return;
+  await settingsAct("identity-error", async () => {
+    await invoke("set_name", { name });
+    drawMe(await invoke("me"));
+    await drawSettings();
+  });
+});
+
+el("network-name-form").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  await settingsAct("network-name-error", async () => {
+    await invoke("set_network_name", { name: el("network-name-input").value.trim() });
+    drawMe(await invoke("me"));
+    await drawSettings();
+  });
+});
+
+// ── permissions ────────────────────────────────────────────────────────
+//
+// Role-first, because permissions are held by roles and never by people
+// (`design/02` §1): there is no per-user grant anywhere in this protocol, so a
+// person-first surface would be a lie about what the log can express. Giving one
+// person access means a role containing only them, which `giveAccessTo` does
+// rather than making somebody discover it.
+
+/// Every role, with the one being looked at expanded beside the list.
+async function drawRoles() {
+  let roles;
+  try {
+    roles = await invoke("roles");
+  } catch (err) {
+    el("perms-error").hidden = false;
+    el("perms-error").textContent = String(err);
+    return;
+  }
+
+  const list = el("role-list");
+  list.replaceChildren();
+  for (const role of roles) {
+    const item = document.createElement("li");
+    const button = document.createElement("button");
+    button.className = role.id === state.role ? "current" : "";
+    button.addEventListener("click", async () => {
+      state.role = role.id;
+      await drawRoles();
+    });
+
+    const name = document.createElement("span");
+    name.className = "role-name";
+    name.textContent = role.id;
+    button.append(name);
+
+    // What a role actually confers, at a glance. A count of members alone would
+    // make an empty powerful role and an empty powerless one look identical.
+    const note = document.createElement("span");
+    note.className = "role-note";
+    note.textContent = role.unrestricted
+      ? "everything"
+      : `${role.grants.length + role.protocol_grants.length} · ${role.members.length} in`;
+    button.append(note);
+
+    item.append(button);
+    list.append(item);
+  }
+
+  const chosen = roles.find((role) => role.id === state.role);
+  drawRoleDetail(chosen ?? null);
+}
+
+/// One role: who is in it, and what it can do.
+function drawRoleDetail(role) {
+  const box = el("perms-detail");
+  box.replaceChildren();
+  if (!role) {
+    const hint = document.createElement("p");
+    hint.className = "dim";
+    hint.textContent = "Choose a role.";
+    box.append(hint);
+    return;
+  }
+
+  const title = document.createElement("h4");
+  title.textContent = role.id;
+  box.append(title);
+
+  if (role.implicit) {
+    const note = document.createElement("p");
+    note.className = "dim small";
+    note.textContent = role.everyone
+      ? "Every member is in this one on arrival. It may never hold a governance-tier permission — otherwise being let in would itself confer it."
+      : "Created with the network, holding every capability there is.";
+    box.append(note);
+  }
+
+  box.append(memberSection(role));
+  box.append(grantSection(role));
+}
+
+/// Who holds this role.
+function memberSection(role) {
+  const section = document.createElement("section");
+  section.className = "perm-block";
+
+  // Its own header rule rather than the sidebar's `channels-head`: that one
+  // carries the rail's spacing and uppercase treatment, and borrowing it here
+  // dragged a column of sidebar styling into a settings sheet.
+  const head = document.createElement("div");
+  head.className = "perm-head-row";
+  const heading = document.createElement("h5");
+  heading.textContent = `members (${role.members.length})`;
+  head.append(heading);
+
+  if (role.may_assign && !role.everyone) {
+    const add = document.createElement("button");
+    add.className = "perm-add";
+    add.textContent = "+";
+    add.title = "add somebody";
+    add.addEventListener("click", () => addToRole(role));
+    head.append(add);
+  }
+  section.append(head);
+
+  const list = document.createElement("ul");
+  list.className = "role-members";
+  for (const member of role.members) {
+    const item = document.createElement("li");
+
+    const who = document.createElement("span");
+    who.className = "role-member-name";
+    who.textContent = member.name ?? member.short;
+    // Spec 07 §8: a name is never sufficient on its own. Uniqueness is decided
+    // on a key that does not fold lookalikes, so the identity rides alongside.
+    const id = document.createElement("span");
+    id.className = "mono small";
+    id.textContent = member.short;
+    item.append(who, id);
+
+    if (role.may_assign && !role.everyone) {
+      const drop = document.createElement("button");
+      drop.className = "drop";
+      drop.textContent = "×";
+      drop.title = `take ${member.name ?? member.short} out of ${role.id}`;
+      drop.addEventListener("click", async () => {
+        // Native, because this asks *whether* rather than *what* (§5.1), and
+        // because taking yourself out of a powerful role is the one action here
+        // that can leave a network nobody can govern. `design/02` §5 refuses a
+        // hierarchy that would prevent it — there is no structural protection
+        // for a founder, only who holds the capability — so the client warns and
+        // does not block. Blocking would be inventing the hierarchy the protocol
+        // declines to have.
+        if (
+          member.you &&
+          !confirm(
+            `Take yourself out of ${role.id}?\n\nYou lose whatever it holds. ` +
+              `If you are the last member of a role that holds governance power, ` +
+              `nobody will be able to grant it back.`,
+          )
+        )
+          return;
+        await settingsAct("perms-error", async () => {
+          await invoke("set_role_member", {
+            role: role.id,
+            identity: member.identity,
+            member: false,
+          });
+          await drawRoles();
+        });
+      });
+      item.append(drop);
+    }
+    list.append(item);
+  }
+  if (role.members.length === 0) {
+    const empty = document.createElement("li");
+    empty.className = "empty";
+    empty.textContent = role.everyone ? "every member" : "nobody yet";
+    list.append(empty);
+  }
+  section.append(list);
+
+  if (role.everyone) {
+    const note = document.createElement("p");
+    note.className = "dim small";
+    note.textContent =
+      "Membership here is admission to the network, and is managed from the waiting room rather than as a role.";
+    section.append(note);
+  }
+  return section;
+}
+
+/// What this role can do, and where.
+function grantSection(role) {
+  const section = document.createElement("section");
+  section.className = "perm-block";
+
+  const heading = document.createElement("h5");
+  heading.textContent = "can do";
+  section.append(heading);
+
+  if (role.unrestricted) {
+    const note = document.createElement("p");
+    note.className = "dim small";
+    note.textContent =
+      "Everything, including permissions defined later. There is no set to take one out of — narrowing this means replacing it with an explicit list, which is a larger act than a checkbox and is not offered here.";
+    section.append(note);
+    return section;
+  }
+
+  const list = document.createElement("ul");
+  list.className = "grant-list";
+  for (const grant of role.grants) {
+    const item = document.createElement("li");
+    item.className = grant.governance ? "grant governance" : "grant";
+
+    const verb = document.createElement("span");
+    verb.className = "grant-verb";
+    verb.textContent = grant.verb;
+
+    const where = document.createElement("span");
+    where.className = "grant-scope";
+    where.textContent = grant.scope_label;
+
+    item.append(verb, where);
+
+    if (state.me?.may_define_group) {
+      const drop = document.createElement("button");
+      drop.className = "drop";
+      drop.textContent = "×";
+      drop.title = `withdraw ${grant.verb} at ${grant.scope_label}`;
+      drop.addEventListener("click", async () => {
+        await settingsAct("perms-error", async () => {
+          await invoke("set_permission", {
+            role: role.id,
+            verb: grant.verb,
+            scope: grant.scope,
+            scopeId: grant.scope_id,
+            grant: false,
+          });
+          await drawRoles();
+        });
+      });
+      item.append(drop);
+    }
+    list.append(item);
+  }
+
+  // Shown, never edited. These are the network's own governance rather than this
+  // application's vocabulary, and a grid built for chat verbs would present them
+  // as the same kind of thing. A role whose powers were half displayed would
+  // read as weaker than it is.
+  for (const name of role.protocol_grants) {
+    const item = document.createElement("li");
+    item.className = "grant protocol";
+    const verb = document.createElement("span");
+    verb.className = "grant-verb";
+    verb.textContent = name;
+    const where = document.createElement("span");
+    where.className = "grant-scope";
+    where.textContent = "the network's own";
+    item.append(verb, where);
+    list.append(item);
+  }
+
+  if (list.childElementCount === 0) {
+    const empty = document.createElement("li");
+    empty.className = "empty";
+    empty.textContent = "nothing yet";
+    list.append(empty);
+  }
+  section.append(list);
+
+  if (state.me?.may_define_group) {
+    const add = document.createElement("button");
+    add.className = "grant-add";
+    add.textContent = "+ grant a permission";
+    add.addEventListener("click", () => grantTo(role));
+    section.append(add);
+  }
+  return section;
+}
+
+/// Grants one verb at one scope, chosen from what this network actually has.
+///
+/// A picker rather than a text field, deliberately: an unregistered capability
+/// name is refused at replay, so a typo would produce a grant that resolves for
+/// nobody and reports nothing — the failure mode a free-text field invites.
+async function grantTo(role) {
+  const [verbs, scopes] = await Promise.all([invoke("verbs"), invoke("scopes")]);
+
+  const allowed = verbs.filter((verb) => !(role.everyone && verb.governance));
+  const verb = await pickOne(
+    `What may ${role.id} do?`,
+    allowed.map((v) => [
+      v.name,
+      v.governance ? `${v.summary} — governance-tier` : v.summary,
+    ]),
+  );
+  if (!verb) return;
+
+  const scope = await pickOne(
+    `Where may ${role.id} ${verb}?`,
+    // Categories first, because `design/02` §4 makes the category the scope a
+    // grant is expected to bind at and the channel the override.
+    scopes.map((s) => [`${s.kind}:${s.id}`, s.label]),
+  );
+  if (!scope) return;
+  const [kind, id] = splitScope(scope);
+
+  await settingsAct("perms-error", async () => {
+    await invoke("set_permission", {
+      role: role.id,
+      verb,
+      scope: kind,
+      scopeId: id,
+      grant: true,
+    });
+    await drawRoles();
+  });
+}
+
+/// Splits a `kind:id` scope key without eating a hex id that contains no colon.
+function splitScope(key) {
+  const at = key.indexOf(":");
+  return [key.slice(0, at), key.slice(at + 1)];
+}
+
+/// Puts somebody in a role, chosen from the people this network has.
+async function addToRole(role) {
+  const people = await invoke("people");
+  const held = new Set(role.members.map((member) => member.identity));
+  const candidates = people.filter((person) => !held.has(person.identity));
+  if (candidates.length === 0) {
+    await settingsAct("perms-error", () => {
+      throw new Error("everybody here already holds that role");
+    });
+    return;
+  }
+
+  const who = await pickOne(
+    `Who joins ${role.id}?`,
+    candidates.map((person) => [
+      person.identity,
+      `${person.name ?? person.short} · ${person.short}`,
+    ]),
+  );
+  if (!who) return;
+
+  await settingsAct("perms-error", async () => {
+    await invoke("set_role_member", { role: role.id, identity: who, member: true });
+    await drawRoles();
+  });
+}
+
+// ── asking ─────────────────────────────────────────────────────────────
+//
+// **The line, stated once because both sides of it look like a dialog.**
+// `design/09` §6.5 requires anything that asks a member to *authorise*
+// something to sit outside the document a theme can reach — a theme may hide,
+// move or cover any element, so a confirmation it can conceal is not one. That
+// applies to asking *whether*, and the destructive confirmations keep using
+// `window.confirm`, which is browser chrome and outside the DOM by
+// construction.
+//
+// Asking *what* is a different act. Choosing a verb, picking a scope, typing a
+// name — none of it approves anything, and a theme that restyled it can at
+// worst make its own client awkward. So those live here, in the document,
+// where they can look like the rest of the application instead of like the
+// operating system's idea of a text field.
+
+/// The shell both askers share: a veil, a sheet, and a cancel that resolves null.
+function dialog(question, fill) {
+  return new Promise((resolve) => {
+    document.querySelector(".chooser")?.remove();
+
+    let settled = false;
+    const close = (value) => {
+      if (settled) return;
+      settled = true;
+      veil.remove();
+      document.removeEventListener("keydown", onKey);
+      resolve(value);
+    };
+    const onKey = (event) => {
+      if (event.key === "Escape") close(null);
+    };
+
+    const veil = document.createElement("div");
+    veil.className = "chooser";
+    veil.dataset.kols = "chooser";
+
+    const sheet = document.createElement("div");
+    sheet.className = "chooser-sheet";
+
+    const title = document.createElement("h4");
+    title.textContent = question;
+    sheet.append(title);
+
+    fill(sheet, close);
+
+    const cancel = document.createElement("button");
+    cancel.className = "chooser-cancel";
+    cancel.textContent = "cancel";
+    cancel.addEventListener("click", () => close(null));
+    sheet.append(cancel);
+
+    veil.append(sheet);
+    veil.addEventListener("click", (event) => {
+      if (event.target === veil) close(null);
+    });
+    document.addEventListener("keydown", onKey);
+    document.body.append(veil);
+  });
+}
+
+/// One of a fixed set, resolving to the chosen value or null.
+function pickOne(question, options) {
+  return dialog(question, (sheet, close) => {
+    const list = document.createElement("ul");
+    for (const [value, label] of options) {
+      const item = document.createElement("li");
+      const button = document.createElement("button");
+      button.textContent = label;
+      button.addEventListener("click", () => close(value));
+      item.append(button);
+      list.append(item);
+    }
+    sheet.append(list);
+  });
+}
+
+/// A line of text, resolving to what was typed or null.
+///
+/// Distinguishes cancelling from clearing, like the `prompt` it replaces: an
+/// empty answer is a value the caller may accept — unnaming a network is a real
+/// act — and null is the member deciding not to.
+function askFor(question, { value = "", placeholder = "" } = {}) {
+  return dialog(question, (sheet, close) => {
+    const form = document.createElement("form");
+    form.className = "chooser-form";
+
+    const input = document.createElement("input");
+    input.type = "text";
+    input.autocomplete = "off";
+    input.value = value;
+    input.placeholder = placeholder;
+    input.setAttribute("aria-label", question);
+
+    const submit = document.createElement("button");
+    submit.type = "submit";
+    submit.textContent = "ok";
+
+    form.addEventListener("submit", (event) => {
+      event.preventDefault();
+      close(input.value);
+    });
+    form.append(input, submit);
+    sheet.append(form);
+    // After append, or there is nothing on screen to focus.
+    setTimeout(() => {
+      input.focus();
+      input.select();
+    }, 0);
+  });
+}
+
+el("new-role").addEventListener("click", async () => {
+  const name = await askFor("Name the new role", { placeholder: "Moderators" });
+  if (!name?.trim()) return;
+  await settingsAct("perms-error", async () => {
+    await invoke("create_role", { name: name.trim() });
+    state.role = name.trim();
+    await drawRoles();
+  });
+});
+
+/// Runs a settings action, reporting a refusal into that panel's own line.
+///
+/// Per panel rather than one shared banner: a refusal belongs beside the control
+/// that earned it, and the channel screen's `refused` line is behind this sheet
+/// where nobody would see it.
+async function settingsAct(errorId, run) {
+  const line = el(errorId);
+  try {
+    await run();
+    line.hidden = true;
+  } catch (err) {
+    line.hidden = false;
+    line.textContent = String(err);
+  }
+}
 
 /// What the node learns, while it runs.
 ///

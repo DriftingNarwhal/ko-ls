@@ -201,7 +201,10 @@ body {
   background: var(--raised);
   border: 1px solid var(--line);
   border-radius: var(--radius);
-  width: min(560px, 100%);
+  /* Wider than it was, because the sheet gained a nav column and a panel that
+     puts a role list beside its detail. At the old 560px the permissions grid
+     collapsed to two columns too narrow to read either. */
+  width: min(860px, 100%);
   max-height: 88vh;
   display: flex;
   flex-direction: column;
@@ -232,10 +235,370 @@ body {
 .settings-body {
   overflow-y: auto;
   min-height: 0;
+  padding: var(--gap);
 }
 /* Inside the sheet it is the only thing there, so it keeps no top border of its
    own and its details sit open rather than folded away behind a summary. */
-.settings-body .relay { border-top: none; }
+.settings-body .relay { border-top: none; padding: 0; }
+
+/* ---- settings sections ------------------------------------------------- */
+
+/* Grouped by what a click *costs*, not by topic (`design/09` §4.2): local and
+   undoable on one side, signed and replayed forever on the other. The nav is
+   what carries that distinction, so it keeps its headings even though two of
+   them would fit on one line. */
+.settings-layout {
+  display: grid;
+  grid-template-columns: 168px 1fr;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.settings-nav {
+  border-right: 1px solid var(--line);
+  padding: var(--gap);
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.settings-nav h3 {
+  margin: var(--gap) 0 0;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--dim);
+}
+.settings-nav h3:first-child { margin-top: 0; }
+
+/* The half-sentence that makes the grouping mean something. Without it the two
+   headings are just labels, and the line between them is the point. */
+.settings-nav-note {
+  margin: 0 0 4px;
+  font-size: 11px;
+  line-height: 1.35;
+  color: var(--dim);
+}
+
+.settings-tab {
+  text-align: left;
+  padding: 5px 8px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+.settings-tab:hover { background: var(--hover); }
+.settings-tab.current { background: var(--sunken); color: var(--accent); }
+
+.settings-panel { display: flex; flex-direction: column; gap: 8px; }
+.settings-panel h3 {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 600;
+}
+.settings-panel .row { display: flex; gap: 6px; }
+.settings-panel .row input {
+  flex: 1;
+  min-width: 0;
+  font: inherit;
+  font-size: 13px;
+  color: var(--text);
+  background: var(--ground);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 5px 8px;
+}
+.settings-panel .row button {
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: transparent;
+  color: var(--text);
+  cursor: pointer;
+  font: inherit;
+  font-size: 12px;
+  padding: 3px 12px;
+}
+.settings-panel .row button:hover { border-color: var(--accent); color: var(--accent); }
+.settings-panel label {
+  font-size: 12px;
+  color: var(--dim);
+}
+
+.settings-error {
+  margin: 0;
+  font-size: 12px;
+  color: var(--bad);
+}
+
+.small { font-size: 11px; }
+
+/* ---- permissions ------------------------------------------------------- */
+
+.perms {
+  display: grid;
+  grid-template-columns: 176px 1fr;
+  gap: var(--gap);
+  align-items: start;
+}
+
+.perms-roles {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  border-right: 1px solid var(--line);
+  padding-right: var(--gap);
+}
+
+/* The panel's own headings. Not the rail's `channels-head`, which carries the
+   sidebar's spacing and would drag a column of it into this sheet. */
+.perm-head, .perm-head-row h5, .perm-block h5 {
+  margin: 0;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--dim);
+}
+.perm-head-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.perm-add {
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: transparent;
+  color: var(--dim);
+  cursor: pointer;
+  font: inherit;
+  font-size: 12px;
+  line-height: 1;
+  padding: 2px 7px;
+}
+.perm-add:hover { border-color: var(--accent); color: var(--accent); }
+
+.role-list { list-style: none; margin: 0; padding: 0; }
+.role-list button {
+  width: 100%;
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 6px;
+  text-align: left;
+  padding: 5px 8px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+.role-list button:hover { background: var(--hover); }
+.role-list button.current { background: var(--sunken); color: var(--accent); }
+.role-name { overflow: hidden; text-overflow: ellipsis; }
+.role-note { font-size: 11px; color: var(--dim); white-space: nowrap; }
+
+.perms-detail {
+  display: flex;
+  flex-direction: column;
+  gap: var(--gap);
+  min-width: 0;
+}
+.perms-detail h4 { margin: 0; font-size: 13px; }
+
+.perm-block { display: flex; flex-direction: column; gap: 6px; }
+
+.role-members, .grant-list { list-style: none; margin: 0; padding: 0; }
+.role-members li, .grant-list li {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  padding: 3px 0;
+  font-size: 12px;
+}
+.role-member-name { flex: 1; overflow: hidden; text-overflow: ellipsis; }
+
+.grant-verb {
+  font-family: var(--mono);
+  font-size: 11px;
+}
+.grant-scope { flex: 1; color: var(--dim); font-size: 11px; }
+
+/* A governance-tier grant is marked, because the tier is the whole reason some
+   of these cannot go on `everyone` and a flat list would hide that. */
+.grant.governance .grant-verb { color: var(--warn); }
+/* The network's own capabilities, shown and never edited here. */
+.grant.protocol .grant-verb { color: var(--dim); }
+
+.drop {
+  border: 0;
+  background: transparent;
+  color: var(--dim);
+  cursor: pointer;
+  font: inherit;
+  line-height: 1;
+  padding: 0 4px;
+}
+.drop:hover { color: var(--bad); }
+
+.grant-add, #new-role {
+  align-self: flex-start;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: transparent;
+  color: var(--text);
+  cursor: pointer;
+  font: inherit;
+  font-size: 12px;
+  padding: 3px 8px;
+}
+.grant-add:hover, #new-role:hover { border-color: var(--accent); color: var(--accent); }
+
+/* ---- network settings -------------------------------------------------- */
+
+.admission { display: flex; flex-direction: column; gap: 6px; }
+
+.choice {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 8px;
+  align-items: start;
+  padding: 6px 8px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  cursor: pointer;
+}
+.choice:hover { border-color: var(--accent); }
+.choice input { margin-top: 3px; }
+/* A choice the network cannot take is dimmed rather than removed — the reason
+   sits beside it, and a missing option is a question nobody can answer. */
+.choice:has(input:disabled) { opacity: 0.5; cursor: not-allowed; }
+.choice span { font-size: 12px; color: var(--dim); line-height: 1.4; }
+.choice strong { display: block; color: var(--text); font-weight: 600; }
+
+.setting-list { list-style: none; margin: 0; padding: 0; }
+
+.setting {
+  padding: 8px 0;
+  border-top: 1px solid var(--line);
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.setting:first-child { border-top: 0; }
+.setting p { margin: 0; }
+
+.setting-head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+.setting-label { font-size: 13px; }
+.setting-value {
+  flex: 1;
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--accent);
+}
+
+/* ---- the chooser ------------------------------------------------------- */
+
+/* Asks *what*, never *whether*. Anything that asks a member to authorise
+   something stays in native chrome, outside what a theme can reach
+   (`design/09` §6.5) — this picks a value for a form. */
+.chooser {
+  position: fixed;
+  inset: 0;
+  background: var(--veil);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--gap);
+  z-index: 70;
+}
+.chooser-sheet {
+  background: var(--raised);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  width: min(360px, 100%);
+  max-height: 70vh;
+  overflow-y: auto;
+  padding: var(--gap);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.chooser-sheet h4 { margin: 0; font-size: 13px; }
+.chooser-sheet ul { list-style: none; margin: 0; padding: 0; }
+.chooser-sheet li button {
+  width: 100%;
+  text-align: left;
+  padding: 6px 8px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+.chooser-sheet li button:hover { background: var(--hover); }
+.chooser-form { display: flex; gap: 6px; }
+.chooser-form input {
+  flex: 1;
+  min-width: 0;
+  font: inherit;
+  font-size: 13px;
+  color: var(--text);
+  background: var(--ground);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 6px 8px;
+}
+.chooser-form button {
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: transparent;
+  color: var(--text);
+  cursor: pointer;
+  font: inherit;
+  font-size: 12px;
+  padding: 3px 12px;
+}
+.chooser-form button:hover { border-color: var(--accent); color: var(--accent); }
+
+.chooser-cancel {
+  align-self: flex-end;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: transparent;
+  color: var(--dim);
+  cursor: pointer;
+  font: inherit;
+  font-size: 12px;
+  padding: 3px 10px;
+}
+.chooser-cancel:hover { border-color: var(--accent); color: var(--accent); }
+
+/* ---- renaming in place ------------------------------------------------- */
+
+.rename {
+  width: 100%;
+  background: var(--sunken);
+  border: 1px solid var(--accent);
+  border-radius: 4px;
+  color: var(--text);
+  font: inherit;
+  font-size: 13px;
+  padding: 2px 6px;
+}
 
 /* ---- the relay --------------------------------------------------------- */
 

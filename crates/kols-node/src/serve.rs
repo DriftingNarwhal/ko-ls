@@ -101,6 +101,26 @@ pub fn printing() -> Sink {
     std::sync::Arc::new(render)
 }
 
+/// Where everything this loop emits goes.
+///
+/// Two channels rather than one because they carry different things: [`Sink`]
+/// takes *events*, which `design/05` §3 defines as a boundary vocabulary, and
+/// [`crate::Report`] takes the node's own lifecycle lines, which that section
+/// deliberately excludes from it. A terminal wants both; a window wants the
+/// first and has nowhere to put the second.
+///
+/// Grouped into a struct because passing them separately took [`serve`] to eight
+/// arguments, one past what clippy tolerates — and the grouping is real rather
+/// than arithmetic: this is one answer to "where does this node's output go".
+/// The signature is at the threshold again, so a ninth thing to pass is the
+/// prompt to give the six configuration parameters a struct of their own.
+pub struct Output<'a> {
+    /// Events, for whatever is rendering the network.
+    pub events: &'a Sink,
+    /// Lifecycle lines, for whoever has somewhere to print them.
+    pub report: &'a crate::Report,
+}
+
 /// Runs the node until interrupted, on a runtime of its own.
 ///
 /// What `kols serve` calls. A caller that already has a runtime — the desktop
@@ -125,7 +145,10 @@ pub fn run(
         seal_bytes,
         live,
         live_window,
-        &printing(),
+        &Output {
+            events: &printing(),
+            report: &crate::printing_report(),
+        },
     ))
 }
 
@@ -156,8 +179,9 @@ pub async fn serve(
     seal_bytes: usize,
     live: bool,
     live_window: i64,
-    sink: &Sink,
+    out: &Output<'_>,
 ) -> Result<(), String> {
+    let Output { events: sink, report } = out;
     let store = Store::open(root).map_err(|e| e.to_string())?;
     // Claimed before anything else, and held for the whole loop: only one
     // process may run a node for a network, because the key group is live state
@@ -204,8 +228,8 @@ pub async fn serve(
         }
     }
 
-    println!("serving as {}", identity.id().short());
-    println!("  peer id   {}", node.peer_id());
+    crate::say!(report, "serving as {}", identity.id().short());
+    crate::say!(report, "  peer id   {}", node.peer_id());
 
     // Both of these are best-effort at startup and repeated after every
     // governance sync, because a node that has just attached to a network is
@@ -237,11 +261,11 @@ pub async fn serve(
         match node.restore_epoch_group(&saved, rotation) {
             Ok(_) => {
                 holds_group = true;
-                println!("  group     restored from the last run");
+                crate::say!(report, "  group     restored from the last run");
             }
             // Not fatal: this node can still read with the keys it holds, and
             // saying so beats refusing to start over state it can re-fetch.
-            Err(err) => println!("  group     could not be restored ({err})"),
+            Err(err) => crate::say!(report, "  group     could not be restored ({err})"),
         }
     }
 
@@ -255,20 +279,20 @@ pub async fn serve(
                 persist_group(&store, &node)?;
                 holds_group = true;
                 keyed = true;
-                println!("  keyed     this network for the first time");
+                crate::say!(report, "  keyed     this network for the first time");
             }
         }
     }
 
     match (keyed, holds_group) {
-        (true, true) => println!("  epoch     held, and this node can key others in"),
-        (true, false) => println!("  epoch     held, but no group — this node cannot key others in"),
-        _ => println!("  epoch     none — this node can fetch content and open none of it"),
+        (true, true) => crate::say!(report, "  epoch     held, and this node can key others in"),
+        (true, false) => crate::say!(report, "  epoch     held, but no group — this node cannot key others in"),
+        _ => crate::say!(report, "  epoch     none — this node can fetch content and open none of it"),
     }
 
     match ready(&store, &mut node, &identity, seal_bytes) {
-        Ok(published) => println!("  published {published} segment(s) from this node"),
-        Err(_) => println!("  not a member of this network yet — syncing will settle it"),
+        Ok(published) => crate::say!(report, "  published {published} segment(s) from this node"),
+        Err(_) => crate::say!(report, "  not a member of this network yet — syncing will settle it"),
     }
 
     // A circuit on one of the network's relays, before anything else needs an
@@ -302,10 +326,10 @@ pub async fn serve(
     let mut failures: Vec<String> = Vec::new();
     let reserved = reserve_any_reporting(&mut node, &designated, sink, &mut failures).await;
     if designated.is_empty() {
-        println!("  relay     none designated — this node is reachable only on its own addresses");
+        crate::say!(report, "  relay     none designated — this node is reachable only on its own addresses");
     }
     // Emitted in every case, including the good one. A terminal has had this all
-    // along as a `println!`; a window had only the failures, through `Degraded`.
+    // along only to the report; a window had only the failures, through `Degraded`.
     sink(&[Event::Relay {
         reserved,
         designated: designated.len(),
@@ -328,7 +352,7 @@ pub async fn serve(
             .map_err(|err| format!("{peer:?} is not a multiaddr: {err}"))?;
         node.dial_candidates([address])
             .map_err(|err| format!("could not dial {peer}: {err}"))?;
-        println!("  dialing   {peer}");
+        crate::say!(report, "  dialing   {peer}");
     }
 
     let mut connected: BTreeSet<PeerId> = BTreeSet::new();
@@ -504,7 +528,7 @@ pub async fn serve(
                         if let Some(from) = peer_identity(peer, &store)?
                             && node.request_epoch_key(from, &identity).is_ok()
                         {
-                            println!("asked {} to key us in", from.short());
+                            crate::say!(report, "asked {} to key us in", from.short());
                             unkeyed_since.get_or_insert_with(Instant::now);
                             last_asked = Some(Instant::now());
                             break;
@@ -565,7 +589,7 @@ pub async fn serve(
             // other angle nothing happened.
             NodeEvent::ListenAddrGone(address) => {
                 if crate::is_circuit_address(&address) {
-                    println!("  relay     the circuit on {address} ended — asking again");
+                    crate::say!(report, "  relay     the circuit on {address} ended — asking again");
                     sink(&[Event::Relay {
                         reserved: None,
                         designated: designated.len(),
@@ -592,7 +616,7 @@ pub async fn serve(
                     address.clone().with(Protocol::P2p(identity.peer_id()))
                 };
                 if listening.iter().all(|seen| seen != &full) {
-                    println!("  listening {full}");
+                    crate::say!(report, "  listening {full}");
                     listening.push(full);
                     // Written down so a one-shot `kols invite` can carry them.
                     // Only a running node knows what it is reachable on, and an
@@ -623,7 +647,7 @@ pub async fn serve(
             // — which is how somebody found out that losing a circuit dropped a
             // peer they could still reach directly.
             NodeEvent::HolePunchSucceeded { peer } => {
-                println!("  direct    hole-punched to {peer} — the relay is out of the path");
+                crate::say!(report, "  direct    hole-punched to {peer} — the relay is out of the path");
                 sink(&[Event::Degraded {
                     reason: format!("connected directly to {peer}; the relay introduced you and is no longer carrying anything"),
                 }]);
@@ -641,7 +665,7 @@ pub async fn serve(
                 // This is not a partition from the network. Everything here is
                 // pull-based and content-addressed, so the two converge through
                 // any member both can reach; what they have lost is each other.
-                println!(
+                crate::say!(report, 
                     "  direct    could not hole-punch to {peer} — the circuit is closed \
                      (Core §5.2). You still converge through any member you both reach"
                 );
@@ -658,7 +682,7 @@ pub async fn serve(
             }
 
             NodeEvent::Connected { peer, .. } => {
-                println!("connected to {peer}");
+                crate::say!(report, "connected to {peer}");
                 connected.insert(peer);
                 record_connected(&store, &connected, sink);
                 // A new peer is a new place to walk from. The routing table is
@@ -708,7 +732,7 @@ pub async fn serve(
                         {
                             match node.request_epoch_key(from, &identity) {
                                 Ok(_) => {
-                                    println!("asked {} to key us in", from.short());
+                                    crate::say!(report, "asked {} to key us in", from.short());
                                     unkeyed_since.get_or_insert_with(Instant::now);
                                     last_asked = Some(Instant::now());
                                 }
@@ -796,7 +820,7 @@ pub async fn serve(
                     persist_keyring(&store, &node)?;
                     persist_group(&store, &node)?;
                     keyed = true;
-                    println!(
+                    crate::say!(report, 
                         "keyed into this network ({historical_keys} historical key(s) came with it)"
                     );
                     request_foreign_segments(&store, &mut node, &identity, &mut fetched, &backfill)?;

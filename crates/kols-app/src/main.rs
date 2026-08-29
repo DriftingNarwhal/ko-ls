@@ -35,6 +35,26 @@
 //! `@import` and `@font-face src` are the complete set. Under a CSP with no
 //! remote origins, arbitrary user CSS *cannot* phone home.
 
+// # No console window on Windows
+//
+// A Rust binary defaults to the console subsystem, so launching this one from
+// Explorer opened a terminal behind the window — cosmetic, and not what a
+// product looks like (`design/00` D30: the window is the product, the terminal
+// is a development tool). `windows` is the GUI subsystem and closes that.
+//
+// **Release only, and the gate is not caution.** A debug build keeps its console
+// so that running it from a terminal still shows what the node is doing, which
+// is where this gets developed.
+//
+// **This attribute alone would have been worse than the terminal it removes.**
+// A GUI-subsystem process launched from Explorer has no console at all, so
+// `GetStdHandle` returns null, Rust's stdio turns that into a write error, and
+// `print_to` *panics* rather than dropping the line — the window would have
+// crashed on the node's first line of output, on the one platform this cannot
+// be run from. So it landed together with `kols_node::Report`: the node loop
+// hands its lifecycle lines to whoever is listening, the terminal prints them,
+// and this passes `quiet`. Nothing in this process writes to stdout.
+#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 #![deny(missing_docs)]
 
 mod dto;
@@ -160,6 +180,480 @@ fn me_of(executor: &Executor) -> Result<dto::Me, String> {
             .identity_holds(&identity.id(), &intranet_governance::Capability::ModerateContent),
         may_set_relays: state
             .identity_holds(&identity.id(), &intranet_governance::Capability::DefinePolicy),
+        may_define_group: state
+            .identity_holds(&identity.id(), &intranet_governance::Capability::DefineGroup),
+        // Any role at all, so the tab is offered. Which ones is per role, since
+        // `manage-membership:<group>` is dynamically tiered (Core §2.4).
+        may_assign_role: state.groups.keys().any(|group| {
+            state.identity_holds(
+                &identity.id(),
+                &intranet_governance::Capability::manage_membership(group.clone()),
+            )
+        }),
+        network_name: kols_core::ChatPolicy::of(&state.policy)
+            .network_name()
+            .map(str::to_owned),
+        admission_mode: match state.policy.admission_mode {
+            intranet_governance::AdmissionMode::AutoAdmit => "auto".to_owned(),
+            intranet_governance::AdmissionMode::ExplicitIntake => "intake".to_owned(),
+        },
+        member_vote: matches!(
+            state.policy.governance_model,
+            intranet_governance::GovernanceModel::MemberVote { .. }
+        ),
+    })
+}
+
+/// This network's chat settings, as they currently stand.
+///
+/// Served from `kols_core::ChatSetting` rather than restated here, so a setting
+/// added to the vocabulary appears in the interface instead of needing a second
+/// list to remember. The summaries are the interface's own — they say what a
+/// number *bounds*, which the vocabulary has no field for.
+#[tauri::command]
+fn settings(app: tauri::State<'_, App>) -> Result<Vec<dto::Setting>, String> {
+    app.with(|executor| {
+        let state = executor.store().state().map_err(|e| e.to_string())?;
+        Ok(kols_core::ChatSetting::ALL
+            .iter()
+            .map(|setting| {
+                let key = setting.key();
+                dto::Setting {
+                    id: format!("{setting:?}"),
+                    key: key.to_owned(),
+                    label: label_of(*setting).to_owned(),
+                    summary: summary_of(*setting).to_owned(),
+                    value: state.policy.app_policy_int(key, setting.default_value()),
+                    default: setting.default_value(),
+                    explicit: state.policy.app_policy(key).is_some(),
+                    unit: match setting.unit() {
+                        kols_core::Unit::PerMinute => "per-minute",
+                        kols_core::Unit::Bytes => "bytes",
+                        kols_core::Unit::Count => "count",
+                        kols_core::Unit::Millis => "millis",
+                        kols_core::Unit::Seconds => "seconds",
+                        kols_core::Unit::Days => "days",
+                    }
+                    .to_owned(),
+                    zero_means: match setting.zero_means() {
+                        kols_core::ZeroMeaning::NoLimit => "no limit at all",
+                        kols_core::ZeroMeaning::Forever => "kept forever",
+                        kols_core::ZeroMeaning::Zero => "a real bound of zero",
+                        kols_core::ZeroMeaning::RefusesEverything => {
+                            "a real bound of zero, which refuses every message"
+                        }
+                    }
+                    .to_owned(),
+                    retention: matches!(
+                        setting,
+                        kols_core::ChatSetting::RetainMessagesDays
+                            | kols_core::ChatSetting::RetainAttachmentsDays
+                    ),
+                }
+            })
+            .collect())
+    })
+}
+
+/// A short label for one setting.
+const fn label_of(setting: kols_core::ChatSetting) -> &'static str {
+    use kols_core::ChatSetting as S;
+    match setting {
+        S::MessageRate => "messages a minute",
+        S::ReactionRate => "reactions a minute",
+        S::MessageMaxBytes => "message size",
+        S::AttachmentMaxBytes => "attachment size",
+        S::AttachmentMaxCount => "attachments a message",
+        S::SegmentMaxBytes => "segment size",
+        S::MaxFutureSkewMillis => "clock skew allowed",
+        S::SlowmodeMaxSeconds => "longest slowmode",
+        S::RetainMessagesDays => "keep messages",
+        S::RetainAttachmentsDays => "keep attachments",
+    }
+}
+
+/// What one setting bounds, and why a network would move it.
+const fn summary_of(setting: kols_core::ChatSetting) -> &'static str {
+    use kols_core::ChatSetting as S;
+    match setting {
+        S::MessageRate => {
+            "Messages, edits and withdrawals one member may write in one channel per minute.              Counted over the author's own clock readings, so every node reaches the same              verdict. This bounds flooding; it is not for pacing conversation, which is a              channel's own slowmode."
+        }
+        S::ReactionRate => "Reactions and pins one member may write in one channel per minute.",
+        S::MessageMaxBytes => "The largest a single message or edit may be, as UTF-8.",
+        S::AttachmentMaxBytes => {
+            "The largest a single attachment may be. This spends other members' disks: at              replication factor three, one 25 MiB file costs 75 MiB across the network."
+        }
+        S::AttachmentMaxCount => "How many attachments may ride on one message.",
+        S::SegmentMaxBytes => {
+            "The largest published segment a reader will fetch. Without it one member could              make every reader pull an arbitrarily large object."
+        }
+        S::MaxFutureSkewMillis => {
+            "How far ahead of your clock a record may claim to be. Anything further is held              and rendered when your clock reaches it — never dropped."
+        }
+        S::SlowmodeMaxSeconds => {
+            "The longest slowmode a channel manager may set. The ceiling on a knob delegated              to whoever moderates, so calming one channel needs no authority over policy."
+        }
+        S::RetainMessagesDays => {
+            "How long message history stays maintained. Past it, segments stop being              re-wrapped on rotation and go dark to anyone who did not already hold them."
+        }
+        S::RetainAttachmentsDays => {
+            "How long attachments stay maintained. Separate from messages because the costs              are not comparable — a heavy week of files outweighs years of text."
+        }
+    }
+}
+
+/// Parses the handle the interface passes back for a setting.
+fn setting_of(id: &str) -> Result<kols_core::ChatSetting, String> {
+    kols_core::ChatSetting::ALL
+        .iter()
+        .find(|setting| format!("{setting:?}") == id)
+        .copied()
+        .ok_or_else(|| format!("{id:?} is not a setting"))
+}
+
+/// Changes one of this network's chat settings.
+#[tauri::command]
+fn set_chat_setting(app: tauri::State<'_, App>, setting: String, value: i64) -> Result<(), String> {
+    let setting = setting_of(&setting)?;
+    app.with(|executor| {
+        executor
+            .submit(Command::SetChatSetting { setting, value })
+            .map(|_| ())
+            .map_err(|err| err.to_string())
+    })
+}
+
+/// Chooses how joiners are admitted.
+#[tauri::command]
+fn set_admission_mode(app: tauri::State<'_, App>, mode: String) -> Result<(), String> {
+    let mode = match mode.as_str() {
+        "auto" => intranet_governance::AdmissionMode::AutoAdmit,
+        "intake" => intranet_governance::AdmissionMode::ExplicitIntake,
+        other => return Err(format!("{other:?} is not an admission mode")),
+    };
+    app.with(|executor| {
+        executor
+            .submit(Command::SetAdmissionMode { mode })
+            .map(|_| ())
+            .map_err(|err| err.to_string())
+    })
+}
+
+/// Every role, what it holds, and who is in it — `design/02` §1.
+///
+/// One read rather than a call per role: the whole answer comes out of a single
+/// replay, and asking per row would replay the log once per role for a question
+/// one pass already settled.
+#[tauri::command]
+fn roles(app: tauri::State<'_, App>) -> Result<Vec<dto::Role>, String> {
+    app.with(|executor| {
+        let store = executor.store();
+        let me = store.identity().map_err(|e| e.to_string())?.id();
+        let state = store.state().map_err(|e| e.to_string())?;
+        let names = executor.names(&state).map_err(|e| e.to_string())?;
+        let (channels, _) = network::channels(store, &state).map_err(|e| e.to_string())?;
+        let (categories, _) = network::categories(store, &state).map_err(|e| e.to_string())?;
+
+        // Every scope name this network could have granted at, so a grant can be
+        // rendered as the thing it names rather than as a hash.
+        let mut labels: std::collections::BTreeMap<String, (String, String)> =
+            std::collections::BTreeMap::new();
+        for channel in channels.values() {
+            labels.insert(
+                to_hex(channel.id.as_bytes()),
+                ("channel".to_owned(), format!("#{}", channel.name)),
+            );
+        }
+        for category in categories.values() {
+            labels.insert(
+                to_hex(category.id.as_bytes()),
+                ("category".to_owned(), category.name.clone()),
+            );
+        }
+
+        Ok(state
+            .groups
+            .values()
+            .map(|group| {
+                let unrestricted =
+                    matches!(group.capabilities, intranet_governance::CapabilitySet::All);
+                let mut grants = Vec::new();
+                let mut protocol_grants = Vec::new();
+
+                if let intranet_governance::CapabilitySet::Explicit(held) = &group.capabilities {
+                    for capability in held {
+                        match capability {
+                            intranet_governance::Capability::Extension(full) => {
+                                match parse_grant(full, &labels) {
+                                    Some(grant) => grants.push(grant),
+                                    // An extension outside the chat vocabulary.
+                                    // Shown as a protocol grant rather than
+                                    // dropped: a role whose powers were half
+                                    // displayed reads as weaker than it is.
+                                    None => protocol_grants.push(full.clone()),
+                                }
+                            }
+                            other => protocol_grants.push(describe_capability(other)),
+                        }
+                    }
+                }
+                grants.sort_by(|a, b| (&a.verb, &a.scope_label).cmp(&(&b.verb, &b.scope_label)));
+                protocol_grants.sort();
+
+                let mut members: Vec<_> = group
+                    .members
+                    .keys()
+                    .map(|who| dto::Member {
+                        identity: to_hex(who.verifying_key().as_bytes()),
+                        short: who.short(),
+                        name: names.of(who).map(str::to_owned),
+                        // Not asked here. Whether a node has a connection to
+                        // somebody is a question about this moment and belongs
+                        // to the roster (`design/09` §4.1); a role's membership
+                        // is replayed state and does not change when a socket
+                        // does.
+                        connected: false,
+                        you: *who == me,
+                    })
+                    .collect();
+                members.sort_by(|a, b| {
+                    (a.name.is_none(), &a.name, &a.short)
+                        .cmp(&(b.name.is_none(), &b.name, &b.short))
+                });
+
+                dto::Role {
+                    id: group.id.to_string(),
+                    implicit: group.id.is_everyone()
+                        || group.id.as_str() == intranet_governance::FOUNDERS,
+                    unrestricted,
+                    everyone: group.id.is_everyone(),
+                    grants,
+                    protocol_grants,
+                    members,
+                    may_assign: state.identity_holds(
+                        &me,
+                        &intranet_governance::Capability::manage_membership(group.id.clone()),
+                    ),
+                }
+            })
+            .collect())
+    })
+}
+
+/// Splits a chat capability name back into a verb and a scope.
+///
+/// The inverse of `kols_core::Scope::name`, and the only place that inversion
+/// happens. Returns `None` for anything outside the chat vocabulary, which is
+/// how an extension belonging to some other consuming spec — or a verb this
+/// build does not know — is kept out of a grid built for chat verbs.
+fn parse_grant(
+    full: &str,
+    labels: &std::collections::BTreeMap<String, (String, String)>,
+) -> Option<dto::Grant> {
+    let rest = full.strip_prefix("chat:")?;
+    let (verb, scope) = rest.split_once(':')?;
+    if !kols_core::is_verb(verb) {
+        return None;
+    }
+    let governance = kols_core::capabilities::VERBS
+        .iter()
+        .any(|(name, tier)| *name == verb && *tier == intranet_governance::Tier::Governance);
+
+    let (kind, id, label) = if scope == "*" {
+        ("network".to_owned(), String::new(), "network-wide".to_owned())
+    } else if let Some(id) = scope.strip_prefix("cat:") {
+        let label = labels.get(id).map_or_else(
+            // A grant can outlive what it names: deleting a category or channel
+            // leaves grants against its id in place, because a capability is a
+            // string in a set and nothing sweeps them. Saying so beats a bare
+            // hash, and beats hiding a grant that still resolves.
+            || "a category that is gone".to_owned(),
+            |(_, label)| label.clone(),
+        );
+        ("category".to_owned(), id.to_owned(), label)
+    } else {
+        let label = labels.get(scope).map_or_else(
+            || "a channel that is gone".to_owned(),
+            |(_, label)| label.clone(),
+        );
+        ("channel".to_owned(), scope.to_owned(), label)
+    };
+
+    Some(dto::Grant {
+        verb: verb.to_owned(),
+        scope: kind,
+        scope_id: id,
+        scope_label: label,
+        governance,
+    })
+}
+
+/// Names a protocol capability for display.
+fn describe_capability(capability: &intranet_governance::Capability) -> String {
+    use intranet_governance::Capability as C;
+    match capability {
+        C::ApproveNode => "approve-node".to_owned(),
+        C::RevokeNode => "revoke-node".to_owned(),
+        C::DefineGroup => "define-group".to_owned(),
+        C::DefinePolicy => "define-policy".to_owned(),
+        C::DefineContentPolicy => "define-content-policy".to_owned(),
+        C::ModerateContent => "moderate-content".to_owned(),
+        C::AuditReputation => "audit-reputation".to_owned(),
+        C::ReadContent => "read-content".to_owned(),
+        C::ManageMembership(group) => format!("manage-membership:{group}"),
+        C::Publish(content_type) => format!("publish:{content_type}"),
+        C::Extension(name) => name.clone(),
+    }
+}
+
+/// The verbs a grant may name, with what each one costs.
+///
+/// Served from `kols_core::capabilities::VERBS` rather than restated in the
+/// webview, so re-tiering a verb in `design/02` §2.2 moves the interface with
+/// it instead of leaving a second copy to drift. The summaries are the
+/// interface's own — they say what holding one *does*, which the vocabulary
+/// table has no field for and should not grow one.
+#[tauri::command]
+fn verbs() -> Vec<dto::Verb> {
+    kols_core::capabilities::VERBS
+        .iter()
+        .map(|(name, tier)| dto::Verb {
+            name: (*name).to_owned(),
+            governance: *tier == intranet_governance::Tier::Governance,
+            summary: match *name {
+                "post" => "write, revise and withdraw messages",
+                "read" => "read what is written",
+                "create-channel" => "define new channels",
+                "manage-channel" => "rename, move, archive and delete channels, and set who is in a private one",
+                "moderate" => "hide other members' messages, and pin",
+                "set-name" => "claim a display name here",
+                "connect-voice" => "join a voice channel and hear it",
+                "speak-voice" => "transmit in a voice channel",
+                // Total by construction rather than defaulted: a verb added to
+                // the vocabulary should arrive here with a sentence, and an
+                // empty arm would ship it with a placeholder nobody noticed.
+                other => other,
+            }
+            .to_owned(),
+        })
+        .collect()
+}
+
+/// Every scope a grant can bind at, in the order the sidebar shows them.
+#[tauri::command]
+fn scopes(app: tauri::State<'_, App>) -> Result<Vec<dto::ScopeOption>, String> {
+    app.with(|executor| {
+        let store = executor.store();
+        let state = store.state().map_err(|e| e.to_string())?;
+        let (channels, _) = network::channels(store, &state).map_err(|e| e.to_string())?;
+        let (categories, _) = network::categories(store, &state).map_err(|e| e.to_string())?;
+
+        let mut out = vec![dto::ScopeOption {
+            kind: "network".to_owned(),
+            id: String::new(),
+            label: "network-wide".to_owned(),
+        }];
+        // Categories before channels, because `design/02` §4 makes the category
+        // the scope a grant is expected to bind at and the channel the override.
+        // Ordering the picker that way is the cheapest place to say so.
+        let mut cats: Vec<_> = categories.values().collect();
+        cats.sort_by(|a, b| (a.position, &a.name).cmp(&(b.position, &b.name)));
+        for category in cats {
+            out.push(dto::ScopeOption {
+                kind: "category".to_owned(),
+                id: to_hex(category.id.as_bytes()),
+                label: category.name.clone(),
+            });
+        }
+        let mut chans: Vec<_> = channels.values().filter(|c| !c.archived).collect();
+        chans.sort_by(|a, b| a.name.cmp(&b.name));
+        for channel in chans {
+            out.push(dto::ScopeOption {
+                kind: "channel".to_owned(),
+                id: to_hex(channel.id.as_bytes()),
+                label: format!("#{}", channel.name),
+            });
+        }
+        Ok(out)
+    })
+}
+
+/// Names this network, for every member — D32.
+#[tauri::command]
+fn set_network_name(app: tauri::State<'_, App>, name: String) -> Result<(), String> {
+    app.with(|executor| {
+        executor
+            .submit(Command::SetNetworkName { name: name.clone() })
+            .map(|_| ())
+            .map_err(|err| err.to_string())
+    })
+}
+
+/// Creates a role, holding nothing.
+#[tauri::command]
+fn create_role(app: tauri::State<'_, App>, name: String) -> Result<(), String> {
+    let group = intranet_governance::GroupId::new(name.trim());
+    app.with(|executor| {
+        executor
+            .submit(Command::CreateRole {
+                group: group.clone(),
+            })
+            .map(|_| ())
+            .map_err(|err| err.to_string())
+    })
+}
+
+/// Grants or withdraws one verb at one scope.
+#[tauri::command]
+fn set_permission(
+    app: tauri::State<'_, App>,
+    role: String,
+    verb: String,
+    scope: String,
+    scope_id: String,
+    grant: bool,
+) -> Result<(), String> {
+    // Rebuilt from the kind and the id rather than parsed from a name, so the
+    // interface never hands across a capability string of its own. The one
+    // construction stays `kols_core::Scope::name`, on both sides.
+    let scope = match scope.as_str() {
+        "network" => kols_core::Scope::Network,
+        "category" => kols_core::Scope::Category(App::category(&scope_id)?),
+        "channel" => kols_core::Scope::Channel(App::channel(&scope_id)?),
+        other => return Err(format!("{other:?} is not a scope")),
+    };
+    app.with(|executor| {
+        executor
+            .submit(Command::SetPermission {
+                group: intranet_governance::GroupId::new(role.clone()),
+                verb: verb.clone(),
+                scope,
+                grant,
+            })
+            .map(|_| ())
+            .map_err(|err| err.to_string())
+    })
+}
+
+/// Puts an identity in a role, or takes them out.
+#[tauri::command]
+fn set_role_member(
+    app: tauri::State<'_, App>,
+    role: String,
+    identity: String,
+    member: bool,
+) -> Result<(), String> {
+    let who = kols_node::parse_identity(&identity)?;
+    app.with(|executor| {
+        executor
+            .submit(Command::SetRoleMember {
+                group: intranet_governance::GroupId::new(role.clone()),
+                identity: who,
+                member,
+            })
+            .map(|_| ())
+            .map_err(|err| err.to_string())
     })
 }
 
@@ -1051,7 +1545,15 @@ fn start_node(handle: &tauri::AppHandle, app: tauri::State<'_, App>, root: std::
             kols_node::serve::SEAL_TARGET_BYTES,
             true,
             kols_node::serve::LIVE_WINDOW_MILLIS,
-            &sink,
+            &kols_node::serve::Output {
+                events: &sink,
+                // Nowhere, and deliberately. A GUI-subsystem binary has no
+                // console, so a `println!` here would not be ignored — Rust
+                // panics on the write error — and the window would crash on the
+                // node's first line of output. What this window actually needs
+                // from those lines reaches it as events instead.
+                report: &kols_node::quiet(),
+            },
         )
         .await;
         if let Err(why) = outcome {
@@ -1127,7 +1629,17 @@ fn main() {
             delete_message,
             react,
             pin,
-            new_relay_identity
+            new_relay_identity,
+            roles,
+            verbs,
+            scopes,
+            set_network_name,
+            create_role,
+            set_permission,
+            set_role_member,
+            settings,
+            set_chat_setting,
+            set_admission_mode
         ])
         .run(tauri::generate_context!())
         .expect("the window opens");

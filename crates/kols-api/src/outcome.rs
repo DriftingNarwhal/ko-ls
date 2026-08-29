@@ -100,5 +100,44 @@ pub enum Outcome {
         identity: PerNetworkIdentityId,
         /// Added if true, removed if false.
         admitted: bool,
+        /// Which group — `everyone` for admission to the network, a role otherwise.
+        group: intranet_governance::GroupId,
+    },
+    /// The network's name changed — D32, spec 07 §1.7.
+    NetworkNamed {
+        /// What it is now. Empty means the network is unnamed, which is a real
+        /// state rather than a missing one.
+        name: String,
+    },
+    /// One of the network's chat settings changed.
+    ChatSettingSet {
+        /// The policy key, as the log carries it.
+        key: &'static str,
+        /// Its new value.
+        value: i64,
+    },
+    /// The network's admission mode changed.
+    AdmissionModeSet {
+        /// What it is now.
+        mode: intranet_governance::AdmissionMode,
+    },
+    /// A role was created, holding nothing.
+    RoleCreated {
+        /// Its name.
+        group: intranet_governance::GroupId,
+    },
+    /// A role gained or lost one capability.
+    PermissionSet {
+        /// Which role.
+        group: intranet_governance::GroupId,
+        /// The capability's full name, as the log carries it.
+        ///
+        /// The resolved name rather than the verb and scope it was built from,
+        /// because that is what a reader will be looking for when a grant does
+        /// not resolve — and building it a second time to display it is how the
+        /// two spellings drift apart.
+        capability: String,
+        /// Granted if true, withdrawn if false.
+        granted: bool,
     },
 }

@@ -40,16 +40,53 @@ pub struct Placement {
     pub category: Option<CategoryId>,
 }
 
-fn channel_cap(verb: &str, channel: &ChannelId) -> Capability {
-    Capability::extension(format!("chat:{verb}:{}", to_hex(channel.as_bytes())))
+/// One of the three scopes a chat capability can be granted at — `design/02` §3.
+///
+/// # Why this is a type rather than three functions
+///
+/// A grant and a resolution have to agree on a capability's *name*, byte for
+/// byte: `identity_holds` compares `Capability::Extension(String)` values, so a
+/// writer that spelled a scope differently from the reader would produce a grant
+/// that resolves for nobody — and nothing would say so, because an absent grant
+/// and a misspelled one are the same observation (`design/02` §3: denials are
+/// absent grants).
+///
+/// Naming used to live in three private helpers here, which was safe only while
+/// this module was the only thing that built one. Granting is now a command
+/// (`design/05` §3's `SetPermission`), so a second caller exists and the two
+/// must not be able to drift. [`Scope::capability`] is the one construction, used
+/// by the writer and by every resolution below.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum Scope {
+    /// The whole network — `chat:<verb>:*`.
+    Network,
+    /// One category, and every channel that names it — `chat:<verb>:cat:<id>`.
+    ///
+    /// The scope `design/02` §4 expects a grant to bind at: a group with rights
+    /// on 300 channels otherwise holds 300 capability entries, every one of them
+    /// replayed by every node.
+    Category(CategoryId),
+    /// One channel — `chat:<verb>:<id>`. The override, not the default.
+    Channel(ChannelId),
 }
 
-fn category_cap(verb: &str, category: &CategoryId) -> Capability {
-    Capability::extension(format!("chat:{verb}:cat:{}", to_hex(category.as_bytes())))
-}
+impl Scope {
+    /// The capability `verb` at this scope.
+    ///
+    /// The only place a chat capability name is built. Resolution reads what
+    /// this writes.
+    pub fn capability(&self, verb: &str) -> Capability {
+        Capability::extension(self.name(verb))
+    }
 
-fn network_cap(verb: &str) -> Capability {
-    Capability::extension(format!("chat:{verb}:*"))
+    /// The capability's name, as the registry and the log carry it.
+    pub fn name(&self, verb: &str) -> String {
+        match self {
+            Self::Network => format!("chat:{verb}:*"),
+            Self::Category(id) => format!("chat:{verb}:cat:{}", to_hex(id.as_bytes())),
+            Self::Channel(id) => format!("chat:{verb}:{}", to_hex(id.as_bytes())),
+        }
+    }
 }
 
 /// Whether `identity` holds `verb` for this placement.
@@ -65,7 +102,7 @@ pub fn holds(
     verb: &str,
     placement: &Placement,
 ) -> bool {
-    if state.identity_holds(identity, &channel_cap(verb, &placement.channel)) {
+    if state.identity_holds(identity, &Scope::Channel(placement.channel).capability(verb)) {
         return true;
     }
     holds_in_scope(state, identity, verb, placement.category.as_ref())
@@ -89,11 +126,22 @@ pub fn holds_in_scope(
     category: Option<&CategoryId>,
 ) -> bool {
     if let Some(category) = category
-        && state.identity_holds(identity, &category_cap(verb, category))
+        && state.identity_holds(identity, &Scope::Category(*category).capability(verb))
     {
         return true;
     }
-    state.identity_holds(identity, &network_cap(verb))
+    state.identity_holds(identity, &Scope::Network.capability(verb))
+}
+
+/// Whether `verb` is one this application defines — `design/02` §2.2.
+///
+/// Checked before a grant is written rather than only when it is read. An
+/// unregistered extension name is refused outright by the protocol (Core §2.2.1),
+/// so granting `chat:pots:*` would produce an entry that resolves for nobody and
+/// reports no error — the failure mode a typo in a free-text field produces, and
+/// the reason the interface names verbs rather than accepting them.
+pub fn is_verb(verb: &str) -> bool {
+    crate::capabilities::VERBS.iter().any(|(name, _)| *name == verb)
 }
 
 /// What a reader needs to answer about the identities behind records.

@@ -54,10 +54,12 @@ pub use record::{
     Attachment, DEFAULT_MAX_BODY_BYTES, MAX_ATTACHMENT_NAME_BYTES, MAX_REACTION_KEY_BYTES,
     Record, RecordBody, RecordClass,
 };
-pub use permissions::{Authority, CategoryId, Placement, StateAuthority, holds, holds_in_scope};
+pub use permissions::{
+    Authority, CategoryId, Placement, Scope, StateAuthority, holds, holds_in_scope, is_verb,
+};
 pub use policy::{
-    ChatPolicy, MAX_NETWORK_NAME_BYTES, NetworkProfile, Retention, conversation_genesis_values,
-    defaults, keys,
+    ChatPolicy, ChatSetting, MAX_NETWORK_NAME_BYTES, NetworkProfile, Retention, Unit, ZeroMeaning,
+    conversation_genesis_values, defaults, keys,
 };
 pub use segment::{MAX_RECORDS_PER_SEGMENT, Segment};
 pub use limits::{RATE_WINDOW_MILLIS, ReaderLimits, Withheld, withheld};
