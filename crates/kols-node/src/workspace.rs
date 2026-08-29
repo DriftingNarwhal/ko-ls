@@ -134,9 +134,18 @@ impl Workspace {
         }
         // A prefix rather than the whole id: a directory name is something a
         // person reads and types, and the store inside it records the id in full.
+        //
+        // **Built here rather than through `create_at`, because that mints an id
+        // of its own.** This used to name the directory after one id and then
+        // hand the path to `create_at`, which generated a *second* — so the
+        // directory named a network that did not exist and the network inside it
+        // lived at a path nothing could derive. Latent until something looked a
+        // store up by id, and then it defeated the guarantee `path_for` exists
+        // for: joining a network you had already created would fail to find it,
+        // make a second store and a second identity, and present as two members
+        // who are two strangers.
         let id = NetworkId::from_bytes(crate::random_32()?);
-        let path = self.root.join(&to_hex(id.as_bytes())[..16]);
-        self.create_at(path, label, relays)
+        self.build(self.path_for(&id), id, label, relays)
     }
 
     /// Where a network's store belongs in this workspace.
@@ -146,6 +155,59 @@ impl Workspace {
     /// two memberships and be two strangers.
     pub fn path_for(&self, network: &NetworkId) -> PathBuf {
         self.root.join(&to_hex(network.as_bytes())[..16])
+    }
+
+    /// Removes this installation's store for a network, permanently.
+    ///
+    /// # This is forgetting, not leaving, and the difference is not pedantry
+    ///
+    /// There is no way to leave a network. Membership is governance state, so
+    /// resigning would mean holding `revoke-node` and revoking yourself, and the
+    /// protocol has no notion of standing down (`design/02` §5 declines a
+    /// hierarchy, which is the same absence seen from the other side). This
+    /// deletes the local store: the network stops being one this installation
+    /// holds, and the log every other member replays is untouched. To them
+    /// nothing happened — you are still a member who has gone quiet.
+    ///
+    /// **The seed goes with it, and the seed is the identity** (`design/02`
+    /// §6.3). Coming back needs the phrase, the network id and a relay, and this
+    /// destroys the first of the three, so a later join arrives as a stranger
+    /// rather than as the member the log already names. There is no undo and no
+    /// recovery service; a caller that does not make that plain to somebody
+    /// first has mis-stated what this does.
+    ///
+    /// Refuses while a node is running for the store, for the reason
+    /// [`Store`] holds a claim at all: deleting live MLS state out from under a
+    /// running node is the one way to lose a network's key material without any
+    /// step reporting a failure.
+    pub fn forget(&self, network: &NetworkId) -> Result<(), String> {
+        // Found by asking each store what network it holds, rather than by
+        // deriving the path from the id. Derivation is correct for anything
+        // created or joined from now on, and wrong for every directory named
+        // before `create` stopped minting a throwaway id for the name — and a
+        // person cannot be asked to care which of those they have.
+        let Some(known) = self
+            .list()
+            .into_iter()
+            .find(|known| known.id == to_hex(network.as_bytes()))
+        else {
+            return Err("no store here for that network".to_owned());
+        };
+        let path = known.path;
+        // Opened only to check the claim: `Store::open` is what knows whether a
+        // node is heartbeating, and asking it is cheaper than duplicating the
+        // rule and letting the two drift.
+        if let Ok(store) = Store::open(path.clone())
+            && store.is_being_served()
+        {
+            return Err(
+                "a node is running for that network. Close it or switch away first — \
+                 deleting a store while its node holds the key group is how key material \
+                 goes missing with nothing reporting it"
+                    .to_owned(),
+            );
+        }
+        std::fs::remove_dir_all(&path).map_err(|err| format!("could not remove {path:?}: {err}"))
     }
 
     /// Creates a network at an exact path.

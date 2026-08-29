@@ -1396,6 +1396,40 @@ async fn join_network(
     })
 }
 
+/// Removes this installation's store for a network — permanently.
+///
+/// **Forgetting, not leaving**, and the command is named for what it does.
+/// Membership is governance state, so there is no resigning: the log every other
+/// member replays is untouched, and to them nothing happened. What goes is this
+/// machine's copy — and the seed with it, which *is* the identity, so a later
+/// join arrives as a stranger rather than as the member the log already names.
+///
+/// Refuses the network that is currently open rather than quietly closing it: a
+/// node is running for that one, and removing live MLS state out from under a
+/// running node is how key material goes missing with no step reporting it.
+#[tauri::command]
+fn forget_network(app: tauri::State<'_, App>, network: String) -> Result<(), String> {
+    let id = intranet_crypto::from_hex(network.trim())
+        .and_then(|bytes| <[u8; 32]>::try_from(bytes.as_slice()).ok())
+        .map(intranet_identity::NetworkId::from_bytes)
+        .ok_or("that is not a network id")?;
+
+    let open_here = app
+        .open
+        .lock()
+        .map_err(|_| "the workspace lock is poisoned")?
+        .as_ref()
+        .is_some_and(|executor| *executor.store().network() == id);
+    if open_here {
+        return Err(
+            "that network is open. Switch to another one first — its node is running, and              removing the store under it is how a key group goes missing quietly"
+                .to_owned(),
+        );
+    }
+
+    app.workspace.forget(&id)
+}
+
 /// Opens one of this client's networks, and starts a node for it.
 #[tauri::command]
 fn open_network(
@@ -1639,7 +1673,8 @@ fn main() {
             set_role_member,
             settings,
             set_chat_setting,
-            set_admission_mode
+            set_admission_mode,
+            forget_network
         ])
         .run(tauri::generate_context!())
         .expect("the window opens");

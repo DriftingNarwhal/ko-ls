@@ -461,6 +461,29 @@ body {
 }
 .grant-add:hover, #new-role:hover { border-color: var(--accent); color: var(--accent); }
 
+/* Destructive, and styled as the quiet option rather than the obvious one:
+   forgetting a network you are keyed into destroys the seed, and a button that
+   invites a click is the wrong shape for that. */
+/* `.picker-list .forget` rather than `.forget`, because `.picker-list button`
+   is more specific than a bare class and would otherwise win — stretching this
+   to the full width of the row and giving it the same weight as the button that
+   opens the network. */
+.picker-list .forget {
+  background: transparent;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  color: var(--dim);
+  cursor: pointer;
+  flex: none;
+  font: inherit;
+  font-size: 11px;
+  margin-bottom: 6px;
+  padding: 3px 8px;
+  text-align: center;
+  width: auto;
+}
+.picker-list .forget:hover { border-color: var(--bad); color: var(--bad); }
+
 /* ---- network settings -------------------------------------------------- */
 
 .admission { display: flex; flex-direction: column; gap: 6px; }

@@ -89,7 +89,36 @@ async function drawPicker() {
     // normal place to be, and saying so is better than an empty channel list.
     note.textContent = network.keyed ? "" : "not keyed in yet";
 
-    item.append(button, note);
+    // **Forget, not leave**, and the word is the honest one. Membership is
+    // governance state, so there is no resigning — the log every other member
+    // replays is untouched and to them nothing has happened. This drops the
+    // local store, which is a different act and is the one a person actually
+    // wants after a join that never worked.
+    const forget = document.createElement("button");
+    forget.className = "forget";
+    forget.textContent = "forget";
+    forget.title = "remove this installation's copy of this network";
+    forget.addEventListener("click", async (event) => {
+        event.stopPropagation();
+        // Native, because this asks whether to destroy something rather than
+        // what to call it (`design/09` §5.1) — and because the seed is the one
+        // thing here with no recovery path.
+        const loss = network.keyed
+          ? "\n\nThis deletes the seed, which is your identity here. You cannot come " +
+            "back as the same member — a later join would arrive as a stranger, and the " +
+            "log would still name the member you were."
+          : "\n\nYou were never keyed into this one, so there is nothing to lose but the " +
+            "attempt.";
+        if (!confirm(`Forget ${network.label || network.id.slice(0, 12)}?${loss}`)) return;
+        try {
+          await invoke("forget_network", { network: network.id });
+          await drawPicker();
+        } catch (err) {
+          fail(err);
+        }
+    });
+
+    item.append(button, note, forget);
     list.append(item);
   }
 
@@ -2380,6 +2409,60 @@ async function watch() {
   });
 }
 
+/// Empties everything on screen that belonged to the network being left.
+///
+/// # Why this is its own step rather than a consequence of drawing
+///
+/// Opening a network redraws the header, the sidebar and the roster, so those
+/// were correct. The message pane was not, and the reason is that it is drawn by
+/// `openChannel` — which `start` calls only when the new network *has* a
+/// channel. A network with none, which is every network at the moment it is
+/// created, therefore left the previous one's messages and channel name sitting
+/// in the document.
+///
+/// **That looked exactly like content crossing between networks, and it is
+/// worth being precise that it was not.** Each network is its own store under
+/// its own directory, every read goes through the executor for the open one, and
+/// a freshly created network's store holds a genesis entry and no records at
+/// all — there is nothing in it that could render as somebody else's message.
+/// What was on screen was the previous render, never cleared. The alarming
+/// reading and the true one are indistinguishable from the outside, which is why
+/// this clears rather than relying on the next draw to overwrite.
+///
+/// The cached signatures go too. They exist to skip redundant DOM work by
+/// comparing against the last thing drawn, and "the last thing drawn" is about
+/// to belong to a different network — a stale one could suppress the very draw
+/// that would have corrected the screen.
+function clearNetworkView() {
+  el("messages").replaceChildren();
+  el("channel-name").textContent = "no channel";
+  el("channel-topic").textContent = "";
+  el("composer").hidden = true;
+  el("composer-denied").hidden = true;
+  el("namer").hidden = true;
+  el("refused").hidden = true;
+  el("refused").textContent = "";
+  // Per network, like everything else here: a fork healed in one network says
+  // nothing about another, and carrying the notice across would attribute it to
+  // the wrong place.
+  el("reorg").hidden = true;
+  el("invite-out").hidden = true;
+  el("waiting-list").replaceChildren();
+  el("roster-list").replaceChildren();
+
+  state.current = null;
+  state.channels = [];
+  state.sidebar = [];
+  state.dragging = null;
+  state.channelSignature = null;
+  state.sidebarSignature = null;
+  state.meSignature = null;
+  state.peopleSignature = null;
+  // Relay standing and the role being looked at are both per network.
+  state.designated = null;
+  state.role = null;
+}
+
 async function start() {
   let me;
   try {
@@ -2392,6 +2475,7 @@ async function start() {
   }
 
   show("app");
+  clearNetworkView();
   drawMe(me);
   // After `drawMe`, which is what puts the network id in `state.me` — the key
   // these are stored under.

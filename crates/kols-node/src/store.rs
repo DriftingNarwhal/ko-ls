@@ -184,6 +184,15 @@ impl Store {
         }
     }
 
+    /// Whether a node is currently running for this store.
+    ///
+    /// The same freshness rule [`Store::hold_node`] applies, asked without
+    /// taking the claim — for a caller that needs to know rather than to hold,
+    /// which is anything about to do something a running node would not survive.
+    pub fn is_being_served(&self) -> bool {
+        claim_is_fresh(&self.root.join("serving").join("heartbeat"))
+    }
+
     /// Claims the right to run a node for this network.
     ///
     /// # Why this is separate from the append lock
@@ -226,13 +235,7 @@ impl Store {
         let deadline = std::time::Instant::now()
             + std::time::Duration::from_millis(NODE_CLAIM_STALE as u64 + 2_000);
         loop {
-            let held_since = fs::read_to_string(&beat)
-                .ok()
-                .and_then(|text| text.trim().parse::<i64>().ok());
-            let fresh = held_since
-                .is_some_and(|when| now_millis().saturating_sub(when) < NODE_CLAIM_STALE);
-
-            if !fresh {
+            if !claim_is_fresh(&beat) {
                 fs::create_dir_all(&path)?;
                 let claim = NodeClaim { path };
                 claim.beat();
@@ -849,6 +852,19 @@ fn fixed<const N: usize>(bytes: &[u8], what: &str) -> Result<[u8; N], StoreError
 
 /// Held while a process is appending to the governance log.
 ///
+/// Whether a claim's heartbeat is recent enough to mean somebody holds it.
+///
+/// One implementation, because [`Store::hold_node`] and
+/// [`Store::is_being_served`] ask the same question and two copies of a
+/// staleness rule drift in exactly the way that makes one of them wrong about a
+/// running node.
+fn claim_is_fresh(beat: &std::path::Path) -> bool {
+    fs::read_to_string(beat)
+        .ok()
+        .and_then(|text| text.trim().parse::<i64>().ok())
+        .is_some_and(|when| now_millis().saturating_sub(when) < NODE_CLAIM_STALE)
+}
+
 /// How long a node claim survives without a heartbeat.
 ///
 /// Long enough that a slow tick does not hand the network's key group to a

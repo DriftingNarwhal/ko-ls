@@ -50,6 +50,15 @@ rediscovers it later as a performance idea.
 sender as sole Founder. So the node count is `servers + conversations`, not `servers`, and a
 user who messages thirty people is running thirty-odd nodes. §2 is the answer to that.
 
+**Switching networks clears the screen before it draws, rather than relying on the next draw
+to overwrite it.** The header, sidebar and roster are redrawn from the network being opened, so
+those were right; the message pane is drawn by opening a *channel*, which a network with none —
+every network at the moment it is created — never does. So the previous network's messages and
+channel name stayed in the document, which looks exactly like content crossing between networks
+and is not: each is its own store under its own directory, and a new one holds a genesis entry
+and no records at all. The alarming reading and the true one are indistinguishable from outside
+the code, which is the whole reason this is a clear rather than a redraw.
+
 **So the client holds a workspace rather than a store.** A directory of networks, each its own
 store, listed and chosen before anything else can happen — which also means *creating* one is
 something the interface does rather than something a terminal must have done first. That was
@@ -57,6 +66,16 @@ the shape of the gap: creating a network lived in `kols init`, so a window could
 without a second copy of the genesis requirements, and each of those is silent when missed —
 the network looks fine until the first post is refused by its own author's node. One path, two
 front ends.
+
+**A network can be forgotten, and forgotten is the honest word.** There is no leaving:
+membership is governance state, so resigning would mean holding `revoke-node` and revoking
+yourself, and §5 of `02` declines the hierarchy that would make that a lesser act. What the
+picker offers is dropping this installation's store — the log every other member replays is
+untouched, and to them nothing has happened. **The seed goes with it**, and the seed is the
+identity (`02` §6.3), so a later join arrives as a stranger rather than as the member the log
+already names. The confirmation says that, and says the lighter thing when there was never a
+key to lose, because a network that was never joined costs nothing to drop and most of the
+uses of this will be exactly that.
 
 **Having no network open is where somebody starts, not a failure.** The interface opens on a
 picker; with exactly one network it opens that one, because being asked to choose between one
