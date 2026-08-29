@@ -372,6 +372,10 @@ pub async fn serve(
     // what it asks for, and `absorb_chain` clears an entry once it lands.
     let mut backfill: BTreeSet<intranet_storage::Cid> = BTreeSet::new();
     let mut listening = Vec::new();
+    // Asked once. The routing table decides which of this machine's LAN
+    // addresses an invite is allowed to name, and it does not change often
+    // enough to re-ask on every listen event.
+    let preferred = crate::preferred_source_addresses();
 
     // One-shot commands write to the same store this node reads, so a `post`
     // in another terminal is invisible until something re-reads it. Polling is
@@ -620,18 +624,11 @@ pub async fn serve(
                     listening.push(full);
                     // Written down so a one-shot `kols invite` can carry them.
                     // Only a running node knows what it is reachable on, and an
-                    // invite with no bootstrap address cannot connect anybody.
-                    // Loopback and link-local are never useful to somebody
-                    // else, and an invite carries whatever is here. Binding
-                    // dual-stack multiplied the noise: this machine had five
-                    // interfaces before IPv6 and QUIC doubled each of them, so
-                    // an unfiltered invite names a dozen addresses a joiner
-                    // will dial in order, most of which cannot answer.
-                    let addresses: Vec<String> = listening
-                        .iter()
-                        .filter(|address| crate::is_worth_publishing(address))
-                        .map(ToString::to_string)
-                        .collect();
+                    // invite with no bootstrap address cannot connect anybody —
+                    // but most of what it listens on cannot answer a stranger,
+                    // so this is a selection rather than the whole list. See
+                    // `addresses_for_an_invite` for which ones and why.
+                    let addresses = crate::addresses_for_an_invite(&listening, &preferred);
                     if let Err(err) = store.set_addresses(&addresses) {
                         sink(&[Event::Degraded {
                             reason: format!("could not record this node's addresses: {err}"),

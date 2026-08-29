@@ -188,6 +188,34 @@ that — refusing to mint rather than producing a credential that connects to no
 same applies in reverse: the addresses an invite carried are kept by whoever redeems it, so
 a joiner never has to be told an address by hand after being handed one inside the invite.
 
+**Which addresses, though, turned out to be most of the work.** The daemon first wrote down
+everything it listened on minus loopback and link-local, and one ordinary Windows machine
+produced twenty-five: three global IPv6 addresses and one real LAN address, and beside them a
+Tailscale pair, three virtual-adapter subnets left by VirtualBox and two hypervisors, and
+circuits through a relay that announced its private container addresses beside its public
+name — each direct address doubled again by TCP and QUIC. That is a 4,400-character invite,
+which is not something anybody sends in a chat message, and the length was not the worst of
+it: a joiner dials the list in order, and every circuit through one relay shares a connection,
+so a dead relay hop dialled first can cancel the live one queued behind it (Core §5.2). The
+invite was carrying addresses that actively broke the join it existed to perform.
+
+So the daemon selects rather than filters, on three rules that between them cut that machine
+to nine addresses and about 1,950 characters. **An overlay address is dropped** — somebody on
+your tailnet does not need an invite to find you, and somebody who is not on it can never use
+the address. **A LAN address survives only if it is the one this machine actually uses**;
+nothing in the text distinguishes `192.168.56.1` from `192.168.1.200`, so the routing table is
+asked instead, and if it answers nothing useful every LAN address is kept — a long invite is a
+better outcome than two machines in one house unable to find each other. **A relay already
+offered at an address a stranger can reach is not also offered at a private one**, which
+removes the leaked container addresses while keeping a member relaying on the LAN, for whom
+the private hop is the only way in. What survives is capped, so no interface list can produce
+an invite nobody can paste.
+
+More than half of what is left is the node's peer id, repeated once per address. Removing it
+would mean the addresses travelled without their `/p2p/` suffix and the joiner appended the
+one the invite already names — a change to the protocol's wire format, and so a decision above
+the client. `invite_length.rs` measures it so the number is known when that is taken.
+
 The URI is a container, not a format: the bytes are the protocol's and normative, the scheme
 and its base32 are the client's, chosen so an invite survives being pasted into a chat
 message and copied back out.

@@ -24,6 +24,59 @@ Kept because this project keeps re-learning the same lessons and paying for them
 
 ---
 
+- **2026-08-29** — **The milestone's first test passes, and the invite it passed with was 4,400 characters long.**
+
+  Two of the user's own laptops on separate networks, one on a mobile hotspot: joined over the
+  deployed relay, auto-admit on a valid invite worked, and both ends reconnected after being
+  closed and reopened. That is exactly what §1 named as this milestone's first test, and it is
+  the first time two nodes have met across networks rather than across one LAN.
+
+  It nearly did not, and the reason is worth writing down because three diagnoses were wrong
+  before the right one, and each was killed by the user's evidence rather than by my analysis.
+  A friend on a third network could not join. I blamed a `?` in the dial loop that aborted
+  before the circuit was reached (killed by "nobody answered within 30s" — the timeout is only
+  reached *after* the loop completes), then a spent invite (killed by "I generated a new invite
+  every time"), then O21 (killed by "they are not in the roster"). The actual cause was in the
+  relay's deployment: it announced its private container addresses beside its public name, the
+  private hops sorted first, and because every circuit through one relay peer shares a
+  connection, dialling a dead hop left the relay abandoned and **cancelled the request behind
+  it** — so the failure was reported against the address that would have worked. The user fixed
+  the relay's public address in Railway and it connected.
+
+  The transport now orders an unroutable relay hop last (Core §5.2, added as a SHOULD), which
+  would have prevented it. But the invite was the other half: it carried twenty-five addresses
+  of which most could not answer anybody, and that is what came next.
+
+  **Which addresses an invite carries is now a selection rather than a filter.** One ordinary
+  Windows machine listed three global IPv6 addresses and one real LAN address, and beside them
+  a Tailscale pair, three virtual-adapter subnets from VirtualBox and two hypervisors, and four
+  circuits through the relay's private addresses — every direct one doubled by TCP and QUIC.
+  Twenty-five addresses, about 4,450 characters of URI, which is not something anybody sends in
+  a chat message. Three rules cut it to nine and about 1,950: an overlay address is dropped
+  (somebody on your tailnet does not need an invite to find you); a LAN address survives only if
+  the routing table says it is the one this machine uses, since nothing in the text separates
+  `192.168.56.1` from `192.168.1.200`; and a relay already offered at a reachable address is
+  not also offered at a private one.
+
+  Two things that shape those rules. The routing-table question is asked by connecting a UDP
+  socket to a documentation address — no packet is sent, it is a route lookup — and it **fails
+  open**: if the answer matches nothing this node listens on, every LAN address is kept, because
+  a long invite is a better outcome than two machines in one house that cannot find each other.
+  And the relay rule is not "drop private hops": a member relaying on the LAN looks identical
+  from the address alone, and for that network it is the only way in. What distinguishes the
+  leaked container address is that the *same relay peer* was also offered publicly.
+
+  Writing the tests found two defects in the first version, both of the same kind — a rule
+  about this machine's own interfaces applied to an address belonging to another machine. The
+  private relay hop survived as if it were a LAN relay, and the preferred-source pruning was
+  dropping LAN relays outright.
+
+  More than half of what is left is the peer id, repeated once per address. Removing it means
+  the addresses travel without their `/p2p/` suffix and the joiner appends the one the invite
+  already names — a change to `intranet_invite::Invite`'s wire format, so a decision above the
+  client rather than one to take while a build is out being tested. `invite_length.rs` asserts
+  the ratio so the number is known when it is taken.
+
 - **2026-08-23** — **A closing sweep, which found the same defect twice in one session.**
 
   Counts corrected: 247 here and 655 upstream, `kols-core` at 126 and `kols-api` at 33, all of

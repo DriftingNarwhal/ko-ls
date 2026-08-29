@@ -159,6 +159,191 @@ fn is_link_local(ip: &std::net::Ipv6Addr) -> bool {
     ip.segments()[0] & 0xffc0 == 0xfe80
 }
 
+/// How reachable an address is by somebody who was handed an invite.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Reach {
+    /// A global IP or a name: anybody can try it.
+    Anybody,
+    /// A private IPv4 address, which answers somebody on the same LAN and
+    /// nobody else. Two machines in one house are a case this must keep.
+    SameLan,
+    /// Reachable only from inside an overlay this joiner is not on — Tailscale's
+    /// `100.64/10` and `fd7a:…`, and unique-local IPv6 generally.
+    Overlay,
+}
+
+/// How far an address reaches, judged on the hop a dial actually starts with.
+pub fn reach_of(address: &libp2p::Multiaddr) -> Reach {
+    if intranet_transport::dial::first_hop_is_routable(address) {
+        return Reach::Anybody;
+    }
+    for part in address.iter() {
+        match part {
+            // Everything past here names the peer beyond the relay, not the
+            // hop being judged.
+            libp2p::multiaddr::Protocol::P2pCircuit => break,
+            libp2p::multiaddr::Protocol::Ip4(ip) if ip.is_private() => return Reach::SameLan,
+            libp2p::multiaddr::Protocol::Ip4(_) | libp2p::multiaddr::Protocol::Ip6(_) => break,
+            _ => {}
+        }
+    }
+    Reach::Overlay
+}
+
+/// The most addresses an invite will carry.
+///
+/// Well under the wire ceiling of 32 (`intranet_invite::wire`), because that
+/// bound exists to stop an attacker inflating a message and this one exists to
+/// keep an invite short enough to paste. A node with more than a dozen
+/// *reachable* addresses is a node whose extra addresses nobody will get to.
+pub const INVITE_ADDRESS_LIMIT: usize = 12;
+
+/// The addresses an invite should carry, out of everything this node listens on.
+///
+/// # Why this is a selection and not a filter
+///
+/// A node listens on every interface it has, and an invite used to carry all of
+/// them. One real machine produced twenty-three: three global IPv6 addresses and
+/// one real LAN address, and beside them a Tailscale pair, three virtual-adapter
+/// subnets left by VirtualBox and two hypervisors, four circuit addresses
+/// through a relay's private container IPs — each doubled by TCP and QUIC. That
+/// is a 4,300-character invite of which the great majority cannot answer
+/// anybody, and the length is not the only cost: a joiner dials them in order,
+/// and circuit addresses through one relay share a connection, so the dead ones
+/// are actively harmful (Core §5.2).
+///
+/// Three rules, in order of how much they remove:
+///
+/// 1. **An overlay address is dropped.** Somebody on your tailnet does not need
+///    your invite to find you, and somebody who is not on it can never use the
+///    address. This is the one the machine above was asked about by name.
+/// 2. **A LAN address survives only if it is the one this machine actually uses.**
+///    Nothing in `192.168.56.1` says VirtualBox and nothing in `192.168.1.200`
+///    says real; the routing table is what knows the difference, so `preferred`
+///    is asked rather than the text (see `preferred_source_addresses`). If it
+///    knows nothing, every LAN address is kept — a long invite is a worse
+///    outcome than a house where two machines cannot find each other.
+///
+///    This asks about *this machine's* interfaces, so it is asked of direct
+///    addresses only. A circuit's hop is the relay's address, and the question
+///    there is a different one: **a relay already offered at an address a
+///    stranger can reach is not also offered at a private one.** That drops the
+///    container address a hosted relay leaks, while a relay whose only hop is
+///    private — a member relaying on the LAN — is kept, because for that
+///    network it is the way in.
+/// 3. **What is left is capped**, reachable-by-anybody first, so a pathological
+///    interface list cannot produce an invite nobody can paste.
+///
+/// Loopback, link-local and unspecified are gone before any of this, by
+/// `is_worth_publishing`: they are not a matter of degree.
+pub fn addresses_for_an_invite(
+    listening: &[libp2p::Multiaddr],
+    preferred: &[std::net::IpAddr],
+) -> Vec<String> {
+    let worth: Vec<&libp2p::Multiaddr> = listening
+        .iter()
+        .filter(|address| is_worth_publishing(address))
+        .filter(|address| reach_of(address) != Reach::Overlay)
+        .collect();
+
+    // The relays this node has a reservation on that are reachable from
+    // outside. A relay announcing a private address beside a public one is the
+    // deployment that caused this: the extra hop is not a second way in, it is
+    // the same way in written wrongly, and dialling it can cancel the requests
+    // queued behind it (Core §5.2).
+    let reachable_relays: std::collections::BTreeSet<libp2p::PeerId> = worth
+        .iter()
+        .filter(|address| reach_of(address) == Reach::Anybody)
+        .filter_map(|address| relay_peer(address))
+        .collect();
+
+    // Asked over direct addresses only, and before pruning: if the routing
+    // table named an address this node is not listening on, it has told us
+    // nothing about these, and dropping the lot on that basis would leave a
+    // same-LAN join with nothing to dial.
+    let preferred_is_useful = worth
+        .iter()
+        .filter(|address| !is_circuit_address(address) && reach_of(address) == Reach::SameLan)
+        .any(|address| first_ip(address).is_some_and(|ip| preferred.contains(&ip)));
+
+    let mut chosen: Vec<&libp2p::Multiaddr> = worth
+        .into_iter()
+        .filter(|address| {
+            if reach_of(address) == Reach::Anybody {
+                return true;
+            }
+            match relay_peer(address) {
+                // A circuit. Its hop names the relay rather than this machine,
+                // so the routing table has nothing to say about it — the
+                // question is only whether the same relay was also offered at
+                // an address a stranger can reach. If it was not, this is a
+                // relay on the LAN and the only way in.
+                Some(relay) => !reachable_relays.contains(&relay),
+                // A LAN address of this machine's own, kept only if it is the
+                // one this machine actually uses.
+                None => {
+                    !preferred_is_useful
+                        || first_ip(address).is_some_and(|ip| preferred.contains(&ip))
+                }
+            }
+        })
+        .collect();
+
+    // Only decides what the cap keeps. The joiner orders what it receives for
+    // itself (`dial::order_candidates`), which is where dialling order is
+    // settled.
+    chosen.sort_by_key(|address| u8::from(reach_of(address) != Reach::Anybody));
+    chosen.truncate(INVITE_ADDRESS_LIMIT);
+    chosen.iter().map(ToString::to_string).collect()
+}
+
+/// The relay a circuit address goes through, which is the peer named just
+/// before `/p2p-circuit`. `None` for a direct address.
+fn relay_peer(address: &libp2p::Multiaddr) -> Option<libp2p::PeerId> {
+    let mut relay = None;
+    for part in address.iter() {
+        match part {
+            libp2p::multiaddr::Protocol::P2p(peer) => relay = Some(peer),
+            libp2p::multiaddr::Protocol::P2pCircuit => return relay,
+            _ => {}
+        }
+    }
+    None
+}
+
+/// The IP a dial to this address would start at, if it starts at one.
+fn first_ip(address: &libp2p::Multiaddr) -> Option<std::net::IpAddr> {
+    address.iter().find_map(|part| match part {
+        libp2p::multiaddr::Protocol::Ip4(ip) => Some(std::net::IpAddr::V4(ip)),
+        libp2p::multiaddr::Protocol::Ip6(ip) => Some(std::net::IpAddr::V6(ip)),
+        _ => None,
+    })
+}
+
+/// The addresses this machine would send from, one per family.
+///
+/// Connecting a UDP socket sends no packet: it asks the routing table which
+/// interface would carry one to that destination, and the answer is that
+/// interface's own address. That is the only thing on this machine that can
+/// tell a real LAN address from a hypervisor's, which is why an invite asks.
+///
+/// Returns what it can. A machine with no IPv6 route, or none at all, is not an
+/// error here — `addresses_for_an_invite` keeps every LAN address when this
+/// says nothing useful.
+pub fn preferred_source_addresses() -> Vec<std::net::IpAddr> {
+    // Documentation ranges (RFC 5737, RFC 3849). Nothing is sent to them; they
+    // are addresses to *route to*, and they route the same way as anything else
+    // off this link — down the default route.
+    [("0.0.0.0:0", "192.0.2.1:9"), ("[::]:0", "[2001:db8::1]:9")]
+        .into_iter()
+        .filter_map(|(bind, probe)| {
+            let socket = std::net::UdpSocket::bind(bind).ok()?;
+            socket.connect(probe).ok()?;
+            socket.local_addr().ok().map(|address| address.ip())
+        })
+        .collect()
+}
+
 /// Whether an address is a relay circuit rather than a direct socket.
 ///
 /// The distinction matters for what a node should say when one goes away: a
@@ -206,6 +391,218 @@ mod address_tests {
         assert!(is_worth_publishing(&addr(
             "/ip4/66.33.22.230/tcp/55503/p2p/12D3KooWDq3KKteeKPBfkcz39RuaqnT49BjhMiKAcnrVDDbw4Vtn/p2p-circuit"
         )));
+    }
+}
+
+#[cfg(test)]
+mod invite_address_tests {
+    use super::{addresses_for_an_invite, reach_of, Reach, INVITE_ADDRESS_LIMIT};
+    use libp2p::Multiaddr;
+
+    const ME: &str = "12D3KooWMHZbUfFYuqe6NxXBFSg3aLzfTSa1B5QKGNKwMrWz5FaD";
+    const RELAY: &str = "12D3KooWAT1R2JjcZbnVUKLX8Xo1Qg5APTWMkpHarHY4Uo1YpGzT";
+
+    fn addr(text: &str) -> Multiaddr {
+        text.parse().expect("valid multiaddr")
+    }
+
+    /// A direct listen address, as `serve` records it — peer id appended.
+    fn direct(host: &str) -> Multiaddr {
+        let family = if host.contains(':') { "ip6" } else { "ip4" };
+        addr(&format!("/{family}/{host}/tcp/65343/p2p/{ME}"))
+    }
+
+    /// A circuit through a relay reachable at `hop`.
+    fn circuit(hop: &str) -> Multiaddr {
+        let family = if host_is_name(hop) {
+            "dns4"
+        } else if hop.contains(':') {
+            "ip6"
+        } else {
+            "ip4"
+        };
+        addr(&format!(
+            "/{family}/{hop}/tcp/4001/p2p/{RELAY}/p2p-circuit/p2p/{ME}"
+        ))
+    }
+
+    fn host_is_name(host: &str) -> bool {
+        host.chars().any(|c| c.is_ascii_alphabetic()) && !host.contains(':')
+    }
+
+    /// Everything one real machine listened on, which is what prompted this.
+    /// Only the TCP half is listed; QUIC doubled every direct address.
+    fn a_real_machine() -> Vec<Multiaddr> {
+        vec![
+            direct("2600:1700:a825:4800::3f"),
+            direct("2600:1700:a825:4800:634c:8370:a381:9f64"),
+            direct("2600:1700:a825:4800:d46f:a0b3:57f5:bbc7"),
+            direct("fd7a:115c:a1e0::4b36:9876"), // Tailscale
+            direct("100.101.152.117"),           // Tailscale
+            direct("192.168.1.200"),             // the real LAN
+            direct("192.168.56.1"),              // VirtualBox
+            direct("192.168.23.1"),              // a hypervisor
+            direct("192.168.220.1"),             // another one
+            direct("127.0.0.1"),
+            direct("fe80::1"),
+            circuit("switchback.proxy.rlwy.net"),
+            circuit("10.140.152.103"), // the relay's container address
+            circuit("fd12:a6a1:7ec6:1::9867"),
+        ]
+    }
+
+    fn lan() -> Vec<std::net::IpAddr> {
+        vec!["192.168.1.200".parse().expect("valid ip")]
+    }
+
+    #[test]
+    fn an_overlay_address_never_reaches_the_person_you_invited() {
+        // Both halves of Tailscale. Somebody on the tailnet does not need the
+        // invite to find this machine; somebody who is not on it never can.
+        assert_eq!(reach_of(&direct("100.101.152.117")), Reach::Overlay);
+        assert_eq!(reach_of(&direct("fd7a:115c:a1e0::4b36:9876")), Reach::Overlay);
+        // A private relay hop is not overlay — a member relaying on the LAN
+        // looks exactly like this, and `addresses_for_an_invite` is what tells
+        // the two apart, by whether the same relay was also offered publicly.
+        assert_eq!(reach_of(&circuit("10.140.152.103")), Reach::SameLan);
+
+        assert_eq!(reach_of(&direct("2600:1700:a825:4800::3f")), Reach::Anybody);
+        assert_eq!(reach_of(&circuit("switchback.proxy.rlwy.net")), Reach::Anybody);
+        assert_eq!(reach_of(&direct("192.168.1.200")), Reach::SameLan);
+    }
+
+    #[test]
+    fn a_real_machines_invite_names_only_what_can_answer() {
+        let chosen = addresses_for_an_invite(&a_real_machine(), &lan());
+
+        let expected = [
+            "2600:1700:a825:4800::3f",
+            "2600:1700:a825:4800:634c:8370:a381:9f64",
+            "2600:1700:a825:4800:d46f:a0b3:57f5:bbc7",
+            "switchback.proxy.rlwy.net",
+            "192.168.1.200",
+        ];
+        for host in expected {
+            assert!(
+                chosen.iter().any(|address| address.contains(host)),
+                "{host} must survive, got {chosen:#?}"
+            );
+        }
+        // The hypervisors, Tailscale, the relay's container addresses, and what
+        // was never publishable to begin with.
+        for host in [
+            "192.168.56.1",
+            "192.168.23.1",
+            "192.168.220.1",
+            "100.101.152.117",
+            "fd7a:",
+            "10.140.152.103",
+            "fd12:",
+            "127.0.0.1",
+            "fe80:",
+        ] {
+            assert!(
+                !chosen.iter().any(|address| address.contains(host)),
+                "{host} must not survive, got {chosen:#?}"
+            );
+        }
+        assert_eq!(chosen.len(), expected.len(), "{chosen:#?}");
+    }
+
+    #[test]
+    fn a_lan_relay_survives_even_though_a_lan_relay_hop_is_not_routable() {
+        // A network whose only relay is a member on the same LAN is legitimate,
+        // and dropping its circuit would leave that network with nothing. The
+        // hop is private rather than overlay, so it is kept — and, being a
+        // circuit, it is not subject to the preferred-source pruning either.
+        let chosen = addresses_for_an_invite(&[circuit("192.168.1.7")], &lan());
+        assert_eq!(chosen.len(), 1, "{chosen:#?}");
+    }
+
+    #[test]
+    fn a_relay_offered_publicly_is_not_also_offered_privately() {
+        // The deployment that caused all this: one relay announcing its
+        // container addresses beside its public name, so the invite carried
+        // four circuits through the same peer and the joiner dialled the dead
+        // ones first. Same relay peer, so the private hops are redundant.
+        let chosen = addresses_for_an_invite(
+            &[
+                circuit("switchback.proxy.rlwy.net"),
+                circuit("10.140.152.103"),
+                circuit("fd12:a6a1:7ec6:1::9867"),
+            ],
+            &lan(),
+        );
+        assert_eq!(chosen.len(), 1, "{chosen:#?}");
+        assert!(chosen[0].contains("switchback"), "{chosen:#?}");
+    }
+
+    #[test]
+    fn a_lan_relay_is_kept_beside_this_machines_own_lan_address() {
+        // The pruning in the test above is about this machine's interfaces. A
+        // relay on the LAN is a *different* machine, so knowing which of our
+        // own addresses is real says nothing about it — and it is this
+        // network's only way in.
+        let chosen = addresses_for_an_invite(
+            &[direct("192.168.1.200"), direct("192.168.56.1"), circuit("192.168.1.7")],
+            &lan(),
+        );
+        assert!(chosen.iter().any(|address| address.contains("192.168.1.7")), "{chosen:#?}");
+        assert!(chosen.iter().any(|address| address.contains("192.168.1.200")), "{chosen:#?}");
+        assert!(!chosen.iter().any(|address| address.contains("192.168.56.1")), "{chosen:#?}");
+    }
+
+    #[test]
+    fn a_routing_table_that_says_nothing_useful_keeps_every_lan_address() {
+        // A machine routing its default through Tailscale reports a `100.64/10`
+        // source, which matches none of these. Pruning on that basis would
+        // leave two machines in one house unable to find each other, so an
+        // answer that explains nothing prunes nothing.
+        let listening = a_real_machine();
+        let elsewhere = vec!["100.101.152.117".parse().expect("valid ip")];
+
+        let chosen = addresses_for_an_invite(&listening, &elsewhere);
+        for host in ["192.168.1.200", "192.168.56.1", "192.168.220.1"] {
+            assert!(
+                chosen.iter().any(|address| address.contains(host)),
+                "{host} must survive, got {chosen:#?}"
+            );
+        }
+        // Failing open is about LAN addresses only; the overlay is still gone.
+        assert!(!chosen.iter().any(|address| address.contains("100.101")));
+
+        // And the same when nothing at all could be probed.
+        assert_eq!(chosen, addresses_for_an_invite(&listening, &[]));
+    }
+
+    #[test]
+    fn an_invite_stays_short_enough_to_paste() {
+        // Every one of these is reachable, so nothing above the cap removes
+        // them; the cap is what stops an invite nobody can paste.
+        let listening: Vec<Multiaddr> = (0..40)
+            .map(|n| direct(&format!("2600:1700:a825:4800::{n:x}")))
+            .chain(std::iter::once(direct("192.168.1.200")))
+            .collect();
+
+        let chosen = addresses_for_an_invite(&listening, &lan());
+        assert_eq!(chosen.len(), INVITE_ADDRESS_LIMIT);
+        // What the cap dropped is what somebody was least likely to reach.
+        assert!(
+            chosen.iter().all(|address| !address.contains("192.168")),
+            "{chosen:#?}"
+        );
+    }
+
+    #[test]
+    fn the_routing_table_names_an_address_this_machine_holds() {
+        // Not asserting *which* — that is the point of asking the OS. Only that
+        // the probe answers on an ordinary machine rather than silently
+        // returning nothing and failing open forever.
+        let preferred = super::preferred_source_addresses();
+        assert!(
+            preferred.iter().any(|ip| !ip.is_loopback() && !ip.is_unspecified()),
+            "no usable source address: {preferred:?}"
+        );
     }
 }
 
