@@ -24,7 +24,7 @@ Kept because this project keeps re-learning the same lessons and paying for them
 
 ---
 
-- **2026-08-29** — **The milestone's first test passes, and the invite it passed with was 4,400 characters long.**
+- **2026-08-29** — **The milestone's first test passes, and the invite it passed with was 4,750 characters long.**
 
   Two of the user's own laptops on separate networks, one on a mobile hotspot: joined over the
   deployed relay, auto-admit on a valid invite worked, and both ends reconnected after being
@@ -51,8 +51,8 @@ Kept because this project keeps re-learning the same lessons and paying for them
   Windows machine listed three global IPv6 addresses and one real LAN address, and beside them
   a Tailscale pair, three virtual-adapter subnets from VirtualBox and two hypervisors, and four
   circuits through the relay's private addresses — every direct one doubled by TCP and QUIC.
-  Twenty-five addresses, about 4,450 characters of URI, which is not something anybody sends in
-  a chat message. Three rules cut it to nine and about 1,950: an overlay address is dropped
+  Twenty-five addresses, about 4,750 characters of URI, which is not something anybody sends in
+  a chat message. Three rules cut it to nine: an overlay address is dropped
   (somebody on your tailnet does not need an invite to find you); a LAN address survives only if
   the routing table says it is the one this machine uses, since nothing in the text separates
   `192.168.56.1` from `192.168.1.200`; and a relay already offered at a reachable address is
@@ -71,11 +71,34 @@ Kept because this project keeps re-learning the same lessons and paying for them
   private relay hop survived as if it were a LAN relay, and the preferred-source pruning was
   dropping LAN relays outright.
 
-  More than half of what is left is the peer id, repeated once per address. Removing it means
-  the addresses travel without their `/p2p/` suffix and the joiner appends the one the invite
-  already names — a change to `intranet_invite::Invite`'s wire format, so a decision above the
-  client rather than one to take while a build is out being tested. `invite_length.rs` asserts
-  the ratio so the number is known when it is taken.
+  More than half of what was left after that was the peer id, repeated once per address, and
+  the user took the wire-format change rather than defer it — a new build costs nothing. **The
+  addresses in one invite all name the same node, so they all end in the same `/p2p/<id>`, and
+  the encoding now writes the longest ending they share exactly once.** Deliberately stated as
+  a fact about those strings rather than about multiaddrs: `intranet-invite` holds addresses as
+  opaque `String`s precisely so a signed credential does not acquire opinions about transport,
+  and a suffix is something an encoder can find without acquiring any. It is not what is signed
+  — the signature covers a payload where the addresses appear whole — so this changed the URI
+  and nothing a receiving node verifies.
+
+  **Two better-sounding schemes were measured and both lost to the framing.** A shared table of
+  `/`-separated components dedupes strictly more, and comes out *larger*: `Enc` frames every
+  length with a fixed eight-byte `u64`, so the table's per-entry prefixes plus a per-address
+  index list cost 766 bytes where the plain encoding cost 1,082 and the suffix scheme cost 634.
+  Compression would need a dependency, a decompression-bomb bound, and a data-dependent size.
+  The cheap trick won on the merits, which is not the usual direction.
+
+  I got the arithmetic wrong twice on the way, both times by estimating instead of measuring,
+  and both times the test caught it. I predicted the addresses would "more than halve" — they
+  fell 41%, because those eight-byte prefixes are a floor no scheme here gets under. And the
+  first end-to-end figure was an estimate of "roughly 200 bytes of overhead" that was off by
+  15%; minting a real invite and encoding it costs a keypair and answers exactly.
+
+  **About 4,750 characters to 1,324**, roughly half from choosing addresses and half from the
+  encoding. Core §5.6 now says why an implementation should care: an invite is carried out of
+  band by a human, so its serialized size is part of the job the section gives it, not a
+  representation detail — with the two drivers named, since neither is visible from the field
+  list.
 
 - **2026-08-23** — **A closing sweep, which found the same defect twice in one session.**
 

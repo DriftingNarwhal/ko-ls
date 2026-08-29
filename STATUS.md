@@ -76,7 +76,7 @@ Where that milestone stands:
 | Windows and macOS builds | **done**, in CI. `kols.exe` runs; `kols-desktop.exe` is built and unrun. It no longer opens a console behind the window — and the attribute that does that had to land with `kols_node::Report`, since a GUI-subsystem process has no stdout and Rust *panics* on the write rather than dropping it |
 | Two nodes meeting through the deployed relay | **Done, on one LAN.** Both ends ran the window, connected and reconnected several times, messages crossed both ways, and an established connection survived the relay going down |
 | **Two nodes on separate networks** | **Done — this milestone's stated first test passes.** Two of the user's own laptops, one on a mobile hotspot: joined over the relay, auto-admit on a valid invite worked, and both ends reconnected after being closed and reopened. Not yet repeated with a second person on a third network, which is the harder version of the same case |
-| Invites short enough to send somebody | **done** — one real machine's invite went from ~4,400 characters to ~1,950 by selecting which addresses to carry rather than carrying all of them (`design/02` §6.1) |
+| Invites short enough to send somebody | **done** — one real machine's invite went from ~4,750 characters to ~1,324, about half from carrying only the addresses a recipient could dial and about half from an encoding that stops repeating the peer id once per address (`design/02` §6.1, Core §5.6) |
 
 **Runnable.** `kols-desktop` is the product (`design/00` D30); `kols` is a development tool
 over the same `kols-api` boundary, owed no feature parity and no end-user documentation.
@@ -93,7 +93,7 @@ over the same `kols-api` boundary, owed no feature parity and no end-user docume
   serve, post, read, edit, delete, react, pin, and channel
   create/list/rename/topic/slowmode/archive.
 
-**Gates green as of this date:** 291 tests here, 659 in `../distributed-intranet`, clippy
+**Gates green as of this date:** 292 tests here, 666 in `../distributed-intranet`, clippy
 clean in both.
 
 ---

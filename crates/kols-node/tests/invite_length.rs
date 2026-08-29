@@ -64,64 +64,126 @@ fn a_real_machine() -> Vec<Multiaddr> {
     all
 }
 
-/// The URI an address list produces, near enough to hold a bound against.
+/// The URI these addresses actually produce, by minting and encoding an invite.
 ///
-/// Base32 of the canonical bytes, which are the addresses plus a fixed ~200 for
-/// the network id, issuer, subject, timestamps, use count and signature.
+/// Estimated at first, from the address bytes plus a guess at the fixed fields.
+/// The estimate was wrong by about 15% because `Enc` frames every length with a
+/// fixed eight-byte `u64`, which a guess at "roughly 200 bytes of overhead"
+/// does not account for. Measuring the real thing costs a keypair.
 fn uri_length(addresses: &[String]) -> usize {
-    let bytes: usize = addresses.iter().map(String::len).sum();
-    kols_node::invite::SCHEME.len() + (bytes + 200).div_ceil(5) * 8
+    let seed = intranet_identity::MasterSeed::from_entropy([7u8; 32]);
+    let network = intranet_identity::NetworkId::from_bytes([9u8; 32]);
+    let issuer = seed.identity_for(&network).expect("derives an identity");
+    let invite = intranet_invite::Invite::issue(
+        &issuer,
+        addresses.to_vec(),
+        intranet_invite::InviteSubject::Bearer,
+        intranet_crypto::Timestamp::from_millis(0),
+        intranet_crypto::Timestamp::from_millis(86_400_000),
+        1,
+    );
+    kols_node::invite::to_uri(&invite).len()
 }
 
 #[test]
 fn an_invite_for_a_real_machine_is_short_enough_to_send_somebody() {
     let listening = a_real_machine();
-    let before: Vec<String> = listening.iter().map(ToString::to_string).collect();
-    let after = kols_node::addresses_for_an_invite(
+    let unselected: Vec<String> = listening.iter().map(ToString::to_string).collect();
+    let selected = kols_node::addresses_for_an_invite(
         &listening,
         &["192.168.1.200".parse().expect("valid ip")],
     );
 
-    // The number this started at, kept so the improvement is visible rather
-    // than asserted against nothing.
+    // Two separate savings, and this measures the one that is still visible.
+    // Carrying every address costs about a kilobyte of URI more than carrying
+    // the nine worth carrying — the hypervisor subnets, Tailscale, and the
+    // relay's container addresses.
+    let (all, chosen) = (uri_length(&unselected), uri_length(&selected));
     assert!(
-        uri_length(&before) > 4_000,
-        "the unfiltered invite was measured at ~4,450 characters; got {}",
-        uri_length(&before)
+        all > chosen + 800,
+        "selecting addresses must be worth having; {all} -> {chosen}"
     );
 
-    // Roughly halved. Not a tight bound — it exists to fail if a change puts
-    // the hypervisor subnets or the relay's container addresses back, each of
-    // which costs hundreds of characters.
-    let length = uri_length(&after);
+    // The other saving cannot be measured from here any more, because the
+    // encoding it improved on no longer exists: an unselected invite under the
+    // old wire format was about 4,450 characters, and factoring the shared
+    // ending out is what took the rest (`intranet_invite::wire`).
     assert!(
-        length < 2_200,
-        "invite grew back to {length} characters:\n{after:#?}"
+        chosen < 1_400,
+        "invite grew back to {chosen} characters:\n{selected:#?}"
     );
-    assert_eq!(after.len(), 9, "{after:#?}");
+    assert_eq!(selected.len(), 9, "{selected:#?}");
+    // Measured: 2,575 characters for all twenty-five, 1,324 for the nine.
 }
 
 #[test]
-fn what_is_left_is_mostly_the_peer_id_repeated() {
-    // Recorded rather than fixed: the id appears once per address, and once
-    // more on a circuit for the relay. Shortening this is a change to the wire
-    // format of `intranet_invite::Invite` — the addresses would carry no
-    // `/p2p/` suffix and the joiner would append the one the invite names — so
-    // it is a decision above this crate. This test is here so the number is
-    // known when that decision is taken.
+fn the_peer_id_is_no_longer_paid_for_once_per_address() {
+    // It used to be more than half of what the addresses cost. The wire
+    // encoding now writes the ending they share exactly once
+    // (`intranet_invite::wire::put_addresses`), so the invite carries it a
+    // single time however many addresses there are — which is what this
+    // asserts, since the count is what used to scale.
     let after = kols_node::addresses_for_an_invite(
         &a_real_machine(),
         &["192.168.1.200".parse().expect("valid ip")],
     );
-    let bytes: usize = after.iter().map(String::len).sum();
-    let ids: usize = after
-        .iter()
-        .map(|address| address.matches("12D3KooW").count() * 52)
-        .sum();
+    let seed = intranet_identity::MasterSeed::from_entropy([7u8; 32]);
+    let network = intranet_identity::NetworkId::from_bytes([9u8; 32]);
+    let issuer = seed.identity_for(&network).expect("derives an identity");
+    let invite = intranet_invite::Invite::issue(
+        &issuer,
+        after,
+        intranet_invite::InviteSubject::Bearer,
+        intranet_crypto::Timestamp::from_millis(0),
+        intranet_crypto::Timestamp::from_millis(86_400_000),
+        1,
+    );
+    let encoded = intranet_invite::encode_invite(&invite);
+    let text = String::from_utf8_lossy(&encoded);
 
+    assert_eq!(
+        text.matches(ME).count(),
+        1,
+        "this node's peer id must appear once, not once per address"
+    );
+    // And what came back out is still every address that went in.
+    assert_eq!(
+        intranet_invite::decode_invite(&encoded)
+            .expect("decodes")
+            .bootstrap_addresses,
+        invite.bootstrap_addresses
+    );
+}
+
+/// What the same addresses cost before the wire encoding factored their shared
+/// ending out. Kept so the headline number has something behind it.
+#[test]
+fn the_historical_figure_is_reproducible() {
+    use intranet_crypto::Enc;
+
+    let all: Vec<String> = a_real_machine().iter().map(ToString::to_string).collect();
+    let mut whole = Enc::new();
+    whole.seq(all.iter(), |e, address| {
+        e.str(address);
+    });
+    let mut factored = Enc::new();
+    factored.seq(std::iter::once(&all), |e, addresses| {
+        // The shared ending, then each address without it — what `put_addresses`
+        // does, reproduced here because it is private to the invite crate.
+        let ending = format!("/p2p/{ME}");
+        e.str(&ending);
+        e.seq(addresses.iter(), |e, address| {
+            e.str(&address[..address.len() - ending.len()]);
+        });
+    });
+
+    // The URI grows 8/5 with the encoding, so the saving in characters is the
+    // saving in bytes scaled by the same factor.
+    let saved = (whole.finish().len() - factored.finish().len()) * 8 / 5;
+    let now = uri_length(&all);
     assert!(
-        ids * 2 > bytes,
-        "peer ids are {ids} of {bytes} address bytes; if that is no longer the \
-         majority, the note above about the wire format is out of date"
+        (4_600..4_900).contains(&(now + saved)),
+        "an unselected invite used to be about 4,750 characters; got {}",
+        now + saved
     );
 }

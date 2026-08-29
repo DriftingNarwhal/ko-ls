@@ -200,7 +200,7 @@ so a dead relay hop dialled first can cancel the live one queued behind it (Core
 invite was carrying addresses that actively broke the join it existed to perform.
 
 So the daemon selects rather than filters, on three rules that between them cut that machine
-to nine addresses and about 1,950 characters. **An overlay address is dropped** — somebody on
+to nine addresses, and a change to the encoding took it the rest of the way. **An overlay address is dropped** — somebody on
 your tailnet does not need an invite to find you, and somebody who is not on it can never use
 the address. **A LAN address survives only if it is the one this machine actually uses**;
 nothing in the text distinguishes `192.168.56.1` from `192.168.1.200`, so the routing table is
@@ -211,10 +211,24 @@ removes the leaked container addresses while keeping a member relaying on the LA
 the private hop is the only way in. What survives is capped, so no interface list can produce
 an invite nobody can paste.
 
-More than half of what is left is the node's peer id, repeated once per address. Removing it
-would mean the addresses travelled without their `/p2p/` suffix and the joiner appended the
-one the invite already names — a change to the protocol's wire format, and so a decision above
-the client. `invite_length.rs` measures it so the number is known when that is taken.
+More than half of what was left after that was the node's peer id, repeated once per address,
+and **the second half of the fix is upstream in how an invite is encoded.** The addresses in
+one invite all name the same node, so they all end in the same `/p2p/<peer id>`. The invite's
+wire encoding now writes the longest ending they share exactly once — a fact about those
+strings rather than about multiaddrs, which is what keeps `intranet-invite` free of any notion
+of what an address means. It is not what is signed: the signature covers a payload in which
+the addresses appear whole, so this changed the URI and nothing a receiving node verifies.
+
+Two richer schemes were measured and rejected, both for the same reason. A shared table of
+`/`-separated components dedupes more in principle and comes out **larger**, because the
+protocol's encoder frames every length with a fixed eight-byte `u64` and the table's prefixes
+and index lists cost more than the repetition they remove. Compressing the whole encoding
+would need a dependency, a bound against a decompression bomb, and a size that varies with the
+data. Nine addresses went from 1,082 bytes to 634 for one string and one subtraction.
+
+Together: **about 4,750 characters to 1,324** for that machine, which `invite_length.rs`
+asserts and Core §5.6 now states as an obligation — an invite is carried out of band by a
+human, so one too long to paste has failed the job the specification gives it.
 
 The URI is a container, not a format: the bytes are the protocol's and normative, the scheme
 and its base32 are the client's, chosen so an invite survives being pasted into a chat
