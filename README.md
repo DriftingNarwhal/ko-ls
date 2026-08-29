@@ -133,6 +133,15 @@ only there proves they are self-consistent rather than host-independent.
 installer and a portable binary for Windows and Apple Silicon macOS. `kols-desktop` is the
 application; it needs no terminal for any step, including setting up a relay.
 
+**The two platforms are not symmetric about the portable binary, and the names hide it.** On
+Windows `kols-desktop.exe` runs on its own. On macOS the application is `ko-ls.app`, out of the
+`.dmg` — the portable `kols-desktop` beside it is a bare executable, and Finder runs one of
+those by opening Terminal. That is what Finder does with any Unix executable outside a bundle
+and nothing in the build can change it: macOS has no equivalent of the subsystem flag that
+keeps a console off the Windows build. The macOS portable binary is kept because the bundler
+is allowed to fail without taking the build down with it, so it is a fallback rather than the
+ordinary way in.
+
 Everything below is the **development** path. `kols` is a tool for building this, not a way to
 use it: it exists because a front end over `kols-api` could be driven before there was a window,
 and it stays because it is the reference path when the window misbehaves. It owes the window no

@@ -237,4 +237,6 @@ jobs:
 
           **Windows** needs the WebView2 runtime, which ships with Windows 11 and current Windows 10.
 
-          **macOS** builds are for Apple Silicon and are ad-hoc signed, not notarised. Gatekeeper refuses them on first run: **right-click the app → Open**, once. If macOS instead calls it *damaged*, that is quarantine on an older download — \`xattr -dr com.apple.quarantine /Applications/ko-ls.app\` clears it. Notarising needs a paid developer certificate this project does not have."
+          **macOS** builds are for Apple Silicon and are ad-hoc signed, not notarised. Gatekeeper refuses them on first run: **right-click the app → Open**, once. If macOS instead calls it *damaged*, that is quarantine on an older download — \`xattr -dr com.apple.quarantine /Applications/ko-ls.app\` clears it. Notarising needs a paid developer certificate this project does not have.
+
+          **On macOS the application is \`ko-ls.app\`, out of the \`.dmg\`.** The portable \`kols-desktop\` beside it is a bare executable, and double-clicking one of those opens a Terminal window to run it — that is what Finder does with any Unix executable outside a bundle, and nothing in the build can change it. So the two platforms are not symmetric here even though the names suggest they are: \`kols-desktop.exe\` runs standalone and its macOS counterpart does not. The portable binary is published because the bundler is allowed to fail without taking the build down with it, which makes it a fallback rather than the ordinary way in."

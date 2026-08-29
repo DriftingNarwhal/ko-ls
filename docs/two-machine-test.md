@@ -28,7 +28,7 @@ neither — it is a routable address both can reach.
 | Machine | Take |
 |---|---|
 | Windows | `windows-x64-ko-ls_<version>_x64-setup.exe`, or `windows-x64-kols-desktop.exe` to run without installing |
-| MacBook | `macos-arm64-ko-ls_<version>_aarch64.dmg` |
+| MacBook | `macos-arm64-ko-ls_<version>_aarch64.dmg` — the `.dmg`, and not the portable binary beside it |
 
 Both platforms object to an unsigned download the first time, in ways that read as a broken
 build.
@@ -40,6 +40,13 @@ plus a build older than v0.3.4 — clear it with
 signed and gets the ordinary "unidentified developer" prompt instead.
 
 **Windows**: SmartScreen warns about the installer. The portable `.exe` avoids it entirely.
+
+**There is no macOS equivalent of that portable route, and the release publishes something that
+looks like one.** `macos-arm64-kols-desktop` is a bare executable, and Finder runs one of those
+by opening a Terminal window alongside it — which is what Finder does with any Unix executable
+outside a bundle, not a fault in the build. Nothing can change it: macOS has no counterpart to
+the subsystem flag that keeps a console off `kols-desktop.exe`. On macOS the application is
+`ko-ls.app`, out of the `.dmg`.
 
 Neither is a symptom: notarising and code-signing need paid certificates this project does not
 have.
