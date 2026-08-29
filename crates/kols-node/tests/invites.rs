@@ -155,6 +155,70 @@ fn fails(home: &Home, args: &[&str]) -> String {
 }
 
 #[test]
+fn somebody_at_the_door_is_still_there_after_a_restart() {
+    // **The waiting room is in-memory state on the node**, so a restart empties
+    // it — and `record_waiting` used to write that empty room over the file,
+    // erasing the person standing at the door. It read as a join that never
+    // happened, from both ends: the joiner had been told once that it was
+    // waiting and does not ask again, and the admin's door was blank.
+    //
+    // Closing the window and switching networks both restart the node, so this
+    // was the ordinary case rather than a rare one.
+    let relay = hosted_relay();
+    let alice = Home::new("inv-restart-alice");
+    ok(&alice, &["init", "the workshop", "--relay", &relay]);
+
+    let bob = Home::new("inv-restart-bob");
+    let uri = {
+        let _node = serving(&alice, 45505);
+        let minted = ok(&alice, &["invite", "--uses", "1", "--hours", "1"]);
+        let uri = minted
+            .lines()
+            .next()
+            .expect("an invite is printed")
+            .to_owned();
+        let joined = ok(&bob, &["join", &uri]);
+        assert!(joined.contains("waiting to be admitted"), "{joined}");
+
+        // Alice sees him while her node is up.
+        let deadline = Instant::now() + patience(Duration::from_secs(20));
+        loop {
+            if ok(&alice, &["waiting"]).contains("kols admit") {
+                break;
+            }
+            assert!(Instant::now() < deadline, "bob never reached the door");
+            std::thread::sleep(Duration::from_millis(300));
+        }
+        uri
+    };
+    // Alice's node is dropped here — the window closed, or another network
+    // opened. The room it held is gone with it.
+    let _ = uri;
+
+    let seen = ok(&alice, &["waiting"]);
+    assert!(
+        seen.contains("kols admit"),
+        "bob was at the door before the restart and must still be:\n{seen}"
+    );
+
+    // And he is still there once a node is running again, rather than being
+    // cleared by the first tick of one that has not relearned him.
+    let _restarted = serving(&alice, 45506);
+    let deadline = Instant::now() + patience(Duration::from_secs(20));
+    loop {
+        let seen = ok(&alice, &["waiting"]);
+        assert!(
+            seen.contains("kols admit"),
+            "a restarted node cleared the door it had not relearned:\n{seen}"
+        );
+        if Instant::now() > deadline {
+            break;
+        }
+        std::thread::sleep(Duration::from_secs(3));
+    }
+}
+
+#[test]
 fn a_join_that_finds_nobody_says_what_it_dialled() {
     // **The regression this guards is silent by construction.** An invite
     // carries the issuer's LAN addresses *and* its relay circuit, and the

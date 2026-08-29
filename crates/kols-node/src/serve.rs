@@ -1394,24 +1394,46 @@ fn record_waiting(
 
     // **Anybody already admitted is no longer waiting.**
     //
-    // The node's waiting room is populated when a join is answered and emptied
-    // by nothing that admission goes through: admitting somebody writes a
-    // governance entry, and no path from that entry reaches this room. So a
-    // founder who admitted a member kept being shown them at the door forever,
-    // with an `admit` button that had already been pressed.
+    // **Anybody already admitted is no longer waiting.** The node's room is
+    // populated when a join is answered and emptied by nothing that admission
+    // goes through — admitting writes a governance entry, and no path from one
+    // reaches this room — so a founder who admitted somebody kept being shown
+    // them at the door, with an `admit` button that had already been pressed.
+    // **The union of what this node knows now and what was written down, not a
+    // replacement.** The waiting room is in-memory state on the node — a fresh
+    // `WaitingRoom` at construction — so a restart empties it, and writing the
+    // empty room over the file *erased the person standing at the door*. From
+    // both ends it then looked like the join had never happened: their client
+    // had been told once that it was waiting and does not ask again, and the
+    // admin's door was blank with nothing to admit.
     //
-    // Filtered against replayed state rather than fixed by remembering who was
-    // admitted, because replay is the authority on membership and this is then
-    // correct for members admitted by somebody else, and after a restart.
+    // Closing the window and switching networks both restart the node, which
+    // makes this the ordinary case rather than a rare one. Somebody who knocked
+    // is still knocking after the application is reopened, and this is the file
+    // that has to remember it, since nothing else does.
+    //
+    // Growth is bounded by the filter below rather than by forgetting: an
+    // admitted member leaves on the next tick, and somebody who knocked and was
+    // never admitted is genuinely still waiting, which is what the entry says.
     let members = store.state().ok();
-    let identities: Vec<String> = occupants
-        .iter()
-        .filter(|entry| {
-            members
-                .as_ref()
-                .is_none_or(|state| !state.is_member(&entry.identity))
+    let mut identities: std::collections::BTreeSet<String> =
+        store.waiting().into_iter().collect();
+    identities.extend(
+        occupants
+            .iter()
+            .map(|entry| intranet_crypto::to_hex(entry.identity.verifying_key().as_bytes())),
+    );
+
+    // Filtered against replayed state rather than by remembering who was
+    // admitted, because replay is the authority on membership — so this stays
+    // correct for somebody admitted by another member, and across a restart.
+    let identities: Vec<String> = identities
+        .into_iter()
+        .filter(|hex| {
+            crate::parse_identity(hex).is_ok_and(|id| {
+                members.as_ref().is_none_or(|state| !state.is_member(&id))
+            })
         })
-        .map(|entry| intranet_crypto::to_hex(entry.identity.verifying_key().as_bytes()))
         .collect();
     if let Err(err) = store.set_waiting(&identities) {
         sink(&[Event::Degraded {
