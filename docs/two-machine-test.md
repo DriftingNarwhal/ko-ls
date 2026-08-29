@@ -308,6 +308,27 @@ Capture, from **both** machines:
 **Absence of a circuit is the most common single cause**, and the panel reports it plainly
 enough that guessing should not be necessary.
 
+### A joiner that never reaches the relay at all
+
+The tell is one-sided: **B says nobody answered, and B's peer id never appears in the relay's
+log.** A peer id is only known after the Noise handshake, so its absence means the handshake
+never completed — the join reached the relay and was refused, or the packets never arrived.
+
+Distinguish those from B's machine before touching anything on A's, because A is not involved:
+
+- **Load the relay's `/health` in a browser on B.** That is HTTPS on 443. If it loads, the host
+  and DNS are fine and only the libp2p port is in question — which is the interesting case,
+  since a hosted relay is usually reached on a high TCP port and plenty of networks allow 443
+  and drop everything else outbound.
+- **Try B on a phone hotspot.** If the join works there and not on its own network, the network
+  is filtering and nothing in this project can change that. That is the fastest single test.
+
+The refusal itself names the addresses it dialled and, since it started reporting them, why each
+one failed — a refused connection, a name that would not resolve, and a port silently dropped
+are three different sentences rather than one silence. If it says the connections were *still
+outstanding*, nothing refused them, which is what dropping rather than rejecting looks like from
+the joining end.
+
 **The window's honest limit:** it can tell you that nobody answered, and not why. The reason
 lives on the other machine, so a screenshot of B's window is worth little without one of A's.
 If you exhaust the above, the development binary prints considerably more — `kols serve` narrates

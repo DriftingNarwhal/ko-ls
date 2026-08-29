@@ -115,15 +115,51 @@ pub async fn redeem(
     )
     .map_err(|err| err.to_string())?;
 
+    // **Every address is attempted, and one failing no longer ends the join.**
+    //
+    // This used to `?` on each parse and each dial, which reads as strict and is
+    // exactly backwards here. An invite carries the issuer's LAN addresses *and*
+    // its relay circuit, and the circuit is always last — `order_candidates`
+    // puts it there deliberately, and it arrives last anyway because a
+    // reservation completes after the direct listeners come up. So the one
+    // address that can reach somebody on another network was the one an earlier
+    // failure stopped this from ever dialling, and the relay saw no connection
+    // attempt at all.
+    //
+    // Invisible on one LAN, which is where this was tested: there the first
+    // address works and the circuit is never needed. It shows up only between
+    // two networks, which is the case Core §5.5 exists for.
+    let mut candidates = Vec::new();
+    let mut refused = Vec::new();
     for address in &invite.bootstrap_addresses {
-        let parsed: Multiaddr = address
-            .parse()
-            .map_err(|err| format!("the invite carries an unusable address {address:?}: {err}"))?;
-        node.dial_candidates([parsed])
-            .map_err(|err| format!("could not dial {address}: {err}"))?;
-        if chatty {
-            println!("  dialing   {address}");
+        match address.parse::<Multiaddr>() {
+            Ok(parsed) => candidates.push(parsed),
+            Err(err) => refused.push(format!("{address} ({err})")),
         }
+    }
+
+    // Ordered here rather than taken in the invite's order, because dialling
+    // them one at a time meant `dial_candidates` only ever saw a single address
+    // and its ordering never applied: direct before circuit, IPv6 before IPv4.
+    let mut dialed = Vec::new();
+    for parsed in intranet_transport::dial::order_candidates(candidates) {
+        match node.dial_candidates([parsed.clone()]) {
+            Ok(()) => {
+                if chatty {
+                    println!("  dialing   {parsed}");
+                }
+                dialed.push(parsed.to_string());
+            }
+            Err(err) => refused.push(format!("{parsed} ({err})")),
+        }
+    }
+
+    if dialed.is_empty() {
+        return Err(format!(
+            "not one of the invite's address(es) could be dialled, so nothing was contacted \
+             — not the issuer, and not their relay: {}",
+            refused.join("; ")
+        ));
     }
 
     // Remembered before the answer rather than after: these are how this node
@@ -136,15 +172,53 @@ pub async fn redeem(
 
     let deadline = tokio::time::Instant::now() + Duration::from_secs(timeout_secs);
     let mut asked = false;
+    // **Why each dial failed, which the transport reports and this used to
+    // discard.** `DialFailed` carries the reason, the match below ended in a
+    // catch-all, and the join then reported a bare "nobody answered" — so a
+    // relay that refused the connection, a name that would not resolve and a
+    // port a network silently drops all looked identical from the joining end.
+    // That is the difference between a person saying "it did not work" and
+    // saying what did not work.
+    let mut failures: Vec<String> = Vec::new();
 
     loop {
         let event = tokio::select! {
             event = node.next_event() => event,
             () = tokio::time::sleep_until(deadline) => {
-                return Err(format!(
-                    "nobody answered within {timeout_secs}s. The addresses in the invite may be \\
-                     stale, or the node that issued it may not be running"
-                ));
+                // Says what was actually tried. The previous wording named two
+                // causes and left the interesting third invisible: an address
+                // that could not be dialled at all reached nobody, and a joiner
+                // reading "nobody answered" had no way to tell a silent relay
+                // from one that was never contacted.
+                let mut why =
+                    format!("nobody answered within {timeout_secs}s. Dialled: {}", dialed.join(", "));
+                if !refused.is_empty() {
+                    why.push_str(&format!(". Could not be dialled: {}", refused.join("; ")));
+                }
+                if !dialed.iter().any(|address| address.contains("p2p-circuit")) {
+                    why.push_str(
+                        ". None of these was a relay circuit, so they only reach somebody on \
+                         the same network as the issuer — the invite may have been minted \
+                         without one",
+                    );
+                }
+                if failures.is_empty() {
+                    // Nothing failed and nothing answered: the connections were
+                    // still in flight when time ran out, which is what a network
+                    // silently dropping the packets looks like from here.
+                    why.push_str(
+                        ". Nothing reported a failure either, so the connections were still \
+                         outstanding — which is what a network that drops the traffic rather \
+                         than refusing it looks like from this end",
+                    );
+                } else {
+                    why.push_str(&format!(". Failures: {}", failures.join("; ")));
+                }
+                why.push_str(
+                    ". Otherwise the addresses may be stale, or the node that issued the \
+                     invite may not be running",
+                );
+                return Err(why);
             }
         };
 
@@ -172,6 +246,19 @@ pub async fn redeem(
 
             NodeEvent::JoinRefused { reason, .. } => {
                 return Err(format!("the join was refused: {reason}"));
+            }
+
+            NodeEvent::DialFailed { peer, error } => {
+                let who = peer.map_or_else(|| "an address".to_owned(), |peer| peer.to_string());
+                let line = format!("{who}: {error}");
+                // Deduplicated because a single unreachable address is retried
+                // and would otherwise fill the refusal with one repeated line.
+                if !failures.contains(&line) {
+                    if chatty {
+                        println!("  no answer {line}");
+                    }
+                    failures.push(line);
+                }
             }
 
             _ => {}

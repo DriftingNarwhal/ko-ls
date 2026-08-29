@@ -155,6 +155,65 @@ fn fails(home: &Home, args: &[&str]) -> String {
 }
 
 #[test]
+fn a_join_that_finds_nobody_says_what_it_dialled() {
+    // **The regression this guards is silent by construction.** An invite
+    // carries the issuer's LAN addresses *and* its relay circuit, and the
+    // circuit is always last. `redeem` used to `?` on each dial, so one address
+    // failing ended the join before the circuit was ever tried — and the relay
+    // saw no connection attempt at all. On one LAN that is invisible, because
+    // the first address works and the circuit is never needed; it appears only
+    // between two networks, which is exactly the case this project cannot test
+    // from one machine.
+    //
+    // So this asserts the observable half: every address is attempted, and the
+    // failure names them. A join that reached nothing would have an empty list
+    // here, which is the shape of the bug.
+    let relay = hosted_relay();
+    let alice = Home::new("inv-quiet-alice");
+    ok(&alice, &["init", "the workshop", "--relay", &relay]);
+
+    let uri = {
+        let _node = serving(&alice, 45507);
+        let minted = ok(&alice, &["invite", "--uses", "1", "--hours", "1"]);
+        minted
+            .lines()
+            .next()
+            .expect("an invite is printed")
+            .to_owned()
+    };
+    // Alice's daemon is dropped here, so the addresses are real, well-formed and
+    // answered by nobody — which is the state a joiner cannot otherwise tell
+    // apart from never having dialled at all.
+
+    let bob = Home::new("inv-quiet-bob");
+    let why = fails(&bob, &["join", &uri, "--timeout", "5"]);
+
+    assert!(
+        why.contains("Dialled:"),
+        "the refusal should name what it tried:\n{why}"
+    );
+    assert!(
+        why.contains("p2p-circuit"),
+        "the circuit is the address that reaches another network, and it must be \
+         among the ones dialled:\n{why}"
+    );
+    // The stray backslash a doubled line-continuation used to leave in this
+    // message, in the one string a joiner actually reads.
+    assert!(
+        !why.contains('\\'),
+        "the refusal carries an escape that should have been a line continuation:\n{why}"
+    );
+    // And it accounts for the silence rather than only reporting it. The
+    // transport says why a dial failed and this used to discard it, which is
+    // what made a refused connection, an unresolvable name and a silently
+    // dropped port indistinguishable from the joining end.
+    assert!(
+        why.contains("Failures:") || why.contains("still outstanding"),
+        "the refusal should say why nothing answered, not only that nothing did:\n{why}"
+    );
+}
+
+#[test]
 fn one_string_takes_a_stranger_from_nothing_to_a_place_in_the_network() {
     let relay = hosted_relay();
     let alice = Home::new("inv-alice");
