@@ -46,7 +46,7 @@ sequencing.
 | Keying tiers, private channels, direct messages, search leakage | [`design/03`](design/03-confidentiality.md) |
 | Voice, video, stage, media transport | [`design/04`](design/04-realtime.md) |
 | Crate layout, the `kols-api` boundary, the node loop, local state, testing | [`design/05`](design/05-client-architecture.md) |
-| Every change the protocol still owes, with acceptance criteria — E1–E15 | [`design/06`](design/06-protocol-extensions.md) |
+| Every change the protocol still owes, with acceptance criteria — E1–E16 | [`design/06`](design/06-protocol-extensions.md) |
 | How the project got from a finished design to first code — F/S items, P0 | [`design/07`](design/07-build-plan.md) |
 | Encoding conformance obligations and the `kols-core` module map | [`design/08`](design/08-record-encoding.md) |
 | Navigation, liveness tiers, presence honesty, settings, theming | [`design/09`](design/09-interface.md) |
@@ -96,8 +96,9 @@ over the same `kols-api` boundary, owed no feature parity and no end-user docume
   serve, post, read, edit, delete, react, pin, and channel
   create/list/rename/topic/slowmode/archive.
 
-**Gates green as of this date:** 292 tests here, 666 in `../distributed-intranet`, clippy
-clean in both.
+**Gates green as of this date:** 298 tests here, 666 in `../distributed-intranet`, clippy
+clean in both. O20's starved-run flake did not reproduce on this full-width run; it is not
+fixed, and one green run is not evidence that it is.
 
 ---
 
@@ -124,6 +125,7 @@ not, the dependency is named in the owning document.
 | O21 | A joiner admitted under auto-admit whose response never arrives is a member who believes they are waiting. Their client does not ask again, so nothing on either side surfaces the disagreement | `design/09` §4 |
 | O16 | Two members on one network still cannot find each other without the relay. mDNS runs and the transport caches what it finds, but never auto-dials, and nothing here handles the event it emits | `design/00` §6 |
 | O19 | **A role cannot be deleted.** `EntryBody` expresses no group removal, so what a role holds can be emptied and its members taken out, and the name stays in replayed history forever. The interface says so rather than offering a control that cannot work. Not a protocol change being asked for — nobody has needed one — but a limit somebody will meet and should not have to discover | `design/05` §3 |
+| O22 | **A member cannot leave a network.** `forget` is local — it drops this installation's store and seed, and to every other member nothing has happened: still in `everyone`, still in every role, still a leaf the epoch rotates for. Needs E16, which is small; the client half is two commands rather than one, in an order that cannot be reversed | `design/06` §16, `design/02` §6.5 |
 | O20 | **The daemon suite run starved is unreliable**, and `CONTRIBUTING.md` asks for exactly that run. One or two of eleven time out in `wait_for` under `taskset -c 0,1`; each passes alone. Measured at `main` on 2026-08-29, so it is the suite rather than any change — but it makes the starved run a signal to isolate rather than a gate, which is weaker than what it was added for | `CONTRIBUTING.md`, `tests/common::patience` |
 
 O8, O10, O12, O13, O14, O17 and O18 are closed. What each was, and what closing it turned up,
@@ -148,8 +150,8 @@ stays readable.
 
 **Protocol extensions.** [`design/06`](design/06-protocol-extensions.md) §0 carries the table
 and is the one place their state is kept. In summary: E1 and E3 withdrawn as unnecessary;
-**E2, E4, E5, E9, E11, E12 and E14 landed**; E7, E10 and E13 are P2, E6 is P3, E8 is P4, and
-E15 is spec text that blocks nothing.
+**E2, E4, E5, E9, E11, E12 and E14 landed**; E7, E10 and E13 are P2, E6 is P3, E8 is P4,
+E15 is spec text that blocks nothing, and E16 is small and blocks leaving a network at all.
 
 **P0 is closed** — all five criteria met, recorded in `design/07` §3. The measurements it
 produced, which the whole segment model rests on, are in `design/08` §4.
@@ -158,7 +160,7 @@ produced, which the whole segment model rests on, are in `design/08` §4.
 
 ## 4. Log
 
-Moved to [`docs/log.md`](docs/log.md) — 100 entries, newest first.
+Moved to [`docs/log.md`](docs/log.md) — 101 entries, newest first.
 
 What happened *lately* is §1. The log is why things are the way they are: the reasoning behind
 a change, the thing tried and abandoned, the bug that turned out to be a different bug. It

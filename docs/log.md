@@ -108,6 +108,31 @@ Kept because this project keeps re-learning the same lessons and paying for them
   end gets a real gate is a decision to make on purpose rather than drift into, and adding a
   second toolchain to `cargo test` is most of what it costs.
 
+- **2026-08-30** — **Leaving a network is a gap, and the rejoin question answers itself.**
+
+  The seventh field note asked that forgetting a network tell the network. It cannot: every
+  `MembershipChange` is gated on `revoke-node`, so the one member who knows they are leaving
+  is the one member who cannot say so. `forget` drops the local store and the seed, and to
+  everybody else nothing has happened — still in `everyone`, still in every role, still a leaf
+  the epoch rotates for, forever.
+
+  Recorded as E16 rather than built, per `design/06` §0: a removal naming its own author needs
+  no capability, because it is monotone downward and self-directed — it grants nothing, names
+  nobody but its signer, and is proved by the same signature that proves the identity it
+  removes. Two things the spec work has to settle rather than imply: that a departure records
+  and does not itself rotate, because under auto-admit a multi-use invite would otherwise buy a
+  join/leave grinding loop; and that it takes effect on replay rather than on approval, since
+  a network whose admins have all gone is the one a person most wants to leave.
+
+  **The open question turned out to be already closed.** Whether a departed member may come
+  back does not arise for `forget`, which destroys the seed — that identity cannot return under
+  any rule we write, and the record is orphaned by construction. It is live only for a *leave*
+  that keeps the seed, which the client does not have and should, and there the answer is that
+  leaving is not banishment: the log records added, removed, added. Anything stronger would be
+  a ban, and this protocol has no such concept.
+
+---
+
 - **2026-08-30** — **The network was only as durable as its authors' uptime, and the first three-node test found it.**
 
   Three people across three networks, and the third saw nothing the second had written

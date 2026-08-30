@@ -1,6 +1,6 @@
 # Membership and Permissions
 
-**Document status:** v1.0 — permission resolution implemented and reached through `kols-api`'s gate; E11 landed, so §2.2's per-scope registration problem is gone
+**Document status:** v1.1 — §6.5 records that leaving a network is a gap rather than a design, and what the client owes once `06` §16 lands: two commands rather than one, and an order that cannot be reversed. Previously v1.0 — permission resolution implemented and reached through `kols-api`'s gate; E11 landed, so §2.2's per-scope registration problem is gone
 **Depends on:** Core Protocol Spec §1 (identity), §2 (governance), §5.6 (invites)
 **Consumed by:** `01-messaging-model`, `03-confidentiality`, `04-realtime`
 
@@ -324,6 +324,43 @@ would exceed them. Two client consequences:
 - **The node's own refusals are worth showing in settings**, in the one place a user is
   already looking at what they volunteered. A steady stream of them is what "I offered more
   upload than I have" looks like from the inside, and there is no other signal for it.
+
+### 6.5 Leaving, which the client currently cannot do
+
+The client offers **forget**, and the word is honest about what it does: it deletes this
+installation's store and the seed with it. It is deliberately not called *leave*, because
+membership is governance state and nothing in the log expresses resignation — so to every
+other member, nothing has happened.
+
+**That is a gap rather than a design.** `06` §16 (E16) has the protocol half: a membership
+removal naming its own author needs no capability, because it grants nothing, names nobody
+but its signer, and is proved by the same signature that proves the identity it removes.
+Until that lands there is no entry a departing member is allowed to write, and this section
+records what the client should do once there is.
+
+**Two commands, not one, because they answer different questions.**
+
+- **Leave** — write the departure, keep the seed. The answer to *I do not want to be in this
+  network any more*. Nothing stops re-admission later: the log records added, removed,
+  added, and everything written stays attributed to the identity that wrote it. Leaving is
+  not banishment, and a protocol with no concept of a ban should not grow one as a side
+  effect of somebody walking out.
+- **Forget** — leave, then destroy the store and the seed. The answer to *I want this off
+  this machine*. It is the stronger act and stays behind the existing native confirmation,
+  because the seed has no recovery path.
+
+**The order is load-bearing and easy to get backwards.** The departure entry is signed by
+the key `forget` is about to destroy, so it must be written **and published** first. A node
+that is offline, unkeyed, or without a route cannot announce anything — so leaving is
+best-effort, and the interface must distinguish *told the network* from *could not tell the
+network* rather than reporting success either way. A forget that cannot announce is still a
+forget; it is just one the network will not learn about, and saying so is the difference
+between an honest limit and a lie.
+
+**What the network does with a departure is the network's business, not the leaver's.**
+The removal takes effect on replay; the epoch does not rotate on the departure itself, for
+the grinding reason `06` §16 gives. A member who left and kept their seed is precisely a
+member who has not been revoked yet, which is the state the guarantee already covers.
 
 ---
 

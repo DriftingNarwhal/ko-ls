@@ -1,6 +1,6 @@
 # Required Protocol Extensions
 
-**Document status:** v2.1 — §13 records that D29 turned E13 from a friction item into the mechanism, and §12 records that `Discovery::Off` is a privacy requirement rather than a saving; both were being carried in a status file. Previously v2.0 — **E14 landed**, as leaf replacement rather than the re-delivery this document asked for;  E1 and E3 withdrawn, **E9, E2, E5, E4, E11 and E12 landed**; E12 narrowed to its protocol half on landing, E13 added from `09`, E14 added from a bug, **E15 added from a divergence this document should have been carrying already**. §2's branch-length and profile-enforcement claims corrected to what landed
+**Document status:** v2.2 — **E16 added**: there is no way to leave a network, because every membership change is gated on `revoke-node` and the one member who knows they are leaving is the one who cannot say so; §16 also settles the rejoin question the client was carrying as open, which turns out to be answered already for `forget` and live only for a leave that keeps the seed. Previously v2.1 — §13 records that D29 turned E13 from a friction item into the mechanism, and §12 records that `Discovery::Off` is a privacy requirement rather than a saving; both were being carried in a status file. Previously v2.0 — **E14 landed**, as leaf replacement rather than the re-delivery this document asked for;  E1 and E3 withdrawn, **E9, E2, E5, E4, E11 and E12 landed**; E12 narrowed to its protocol half on landing, E13 added from `09`, E14 added from a bug, **E15 added from a divergence this document should have been carrying already**. §2's branch-length and profile-enforcement claims corrected to what landed
 **Depends on:** all preceding documents
 **Consumed by:** work in `distributed-intranet`
 
@@ -41,6 +41,7 @@ Two rules govern this list:
 | E13 | Cross-network connection bootstrap, for direct messages — **load-bearing since D29, not merely convenient**: without it a conversation across NAT needs its own relay, so there are no DMs at all (§13) | P2 | Medium |
 | ~~E14~~ | Idempotent epoch-key delivery — **landed**, Core §3.5.1. Asked as key re-delivery; landed as leaf replacement, because re-delivery restores no group state and re-adding silently breaks revocation | — | Done |
 | E15 | Independent per-network seeds — Core §1.1's master seed is not what this client implements (D28) | Nothing; conformance rather than function | Spec text only |
+| E16 | Self-removal from a group — a member cannot say they are leaving, because every membership change is gated on `revoke-node` (§16) | Leaving a network at all | Small |
 
 ---
 
@@ -731,7 +732,94 @@ sufficient.
 
 ---
 
-## 16. Sequencing
+## 16. E16 — Self-Removal From a Group
+
+**There is no way to leave a network, and the client's `forget` is not one.** It deletes
+this installation's store and the seed with it. To every other member nothing has happened:
+the departed identity is still in `everyone`, still in every role it was put in, still a
+leaf in the MLS group, and still shown in the roster as a member who is simply never
+connected. Every subsequent epoch rotation wraps the group's key material for a leaf whose
+private half was deliberately destroyed.
+
+None of that is a break — a member who deleted their seed cannot read anything, so nothing
+leaks — but three things are wrong in a way that compounds:
+
+- **The group only grows.** MLS removal is the only thing that takes a leaf out, and
+  nothing here ever calls for one. A network that has churned through fifty members carries
+  fifty leaves and rotates all of them, forever.
+- **The roster lies by omission.** "Not connected" already covers away, unreachable and
+  never dialled (`09` §4.1), and it now also covers *gone permanently*, which is the one
+  case a reader would actually want distinguished and the only one this client could
+  know about.
+- **A leak that happened before the deletion never expires.** If the seed was ever copied,
+  its holder keeps receiving key material for every future epoch. Revocation exists for
+  exactly this and nobody thought to invoke it, because the person who knows is the person
+  leaving.
+
+### What the log can express, and what it cannot
+
+`EntryBody::MembershipChange { group, identity, action: Remove { cascade } }` is the right
+entry and already exists. It is gated on `Capability::RevokeNode`, which a departing member
+almost never holds — so the one member who knows they are leaving is the one member who
+cannot say so. The protocol has no concept of leaving at all: Core §2 covers admission and
+revocation, and both are things done *to* a member.
+
+### The rule this asks for
+
+**A `MembershipChange` removing the entry's own author requires no capability.**
+
+The reason it is safe is the reason it is worth stating as a rule rather than a special
+case: the entry is **monotone downward and self-directed**. It grants nothing, it names
+nobody but its signer, and its signature is the same one that proves the identity it
+removes. There is no version of it that escalates, and no version of it that touches
+another member. That is a materially different object from the capability-gated
+`MembershipChange` beside it, which is why it does not weaken the gate that entry keeps.
+
+Two things the amendment has to settle rather than leave implied:
+
+- **Whether a departure rotates the epoch, and who pays for it.** It has to eventually —
+  a leaf that stays in the tree is the whole point above — but `RotationReason::MemberRevoked`
+  is `revoke-node`'s to trigger, and letting a departure force one directly creates a
+  grinding path: under `admission: auto` (Core §2.4) a member holding a multi-use invite
+  can join, leave, join and leave, forcing a real rotation and a replayed governance entry
+  each time. The cheap resolution is that a departure **records** the departure and does not
+  itself rotate; the next rotation excludes them, and a `revoke-node` holder may rotate on
+  seeing one. That keeps the cost on the side that already bears it and leaves the guarantee
+  intact, because a departed member who kept their seed is exactly a member who has not been
+  revoked yet.
+- **That it is a statement, not a request.** The removal takes effect on replay like any
+  other entry. A design where leaving is a request some admin approves would mean a member
+  cannot leave a network whose admins have all gone, which is the state a person most wants
+  to leave.
+
+### Coming back, which is not the question it looks like
+
+Whether a departed member may rejoin **is already answered for `forget`, and not by this
+extension**: `forget` destroys the seed, so that identity cannot return under any rule we
+write. The old record is orphaned by construction. Nothing has to decide it.
+
+The question is live only for a **leave that keeps the seed**, which is a thing the client
+does not have and should (`02`). There the answer should be that leaving is not banishment:
+the log records *added, removed, added*, re-admission is ordinary admission, and everything
+they wrote stays attributed to the identity that wrote it. Anything stronger would be a ban,
+and this protocol has no such concept — building one in as a side effect of leaving would be
+the largest thing in this section and nobody asked for it.
+
+**Ordering, which the client owes and the protocol should say plainly.** The departure entry
+is signed by the key being destroyed, so it must be written *and published* before the seed
+goes. A node that is offline or has no route cannot announce anything, so leaving is
+best-effort and the interface must say which of the two happened rather than reporting
+success either way.
+
+**Acceptance:** Core §2 states that a membership removal naming its own author is valid
+without a capability, and says what it does and does not do to the epoch; `intranet-governance`
+accepts such an entry and refuses one that removes anybody else; a member with no grants can
+remove themselves from `everyone` and every group they are in; and the departure is visible
+to other members as a member who left rather than as one who is not connected.
+
+---
+
+## 17. Sequencing
 
 ```
 P0   — nothing; E3 turned out to need no protocol change
@@ -744,6 +832,8 @@ P3   E6   — lands when it lands
 P4   E8
 —    E15  (blocks nothing; land it beside the credentials and backup work `00` §5 carries as a
           release gate and `02` §6.3 shapes, which is what it describes)
+—    E16  (blocks leaving a network, which nothing else waits on; small, and independent of
+          every other item here)
 ```
 
 E9 is small and unblocks the rest. E2 is the first item requiring real spec work.
@@ -763,7 +853,7 @@ consumer written against the old shape would have been another thing to migrate.
 
 ---
 
-## 17. What This Design Deliberately Does Not Ask For
+## 18. What This Design Deliberately Does Not Ask For
 
 Recorded so the boundary is visible, and so nobody adds them under the impression they
 were oversights:
