@@ -24,6 +24,39 @@ Kept because this project keeps re-learning the same lessons and paying for them
 
 ---
 
+- **2026-08-30** — **Drag to reorder never worked, and the JavaScript was never the problem.**
+
+  Reported after the channel and folder pass, with the tester's own read attached: *I actually
+  believe it was never working.* They are right, and it had shipped that way since folders
+  existed.
+
+  **Diagnosed by driving it rather than by reading it.** Dispatching `dragstart`, `dragover` and
+  `drop` at the real sidebar under `jsdom` runs the entire path: `state.dragging` is set,
+  `dragover` is `preventDefault`ed so the drop is allowed, and `drop` reaches `move_channel` with
+  the right arguments. The wiring is correct. What never happens in the shipped application is
+  the webview *starting* a drag.
+
+  The likely reason is that `draggable` was on the `<button>`. A button is a form control and a
+  webview resolves a press on one before anything else gets to decide it was a drag. It hangs
+  off the row now — which is an attempt, not a fix, because whether a webview begins a drag is
+  another thing this container cannot answer, and guessing at exactly that kind of question cost
+  three rounds on the sidebar last week.
+
+  **So the real fix is that reordering no longer depends on it.** The channel menu gains *move
+  up* and *move down* — which folders have had since they existed, and channels never got
+  precisely because the drag was there and looked like the answer. Offered only where there is
+  somewhere to go, so no entry does nothing.
+
+  The rule worth keeping: a capability whose only route is one nobody can verify has no route.
+  Where the unverifiable one is a convenience, the plain one belongs beside it rather than after
+  it.
+
+  Two smaller things found in passing. A folder's own `dragover` fired after a row inside it had
+  already marked itself, so the drop marker showed the folder when the drop would have gone to
+  the row — the handler stops propagation now, like the drop handler already did. And if the
+  drag still does not start with the attribute moved, it comes out: an invisible control that
+  does nothing is worth less than the code it takes.
+
 - **2026-08-30** — **Asked to check the shutdown path, found there was none, and the danger was not the one being looked for.**
 
   The question was whether the application closes cleanly. It has no shutdown handling at all —

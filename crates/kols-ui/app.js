@@ -640,14 +640,24 @@ function channelItem(channel, category) {
   // Gated on the capability, like every other control here. Hiding is
   // presentation only — the command is re-checked on receipt regardless.
   if (state.mayManage) {
-    button.draggable = true;
-    button.addEventListener("dragstart", (event) => {
+    // **On the row rather than on the button**, which is the one difference
+    // worth trying before giving up on this. `draggable` is defined for any
+    // element, but a `<button>` is a form control and webviews handle a press on
+    // one before anything else gets to decide it was a drag — so the events
+    // below have never been observed to fire in the shipped application, while
+    // dispatching them by hand runs the whole path correctly.
+    //
+    // The menu now carries move up and move down, so reordering does not depend
+    // on this working. If it still does not, it comes out: an invisible control
+    // that does nothing is worth less than the code it takes.
+    item.draggable = true;
+    item.addEventListener("dragstart", (event) => {
       state.dragging = { channel: channel.id };
       event.dataTransfer.effectAllowed = "move";
       // Firefox will not start a drag without data set.
       event.dataTransfer.setData("text/plain", channel.id);
     });
-    button.addEventListener("dragend", () => {
+    item.addEventListener("dragend", () => {
       state.dragging = null;
       clearDropMarks();
     });
@@ -731,6 +741,7 @@ function wireDrop(node, category, into = false) {
   node.addEventListener("dragover", (event) => {
     if (!state.dragging) return;
     event.preventDefault();
+    event.stopPropagation();
     event.dataTransfer.dropEffect = "move";
     clearDropMarks();
     node.classList.add(into ? "drop-into" : "drop-before");
@@ -894,10 +905,47 @@ function renameInPlace(node, current, commit) {
   input.select();
 }
 
+/// Moves a channel one place up or down among its siblings.
+///
+/// The same job the drag does, on the menu, because **the drag has never once
+/// been seen to work.** The wiring is right — driving `dragstart`, `dragover`
+/// and `drop` by hand runs the whole path and reaches `move_channel` — so what
+/// is missing is the webview starting a drag at all, which is a thing this
+/// project cannot test and has already paid for guessing at twice.
+///
+/// Folders have had this since they existed (`nudgeFolder`). Channels never got
+/// it, because the drag was there and looked like the answer.
+///
+/// `moveChannelTo` lands a channel *before* a named sibling, so moving down
+/// means landing before whatever follows the neighbour — or at the end, when
+/// nothing does.
+async function nudgeChannel(channel, category, direction) {
+  const siblings = siblingsIn(category);
+  const at = siblings.findIndex((c) => c.id === channel.id);
+  const to = at + direction;
+  if (at < 0 || to < 0 || to >= siblings.length) return;
+
+  const before = direction < 0 ? siblings[to].id : (siblings[to + 1]?.id ?? null);
+  await moveChannelTo(channel.id, category, before);
+}
+
 function channelMenu(event, channel, category) {
   const folders = state.sidebar.filter((row) => row.kind === "category");
   const row = event.currentTarget;
-  const entries = [
+  const siblings = siblingsIn(category);
+  const at = siblings.findIndex((c) => c.id === channel.id);
+  const entries = [];
+
+  // Offered only where there is somewhere to go, so a menu never carries an
+  // entry that does nothing.
+  if (at > 0) {
+    entries.push(["move up", async () => nudgeChannel(channel, category, -1)]);
+  }
+  if (at >= 0 && at < siblings.length - 1) {
+    entries.push(["move down", async () => nudgeChannel(channel, category, 1)]);
+  }
+
+  entries.push(...[
     [
       "rename",
       async () => {
@@ -933,7 +981,7 @@ function channelMenu(event, channel, category) {
         });
       },
     ],
-  ];
+  ]);
 
   if (category !== null && category !== "") {
     entries.push([

@@ -32,7 +32,10 @@ const me = {
   may_invite: true, may_moderate: true, may_set_relays: true,
   may_define_group: true, admission_mode: "intake", member_vote: false,
 };
-const channels = [{ id: "c1", name: "general", topic: "everything", archived: false, private: false }];
+const channels = [
+  { id: "c1", name: "general", topic: "everything", archived: false, private: false, position: 0 },
+  { id: "c2", name: "random", topic: "", archived: false, private: false, position: 1024 },
+];
 let messages = [
   { id: "m1", author: "corey", author_id: "id-corey-0001", at: "10:00", body: "one",
     edited: false, withdrawn: false, redacted: false, pinned: false, reactions: [], mine: true },
@@ -111,7 +114,10 @@ say("presence is on screen", !el("presence").hidden);
 
 // ── the channel row's menu is on a right-click, and only there ─────────
 const row = el("channel-list").querySelector(".channel-item > button");
-say("the row carries nothing but the channel", el("channel-list").querySelectorAll("button").length === 1);
+// One button per row, and no second way into the menu beside it.
+say("each row carries nothing but the channel",
+    [...el("channel-list").querySelectorAll(".channel-item")]
+      .every((item) => item.querySelectorAll("button").length === 1));
 row?.dispatchEvent(
   new window.MouseEvent("contextmenu", { bubbles: true, clientX: 10, clientY: 10 }),
 );
@@ -120,7 +126,49 @@ const menu = window.document.querySelector(".pop-menu");
 say("right-click opens the menu", Boolean(menu));
 const entries = [...(menu?.querySelectorAll("button") ?? [])].map((b) => b.textContent);
 say("menu offers rename and delete", entries.includes("rename") && entries.includes("delete"), entries.join(", "));
+// Reordering has a route that does not depend on the webview starting a drag,
+// which it has never been seen to do.
+say("the first channel offers move down and not move up",
+    entries.includes("move down") && !entries.includes("move up"), entries.join(", "));
 menu?.remove();
+
+// And the move actually reorders: the second channel, moved up, lands before the
+// first.
+const second = [...el("channel-list").querySelectorAll(".channel-item")][1];
+second.querySelector("button").dispatchEvent(
+  new window.MouseEvent("contextmenu", { bubbles: true, clientX: 10, clientY: 10 }),
+);
+await settled();
+const up = [...window.document.querySelectorAll(".pop-menu button")].find(
+  (b) => b.textContent === "move up",
+);
+say("the second channel offers move up", Boolean(up));
+calls.length = 0;
+up?.dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
+await settled();
+say("moving up asks the core to move it", calls.includes("move_channel"), calls.join(", "));
+window.document.querySelector(".pop-menu")?.remove();
+
+// The drag path is wired correctly even though nothing has been seen to start
+// one — worth holding, since the difference between "not wired" and "never
+// begun" is the difference between fixing this and removing it.
+const sidebarRows = [...el("channel-list").querySelectorAll(".channel-item")];
+say("the row itself is draggable, not the button inside it",
+    sidebarRows[0].draggable === true &&
+      sidebarRows[0].querySelector("button").draggable === false);
+const carry = { setData() {}, effectAllowed: "", dropEffect: "" };
+const fire = (type, target) => {
+  const event = new window.Event(type, { bubbles: true, cancelable: true });
+  event.dataTransfer = carry;
+  target.dispatchEvent(event);
+  return event;
+};
+fire("dragstart", sidebarRows[1]);
+say("dragging over a row offers a drop", fire("dragover", sidebarRows[0]).defaultPrevented);
+calls.length = 0;
+fire("drop", sidebarRows[0]);
+await settled();
+say("dropping asks the core to move it", calls.includes("move_channel"), calls.join(", "));
 
 // ── who is here ────────────────────────────────────────────────────────
 say("count starts at zero", el("presence-count").textContent === "0");
