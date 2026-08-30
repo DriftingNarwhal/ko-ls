@@ -24,6 +24,29 @@ Kept because this project keeps re-learning the same lessons and paying for them
 
 ---
 
+- **2026-08-30** — **The most destructive thing this client does was asserted by a dialog and by nothing else.**
+
+  Forgetting a network deletes the store and the seed inside it, and the confirmation says
+  you cannot come back as the same member. Nothing held that. The existing test asserted the
+  directory was gone, which is a weaker claim: a directory can go while the thing that
+  mattered about it survives somewhere.
+
+  Now `forgetting_destroys_the_seed_so_a_later_join_is_a_stranger` creates a network, forgets
+  it, and re-creates a store for **the same network id** — everything public about the
+  network still known, because the id is public — and asserts the identity differs.
+
+  The second half is what makes the first half mean anything: the same entropy in the same
+  network reproduces the same identity, so an identity is a pure function of seed and id
+  rather than of anything the store happens to hold. That is why deleting the seed is
+  irreversible rather than merely inconvenient, and it is also why the id being public costs
+  nothing — `Workspace::build` already refuses to derive one from the other, on the grounds
+  that it would make an identity a function of public information.
+
+  The property is about **this machine**, and the wording everywhere should stay that way. A
+  copy of the directory on a second device, or a backup taken before the deletion, is that
+  member still. Forget destroys this installation's copy; it does not reach the ones it
+  cannot see.
+
 - **2026-08-30** — **No event had ever reached the window, and three polls were written as fixes for it.**
 
   Found while adding first-sight marks on messages, which needed the unread counts to work —

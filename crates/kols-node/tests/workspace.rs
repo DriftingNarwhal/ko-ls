@@ -168,6 +168,61 @@ fn forgetting_removes_the_store_and_leaves_the_others() {
     assert!(workspace.path_for(&kept).exists());
 }
 
+/// The claim the confirmation dialog makes, and the one nothing was holding.
+///
+/// Forgetting is destructive in a way that has no undo and no recovery service,
+/// and what makes it destructive is the seed: an identity is derived from it and
+/// from the network id, and the id is public. So the seed is the whole of the
+/// difference between coming back as yourself and coming back as a stranger.
+///
+/// This asserts the mechanism rather than observing a coincidence of randomness.
+/// The second half is what makes the first half mean something: the same entropy
+/// in the same network *does* reproduce the identity, so the identity is a pure
+/// function of the two — which is precisely why deleting one of them is
+/// irreversible rather than merely inconvenient.
+#[test]
+fn forgetting_destroys_the_seed_so_a_later_join_is_a_stranger() {
+    use kols_node::store::Store;
+
+    let dir = Dir::new("forget-identity");
+    let workspace = Workspace::at(dir.0.clone());
+
+    let store = workspace.create("the workshop", Vec::new()).expect("creates");
+    let network = *store.network();
+    let path = store.root().to_path_buf();
+    let before = store.identity().expect("an identity").id();
+    assert!(path.join("seed").is_file(), "the seed is what forget destroys");
+    drop(store);
+
+    workspace.forget(&network).expect("forgets");
+    assert!(!path.exists(), "the store, and the seed inside it, are gone");
+
+    // Joining the same network again, on this machine, with everything public
+    // about it still known: the id names the network and nothing else is needed
+    // to arrive at it.
+    let again = Store::create(path.clone(), network, kols_node::random_32().expect("entropy"))
+        .expect("a second store for the same network");
+    assert_ne!(
+        before,
+        again.identity().expect("an identity").id(),
+        "a join after forgetting must arrive as somebody the log has never seen"
+    );
+    drop(again);
+
+    // And the converse, which is what makes the assertion above a property
+    // rather than luck: the seed is the identity, so keeping it keeps it.
+    let entropy = kols_node::random_32().expect("entropy");
+    let one = Dir::new("forget-identity-a");
+    let two = Dir::new("forget-identity-b");
+    let a = Store::create(one.0.join("store"), network, entropy).expect("creates");
+    let b = Store::create(two.0.join("store"), network, entropy).expect("creates");
+    assert_eq!(
+        a.identity().expect("an identity").id(),
+        b.identity().expect("an identity").id(),
+        "the same seed in the same network is the same member"
+    );
+}
+
 #[test]
 fn forgetting_a_network_nobody_holds_is_refused() {
     let dir = Dir::new("forget-missing");
