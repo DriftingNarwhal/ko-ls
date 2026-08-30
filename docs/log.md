@@ -66,6 +66,48 @@ Kept because this project keeps re-learning the same lessons and paying for them
   by asking the boundary directly, which is a test, which is why `design/05` §8 now has a row
   for it.
 
+- **2026-08-30** — **The first field test's interface list, and the two items on it that were already built.**
+
+  Seven notes came back from the three-person test. Two of them — add, delete and rename
+  channels — asked for controls that had shipped weeks earlier, on a right-click and nowhere
+  else. That is not a control, it is a rumour, and the fix is a `⋯` on the row that opens the
+  same menu rather than a second copy of it. It appears on hover, on keyboard focus, and
+  permanently on the open channel, so there is always one visible instance to find by
+  accident.
+
+  **First sight of a message is a set, not a watermark, and the reason is the user's own
+  observation.** A message is ordered by its author's clock, so one written while its author
+  was offline lands *back* in the timeline when it finally arrives — behind any read position
+  you could have stored. So what is remembered is which message ids were on screen when the
+  channel was last looked at, per channel, replaced on each visit rather than accumulated:
+  bounded by the size of the channel, and with no eviction policy to get wrong. A channel with
+  no record at all marks nothing, because "never displayed here" honestly means *no idea*
+  rather than *none of this has been seen*.
+
+  Two things it got wrong first, both found by driving the interface rather than by reading
+  it. Marks cleared on the next redraw, because `freshIn` recomputed from storage every two
+  seconds — fixed by holding them for the length of a visit. Then they never cleared at all in
+  a network with one channel, because clearing was a side effect of *changing* channel and
+  there was nowhere to change to; now arriving clears and staying accumulates, and clicking
+  the channel you are in counts as arriving.
+
+  **The rest was arrangement.** The roster left the rail for a dropdown at the top right,
+  keeping one number in the frame — how many other members this node is connected to — beside
+  a dot for yourself lit when that is not zero. That dot is the only thing in the window that
+  separates "the network is quiet" from "nothing I write leaves this machine", and it was
+  previously answerable only by opening the roster and counting unlit rings. The door became a
+  sheet behind a button carrying the number waiting, which is the only reason it was allowed
+  to stop being a permanent section. Settings became a screen: it had been floating over a
+  dimmed channel while asking people to read three paragraphs about permanent governance
+  entries, in a column narrower than the window already available.
+
+  **Driven under `jsdom` with a stubbed `invoke`**, thirty checks, which is how both of the
+  first-sight bugs surfaced in minutes. Kept as `crates/kols-ui/drive.mjs` and deliberately
+  not wired into the gate: it needs `npm install jsdom` and applies no CSS, so it answers
+  whether the wiring runs and not whether anything is in the right place. Whether the front
+  end gets a real gate is a decision to make on purpose rather than drift into, and adding a
+  second toolchain to `cargo test` is most of what it costs.
+
 - **2026-08-30** — **The network was only as durable as its authors' uptime, and the first three-node test found it.**
 
   Three people across three networks, and the third saw nothing the second had written

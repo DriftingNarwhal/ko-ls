@@ -1,6 +1,6 @@
 # Interface
 
-**Document status:** v0.8 — §4.2's Network section takes admission mode, the abuse limits and the retention windows, and says the three things a number on screen does not carry. Previously v0.7 — §4.2's settings sections are built, and it says what shape they took and which of them is a panel over a feature that does not exist yet; §5 gains the line between asking *whether* and asking *what*, which is what decides whether a dialog may live in the document a theme can reach. Previously v0.6 — §4.1 says plainly that presence is unbuilt, why it is last, and what the window shows instead; that was being carried in a status file. Previously v0.5 — §4.2 fixes what settings is and how it is divided, §6.4 and §6.5 settle reset and the two things that must leave the document before a theme can reach them (D36, D37). Theming remains designed and unbuilt. Previously v0.4 — D29 (a relay is never shared between networks) and what it does and does not mean for §3's direct-message bootstrap;  an interface now exists and is a first pass, not a settled one: it
+**Document status:** v0.9 — §4.1 says where the roster went and what the one number left on screen is for; §4.2 records settings becoming a screen rather than a layer, and the rule that decides which surface a thing gets; §4.3 is new and separates *where something arrived* from *what you have not seen*, which cannot be derived from it because a message is ordered by its author's clock rather than by its arrival. §7.1 and §7.3 narrowed rather than closed. Previously v0.8 — §4.2's Network section takes admission mode, the abuse limits and the retention windows, and says the three things a number on screen does not carry. Previously v0.7 — §4.2's settings sections are built, and it says what shape they took and which of them is a panel over a feature that does not exist yet; §5 gains the line between asking *whether* and asking *what*, which is what decides whether a dialog may live in the document a theme can reach. Previously v0.6 — §4.1 says plainly that presence is unbuilt, why it is last, and what the window shows instead; that was being carried in a status file. Previously v0.5 — §4.2 fixes what settings is and how it is divided, §6.4 and §6.5 settle reset and the two things that must leave the document before a theme can reach them (D36, D37). Theming remains designed and unbuilt. Previously v0.4 — D29 (a relay is never shared between networks) and what it does and does not mean for §3's direct-message bootstrap;  an interface now exists and is a first pass, not a settled one: it
 creates and joins networks, runs a node, renders a channel, brings the next member in, and gates
 its chrome on permission. §1's workspace, **both halves of §5**, §4's first two questions and
 most of §7's second are built; §2's tiering, §4.1's presence and §6's theming are not, and §7's
@@ -298,11 +298,40 @@ who is **connected to you right now**, drawn as an empty ring rather than an unl
 with the wording saying so where it is shown. An unmarked member may be away, unreachable
 from here, or never dialled, and nothing on this machine distinguishes them.
 
+**Where it lives, and the one number that stays on screen.** The roster is a dropdown at the
+top right rather than a permanent column, and what remains visible is a count of the members
+this node holds a connection to, beside a dot for yourself that is lit when that count is not
+zero.
+
+That dot is not presence either, and it is worth being exact about which narrower thing it
+is: it says **this node is talking to somebody**. Nothing else in the window answers that.
+"The network is quiet" and "nothing I write leaves this machine" render identically —
+an empty channel, a roster of unlit rings — and the second is the one worth knowing about
+immediately. Previously it could be reached only by opening the roster and counting rows that
+were not lit, which is a question nobody thinks to ask until after the evening is wasted.
+
+The count is deliberately of *other* members, so it is zero on a network where you are the
+only one, rather than one. A roster that congratulated somebody on being connected to
+themselves would be the same class of mistake as claiming a member is offline.
+
 ### 4.2 Settings, and the Line Down the Middle of It
 
-Settings is one sheet with sections, and the sections are arranged around a distinction this
+Settings is one screen with sections, and the sections are arranged around a distinction this
 application cares about more than most: **some of what lives here is mine, and some of it is
 the network's.**
+
+**A screen and not a layer over one**, which is a correction rather than a preference. It used
+to float over a dimmed channel, and a veil makes a claim: *this is a detour, the real thing is
+underneath*. Half of what is in here writes governance entries every member replays and nobody
+can unwrite, and the paragraphs below explain that at length — read through a dim wash, in a
+column narrower than the window already available. The sheet was arguing against its own
+contents. Settings is a place you go, so it takes the window and gives it back; `done` and
+Escape both leave, because a full-window view with one way out is the trap a sheet at least
+never was.
+
+The rule that decides which surface a thing gets is whether somebody came to **finish
+something and leave**. Minting an invite is that, and is a sheet. Choosing what this network
+keeps forever is not.
 
 Changing a font is local, private and undoable. Changing the network's name writes a
 governance entry that every member replays and nobody can unwrite — it is the same act as
@@ -394,6 +423,50 @@ rather than choices:
 **What may join this sheet later** is bounded by the same line: anything whose change is local
 goes under *mine*, anything that writes to the log goes under *the network's*, and anything
 that does neither is not a setting and wants a different home.
+
+### 4.3 What Arrived, and What You Have Not Seen
+
+Two different questions, answered separately because they fail separately.
+
+**Where something arrived** is the unread count on a channel: weight on the name so it reads
+at a glance, and a number once you look. Driven by arrival rather than by scanning — the node
+reports what it learned and a channel nobody is looking at gains a count — which is what makes
+it free and what makes it survive the application being closed, since the node was not running
+either and learns the backlog on the next start.
+
+**What you have not read** is a mark on the individual message, and it cannot be derived from
+the first. **A message is ordered by its author's clock, not by its arrival**, so one written
+five minutes ago by somebody whose node was offline lands five minutes back in the timeline
+when it finally reaches you — behind any watermark you could have set. A read position would
+file it as already seen every time, and this is precisely the message that needs pointing at.
+
+So what is remembered is *which* messages were on screen the last time somebody looked at the
+channel, per person per machine, and everything else in it is new. That is bounded by the size
+of the channel rather than growing, and it is replaced on each visit rather than accumulated —
+everything is drawn, so "what was here last time" is the complete answer and there is no
+eviction policy to get wrong.
+
+Three properties it commits to:
+
+- **First sight of a channel marks nothing.** No record at all means this machine has never
+  displayed it, and the honest reading of that is *no idea* rather than *none of this has been
+  seen* — which would set a hundred messages of backlog alight on the day somebody joins.
+  From the second visit it is exact.
+- **Marks accumulate while you stay and clear when you arrive.** A redraw under a reader who
+  has not moved must not erase them, or the second message would clear the mark on the first.
+  Clicking the channel — including the one you are already in, which is the only gesture
+  available on a network with one channel — is what starts them again.
+- **It is local, and says so.** What somebody has read is not a fact about the network, and
+  writing it to the log would publish a reading habit to every member. §7.7 is what to revisit:
+  read state becomes shared when multi-device lands, and this is per device until it does.
+
+**Outside the window there are two signals and deliberately no third.** The title carries the
+total, because it is the only one still true a minute later and the only one a taskbar shows;
+an attention request fires while the window is unfocused, because it is the only one that
+arrives while somebody is doing something else. No sound, and no operating-system toast — a
+toast means a plugin and a permission this client has never asked for, and that is a decision
+to make on purpose rather than one to slip in beside a title change. §7.3 is the larger
+question this answers only within one network.
 
 ---
 
@@ -559,7 +632,12 @@ not a capability.
 ## 7. Open Questions
 
 1. **Navigation shape.** §4 fixes what must be answerable; the arrangement that answers it
-   is not decided. Explicitly not assumed to be Discord's three columns.
+   is not decided. Explicitly not assumed to be Discord's three columns — and the first field
+   test moved it *further* from three, not closer: the rail now carries the network and its
+   channels and nothing else, with the roster a dropdown at the top right (§4.1), the door a
+   sheet behind a counted button, and settings a screen of its own (§4.2). What is left open
+   is whether a fourth thing ever earns permanent space in the frame, and the answer so far
+   has been no.
 2. **The invite flow's remaining choices.** Built: an `approve-node` holder mints an invite,
    copies one string, watches the waiting room and admits from it, and a joiner who lands in
    the waiting room is told that is a success rather than shown an empty network. Still
@@ -567,7 +645,10 @@ not a capability.
    twenty-four hours with nothing in the interface to change them — a founder inviting six
    people has to mint six times, which is a decision nobody made.
 3. **How a warm network surfaces activity.** A message arriving on a network that is not in
-   view has to be noticeable without every warm network demanding attention.
+   view has to be noticeable without every warm network demanding attention. §4.3 answers this
+   *within* the open network — per-channel counts, a total in the title, an attention request
+   while unfocused — and none of it crosses networks, which is where the hard half is: the
+   window switcher has one title and §2's warm tier may hold several networks at once.
 4. **What "recent" means for warm tier membership.** §2 says recent networks stay warm;
    the rule that decides which is not written.
 5. **Attachment and media presentation**, including whether a theme may restyle inline media.

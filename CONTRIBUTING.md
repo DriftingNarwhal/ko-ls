@@ -44,6 +44,19 @@ cannot do; it does not gate. A failure reproduced locally arrives with complete 
 the minute it appears, which is the difference between diagnosing a fault and copy-pasting
 log fragments at one.
 
+**The front end has no gate, and one thing to run by hand instead.** `crates/kols-ui` is
+2,600 lines of JavaScript that nothing asks questions of. `drive.mjs` beside it loads the
+real `index.html` and `app.js` into `jsdom` with a stubbed `invoke`, walks the interface,
+and reports:
+
+```
+cd crates/kols-ui && npm install jsdom && node drive.mjs
+```
+
+It is not wired into the gate — adding a second toolchain to `cargo test` is a decision
+nobody has made — and it applies no CSS, so it says nothing about layout. Run it after
+changing `app.js`. Its first half hour found two bugs that reading had not.
+
 Three things about the suite that are not obvious, each learned by getting them wrong:
 
 - **`cargo clippy` on the Windows target is a second run**, `cargo clippy -p kols-node

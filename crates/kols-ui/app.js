@@ -9,6 +9,17 @@
 const { invoke } = window.__TAURI__.core;
 const { listen } = window.__TAURI__.event;
 
+/// The window itself, for the two things a chat client owes somebody who is not
+/// looking at it. Guarded because everything else here degrades to a poll and
+/// this should too: a window that cannot be told about is still a window.
+const frame = (() => {
+  try {
+    return window.__TAURI__.window.getCurrentWindow();
+  } catch {
+    return null;
+  }
+})();
+
 const el = (id) => document.getElementById(id);
 const state = {
   channels: [],
@@ -30,6 +41,15 @@ const state = {
   channelPoll: null,
   // Channel id to how many messages have arrived there unseen.
   unread: {},
+  // Channel id to the message ids that were on screen the last time somebody
+  // looked at it — what "already seen" means, per person per machine.
+  seen: {},
+  // What is currently marked as *newly* seen, and where. Held for the length of
+  // a visit rather than recomputed per draw, so a highlight does not blink out
+  // two seconds later when the poll redraws the same channel.
+  holding: null,
+  // How many are at the door, so the count survives the sheet being closed.
+  waiting: 0,
   // What `me` and the channel list looked like when last drawn, so a tick that
   // finds nothing new leaves the sidebar alone.
   meSignature: null,
@@ -65,11 +85,18 @@ const DOOR_REFRESH_MILLIS = 4000;
 /// would restart for its own action twice.
 const RESTART_QUIET_MILLIS = 8000;
 
-/// Which view is showing. There are only two, and no network open is not an
-/// error state — it is where somebody starts.
+/// Which view is showing. No network open is not an error state — it is where
+/// somebody starts.
+///
+/// Settings is one of these rather than a layer over one: it is a place you go,
+/// and a screen that takes the window says that where a sheet over a dimmed
+/// channel says the opposite. Sibling screens also mean `hidden` is the only
+/// mechanism deciding what is on screen, which is the one this client already
+/// had to make load-bearing (`design/09` §5.1's last paragraph).
 function show(view) {
   document.querySelector(".app").hidden = view !== "app";
   el("picker").hidden = view !== "picker";
+  el("settings").hidden = view !== "settings";
 }
 
 async function drawPicker() {
@@ -106,7 +133,9 @@ async function drawPicker() {
         const loss = network.keyed
           ? "\n\nThis deletes the seed, which is your identity here. You cannot come " +
             "back as the same member — a later join would arrive as a stranger, and the " +
-            "log would still name the member you were."
+            "log would still name the member you were.\n\nThe network is not told. " +
+            "Nothing in the log expresses leaving, so to every other member you stay a " +
+            "member who is simply never connected."
           : "\n\nYou were never keyed into this one, so there is nothing to lose but the " +
             "attempt.";
         if (!confirm(`Forget ${network.label || network.id.slice(0, 12)}?${loss}`)) return;
@@ -124,6 +153,13 @@ async function drawPicker() {
 
   el("picker-list-wrap").hidden = networks.length === 0;
   show("picker");
+  // No network open, so nothing is unread here: the count in the title belonged
+  // to the one being left.
+  try {
+    await frame?.setTitle("ko-ls");
+  } catch {
+    // See `announce`.
+  }
 }
 
 async function openNetwork(id) {
@@ -157,12 +193,17 @@ function drawMe(me) {
   state.me = me;
   state.meSignature = signatureOfMe(me);
   el("network-label").textContent = me.label || "unnamed network";
-  el("network-id").textContent = me.network.slice(0, 16);
+  // A hover rather than two permanent lines of hex under the name.
+  //
+  // Spec 07 §8's obligation is that a *name* must never stand in for an
+  // identity where two members could be confused for one another, and it is met
+  // where that could happen: every message row and every roster row carries
+  // both. Neither of these is that case — one is the network's own id and the
+  // other is your own — and a sidebar that opened with sixteen characters of
+  // hex spent its most valuable space saying something nobody reads twice.
+  el("network-label").title = `network ${me.network}`;
   el("you-name").textContent = me.name ?? "unnamed";
-  // The id is shown beside the name rather than instead of it: spec 07 §8 makes
-  // that an obligation, because uniqueness does not fold confusables and a name
-  // alone cannot tell two members apart.
-  el("identity").textContent = me.identity;
+  el("you-line").title = me.identity;
 
   // `design/09` §5: controls for actions this member cannot perform are not
   // shown. The hidden control and the refused command are independent, and the
@@ -170,13 +211,20 @@ function drawMe(me) {
   el("new-channel").hidden = !me.may_create_channel;
   el("new-folder").hidden = !me.may_manage_channel;
   state.mayManage = me.may_manage_channel;
-  el("doorway").hidden = !me.may_invite;
-  if (me.may_invite) drawWaiting();
+  el("open-door").hidden = !me.may_invite;
+  if (me.may_invite) {
+    drawWaiting();
+  } else {
+    // The sheet is not left standing open on a member who has just lost the
+    // capability that opens it — the command would be refused anyway, but a
+    // door nobody can use should not still be on screen.
+    closeDoor();
+  }
 
   // Shown to every member, unlike the door: whether this node has a way through
   // NAT is not a privileged question, and a member who cannot fix it still
   // benefits from knowing that is what is wrong.
-  el("roster").hidden = false;
+  el("presence").hidden = false;
   drawPeople();
 
   // Re-read on a timer as well as on the event. `design/09` §4 already calls the
@@ -418,11 +466,34 @@ async function drawPeople() {
     list.append(row);
   }
 
-  const live = people.filter((person) => person.connected || person.you).length;
-  el("roster-count").textContent = `${live}/${people.length}`;
+  // Two different questions, and the header answers both without being opened.
+  //
+  // The number is how many *other* members this node holds a connection to,
+  // because that is the figure somebody watches while wondering whether
+  // anything they send is going anywhere. Your own dot is lit when that number
+  // is not zero — one glance that separates "the network is quiet" from
+  // "nothing I do reaches anybody", which previously could only be answered by
+  // opening the roster and counting unlit rows.
+  const others = people.filter((person) => !person.you);
+  const connected = others.filter((person) => person.connected).length;
+  el("presence-count").textContent = String(connected);
+  el("me-dot").classList.toggle("live", connected > 0);
+  el("me-dot").title =
+    connected > 0
+      ? `connected to ${connected} of ${others.length} other member(s)`
+      : "connected to nobody right now";
+  el("presence-toggle").title = el("me-dot").title;
+
+  el("roster-count").textContent = `${connected + 1}/${people.length}`;
   el("roster-note").textContent =
     "A lit dot means connected to you right now. An unlit one means away, " +
     "unreachable from here, or never dialled — this client cannot tell those apart.";
+}
+
+/// Opens or closes the roster.
+function showPeople(open) {
+  el("presence-panel").hidden = !open;
+  el("presence-toggle").setAttribute("aria-expanded", String(open));
 }
 
 // Who is at the door, and letting them in.
@@ -434,6 +505,21 @@ async function drawWaiting() {
   const waiting = await invoke("waiting");
   const list = el("waiting-list");
   list.replaceChildren();
+
+  // On the button that opens the sheet, not only inside it.
+  //
+  // The waiting room used to be a permanent section for one reason: somebody
+  // standing at a door goes unnoticed, and this client has already shipped that
+  // bug once. Moving it behind a click is only allowed because the count comes
+  // out to the frame with it.
+  state.waiting = waiting.length;
+  const badge = el("door-count");
+  badge.hidden = waiting.length === 0;
+  badge.textContent = String(waiting.length);
+  el("open-door").title =
+    waiting.length === 0
+      ? "invites, and who is waiting"
+      : `${waiting.length} waiting to be let in`;
 
   const note = el("waiting-note");
   note.hidden = waiting.length !== 0;
@@ -536,7 +622,7 @@ function channelItem(channel, category) {
     button.append(badge);
   }
 
-  button.addEventListener("click", () => openChannel(channel.id));
+  button.addEventListener("click", () => openChannel(channel.id, { arriving: true }));
 
   // Gated on the capability, like every other control here. Hiding is
   // presentation only — the command is re-checked on receipt regardless.
@@ -558,8 +644,44 @@ function channelItem(channel, category) {
   }
 
   item.append(button);
+  // The same menu, on a handle that says it is there.
+  //
+  // Renaming, topics, folders, archiving and deletion were on a right-click and
+  // nowhere else, which is a control only for somebody who already knows. The
+  // first field test came back asking for channel controls that had shipped
+  // weeks earlier — so this is discoverability rather than function, and it
+  // opens exactly what the right-click opens rather than a second copy of it.
+  if (state.mayManage) {
+    item.append(rowHandle((event) => channelMenu(event, channel, category), button));
+  }
   wireDrop(item, category);
   return item;
+}
+
+/// The `⋯` that opens a row's menu.
+///
+/// `owner` is the element the menu reads as belonging to, because the menu's
+/// rename entry edits a label *inside* it — passing the handle instead would
+/// turn the handle into the text field.
+function rowHandle(open, owner) {
+  const handle = document.createElement("button");
+  handle.type = "button";
+  handle.className = "row-menu";
+  handle.textContent = "\u22EF";
+  handle.title = "rename, topic, move, archive, delete";
+  handle.setAttribute("aria-label", "channel actions");
+  handle.addEventListener("click", (event) => {
+    event.stopPropagation();
+    // `popMenu` positions off the pointer and reads `currentTarget` for the
+    // label to rename, so the owner is handed both.
+    open({
+      preventDefault: () => {},
+      clientX: event.clientX,
+      clientY: event.clientY,
+      currentTarget: owner,
+    });
+  });
+  return handle;
 }
 
 /// One folder, and the channels inside it.
@@ -582,7 +704,10 @@ function folderItem(row) {
 
   if (state.mayManage) {
     head.addEventListener("contextmenu", (event) => folderMenu(event, row));
-    head.title = "right-click for folder actions";
+    const handle = rowHandle((event) => folderMenu(event, row), head);
+    handle.title = "move, rename, delete";
+    handle.setAttribute("aria-label", "folder actions");
+    head.append(handle);
   }
   item.append(head);
 
@@ -1126,6 +1251,7 @@ function signatureOf(opened) {
 
 function drawMessages(opened) {
   state.channelSignature = signatureOf(opened);
+  const fresh = freshIn(opened);
   const channel = state.channels.find((c) => c.id === opened.channel);
   el("channel-name").textContent = channel ? `#${channel.name}` : "channel";
   el("channel-topic").textContent = channel ? channel.topic : "";
@@ -1144,6 +1270,7 @@ function drawMessages(opened) {
     if (message.withdrawn) row.classList.add("withdrawn");
     if (message.redacted) row.classList.add("redacted");
     if (message.pinned) row.classList.add("pinned");
+    if (fresh.has(message.id)) row.classList.add("fresh");
 
     const who = document.createElement("span");
     who.className = "author";
@@ -1320,6 +1447,95 @@ function unreadKey() {
   return `kols:unread:${state.me?.network ?? "none"}`;
 }
 
+function seenKey() {
+  return `kols:seen:${state.me?.network ?? "none"}`;
+}
+
+/// How much of a record id is kept to recognise it again.
+///
+/// Thirty-two bits, within one channel. A collision means one message is not
+/// highlighted, which is the cheapest possible way to be wrong, and the whole
+/// point of not keeping the full id is that this file is written on every draw.
+const SEEN_ID_CHARS = 8;
+
+/// Which of a channel's messages this person has not seen yet.
+///
+/// # Why a set rather than a mark
+///
+/// The obvious thing is to remember how far down you had read. That is wrong
+/// here, and not marginally: a message is ordered by **its author's clock**, so
+/// one written five minutes ago by somebody whose node was offline lands five
+/// minutes back in the timeline when it finally arrives — behind any mark you
+/// could have set. A watermark would file it as already read, every time, which
+/// is precisely the case somebody needs telling about.
+///
+/// So what is remembered is *which* messages were on screen, not how many or
+/// how far. That is bounded by the size of the channel rather than growing, and
+/// it is **replaced** on each visit rather than accumulated: everything is
+/// drawn, so "what was here last time I looked" is the complete answer to what
+/// has been seen, and there is no eviction policy to get wrong.
+///
+/// # What it deliberately does not claim
+///
+/// A channel with no record at all is a channel this machine has never
+/// displayed, and the honest reading of that is *no idea* rather than *none of
+/// this has been seen*. So the first visit files what is there and highlights
+/// nothing, instead of setting a hundred messages of backlog alight on the day
+/// somebody joins. From the second visit on it is exact.
+///
+/// Local by construction and deliberately so — what somebody has read is not a
+/// fact about the network, and writing it to the log would publish a reading
+/// habit to every member. `design/09` §7.7 is the thing to revisit here: read
+/// state becomes shared when multi-device lands, and this is per device until
+/// it does.
+function freshIn(opened) {
+  // A visit, not a draw. The channel is redrawn every two seconds by the poll,
+  // and recomputing from `seen` each time would clear the highlight on the
+  // first tick after it appeared.
+  if (state.holding?.channel !== opened.channel) {
+    state.holding = { channel: opened.channel, ids: new Set() };
+  }
+
+  const stored = state.seen[opened.channel];
+  // A set for the lookup, an array for the storage: `JSON.stringify` cannot
+  // encode a `Set`, and a linear scan per message would be quadratic in the
+  // size of the channel on every redraw.
+  const before = stored ? new Set(stored) : null;
+  const now = [];
+  for (const message of opened.messages) {
+    const key = message.id.slice(0, SEEN_ID_CHARS);
+    now.push(key);
+    if (before && !before.has(key)) state.holding.ids.add(message.id);
+  }
+
+  // Written only when the set actually moved. Ids never change once a record
+  // exists — an edit rewrites a body, not an id — so a difference in length is
+  // the whole of "something arrived or left", and the alternative is
+  // re-encoding every channel's id list on every redraw of any of them.
+  const moved = !stored || stored.length !== now.length;
+  state.seen[opened.channel] = now;
+  if (moved) rememberSeen();
+  return state.holding.ids;
+}
+
+function rememberSeen() {
+  try {
+    localStorage.setItem(seenKey(), JSON.stringify(state.seen));
+  } catch {
+    // Same as the unread counts: a window that cannot store this still marks
+    // what arrives while it is running. Losing it on restart is worth less than
+    // failing to draw anything.
+  }
+}
+
+function recallSeen() {
+  try {
+    state.seen = JSON.parse(localStorage.getItem(seenKey()) ?? "{}") ?? {};
+  } catch {
+    state.seen = {};
+  }
+}
+
 function rememberUnread() {
   try {
     localStorage.setItem(unreadKey(), JSON.stringify(state.unread));
@@ -1337,12 +1553,66 @@ function recallUnread() {
   }
 }
 
-async function openChannel(id) {
+/// How many unread messages this network is holding, across every channel.
+function unreadTotal() {
+  return Object.values(state.unread).reduce((sum, count) => sum + count, 0);
+}
+
+/// Says that something arrived, outside the window as well as inside it.
+///
+/// Three signals, and each of them fails differently on purpose:
+///
+/// - the **badge on the channel**, which is the only one that says *where*;
+/// - the **title**, which is the only one still true a minute later, and the
+///   only one visible from a taskbar or a window switcher;
+/// - the **attention request**, which is the only one that arrives while
+///   somebody is doing something else entirely.
+///
+/// No sound and no operating-system toast. A toast would mean shipping
+/// `tauri-plugin-notification` and asking for a permission this client has
+/// never asked for, and neither is a decision to slip in beside a title change
+/// — `design/09` §7.3 is the open question this is a first answer to, not the
+/// last one.
+///
+/// Attention is requested only while the window is unfocused: a taskbar entry
+/// flashing at somebody who is already reading the message is noise, and the
+/// kind of noise people turn a whole feature off to stop.
+async function announce() {
+  if (!frame) return;
+  const total = unreadTotal();
+  try {
+    await frame.setTitle(total > 0 ? `ko-ls (${total})` : "ko-ls");
+    if (total > 0 && !(await frame.isFocused())) {
+      // Informational rather than critical: on macOS the critical form bounces
+      // the dock icon until the application is activated, which is a demand
+      // rather than a notice, and a chat message is a notice.
+      await frame.requestUserAttention(2);
+    }
+  } catch {
+    // The ACL refuses these, or this is not a Tauri window at all. Everything
+    // inside the window still works; `tests/permissions.rs` is what keeps that
+    // from happening by accident.
+  }
+}
+
+/// Opens a channel and draws it.
+///
+/// `arriving` is the difference between somebody choosing this channel and the
+/// window re-reading it because a record turned up, and it decides one thing:
+/// whether the first-sight marks start again. Arriving clears them; a redraw
+/// under a reader who has not moved must not, or a second message would erase
+/// the mark on the first — which is the whole failure this is drawn for.
+///
+/// It is what makes the marks clear at all in a network with one channel, where
+/// there is nowhere else to go and back from.
+async function openChannel(id, { arriving = false } = {}) {
+  if (arriving) state.holding = null;
   // Reading it is what marks it read. Done before the render so the count is
   // gone by the time the sidebar is drawn below.
   if (state.unread[id]) {
     delete state.unread[id];
     rememberUnread();
+    void announce();
   }
   state.current = id;
   drawSidebar(state.sidebar);
@@ -1383,7 +1653,8 @@ el("composer").addEventListener("submit", async (event) => {
   try {
     await invoke("send_message", { channel: state.current, body });
     el("body").value = "";
-    await openChannel(state.current);
+    // Arriving, because somebody who just wrote into this channel has read it.
+    await openChannel(state.current, { arriving: true });
   } catch (err) {
     // A refusal is an answer, not a crash: too fast, too long, not permitted.
     // It belongs where the user is looking.
@@ -1817,21 +2088,61 @@ for (const button of document.querySelectorAll(".settings-tab")) {
 }
 
 el("open-settings").addEventListener("click", async () => {
-  el("settings").hidden = false;
+  show("settings");
   showSettings(state.settingsTab ?? "network");
-  // Asked for on open rather than kept warm: the panel is closed almost always,
+  // Asked for on open rather than kept warm: the screen is closed almost always,
   // and a relay's standing is only interesting when somebody is looking at it.
   await drawSettings();
 });
 
-el("close-settings").addEventListener("click", () => {
-  el("settings").hidden = true;
+el("close-settings").addEventListener("click", () => show("app"));
+
+// ── the door ───────────────────────────────────────────────────────────
+
+function closeDoor() {
+  el("door").hidden = true;
+}
+
+el("open-door").addEventListener("click", async () => {
+  el("door").hidden = false;
+  // Whatever the four-second poll last saw is probably right and possibly not.
+  // Somebody who just opened this is asking the question now.
+  try {
+    await drawWaiting();
+  } catch {
+    // The note inside says what an empty list means; a failed read is not worth
+    // a banner over a sheet somebody just opened.
+  }
 });
 
-// Escape closes it, since a panel over everything with one way out is a trap
-// the first time somebody opens it by accident.
+el("close-door").addEventListener("click", closeDoor);
+
+// Clicking the dimmed area behind it, like every other sheet in this window.
+el("door").addEventListener("click", (event) => {
+  if (event.target === el("door")) closeDoor();
+});
+
+// ── the roster ─────────────────────────────────────────────────────────
+
+el("presence-toggle").addEventListener("click", (event) => {
+  event.stopPropagation();
+  showPeople(el("presence-panel").hidden);
+});
+
+// A dropdown that does not close when you look away from it is a panel, and
+// this one sits over the messages.
+document.addEventListener("click", (event) => {
+  if (!el("presence").contains(event.target)) showPeople(false);
+});
+
+// Escape leaves whatever is on top, since any surface with one way out is a
+// trap the first time somebody opens it by accident. Innermost first: the
+// dropdown before the sheet, the sheet before the screen.
 document.addEventListener("keydown", (event) => {
-  if (event.key === "Escape" && !el("settings").hidden) el("settings").hidden = true;
+  if (event.key !== "Escape") return;
+  if (!el("presence-panel").hidden) showPeople(false);
+  else if (!el("door").hidden) closeDoor();
+  else if (!el("settings").hidden) show("app");
 });
 
 el("identity-form").addEventListener("submit", async (event) => {
@@ -2354,6 +2665,7 @@ async function watch() {
       state.unread[channel] = (state.unread[channel] ?? 0) + 1;
       rememberUnread();
       drawSidebar(state.sidebar);
+      await announce();
     }
     if (state.current) await openChannel(state.current);
   });
@@ -2449,6 +2761,14 @@ function clearNetworkView() {
   el("invite-out").hidden = true;
   el("waiting-list").replaceChildren();
   el("roster-list").replaceChildren();
+  // An invite is minted for one network and reaches nobody in another, and a
+  // door count belongs to the network whose door it is.
+  el("invite-uri").value = "";
+  el("door-count").hidden = true;
+  closeDoor();
+  showPeople(false);
+  el("presence-count").textContent = "0";
+  el("me-dot").classList.remove("live");
 
   state.current = null;
   state.channels = [];
@@ -2461,6 +2781,12 @@ function clearNetworkView() {
   // Relay standing and the role being looked at are both per network.
   state.designated = null;
   state.role = null;
+  state.waiting = 0;
+  // Per network like the unread counts, and re-read from storage by `start`
+  // under the new network's key. Holding is a property of the visit, and the
+  // visit is over.
+  state.seen = {};
+  state.holding = null;
 }
 
 async function start() {
@@ -2480,12 +2806,14 @@ async function start() {
   // After `drawMe`, which is what puts the network id in `state.me` — the key
   // these are stored under.
   recallUnread();
+  recallSeen();
+  void announce();
   watchRelay();
   watchChannel();
   const rows = await invoke("sidebar");
   drawSidebar(rows);
   const channels = state.channels;
-  if (channels.length > 0) await openChannel(channels[0].id);
+  if (channels.length > 0) await openChannel(channels[0].id, { arriving: true });
 }
 
 watch();

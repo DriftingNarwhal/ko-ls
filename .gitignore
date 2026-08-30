@@ -5,3 +5,10 @@
 # opposite of what the filename suggests. Build output either way, and tracking
 # it meant a diff every time a different machine built.
 /crates/kols-app/gen/schemas
+
+# `crates/kols-ui/drive.mjs` needs jsdom and is run by hand — see CONTRIBUTING.
+# The front end has no build step and no dependency of its own; this is a tool
+# beside it, not a toolchain under it.
+/crates/kols-ui/node_modules
+/crates/kols-ui/package-lock.json
+/crates/kols-ui/package.json

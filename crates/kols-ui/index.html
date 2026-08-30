@@ -68,18 +68,30 @@
 
     <div class="app" data-kols="app" hidden>
       <aside class="rail" data-kols="rail">
-        <!-- Question 1: which network am I in? -->
+        <!-- Question 1: which network am I in?
+             The network id and this member's identity are both obligations
+             (spec 07 §8) and neither is something anybody reads twice a day, so
+             they are a hover away rather than two permanent lines of hex. The
+             obligation is that a name never stands in for an identity where the
+             two could be confused — the roster and every message row still show
+             both, which is where confusing two members would actually cost
+             something. -->
         <header class="network" data-kols="network">
           <div class="rail-actions">
             <button class="switcher" id="switcher" title="your networks">networks</button>
-            <button class="switcher" id="open-settings" title="network settings">settings</button>
+            <button class="switcher" id="open-settings" title="settings">settings</button>
+            <!-- Bringing somebody in. Shown only to a holder of approve-node,
+                 which is the same capability admitting them needs — so a member
+                 who cannot let anybody in is not shown a door. The count is on
+                 the button rather than inside the sheet, because the whole
+                 reason the door used to be a permanent section is that a person
+                 standing at one goes unnoticed. -->
+            <button class="switcher" id="open-door" title="invites, and who is waiting" hidden>
+              invite<span class="door-count" id="door-count" hidden></span>
+            </button>
           </div>
           <h1 id="network-label">…</h1>
-          <p class="mono" id="network-id"></p>
-          <p class="you">
-            you are <span id="you-name">…</span>
-            <span class="mono" id="identity"></span>
-          </p>
+          <p class="you" id="you-line">you are <span id="you-name">…</span></p>
         </header>
 
         <!-- Question 2: what channels are here, and which am I reading? -->
@@ -94,44 +106,6 @@
           <ul id="channel-list"></ul>
         </nav>
 
-        <!-- Bringing somebody in. Shown only to a holder of approve-node, which
-             is the same capability admitting them needs — so a member who
-             cannot let anybody in is not shown a door. -->
-        <section class="doorway" id="doorway" data-kols="doorway" hidden>
-          <div class="channels-head">
-            <!-- Not "people", which the roster below is. Two adjacent sections
-                 under one heading made the roster look absent: somebody looking
-                 for who is in the network read the first, saw "nobody is
-                 waiting", and concluded there was no list — when the list was
-                 the next section down. The door and the room are different
-                 questions and now say so. -->
-            <h2>at the door</h2>
-            <button id="new-invite" title="mint an invite">invite</button>
-          </div>
-
-          <div class="invite-out" id="invite-out" hidden>
-            <p class="dim" id="invite-note"></p>
-            <textarea id="invite-uri" readonly rows="3"></textarea>
-            <button id="copy-invite">copy</button>
-          </div>
-
-          <ul class="waiting-list" id="waiting-list"></ul>
-          <p class="dim" id="waiting-note" hidden></p>
-        </section>
-
-        <!-- Who is here. Shown to everybody, unlike the door above: membership
-             is not privileged information among members, and the connection dot
-             answers "am I talking to them" rather than "are they online",
-             which is not a question this client can answer. -->
-        <section class="roster" id="roster" data-kols="roster" hidden>
-          <div class="channels-head">
-            <h2>people</h2>
-            <span class="dim" id="roster-count"></span>
-          </div>
-          <ul class="roster-list" id="roster-list"></ul>
-          <p class="dim" id="roster-note"></p>
-        </section>
-
         <footer class="state" data-kols="state">
           <p id="key-state"></p>
         </footer>
@@ -139,8 +113,44 @@
 
       <main class="channel" data-kys="channel" data-kols="channel">
         <header class="channel-head" data-kols="channel-head">
-          <h2 id="channel-name">no channel</h2>
-          <p id="channel-topic"></p>
+          <div class="channel-titles">
+            <h2 id="channel-name">no channel</h2>
+            <p id="channel-topic"></p>
+          </div>
+
+          <!-- Who is here. Shown to everybody, unlike the door: membership is
+               not privileged information among members.
+
+               **The dot is yours, and it answers a different question from the
+               dots in the list.** Yours is lit when this node is talking to at
+               least one other member — which is the one thing on this screen
+               that distinguishes "the network is quiet" from "nothing I do
+               reaches anybody", and it was previously answerable only by
+               counting unlit rows. The number beside it is how many members
+               this node holds a connection to, and it stays on screen because
+               that is the figure somebody actually watches; the list behind the
+               dropdown is the detail, and detail is what a click is for. -->
+          <div class="presence" id="presence" data-kols="presence" hidden>
+            <button
+              type="button"
+              class="presence-toggle"
+              id="presence-toggle"
+              aria-expanded="false"
+            >
+              <span class="dot" id="me-dot"></span>
+              <span class="presence-count" id="presence-count">0</span>
+              <span class="presence-caret">&#9662;</span>
+            </button>
+
+            <div class="presence-panel" id="presence-panel" data-kols="roster" hidden>
+              <div class="presence-head">
+                <h3>people</h3>
+                <span class="dim" id="roster-count"></span>
+              </div>
+              <ul class="roster-list" id="roster-list"></ul>
+              <p class="dim small" id="roster-note"></p>
+            </div>
+          </div>
         </header>
 
         <ol class="messages" id="messages" data-kols="messages"></ol>
@@ -185,11 +195,55 @@
         </form>
       </main>
     </div>
+
+    <!-- The door: minting an invite, and letting in whoever redeemed one.
+         A sheet rather than a permanent section, because both halves are things
+         a person does on purpose and neither is worth a fifth of the sidebar for
+         the rest of the day. The count on the button that opens it is what keeps
+         that from being a regression — somebody standing at a door still says so
+         from the frame, and the list of them is behind one click.
+
+         Still one surface for both halves: minting an invite and admitting the
+         person who redeemed it are the same job seen twice, and the previous
+         layout put them under two headings that a reader took for two features.
+    -->
+    <section class="sheet" id="door" data-kols="doorway" hidden>
+      <div class="sheet-inner">
+        <header class="sheet-head">
+          <h2>at the door</h2>
+          <button type="button" id="close-door" title="close">done</button>
+        </header>
+
+        <div class="sheet-body">
+          <button type="button" id="new-invite">mint an invite</button>
+
+          <div class="invite-out" id="invite-out" hidden>
+            <p class="dim" id="invite-note"></p>
+            <textarea id="invite-uri" readonly rows="3"></textarea>
+            <button type="button" id="copy-invite">copy</button>
+          </div>
+
+          <h3 class="perm-head">waiting</h3>
+          <ul class="waiting-list" id="waiting-list"></ul>
+          <p class="dim small" id="waiting-note" hidden></p>
+        </div>
+      </div>
+    </section>
+
     <!-- Settings. Out of the rail because a relay is something you set once and
          then never think about — Core §5.5 calls a bootstrap relay scaffolding,
          and scaffolding does not belong in the frame you look at all day. Still
          one keystroke away, because when it *is* wanted it is usually because
          nothing else works.
+
+         **A screen rather than a sheet over one.** It used to float over a dimmed
+         channel, which said "this is a detour, the real thing is underneath" —
+         and then asked people to read a page of consequences about permanent
+         governance entries through a veil, in a column narrower than the window
+         they already had. Settings here is a place you go, not a thing that
+         happens to the room, so it takes the window and gives it back. Escape and
+         `done` both leave, which is what keeps a full-window view from feeling
+         like being trapped in one.
 
          Sections, and grouped by *what a click costs* rather than by topic
          (`design/09` §4.2). Changing a font is local, private and undoable;

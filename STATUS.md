@@ -79,6 +79,7 @@ Where that milestone stands:
 | **Two nodes on separate networks** | **Done — this milestone's stated first test passes.** Two of the user's own laptops, one on a mobile hotspot, and then a third person on a third network: connection worked across all three, survived close and reopen, reconnected, and roles, permissions and every chat function (posting, voting, withdraw, edit, channel creation by an invited member) worked. The one defect that test found — a node losing its whole servable contribution on restart — is the row above |
 | Invites short enough to send somebody | **done** — one real machine's invite went from ~4,750 characters to ~1,324, about half from carrying only the addresses a recipient could dial and about half from an encoding that stops repeating the peer id once per address (`design/02` §6.1, Core §5.6) |
 | The window hearing what the node tells it | **done, and it never had.** The application declared no Tauri capabilities, so its ACL was empty and every `plugin:` command was refused — `listen` included. No node event had ever reached the window for the life of the client; three polls had been written as fixes for what was one denial, and the features with no poll behind them read as unbuilt (`design/05` §1) |
+| An interface that survives being used | **done** — the first field test's list, worked through: a visible handle on the channel controls that were right-click-only, first-sight marks on messages that land mid-timeline, the roster as a counted dropdown at the top right, the door as a sheet behind a counted button, and settings as a screen rather than a sheet over a dimmed channel (`design/09` §4.1–§4.3) |
 
 **Runnable.** `kols-desktop` is the product (`design/00` D30); `kols` is a development tool
 over the same `kols-api` boundary, owed no feature parity and no end-user documentation.
@@ -87,7 +88,7 @@ over the same `kols-api` boundary, owed no feature parity and no end-user docume
   identity and designates relays, lists and renders channels in the order the network agrees
   on, posts, reacts, revises, withdraws and pins, manages channels and folders, mints an
   invite and admits from the waiting room, and says so when a healed fork undid something.
-  Settings is five sections split by what a click costs (`design/09` §4.2), and carries the
+  Settings is a screen of five sections split by what a click costs (`design/09` §4.2), and carries the
   network's name (D32), a **role-first permissions surface** — roles, what each holds and at
   which scope, and who is in them — and the network's own policy: admission mode, the abuse
   limits of spec 07 §4.3 and the two retention windows of §2.8.
@@ -115,7 +116,7 @@ not, the dependency is named in the owning document.
 | O3 | `may_moderate_at` answers from current state, ignoring the head it is given — so demoting a moderator retroactively invalidates redactions that should stand | `specs/07` §9 Q1, `design/01` §6 |
 | O4 | `kols-store` does not exist; `kols-node` carries a file-backed store instead of the SQLite projection | `design/05` §2, §5 |
 | O5 | The executor rebuilds an author's whole log to append one record, and replay walks the log once per question | `design/05` §5 |
-| O6 | The window has no presence — `design/09` §4's third question has no answer, and is last deliberately | `design/09` §4.1 |
+| O6 | The window has no presence — `design/09` §4's third question has no answer, and is last deliberately. What it shows instead now answers a narrower question in the frame rather than behind a click: how many members this node is connected to, and whether that is more than none | `design/09` §4.1 |
 | O7 | **No credentials and no backup.** Seeds are written to `<home>/seed` in the clear, so anything with read access to that disk is that member. **A release gate, not a feature** | `design/02` §6.3, `design/00` §5 |
 | O9 | A suspended node can lose its claim without knowing — the staleness check is wall-clock, so a sleeping laptop is indistinguishable from a dead one | `design/05` §4 |
 | O11 | A relay may not be shared between two of a member's networks, and **nothing enforces it**. Enforcing it means network-scoping the protocol names, which is a wire change rather than a client fix | `design/00` D29, `design/09` §3 |
@@ -157,7 +158,7 @@ produced, which the whole segment model rests on, are in `design/08` §4.
 
 ## 4. Log
 
-Moved to [`docs/log.md`](docs/log.md) — 99 entries, newest first.
+Moved to [`docs/log.md`](docs/log.md) — 100 entries, newest first.
 
 What happened *lately* is §1. The log is why things are the way they are: the reasoning behind
 a change, the thing tried and abandoned, the bug that turned out to be a different bug. It
