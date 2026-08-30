@@ -24,6 +24,72 @@ Kept because this project keeps re-learning the same lessons and paying for them
 
 ---
 
+- **2026-08-30** — **The network was only as durable as its authors' uptime, and the first three-node test found it.**
+
+  Three people across three networks, and the third saw nothing the second had written
+  until the second came back online — though the first had been connected to both the whole
+  time and could display every message. The user's reading was right and worth stating: the
+  first node *should* have passed those messages on without the author ever reappearing.
+
+  **Nothing in the suite could have caught this, and the reason is structural.** With two
+  nodes, every piece of content has exactly one other place to come from — its author. A
+  network that only ever served content from whoever wrote it passes every test in
+  `two_nodes.rs`. So the harness moved to `common/` and `three_nodes.rs` exists, where a third
+  install can ask for something its author is not around to give.
+
+  The property turned out to work: Bob writes, Bob leaves, Carol arrives and reads it from
+  Alice. **What breaks it is a restart.** The transport's `ChunkStore` is a `BTreeMap` in
+  memory and nothing wrote it down, and the same was true of other members' pointers and DEK
+  wrappings. Storage §4.2 makes holding the bytes the whole of swarm membership, so a node was
+  a member of the swarm for exactly as long as its process lived.
+
+  Own content came back anyway, which is why this hid so well: `publish_own_logs` re-derives
+  this node's segments from its stored records at startup and re-announces them. Nothing did
+  that for anybody else's, and nobody else *can* — a segment is encrypted under its author's
+  per-segment key and named by the CID of that ciphertext, so only the author can produce
+  those bytes again. A member who read a message, closed the app and reopened it could still
+  see the message and could no longer pass it on. The people in the field report had been
+  closing and reopening clients all session.
+
+  Now `Store::put_chunk`/`chunks` and `put_pointer`/`pointers`, with `restore_contribution`
+  putting both back and announcing every chunk before the first tick. Pointers are stored as an
+  encoded `PointerResponse::Records` holding one record — the wire's own type, chosen because
+  it already carries exactly a pointer with its wrappings and already verifies every signature
+  on the way back in; a private on-disk format would be a second encoding of the same thing,
+  checked less. One file per pointer, because `MAX_POINTERS_PER_RESPONSE` caps a response at
+  256 and a node holding more would write a file it could never read back.
+
+  **Two false starts, both the same mistake, both caught by the test rather than by me.** The
+  first version killed Bob seconds after his message went out live, and Carol failed — which I
+  nearly reported as the defect. It was a race of the test's own making: receiving a record
+  live and becoming able to serve it are separate things, several pointer-sync rounds apart.
+  The second version then killed Bob before he had published a segment at all. Both now have a
+  comment saying so, because the shape recurs: **a test that kills a daemon at the moment a
+  user-visible thing happens is measuring the gap between that and the thing underneath it.**
+
+  Instrumenting `request_foreign_segments` and `absorb_segments` with four `eprintln!`s and
+  reading one run settled in minutes what an hour of reading the call graph had not. The
+  diagnosis I was building from the code — that the live path was suppressing the fetch — was
+  wrong, and the instrumentation said so immediately: `wanted=0`, no pointers known at all.
+
+  **A tail worth recording, because it nearly became a false attribution.** The new file's
+  own three tests timed out at full width — in the tests they had just added, which reads
+  exactly like the feature being broken. Longer deadlines did not fix it; a process-wide
+  mutex so only one of them runs at a time did. What remained was
+  `a_node_offline_across_a_rotation_catches_up_and_can_still_read` failing on every full run
+  and passing alone in 50 s, and the obvious story — the new file's four daemons starved it —
+  was wrong. Moving `three_nodes.rs` out of `tests/` and re-running the whole workspace
+  reproduces it identically. Pre-existing, and now deterministic on a 24-core box rather than
+  intermittent: `patience`'s factor is 1 at that width, so nothing is scaled while fourteen
+  tests' daemons compete. Recorded in CONTRIBUTING; not fixed here, because fixing it means
+  rethinking how the suite bounds concurrency and that is not this change.
+
+  Retention is deliberately not addressed. Storage §4.6 defines no eviction policy, and the
+  agreed design (primary tier bounded by the `storage_offered` a node already advertises,
+  under-replication earning a slot rather than arrival order, a freely droppable cache beside
+  it) is the next piece of work — after real store sizes exist to design against rather than
+  guesses. Chunks are unbounded until then, which is what the in-memory store already did.
+
 - **2026-08-29** — **The milestone's first test passes, and the invite it passed with was 4,750 characters long.**
 
   Two of the user's own laptops on separate networks, one on a mobile hotspot: joined over the

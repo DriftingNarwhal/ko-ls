@@ -362,6 +362,120 @@ impl Store {
         Ok(true)
     }
 
+    /// Keeps a chunk this node fetched, so it survives being closed.
+    ///
+    /// # Why a node has to write these down
+    ///
+    /// Storage §4.2 makes holding the bytes the whole of swarm membership: a
+    /// node is a place a chunk can be got from precisely for as long as it has
+    /// the chunk. The transport's [`ChunkStore`](intranet_storage::ChunkStore)
+    /// is a `BTreeMap` in memory, which made that membership last exactly as
+    /// long as the process — so every close and reopen silently retired a
+    /// node's entire contribution.
+    ///
+    /// Its own content came back anyway, because `publish_own_logs` re-derives
+    /// this node's segments from these records at startup and re-announces
+    /// them. Nothing did that for anybody else's, and nobody else *can*: a
+    /// segment is encrypted under its author's per-segment key and named by the
+    /// CID of that ciphertext, so only the author can produce those bytes
+    /// again. A member who read a message, closed the app and reopened it could
+    /// still see the message and could no longer pass it on, and the network's
+    /// durability quietly collapsed to its authors' uptime.
+    ///
+    /// Named by content, so writing the same chunk twice is a no-op and two
+    /// nodes never disagree about what a name holds.
+    pub fn put_chunk(&self, cid: &Cid, bytes: &[u8]) -> Result<bool, StoreError> {
+        let dir = self.root.join("chunks");
+        fs::create_dir_all(&dir)?;
+        let path = dir.join(to_hex(cid.hash().as_bytes()));
+        if path.exists() {
+            return Ok(false);
+        }
+        fs::write(path, bytes)?;
+        Ok(true)
+    }
+
+    /// Every chunk this node kept, to be put back and re-announced at startup.
+    ///
+    /// Addressed by content, so the file name is a hint and the bytes are the
+    /// truth — `ChunkStore::insert` re-derives the CID and refuses a mismatch,
+    /// which is what makes a corrupted or tampered file a discarded chunk
+    /// rather than one this node goes on to serve.
+    pub fn chunks(&self) -> Result<Vec<Vec<u8>>, StoreError> {
+        let dir = self.root.join("chunks");
+        if !dir.exists() {
+            return Ok(Vec::new());
+        }
+        let mut chunks = Vec::new();
+        for entry in fs::read_dir(&dir)? {
+            chunks.push(fs::read(entry?.path())?);
+        }
+        Ok(chunks)
+    }
+
+    /// Keeps another member's pointer and the key wrappings that open it.
+    ///
+    /// Pointers live in memory beside the chunks and are lost the same way, and
+    /// losing them is worse: without the pointer a node cannot say *which*
+    /// segment is an author's head, so the chunks it kept name nothing it can
+    /// find. Both halves have to come back or neither is worth keeping.
+    ///
+    /// Stored as an encoded [`PointerResponse::Records`] holding this one
+    /// record. That type is the wire's, and it is used here because it already
+    /// carries exactly a pointer with its wrappings and already verifies every
+    /// signature on the way back in — a private on-disk format would be a
+    /// second encoding of the same thing, checked less.
+    ///
+    /// One file per pointer, rewritten as it advances. Not one file for all of
+    /// them: `MAX_POINTERS_PER_RESPONSE` caps a response at 256, and a node
+    /// holding more than that would write a file it could never read back.
+    pub fn put_pointer(
+        &self,
+        pointer: &intranet_storage::MutablePointer,
+        wrappings: Vec<intranet_storage::DekWrapping>,
+    ) -> Result<(), StoreError> {
+        let dir = self.root.join("pointers");
+        fs::create_dir_all(&dir)?;
+        let encoded = intranet_storage::PointerResponse::Records {
+            records: vec![intranet_storage::PointerRecord {
+                pointer: pointer.clone(),
+                wrappings,
+            }],
+            truncated: false,
+        }
+        .encode();
+        fs::write(dir.join(to_hex(pointer.pointer_id.as_bytes())), encoded)?;
+        Ok(())
+    }
+
+    /// Every pointer this node kept, with its wrappings.
+    ///
+    /// A file that will not decode is skipped rather than fatal. Decoding
+    /// verifies signatures, so a refusal here means a pointer this node must
+    /// not act on — and refusing to start would turn one bad file into a node
+    /// that cannot open at all, when the honest consequence is one author's
+    /// content being unreachable until it is learned again.
+    pub fn pointers(
+        &self,
+    ) -> Result<Vec<intranet_storage::PointerRecord>, StoreError> {
+        let dir = self.root.join("pointers");
+        if !dir.exists() {
+            return Ok(Vec::new());
+        }
+        let mut records = Vec::new();
+        for entry in fs::read_dir(&dir)? {
+            let Ok(bytes) = fs::read(entry?.path()) else {
+                continue;
+            };
+            if let Ok(intranet_storage::PointerResponse::Records { records: held, .. }) =
+                intranet_storage::PointerResponse::decode(&bytes)
+            {
+                records.extend(held);
+            }
+        }
+        Ok(records)
+    }
+
     /// The channels this node holds any records for.
     pub fn channels_with_records(&self) -> Result<Vec<ChannelId>, StoreError> {
         let dir = self.root.join("channels");
@@ -964,5 +1078,56 @@ mod tests {
     fn nothing_set_is_nothing() {
         assert_eq!(first_set(None, None), None);
         assert_eq!(first_set(os(""), os("")), None);
+    }
+}
+
+#[cfg(test)]
+mod contribution_tests {
+    use super::Store;
+    use intranet_identity::NetworkId;
+    use intranet_storage::Cid;
+
+    fn store(name: &str) -> Store {
+        let root = std::env::temp_dir().join(format!("kols-contrib-{name}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        Store::create(root, NetworkId::from_bytes([3u8; 32]), [4u8; 32]).expect("a store")
+    }
+
+    #[test]
+    fn a_chunk_written_once_comes_back_and_is_not_written_twice() {
+        let store = store("chunks");
+        let bytes = b"a segment's worth of ciphertext".to_vec();
+        let cid = Cid::of(&bytes);
+
+        assert!(store.put_chunk(&cid, &bytes).expect("writes"), "first write");
+        assert!(
+            !store.put_chunk(&cid, &bytes).expect("writes"),
+            "the same chunk again is not new — it is addressed by content, so \
+             the name cannot disagree with what is under it"
+        );
+        assert_eq!(store.chunks().expect("reads"), vec![bytes]);
+
+        let _ = std::fs::remove_dir_all(store.root());
+    }
+
+    // The pointer round-trip is covered end to end by `three_nodes.rs` rather
+    // than here. Minting one needs `MutablePointer::publish`, which takes a
+    // `GovernanceState` and applies both §2.2 publish gates against it — so a
+    // unit test would have to build a governance state to check a file write,
+    // and would be testing a hand-made state as much as anything else.
+
+    #[test]
+    fn a_pointer_file_that_will_not_decode_is_skipped_rather_than_fatal() {
+        // Decoding verifies signatures, so a refusal means a pointer this node
+        // must not act on. Refusing to start would turn one bad file into a
+        // node that cannot open at all.
+        let store = store("bad-pointer");
+        let dir = store.root().join("pointers");
+        std::fs::create_dir_all(&dir).expect("a directory");
+        std::fs::write(dir.join("deadbeef"), b"not a pointer response").expect("writes");
+
+        assert!(store.pointers().expect("reads").is_empty());
+
+        let _ = std::fs::remove_dir_all(store.root());
     }
 }

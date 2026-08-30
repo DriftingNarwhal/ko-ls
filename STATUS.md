@@ -75,7 +75,8 @@ Where that milestone stands:
 | Minting an invite from the window, with the waiting room and admitting beside it | **done** — no step of the flow needs a terminal |
 | Windows and macOS builds | **done**, in CI. `kols.exe` runs; `kols-desktop.exe` is built and unrun. It no longer opens a console behind the window — and the attribute that does that had to land with `kols_node::Report`, since a GUI-subsystem process has no stdout and Rust *panics* on the write rather than dropping it |
 | Two nodes meeting through the deployed relay | **Done, on one LAN.** Both ends ran the window, connected and reconnected several times, messages crossed both ways, and an established connection survived the relay going down |
-| **Two nodes on separate networks** | **Done — this milestone's stated first test passes.** Two of the user's own laptops, one on a mobile hotspot: joined over the relay, auto-admit on a valid invite worked, and both ends reconnected after being closed and reopened. Not yet repeated with a second person on a third network, which is the harder version of the same case |
+| Content outliving the node that wrote it | **done** — a member reads what an offline member wrote, because a third kept it, and a restart no longer discards what a node kept (`three_nodes.rs`). Before this a node was a member of the storage swarm only until its process ended |
+| **Two nodes on separate networks** | **Done — this milestone's stated first test passes.** Two of the user's own laptops, one on a mobile hotspot, and then a third person on a third network: connection worked across all three, survived close and reopen, reconnected, and roles, permissions and every chat function (posting, voting, withdraw, edit, channel creation by an invited member) worked. The one defect that test found — a node losing its whole servable contribution on restart — is the row above |
 | Invites short enough to send somebody | **done** — one real machine's invite went from ~4,750 characters to ~1,324, about half from carrying only the addresses a recipient could dial and about half from an encoding that stops repeating the peer id once per address (`design/02` §6.1, Core §5.6) |
 
 **Runnable.** `kols-desktop` is the product (`design/00` D30); `kols` is a development tool
@@ -155,7 +156,7 @@ produced, which the whole segment model rests on, are in `design/08` §4.
 
 ## 4. Log
 
-Moved to [`docs/log.md`](docs/log.md) — 97 entries, newest first.
+Moved to [`docs/log.md`](docs/log.md) — 98 entries, newest first.
 
 What happened *lately* is §1. The log is why things are the way they are: the reasoning behind
 a change, the thing tried and abandoned, the bug that turned out to be a different bug. It

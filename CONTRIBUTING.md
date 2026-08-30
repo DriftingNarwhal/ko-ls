@@ -59,7 +59,9 @@ Three things about the suite that are not obvious, each learned by getting them 
 - **Run the daemon tests starved as well as fast**: `taskset -c 0,1 cargo test -p kols-node
   --test two_nodes`. These spawn two or three processes that sign and encrypt, and a wide
   machine wins every race a narrow one loses — a keying bug latent for weeks was invisible at
-  full width and reproducible in one run at two cores.
+  full width and reproducible in one run at two cores. `three_nodes` spawns three or four
+  apiece and is heavier again; its deadlines are correspondingly longer, and the comment at
+  the top of that file says why.
 
   **The whole suite starved is currently unreliable, and that is a fact about the suite rather
   than about your change.** Run together at two cores, one or two tests time out in
@@ -75,10 +77,33 @@ Three things about the suite that are not obvious, each learned by getting them 
   `main` — that comparison is the only thing that separates a regression from this. Worth
   fixing eventually: the deadlines come from `tests/common::patience`, which scales with
   available parallelism but evidently not with how many daemons are competing for it.
+
+  **Measured again on 2026-08-30, on a 24-core box, and the picture is worse than the
+  paragraph above.** `a_node_offline_across_a_rotation_catches_up_and_can_still_read` now
+  fails on *every* full-workspace run here and passes alone in 50 s. Not intermittent, and
+  not starvation in the two-core sense — `factor()` returns 1 at this width, so no deadline
+  is scaled at all, while fourteen tests' worth of signing and encrypting daemons are up at
+  once. The suite has outgrown "twelve is the width this was written on and comfortable at".
+
+  **Attribute before believing it, and attribute by removing things.** Adding `three_nodes`
+  looked like the cause — it holds four daemons up for two minutes beside `two_nodes`, and
+  its arrival coincided with this going deterministic. It is not: moving that one file out of
+  `tests/` and re-running the whole workspace reproduces the same single failure. Two full
+  runs with it and one without, same test each time. That check took ten minutes and was the
+  difference between a true statement and a plausible one.
+
+  **Adding daemon tests still makes this worse for every other test.** `three_nodes`'s own
+  three tests did time out at full width when first added, in the very tests they had just
+  introduced — which reads exactly like the new feature being broken, and was not. They take
+  a process-wide mutex now so only one runs at a time; that fixed them and left the failure
+  above untouched, which is what identified it as separate. If you add a file like this,
+  serialize it, budget its deadlines against the whole suite rather than a run of that file,
+  and re-run the full gate before believing either result.
 - **Kill orphaned daemons before believing a red suite**: `pkill -f 'target/debug/kols'`.
   `Daemon::drop` kills its child, and `Drop` does not run when the *harness itself* is killed
   — a Ctrl-C, a timeout, a `pkill` on cargo. The orphans keep listening on ports 45101–45162
-  indefinitely, and every later run fails to bind. It presents as two or three tests failing
+  (`two_nodes`) and 45301–45334 (`three_nodes`) indefinitely, and every later run fails to
+  bind. It presents as two or three tests failing
   in ways that read as distributed-systems faults, and it is not one.
 
   **Two ways that cleanup silently does nothing**, both found by watching it fail — and the

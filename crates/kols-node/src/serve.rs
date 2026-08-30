@@ -290,6 +290,23 @@ pub async fn serve(
         _ => crate::say!(report, "  epoch     none — this node can fetch content and open none of it"),
     }
 
+    // What this node kept for other members, put back before anything asks for
+    // it. `ready` below re-derives and re-announces this node's *own* segments
+    // from its records, which is why an author's content always came back; this
+    // is the other half, and without it a restart retired everything a node was
+    // holding on everybody else's behalf (`Store::put_chunk`).
+    match restore_contribution(&store, &mut node) {
+        Ok((0, 0)) => {}
+        Ok((chunks, pointers)) => crate::say!(
+            report,
+            "  restored  {chunks} chunk(s) and {pointers} pointer(s) kept for other members"
+        ),
+        // Not fatal. A node that cannot re-read what it kept is a node that
+        // serves less than it could, which is worth saying and is not worth
+        // refusing to start over.
+        Err(err) => crate::say!(report, "  restored  nothing kept for other members ({err})"),
+    }
+
     match ready(&store, &mut node, &identity, seal_bytes) {
         Ok(published) => crate::say!(report, "  published {published} segment(s) from this node"),
         Err(_) => crate::say!(report, "  not a member of this network yet — syncing will settle it"),
@@ -750,6 +767,7 @@ pub async fn serve(
             }
 
             NodeEvent::PointersReceived { .. } => {
+                keep_pointers(&store, &node, sink);
                 request_foreign_segments(&store, &mut node, &identity, &mut fetched, &backfill)?;
             }
 
@@ -889,12 +907,88 @@ pub async fn serve(
             },
 
             // A chunk this node fetched makes it a source for that chunk
-            // (Storage §4.2), so it is announced rather than held quietly.
+            // (Storage §4.2), so it is announced rather than held quietly — and
+            // written down, because being a source has to outlive the process
+            // that became one.
             NodeEvent::ChunkReceived { cid, .. } if announced.insert(cid) => {
                 node.announce_chunk(cid);
+                if let Some(bytes) = node.chunk_store().get(&cid)
+                    && let Err(err) = store.put_chunk(&cid, bytes)
+                {
+                    sink(&[Event::Degraded {
+                        reason: format!("could not keep a chunk across restarts: {err}"),
+                    }]);
+                }
             }
 
             _ => {}
+        }
+    }
+}
+
+/// Puts back what a previous run kept for other members.
+///
+/// Returns how many chunks and pointers came back, so a restart can say what it
+/// is carrying rather than leaving it to be inferred.
+///
+/// The chunks are announced as they land, because a chunk this node holds and
+/// has not announced is one nobody can discover here — which is the whole of
+/// what a restart used to lose. Announcing is best-effort by design: Kademlia
+/// refuses to start providing before there is a peer to publish to, and
+/// `ChunkReceived` re-announces anything fetched later anyway.
+fn restore_contribution(store: &Store, node: &mut MemberNode) -> Result<(usize, usize), String> {
+    let mut chunks = 0;
+    for bytes in store.chunks().map_err(|e| e.to_string())? {
+        let cid = intranet_storage::Cid::of(&bytes);
+        // `insert` re-derives the CID and refuses a mismatch, so a file that was
+        // corrupted on disk is dropped here rather than served on.
+        if node.chunk_store_mut().insert(cid, bytes).is_ok() {
+            node.announce_chunk(cid);
+            chunks += 1;
+        }
+    }
+
+    let mut pointers = 0;
+    for record in store.pointers().map_err(|e| e.to_string())? {
+        // The pointer first: a wrapping names the pointer it opens, and one
+        // accepted for a pointer this node does not hold opens nothing.
+        node.accept_pointer(record.pointer);
+        for wrapping in record.wrappings {
+            node.accept_wrapping(wrapping);
+        }
+        pointers += 1;
+    }
+    Ok((chunks, pointers))
+}
+
+/// Writes down the pointers this node holds, with the wrappings that open them.
+///
+/// Called when a sync brings some in rather than on a timer: a pointer that has
+/// not moved re-encodes to the same bytes, so this is a rewrite of what changed
+/// and a no-op for the rest.
+///
+/// This node's own pointers are written too. They are re-derived at startup by
+/// `publish_own_logs` and so do not need to be, but excluding them would mean
+/// asking on every pointer which kind it is, to save a few files.
+fn keep_pointers(store: &Store, node: &MemberNode, sink: &Sink) {
+    let held: Vec<_> = node
+        .pointers()
+        .map(|pointer| {
+            (
+                pointer.clone(),
+                node.wrappings_for(&pointer.pointer_id)
+                    .into_iter()
+                    .cloned()
+                    .collect::<Vec<_>>(),
+            )
+        })
+        .collect();
+    for (pointer, wrappings) in held {
+        if let Err(err) = store.put_pointer(&pointer, wrappings) {
+            sink(&[Event::Degraded {
+                reason: format!("could not keep a pointer across restarts: {err}"),
+            }]);
+            return;
         }
     }
 }
