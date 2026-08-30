@@ -1,0 +1,12 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "What the window is allowed to ask the shell for. Tauri v2 refuses every `plugin:` command that no capability names, and an application defining no capabilities gets an empty allow-list — which is a silent denial, not an error: `listen` rejects a promise nothing awaits, so the interface keeps drawing off its own timers while every push from the node is dropped. `crates/kols-app/tests/permissions.rs` asserts this list against the commands `app.js` actually calls.\n\nThis grants the core default set and two window commands outside it. It grants no plugins, because there are none: everything this client does crosses `kols-api` as an application command, and those are not ACL-gated.",
+  "windows": ["main"],
+  "local": true,
+  "permissions": [
+    "core:default",
+    "core:window:allow-set-title",
+    "core:window:allow-request-user-attention"
+  ]
+}

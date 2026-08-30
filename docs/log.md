@@ -24,6 +24,48 @@ Kept because this project keeps re-learning the same lessons and paying for them
 
 ---
 
+- **2026-08-30** — **No event had ever reached the window, and three polls were written as fixes for it.**
+
+  Found while adding first-sight marks on messages, which needed the unread counts to work —
+  and the unread counts had never incremented once. The path they hang off is
+  `listen("kols://records")`, and `listen` is `plugin:event|listen`.
+
+  Tauri v2 gates every `plugin:` command on an ACL assembled from capability files. This
+  application had none — no `capabilities/` directory, `gen/schemas/capabilities.json` an
+  empty object — so the allow-list was empty and every one of those commands was refused. The
+  application's *own* commands are not gated, which is exactly what hid it: `invoke("me")`,
+  `invoke("open_channel")`, `invoke("send_message")` all worked, so the window opened, drew,
+  posted and looked healthy. `watch()` rejected on its first `await` and registered nothing,
+  and a rejected promise nobody awaits says nothing to anybody.
+
+  **The cost was paid four times as four different bugs.** `CHANNEL_REFRESH_MILLIS`,
+  `DOOR_REFRESH_MILLIS` and `watchRelay` are each documented in this codebase as a fix for "a
+  pushed event was the only path to a redraw" — one of them says it is *the fourth bug in
+  three days* of that shape. They are all the same denial one layer down. What survived was
+  everything a poll covered; what did not was everything else: unread counts, the `Degraded`
+  banner, the reorg report reaching a window that opened after the node reported, and the
+  automatic reconnect when a network designates a relay while your node is already running.
+  The field test reported reconnection as "a little janky", which is what that last one looks
+  like from outside.
+
+  **Reproduced before believing it**, because the alternative was another diagnosis from
+  reading. `RuntimeAuthority::resolve_access` is public and `Context::runtime_authority_mut`
+  reaches it, so `tests/permissions.rs` asks the real configuration whether each command the
+  interface calls would be allowed. It listed all six as refused, which is the whole finding
+  in one line of output. `capabilities/default.json` now grants `core:default` plus
+  `set_title` and `request_user_attention`, and the test passes.
+
+  The test also asserts the **window label**, which is the part that would rot: a capability
+  names the windows it applies to, `tauri.conf.json` does not write a label down, and both
+  default to `main` independently. They can drift apart without either file looking wrong,
+  and the symptom would be this bug again.
+
+  **The general lesson is about the shape of the failure rather than about Tauri.** A boundary
+  that refuses silently cannot be found by using the product, however carefully — every
+  session of manual testing this client has had was compatible with it. It can only be found
+  by asking the boundary directly, which is a test, which is why `design/05` §8 now has a row
+  for it.
+
 - **2026-08-30** — **The network was only as durable as its authors' uptime, and the first three-node test found it.**
 
   Three people across three networks, and the third saw nothing the second had written

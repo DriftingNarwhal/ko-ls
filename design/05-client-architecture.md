@@ -1,6 +1,6 @@
 # Client Architecture
 
-**Document status:** v1.6 — §4 takes the single-node-per-network claim and its six-second expiry, §5 takes what the missing projection costs, and §8 gains the content-routing row; all three moved here from a status file that was carrying them. Previously v1.5 — §3 lists `CreateCategory` and `UpdateCategory`, which landed in the code before they reached this page. Previously v1.4 — §1 and §2 describe the layout that was built: `kols-node` holds the executor, the daemon and the event loop, and `kols-net` is publish and fetch over it. §3 separates what crosses the boundary from what is designed and unbuilt, and `GovernanceReorg` has moved into the first list. The store and media crates still do not exist
+**Document status:** v1.7 — §1 records the shell's second boundary: Tauri's ACL refuses every `plugin:` command an application declares no capability for, silently, and this client shipped with none — so no node event ever reached the window and three polls were written as fixes for what was one denial. §8 gains the row that keeps it fixed. Previously v1.6 — §4 takes the single-node-per-network claim and its six-second expiry, §5 takes what the missing projection costs, and §8 gains the content-routing row; all three moved here from a status file that was carrying them. Previously v1.5 — §3 lists `CreateCategory` and `UpdateCategory`, which landed in the code before they reached this page. Previously v1.4 — §1 and §2 describe the layout that was built: `kols-node` holds the executor, the daemon and the event loop, and `kols-net` is publish and fetch over it. §3 separates what crosses the boundary from what is designed and unbuilt, and `GovernanceReorg` has moved into the first list. The store and media crates still do not exist
 **Depends on:** all preceding documents; App Hosting Spec §1–§3 for the sandbox path
 **Consumed by:** implementation; `09` for the interface built on §3's boundary
 
@@ -43,6 +43,34 @@ narrower API (§7), not a second product.
 boundary to a separate Rust process instead of an in-process call. Tauri's boundary is
 the one we want to define carefully anyway (§3), so getting it for free is worth more
 than Electron's ecosystem advantage.
+
+**The shell has a second boundary, and it fails silently.** Tauri v2 gates every `plugin:`
+command on an access-control list assembled from capability files, and an application that
+declares none gets an empty one — every such command refused. `kols-api`'s own commands are
+not affected, which is exactly what makes this hard to see: the window opens, the channels
+draw, messages send, and the whole thing looks healthy.
+
+**This client shipped that way, and the cost was mistaken for four separate bugs.**
+`listen` is `plugin:event|listen`. With no capability it was refused, `watch()` rejected on
+its first `await`, and *none* of the node's events were ever delivered to the window — not
+records, not governance, not the relay's standing, not the reorg report, not `Degraded`.
+What kept the interface alive was the polling added in response: the channel every two
+seconds, the waiting room every four, the relay on its own timer. Each of those was written
+as a fix for "a pushed event was the only path to a redraw", and each was really a
+workaround for the same denial one layer down. The features with no poll behind them —
+unread counts, the degraded banner — simply never worked, and read as unbuilt.
+
+Two lessons, and the second is the general one:
+
+- **A capability file is not optional configuration**, and its absence is not a smaller
+  version of having one. `crates/kols-app/capabilities/default.json` grants the core default
+  set and the two window commands outside it, and nothing else — there are no plugins here,
+  because everything this client does crosses `kols-api`.
+- **A denial that produces no output is a test's job**, since no amount of running the
+  application reveals it. `crates/kols-app/tests/permissions.rs` resolves every `plugin:`
+  command the interface calls against the real configuration, and asserts the window label
+  the capability names is the one the config actually creates — the two default
+  independently and can drift apart without either file looking wrong.
 
 ---
 
@@ -451,6 +479,7 @@ boundary, which is worth having regardless.
 | Platform | The code that differs per operating system, run where it differs: the seed's permissions and the home directory's resolution. Not the daemon suite, which tests merge and gossip and is platform-neutral | **Partial** — the store's resolution is a pure function with cases; the seed's permissions are asserted on Unix by `cargo test` and on Windows only against the **built artifact** in CI, because the Rust test for it is `#[cfg(unix)]` and compiles out |
 | Multi-node | Extend the existing Docker NAT harness with chat scenarios: partition two members over a real network, heal, assert identical history | Not started — the in-process partition test is not this |
 | Content routing | Three nodes with a **forced** indirect path — A and B unable to reach each other directly while both reach C — asserting A ends up holding B's records. Two nodes cannot demonstrate this: with nobody to route *through*, a one-hop table and a working DHT behave identically | Not started, and **never once observed**. The DHT is bootstrapped and `fetch_chunks` pulls from whichever holder answers, so this should work; nothing has shown that it does. Belongs with the NAT scenarios in harness spec §2.3, which already simulate the topology |
+| Webview ACL (§1) | Every `plugin:` command the interface calls, resolved against the real capability file and the real window label. Tauri refuses what no capability names and produces no output when it does | **Done** — 6 commands, and the label the capability is scoped to. Written after shipping with no capabilities at all, which refused every event for the life of the client |
 | Media | Loss and jitter injection against both `MediaTransport` impls; the fallback is expected to degrade badly and the test should record how badly, not skip it | Not started (P3) |
 
 The protocol repo's gate applies to this work too: `cargo test --workspace` and

@@ -1,6 +1,6 @@
 # ko-ls — Status
 
-**Updated:** 2026-08-29
+**Updated:** 2026-08-30
 **Phase:** P1 — two nodes talk live and durably, a joiner reads back through sealed history,
 and the boundary carries commands in and events out.
 
@@ -78,6 +78,7 @@ Where that milestone stands:
 | Content outliving the node that wrote it | **done** — a member reads what an offline member wrote, because a third kept it, and a restart no longer discards what a node kept (`three_nodes.rs`). Before this a node was a member of the storage swarm only until its process ended |
 | **Two nodes on separate networks** | **Done — this milestone's stated first test passes.** Two of the user's own laptops, one on a mobile hotspot, and then a third person on a third network: connection worked across all three, survived close and reopen, reconnected, and roles, permissions and every chat function (posting, voting, withdraw, edit, channel creation by an invited member) worked. The one defect that test found — a node losing its whole servable contribution on restart — is the row above |
 | Invites short enough to send somebody | **done** — one real machine's invite went from ~4,750 characters to ~1,324, about half from carrying only the addresses a recipient could dial and about half from an encoding that stops repeating the peer id once per address (`design/02` §6.1, Core §5.6) |
+| The window hearing what the node tells it | **done, and it never had.** The application declared no Tauri capabilities, so its ACL was empty and every `plugin:` command was refused — `listen` included. No node event had ever reached the window for the life of the client; three polls had been written as fixes for what was one denial, and the features with no poll behind them read as unbuilt (`design/05` §1) |
 
 **Runnable.** `kols-desktop` is the product (`design/00` D30); `kols` is a development tool
 over the same `kols-api` boundary, owed no feature parity and no end-user documentation.
@@ -140,7 +141,7 @@ stays readable.
 | `kols-net` | Publish and fetch over a running node. Two live two-node tests |
 | `kols-api` | The whole boundary — all three of `design/05` §3's properties held. 39 tests, and the consent drift test is now guarded at both ends: a new command stops the suite compiling until it is sampled |
 | `kols-node` | `kols`, its node daemon, the executor, the store and the workspace — the window's entire backend. Ten tests over a live wire between two processes, and eight in-process over roles and grants |
-| `kols-app` | The Tauri shell, holding a workspace and an executor for whichever network is open. Builds `kols-desktop`. 7 tests |
+| `kols-app` | The Tauri shell, holding a workspace and an executor for whichever network is open. Builds `kols-desktop`. 8 tests, one of which resolves the webview's ACL against the real configuration — the boundary whose failure produces no output |
 | `kols-ui` | The interface: HTML, CSS and one script, holding no keys, no sockets and no files |
 | `kols-store`, `kols-media` | Not created. A crate is made when there is code for it — an empty one is a claim that something exists |
 
@@ -156,7 +157,7 @@ produced, which the whole segment model rests on, are in `design/08` §4.
 
 ## 4. Log
 
-Moved to [`docs/log.md`](docs/log.md) — 98 entries, newest first.
+Moved to [`docs/log.md`](docs/log.md) — 99 entries, newest first.
 
 What happened *lately* is §1. The log is why things are the way they are: the reasoning behind
 a change, the thing tried and abandoned, the bug that turned out to be a different bug. It
