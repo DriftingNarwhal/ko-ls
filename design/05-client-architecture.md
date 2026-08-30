@@ -1,6 +1,6 @@
 # Client Architecture
 
-**Document status:** v1.7 — §1 records the shell's second boundary: Tauri's ACL refuses every `plugin:` command an application declares no capability for, silently, and this client shipped with none — so no node event ever reached the window and three polls were written as fixes for what was one denial. §8 gains the row that keeps it fixed. Previously v1.6 — §4 takes the single-node-per-network claim and its six-second expiry, §5 takes what the missing projection costs, and §8 gains the content-routing row; all three moved here from a status file that was carrying them. Previously v1.5 — §3 lists `CreateCategory` and `UpdateCategory`, which landed in the code before they reached this page. Previously v1.4 — §1 and §2 describe the layout that was built: `kols-node` holds the executor, the daemon and the event loop, and `kols-net` is publish and fetch over it. §3 separates what crosses the boundary from what is designed and unbuilt, and `GovernanceReorg` has moved into the first list. The store and media crates still do not exist
+**Document status:** v1.8 — §1.1 is new: closing the window *is* the shutdown path, so no durable write may happen in place, and what is held rather than written wants stopping. Previously v1.7 — §1 records the shell's second boundary: Tauri's ACL refuses every `plugin:` command an application declares no capability for, silently, and this client shipped with none — so no node event ever reached the window and three polls were written as fixes for what was one denial. §8 gains the row that keeps it fixed. Previously v1.6 — §4 takes the single-node-per-network claim and its six-second expiry, §5 takes what the missing projection costs, and §8 gains the content-routing row; all three moved here from a status file that was carrying them. Previously v1.5 — §3 lists `CreateCategory` and `UpdateCategory`, which landed in the code before they reached this page. Previously v1.4 — §1 and §2 describe the layout that was built: `kols-node` holds the executor, the daemon and the event loop, and `kols-net` is publish and fetch over it. §3 separates what crosses the boundary from what is designed and unbuilt, and `GovernanceReorg` has moved into the first list. The store and media crates still do not exist
 **Depends on:** all preceding documents; App Hosting Spec §1–§3 for the sandbox path
 **Consumed by:** implementation; `09` for the interface built on §3's boundary
 
@@ -71,6 +71,40 @@ Two lessons, and the second is the general one:
   command the interface calls against the real configuration, and asserts the window label
   the capability names is the one the config actually creates — the two default
   independently and can drift apart without either file looking wrong.
+
+### 1.1 Closing the window is the shutdown path, so it has to be survivable
+
+There is no shutdown protocol in front of it and there should not need to be one. The window
+closes, the process ends, and whatever was in flight was in flight. Two consequences, and only
+the first is about correctness:
+
+**Nothing may be written in place.** `fs::write` truncates the destination and then fills it,
+so a process ending between those two steps leaves a file that is neither the old contents nor
+the new. For most of what this store keeps that is an empty list the next tick rewrites. For
+`entries/` it is a governance log that no longer decodes — and `Store::log` refuses the whole
+log rather than the one file, correctly, because a governance log with a hole in it is not a
+smaller governance log. The window is milliseconds wide and what is on the other side of it is
+the network, which is the wrong side of that trade to leave to chance. Every durable write goes
+through a temporary and a rename, and the temporary lives in the store's own `tmp/` rather than
+beside its destination, because the directories this store keeps are all scanned: a leaked
+temporary in `entries/` is a corrupt entry, in `chunks/` a corrupt chunk, and `append_entry`
+numbers by counting the directory so it would take an index twice.
+
+**This is atomicity and not durability**, and the distinction is worth keeping straight. The
+bytes may still be in the page cache when the process ends; they survive the process dying,
+which is what this is for, and they would not survive the machine losing power. Guarding that
+means an `fsync` per record, which is a real cost to take deliberately — and losing the last
+message to a power cut is a different order of problem from losing the network to a window
+closing.
+
+**What is *held* rather than written still wants stopping.** The node claim is released on drop
+and otherwise expires on a six-second timer, so a process that simply ends makes the next launch
+sit waiting for a claim nobody holds — the window opens and the node behind it does not start for
+several seconds. The relay reservation is a slot on somebody else's machine, held until it times
+out. So the shell stops the node on `ExitRequested`: aborting the task drops the future, dropping
+the future drops the claim, and it waits for that because an abort that is never polled has
+dropped nothing. Bounded, because closing a window must never be the thing that hangs, and
+everything the bound gives up on is what the expiry already covers.
 
 ---
 

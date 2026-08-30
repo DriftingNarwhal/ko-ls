@@ -239,6 +239,10 @@ impl Store {
                 fs::create_dir_all(&path)?;
                 let claim = NodeClaim { path };
                 claim.beat();
+                // Holding the claim is the one moment this process knows no
+                // other node is writing to this store, which makes it the only
+                // safe place to sweep what an interrupted write left behind.
+                sweep_scratch(&self.root);
                 return Ok(claim);
             }
             if std::time::Instant::now() > deadline {
@@ -261,7 +265,11 @@ impl Store {
     pub fn append_entry(&self, entry: &LogEntry) -> Result<(), StoreError> {
         let dir = self.root.join("entries");
         let next = fs::read_dir(&dir)?.count();
-        fs::write(dir.join(format!("{next:08}")), wire::encode_entry(entry))?;
+        write_atomically(
+            &self.root,
+            dir.join(format!("{next:08}")),
+            &wire::encode_entry(entry),
+        )?;
         Ok(())
     }
 
@@ -358,7 +366,7 @@ impl Store {
         if path.exists() {
             return Ok(false);
         }
-        fs::write(path, record.canonical_bytes())?;
+        write_atomically(&self.root, path, &record.canonical_bytes())?;
         Ok(true)
     }
 
@@ -391,7 +399,7 @@ impl Store {
         if path.exists() {
             return Ok(false);
         }
-        fs::write(path, bytes)?;
+        write_atomically(&self.root, path, bytes)?;
         Ok(true)
     }
 
@@ -444,7 +452,11 @@ impl Store {
             truncated: false,
         }
         .encode();
-        fs::write(dir.join(to_hex(pointer.pointer_id.as_bytes())), encoded)?;
+        write_atomically(
+            &self.root,
+            dir.join(to_hex(pointer.pointer_id.as_bytes())),
+            &encoded,
+        )?;
         Ok(())
     }
 
@@ -527,7 +539,7 @@ impl Store {
     /// inventing vocabulary the normative document does not have is how two
     /// clients end up disagreeing about what a network is called.
     pub fn set_label(&self, name: &str) -> Result<(), StoreError> {
-        fs::write(self.root.join("label"), name)?;
+        write_atomically(&self.root, self.root.join("label"), name.as_bytes())?;
         Ok(())
     }
 
@@ -548,7 +560,11 @@ impl Store {
     /// Last writer wins, which is right: these change when the daemon restarts
     /// on a new port, and the newest run is the one somebody can actually dial.
     pub fn set_addresses(&self, addresses: &[String]) -> Result<(), StoreError> {
-        fs::write(self.root.join("addresses"), addresses.join("\n"))?;
+        write_atomically(
+            &self.root,
+            self.root.join("addresses"),
+            addresses.join("\n").as_bytes(),
+        )?;
         Ok(())
     }
 
@@ -575,7 +591,11 @@ impl Store {
     /// handed everything they need to connect and must then be told an address
     /// by hand anyway, which is the friction the invite exists to remove.
     pub fn set_peers(&self, addresses: &[String]) -> Result<(), StoreError> {
-        fs::write(self.root.join("peers"), addresses.join("\n"))?;
+        write_atomically(
+            &self.root,
+            self.root.join("peers"),
+            addresses.join("\n").as_bytes(),
+        )?;
         Ok(())
     }
 
@@ -599,7 +619,11 @@ impl Store {
     /// syncing needs a connection, and connecting is what a relay is for. A node
     /// that consulted only replayed state could never use it after a restart.
     pub fn set_relays(&self, relays: &[String]) -> Result<(), StoreError> {
-        fs::write(self.root.join("relays"), relays.join("\n"))?;
+        write_atomically(
+            &self.root,
+            self.root.join("relays"),
+            relays.join("\n").as_bytes(),
+        )?;
         Ok(())
     }
 
@@ -623,7 +647,11 @@ impl Store {
     /// what it knows so `kols waiting` can read it — stale by construction, and
     /// worth saying so where it is displayed rather than pretending otherwise.
     pub fn set_waiting(&self, identities: &[String]) -> Result<(), StoreError> {
-        fs::write(self.root.join("waiting"), identities.join("\n"))?;
+        write_atomically(
+            &self.root,
+            self.root.join("waiting"),
+            identities.join("\n").as_bytes(),
+        )?;
         Ok(())
     }
 
@@ -637,7 +665,11 @@ impl Store {
     /// never had reason to dial — and nothing on this machine can tell those
     /// apart. Anywhere it is displayed has to say which question it answers.
     pub fn set_connected(&self, identities: &[String]) -> Result<(), StoreError> {
-        fs::write(self.root.join("connected"), identities.join("\n"))?;
+        write_atomically(
+            &self.root,
+            self.root.join("connected"),
+            identities.join("\n").as_bytes(),
+        )?;
         Ok(())
     }
 
@@ -708,7 +740,7 @@ impl Store {
             let sealed = self.at_rest_key().seal_chunk(key.expose_for_delivery());
             secret::write_private(&dir.join(to_hex(rotation.as_bytes())), &sealed)?;
         }
-        fs::write(self.root.join("rotation"), current.as_bytes())?;
+        write_atomically(&self.root, self.root.join("rotation"), current.as_bytes())?;
         Ok(())
     }
 
@@ -918,7 +950,7 @@ impl Store {
 
     fn write_segment_mark(&self, cid: &Cid, kind: &str, raw: &[u8]) -> Result<(), StoreError> {
         fs::create_dir_all(self.root.join("segments"))?;
-        fs::write(self.segment_path(cid, kind), raw)?;
+        write_atomically(&self.root, self.segment_path(cid, kind), raw)?;
         Ok(())
     }
 
@@ -966,6 +998,80 @@ fn fixed<const N: usize>(bytes: &[u8], what: &str) -> Result<[u8; N], StoreError
 
 /// Held while a process is appending to the governance log.
 ///
+/// Writes a file so that nothing ever reads half of one.
+///
+/// # Why every durable write in this store goes through it
+///
+/// `fs::write` truncates the destination and then fills it. A process that ends
+/// between those two steps leaves a file that is neither the old contents nor
+/// the new — and "a process that ends" is not an exotic case here, it is the
+/// user closing the window. There is no shutdown protocol in front of it: the
+/// task is dropped and the process exits.
+///
+/// For most of what this store keeps, half a file is an empty list and the next
+/// tick rewrites it. For `entries/` it is a governance log that no longer
+/// decodes, and [`Store::log`] refuses the whole network rather than one file —
+/// correctly, because a governance log with a hole in it is not a smaller
+/// governance log. The window is small and the cost of landing in it is the
+/// network, which is the wrong side of that trade to leave to chance.
+///
+/// # Two details that are load-bearing
+///
+/// The temporary lives in the store's own `tmp/`, and **not beside the file it
+/// is about to become**. `Store::log` reads every file in `entries/` and decodes
+/// it, `chunks` reads every file in `chunks/`, and `append_entry` numbers the
+/// next entry by counting the directory — so a leaked temporary in one of those
+/// would be a corrupt entry, a corrupt chunk, or a reused index. It stays on the
+/// same filesystem, which is what keeps the rename atomic rather than a copy.
+///
+/// `std::fs::rename` replaces an existing destination on both platforms this
+/// ships to — on Windows through `MoveFileEx` with `MOVEFILE_REPLACE_EXISTING`.
+///
+/// # What this is not
+///
+/// **Atomicity, not durability.** The bytes may still be in the page cache when
+/// the process ends. They survive the process dying, which is what this is for,
+/// and they would not survive the machine losing power. Guarding that means an
+/// `fsync` per record, which is a real cost and a decision to make deliberately
+/// — and losing the last message to a power cut is a different order of problem
+/// from losing the network to a window closing.
+fn write_atomically(root: &Path, path: impl AsRef<Path>, bytes: &[u8]) -> Result<(), StoreError> {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static NEXT: AtomicU64 = AtomicU64::new(0);
+
+    let path = path.as_ref();
+    let scratch = root.join("tmp");
+    fs::create_dir_all(&scratch)?;
+    let temp = scratch.join(format!(
+        "{}.{}.tmp",
+        std::process::id(),
+        NEXT.fetch_add(1, Ordering::Relaxed)
+    ));
+
+    fs::write(&temp, bytes)?;
+    if let Err(err) = fs::rename(&temp, path) {
+        // A temporary left behind is a file in a directory nothing scans, but it
+        // is still litter and the failing path is exactly where it accumulates.
+        let _ = fs::remove_file(&temp);
+        return Err(err.into());
+    }
+    Ok(())
+}
+
+/// Removes temporaries an interrupted [`write_atomically`] left behind.
+///
+/// They sit in a directory nothing else scans, so they are litter rather than a
+/// hazard — but the path that leaves them is a process dying, which is also the
+/// path that happens over and over on a machine with a problem.
+fn sweep_scratch(root: &Path) {
+    let Ok(entries) = fs::read_dir(root.join("tmp")) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let _ = fs::remove_file(entry.path());
+    }
+}
+
 /// Whether a claim's heartbeat is recent enough to mean somebody holds it.
 ///
 /// One implementation, because [`Store::hold_node`] and
@@ -1009,7 +1115,15 @@ impl NodeClaim {
     /// Called from the node's own loop, so a claim outlives the process holding
     /// it by at most [`NODE_CLAIM_STALE`].
     pub fn beat(&self) {
-        let _ = fs::write(self.path.join("heartbeat"), now_millis().to_string());
+        // Atomic like every other durable write, and for a sharper reason than
+        // most: a half-written heartbeat does not parse, an unparseable one
+        // reads as *stale*, and a stale claim is one another process may take
+        // over while this one is still running. The window is one tick wide and
+        // self-healing, and it is the one direction of failure this file must
+        // not have.
+        if let Some(root) = self.path.parent() {
+            let _ = write_atomically(root, self.path.join("heartbeat"), now_millis().to_string().as_bytes());
+        }
     }
 }
 

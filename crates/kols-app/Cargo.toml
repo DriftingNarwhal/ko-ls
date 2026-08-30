@@ -22,4 +22,7 @@ intranet-governance.workspace = true
 intranet-identity.workspace = true
 
 tauri = { version = "2", features = [] }
+# For the bounded wait in `stop_node` and nothing else. Already in the tree via
+# `kols-node`; this is the edge being declared rather than a new dependency.
+tokio = { workspace = true, features = ["time"] }
 serde = { version = "1", features = ["derive"] }

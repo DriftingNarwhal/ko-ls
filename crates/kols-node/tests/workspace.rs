@@ -264,6 +264,67 @@ fn forgetting_destroys_the_seed_so_a_later_join_is_a_stranger() {
     );
 }
 
+/// What a process dying mid-write may not be allowed to do.
+///
+/// Closing the window ends the process without a shutdown protocol, and
+/// `fs::write` truncates before it fills — so the question is what a reader
+/// finds if those two steps are interrupted. For `entries/` the answer decides
+/// whether the network opens again at all: `Store::log` refuses a file it cannot
+/// decode, and refuses the whole log rather than the one entry, correctly.
+///
+/// This asserts the property that makes the interruption survivable rather than
+/// trying to interrupt one: nothing is ever written in place, so the destination
+/// holds either the old bytes or the new and never a mixture. The proxy is the
+/// temporary — if a partial write can exist at all, it exists somewhere the
+/// readers do not look.
+#[test]
+fn a_write_that_is_interrupted_cannot_leave_a_log_that_will_not_open() {
+    use kols_node::store::Store;
+
+    let dir = Dir::new("atomic");
+    let workspace = Workspace::at(dir.0.clone());
+    let store = workspace.create("the workshop", Vec::new()).expect("creates");
+    let root = store.root().to_path_buf();
+
+    // Everything a reader scans holds only what a reader expects. A temporary
+    // beside an entry would be decoded as one; beside a chunk it would be served
+    // as one; and `append_entry` numbers the next entry by counting the
+    // directory, so it would take an index twice.
+    store.set_label("renamed").expect("writes");
+    for scanned in ["entries", "records", "chunks", "pointers", "segments"] {
+        let Ok(entries) = std::fs::read_dir(root.join(scanned)) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let name = entry.file_name().to_string_lossy().into_owned();
+            assert!(
+                !name.contains("tmp"),
+                "{scanned}/{name} is scratch in a directory something reads"
+            );
+        }
+    }
+
+    // And the store still opens, which is the whole point of the exercise.
+    assert_eq!(
+        Store::open(root.clone()).expect("opens").label().as_deref(),
+        Some("renamed")
+    );
+
+    // A temporary left by a process that died between the write and the rename
+    // is swept when somebody next takes the claim — which is the one moment a
+    // process knows no other node is writing here.
+    std::fs::create_dir_all(root.join("tmp")).expect("scratch");
+    std::fs::write(root.join("tmp").join("999.0.tmp"), b"half").expect("writes");
+    let store = Store::open(root.clone()).expect("opens");
+    let claim = store.hold_node().expect("claims");
+    assert_eq!(
+        std::fs::read_dir(root.join("tmp")).expect("scratch").count(),
+        0,
+        "taking the claim sweeps what an interrupted write left"
+    );
+    drop(claim);
+}
+
 #[test]
 fn forgetting_a_network_nobody_holds_is_refused() {
     let dir = Dir::new("forget-missing");

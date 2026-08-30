@@ -79,6 +79,7 @@ Where that milestone stands:
 | **Two nodes on separate networks** | **Done — this milestone's stated first test passes.** Two of the user's own laptops, one on a mobile hotspot, and then a third person on a third network: connection worked across all three, survived close and reopen, reconnected, and roles, permissions and every chat function (posting, voting, withdraw, edit, channel creation by an invited member) worked. The one defect that test found — a node losing its whole servable contribution on restart — is the row above |
 | Invites short enough to send somebody | **done** — one real machine's invite went from ~4,750 characters to ~1,324, about half from carrying only the addresses a recipient could dial and about half from an encoding that stops repeating the peer id once per address (`design/02` §6.1, Core §5.6) |
 | The window hearing what the node tells it | **done, and it never had.** The application declared no Tauri capabilities, so its ACL was empty and every `plugin:` command was refused — `listen` included. No node event had ever reached the window for the life of the client; three polls had been written as fixes for what was one denial, and the features with no poll behind them read as unbuilt (`design/05` §1) |
+| Closing the window without losing anything | **done** — there was no shutdown path at all, and the risk was not the one expected: every durable write went straight at its destination, so a process ending mid-write could leave a governance log that no longer decoded and a network that would not open again. Writes are atomic now, and the node is stopped on exit so its claim and its relay slot are released rather than left to expire (`design/05` §1.1) |
 | Coming back after a laptop sleeps | **done** — the re-dial loop asked whether *anything* was connected, and a relay is a connection, so a node holding a reservation never re-dialled a lost peer. Sleep, wake, and the only way back was restarting the application |
 | A network's name reaching the people in it | **done** — `genesis` never wrote `chat:network-name`, so a founder's name lived on their machine alone and every joiner saw an id. Networks created before this need it set once under settings → network |
 | An interface that survives being used | **done** — the first field test's list, worked through: first-sight marks on messages that land mid-timeline, the roster as a counted dropdown at the top right, the door as a sheet behind a counted button, and settings as a screen rather than a sheet over a dimmed channel (`design/09` §4.1–§4.3) |
@@ -98,7 +99,7 @@ over the same `kols-api` boundary, owed no feature parity and no end-user docume
   serve, post, read, edit, delete, react, pin, and channel
   create/list/rename/topic/slowmode/archive.
 
-**Gates green as of this date:** 305 tests here, 666 in `../distributed-intranet`, clippy
+**Gates green as of this date:** 306 tests here, 666 in `../distributed-intranet`, clippy
 clean in both. O20's starved-run flake did not reproduce on this full-width run; it is not
 fixed, and one green run is not evidence that it is.
 
@@ -162,7 +163,7 @@ produced, which the whole segment model rests on, are in `design/08` §4.
 
 ## 4. Log
 
-Moved to [`docs/log.md`](docs/log.md) — 108 entries, newest first.
+Moved to [`docs/log.md`](docs/log.md) — 109 entries, newest first.
 
 What happened *lately* is §1. The log is why things are the way they are: the reasoning behind
 a change, the thing tried and abandoned, the bug that turned out to be a different bug. It

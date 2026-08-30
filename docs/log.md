@@ -24,6 +24,49 @@ Kept because this project keeps re-learning the same lessons and paying for them
 
 ---
 
+- **2026-08-30** — **Asked to check the shutdown path, found there was none, and the danger was not the one being looked for.**
+
+  The question was whether the application closes cleanly. It has no shutdown handling at all —
+  the window closes, the process ends, the node task is killed wherever it was. The expected
+  answer was about the node claim: released on `Drop`, and otherwise expiring on a six-second
+  timer, so a process that just ends makes the next launch sit waiting for a claim nobody holds.
+  Real, and the smaller half.
+
+  **Every durable write went straight at its destination.** `fs::write` truncates and then
+  fills, so a process ending between those two steps leaves a file that is neither the old
+  contents nor the new — and "a process ending" here is the user closing the window. For most
+  of what the store keeps that is an empty list the next tick rewrites. For `entries/` it is a
+  governance log that no longer decodes, and `Store::log` refuses the **whole log** rather than
+  the one file. Correctly: a governance log with a hole in it is not a smaller governance log.
+  Milliseconds wide, and what is on the other side of it is the network.
+
+  Now a temporary and a rename. The temporary lives in the store's own `tmp/` and deliberately
+  not beside its destination, because every directory this store keeps is scanned by something:
+  a leak in `entries/` is decoded as an entry, one in `chunks/` is served as a chunk, and
+  `append_entry` numbers the next entry by *counting* the directory, so it would hand out an
+  index twice. Swept when a process takes the node claim, which is the one moment it knows
+  nothing else is writing there.
+
+  The heartbeat is atomic too, for a sharper reason than the rest: a half-written one does not
+  parse, an unparseable one reads as **stale**, and a stale claim is one another process may
+  take over while this one is still running. One tick wide and self-healing, and still the one
+  direction of failure that file must not have.
+
+  **Atomicity, not durability**, and the difference is worth not blurring. The bytes may sit in
+  the page cache when the process ends: they survive the process dying, which is the case this
+  is for, and they would not survive the machine losing power. That needs an `fsync` per record
+  and is a cost to take on purpose — losing the last message to a power cut is a different order
+  of problem from losing the network to a window closing.
+
+  And the shell now stops the node on `ExitRequested`, waiting for it: aborting a task drops the
+  future and dropping the future drops the claim, but an abort nobody polls has dropped nothing.
+  Bounded at a second and a half, because closing a window must never be the thing that hangs,
+  and what the bound gives up on is exactly what the six-second expiry already covers.
+
+  The test asserts the property rather than trying to interrupt a write: nothing appears in a
+  directory a reader scans, the store still opens, and a temporary left behind by a process that
+  died at the wrong moment is gone once somebody takes the claim.
+
 - **2026-08-30** — **The handle is removed, and the two CSS lessons it cost are kept.**
 
   It worked in the end — drawn icon, out of flow, correct on both platforms — and the tester

@@ -1698,6 +1698,57 @@ fn main() {
             set_admission_mode,
             forget_network
         ])
-        .run(tauri::generate_context!())
-        .expect("the window opens");
+        .build(tauri::generate_context!())
+        .expect("the window opens")
+        .run(|handle, event| {
+            if let tauri::RunEvent::ExitRequested { .. } = event {
+                stop_node(handle);
+            }
+        });
+}
+
+/// How long to wait for the node to stop before leaving without it.
+///
+/// The loop it is in `select!`s on several timers and the swarm, so it reaches a
+/// cancellation point within a tick under any normal load. This bound exists for
+/// the case where it does not — closing a window must never be the thing that
+/// hangs, and everything below is recoverable by expiry anyway.
+const SHUTDOWN_GRACE: std::time::Duration = std::time::Duration::from_millis(1500);
+
+/// Stops the node before the process goes.
+///
+/// # Why this is worth doing rather than letting the process exit
+///
+/// It is not about corruption — `Store` writes atomically, so a process that
+/// vanishes mid-write leaves the previous contents rather than half of the new
+/// ones, and that has to hold whatever this function does: a power cut and a
+/// force-quit are not going to call it.
+///
+/// It is about the two things that are held rather than written. **The node
+/// claim** is released on drop and otherwise expires on a six-second timer, so
+/// a process that just ends makes the next launch sit and wait for a claim
+/// nobody holds — the app opens, and the node behind it does not start for
+/// several seconds. **The relay reservation** is likewise a slot on somebody
+/// else's machine, held until it times out.
+///
+/// Aborting the task drops the future, and dropping the future drops what it
+/// owns — the claim among it. So this waits: an abort that is never polled has
+/// dropped nothing, and returning immediately would leave exactly the state this
+/// exists to avoid.
+fn stop_node(handle: &tauri::AppHandle) {
+    let Some(node) = handle
+        .state::<App>()
+        .node
+        .lock()
+        .ok()
+        .and_then(|mut node| node.take())
+    else {
+        return;
+    };
+    node.abort();
+    // Bounded, and the failure mode of the bound being hit is what the six-second
+    // expiry already covers.
+    let _ = tauri::async_runtime::block_on(async {
+        tokio::time::timeout(SHUTDOWN_GRACE, node).await
+    });
 }
