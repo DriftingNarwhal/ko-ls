@@ -24,6 +24,40 @@ Kept because this project keeps re-learning the same lessons and paying for them
 
 ---
 
+- **2026-08-30** — **Drag-and-drop was swallowed by a Tauri default, which is the second time that sentence has been written this week.**
+
+  The tester asked to actually solve it rather than remove it. Right, and the previous entry's
+  diagnosis was wrong in the way that matters: it correctly established that the front end runs
+  the whole path when the events are dispatched by hand, and then guessed that a `<button>` was
+  refusing to start a drag. It was not the button.
+
+  **Tauri installs a native drag-and-drop handler on the webview, `dragDropEnabled`, and it
+  defaults to on.** It is how a window receives files dropped from the desktop, and it takes the
+  drag before the page ever sees it. Tauri's own doc comment on the field says it plainly —
+  *disabling it is required to use HTML5 drag and drop on the frontend* — and it is one line
+  from a configuration file nobody had reason to open.
+
+  So for as long as folders have existed there was no way to reorder a channel, because drag was
+  the only route and the route was closed a layer below the interface. Nothing in the front end
+  was wrong at any point.
+
+  **This is the same bug as the ACL, and that is the finding.** Both were features removed by a
+  Tauri default. Both were invisible from inside the application — no error, no console message,
+  the code simply never runs. Both were found only by asking the shell's real configuration a
+  direct question. So `permissions.rs` now asserts `dragDropEnabled` beside the command list, and
+  the check was verified by flipping the flag back and watching it fail. The general rule in `05`
+  §1: a shell setting this application depends on gets asserted against the real configuration,
+  whether or not anybody wrote it down — because what nobody wrote down is exactly what defaults
+  out from under you.
+
+  **The trade this makes is real and currently free.** With the native handler off, the window
+  cannot receive a file dropped from the desktop. There are no attachments — `kols-media` does
+  not exist — so nothing is lost, and it is a decision to revisit rather than a corner cut.
+
+  The menu keeps move up and move down. The tester's instinct was to remove them once the drag
+  worked, and the reason to keep them is not redundancy: a drag is a gesture some people cannot
+  make, and it is the one route here that no test can reach.
+
 - **2026-08-30** — **Drag to reorder never worked, and the JavaScript was never the problem.**
 
   Reported after the channel and folder pass, with the tester's own read attached: *I actually

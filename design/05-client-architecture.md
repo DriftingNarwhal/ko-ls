@@ -1,6 +1,6 @@
 # Client Architecture
 
-**Document status:** v1.8 — §1.1 is new: closing the window *is* the shutdown path, so no durable write may happen in place, and what is held rather than written wants stopping. Previously v1.7 — §1 records the shell's second boundary: Tauri's ACL refuses every `plugin:` command an application declares no capability for, silently, and this client shipped with none — so no node event ever reached the window and three polls were written as fixes for what was one denial. §8 gains the row that keeps it fixed. Previously v1.6 — §4 takes the single-node-per-network claim and its six-second expiry, §5 takes what the missing projection costs, and §8 gains the content-routing row; all three moved here from a status file that was carrying them. Previously v1.5 — §3 lists `CreateCategory` and `UpdateCategory`, which landed in the code before they reached this page. Previously v1.4 — §1 and §2 describe the layout that was built: `kols-node` holds the executor, the daemon and the event loop, and `kols-net` is publish and fetch over it. §3 separates what crosses the boundary from what is designed and unbuilt, and `GovernanceReorg` has moved into the first list. The store and media crates still do not exist
+**Document status:** v1.9 — §1 records the second Tauri default to remove a feature silently: the native drag handler takes the drag before the page sees it, so channel reordering never worked. Twice is a pattern, and §8's row is now about shell configuration rather than the ACL alone. Previously v1.8 — §1.1 is new: closing the window *is* the shutdown path, so no durable write may happen in place, and what is held rather than written wants stopping. Previously v1.7 — §1 records the shell's second boundary: Tauri's ACL refuses every `plugin:` command an application declares no capability for, silently, and this client shipped with none — so no node event ever reached the window and three polls were written as fixes for what was one denial. §8 gains the row that keeps it fixed. Previously v1.6 — §4 takes the single-node-per-network claim and its six-second expiry, §5 takes what the missing projection costs, and §8 gains the content-routing row; all three moved here from a status file that was carrying them. Previously v1.5 — §3 lists `CreateCategory` and `UpdateCategory`, which landed in the code before they reached this page. Previously v1.4 — §1 and §2 describe the layout that was built: `kols-node` holds the executor, the daemon and the event loop, and `kols-net` is publish and fetch over it. §3 separates what crosses the boundary from what is designed and unbuilt, and `GovernanceReorg` has moved into the first list. The store and media crates still do not exist
 **Depends on:** all preceding documents; App Hosting Spec §1–§3 for the sandbox path
 **Consumed by:** implementation; `09` for the interface built on §3's boundary
 
@@ -60,6 +60,16 @@ as a fix for "a pushed event was the only path to a redraw", and each was really
 workaround for the same denial one layer down. The features with no poll behind them —
 unread counts, the degraded banner — simply never worked, and read as unbuilt.
 
+**And it happened again, in the other direction.** Tauri installs a native drag-and-drop
+handler on the webview by default — it is how a window receives files dropped from the desktop
+— and it takes the drag before the page sees it, so HTML5 drag-and-drop does not work. Tauri's
+own documentation on the field says disabling it is *required* to use HTML5 drag and drop on
+the frontend. Channel reordering was drag-only, so for as long as folders have existed there
+was no way to reorder a channel; the front end was correct throughout and the events simply
+never arrived. `dragDropEnabled: false` is the whole fix, and the trade it makes is that this
+window cannot receive dropped files — which costs nothing while there are no attachments and is
+a decision to revisit when `kols-media` exists.
+
 Two lessons, and the second is the general one:
 
 - **A capability file is not optional configuration**, and its absence is not a smaller
@@ -68,9 +78,15 @@ Two lessons, and the second is the general one:
   because everything this client does crosses `kols-api`.
 - **A denial that produces no output is a test's job**, since no amount of running the
   application reveals it. `crates/kols-app/tests/permissions.rs` resolves every `plugin:`
-  command the interface calls against the real configuration, and asserts the window label
+  command the interface calls against the real configuration, asserts the window label
   the capability names is the one the config actually creates — the two default
-  independently and can drift apart without either file looking wrong.
+  independently and can drift apart without either file looking wrong — and asserts the
+  native drag handler is off.
+- **Twice is a pattern, and the pattern is the defaults.** Both of these were shipped
+  behaviour that no amount of using the application would reveal, arrived at by leaving a
+  Tauri setting alone. The rule this leaves is that a shell setting this application depends
+  on gets asserted against the real configuration, whether or not it was written down —
+  because what is not written down is exactly what defaults out from under you.
 
 ### 1.1 Closing the window is the shutdown path, so it has to be survivable
 
@@ -513,7 +529,7 @@ boundary, which is worth having regardless.
 | Platform | The code that differs per operating system, run where it differs: the seed's permissions and the home directory's resolution. Not the daemon suite, which tests merge and gossip and is platform-neutral | **Partial** — the store's resolution is a pure function with cases; the seed's permissions are asserted on Unix by `cargo test` and on Windows only against the **built artifact** in CI, because the Rust test for it is `#[cfg(unix)]` and compiles out |
 | Multi-node | Extend the existing Docker NAT harness with chat scenarios: partition two members over a real network, heal, assert identical history | Not started — the in-process partition test is not this |
 | Content routing | Three nodes with a **forced** indirect path — A and B unable to reach each other directly while both reach C — asserting A ends up holding B's records. Two nodes cannot demonstrate this: with nobody to route *through*, a one-hop table and a working DHT behave identically | Not started, and **never once observed**. The DHT is bootstrapped and `fetch_chunks` pulls from whichever holder answers, so this should work; nothing has shown that it does. Belongs with the NAT scenarios in harness spec §2.3, which already simulate the topology |
-| Webview ACL (§1) | Every `plugin:` command the interface calls, resolved against the real capability file and the real window label. Tauri refuses what no capability names and produces no output when it does | **Done** — 6 commands, and the label the capability is scoped to. Written after shipping with no capabilities at all, which refused every event for the life of the client |
+| Shell configuration (§1) | Every `plugin:` command the interface calls, resolved against the real capability file and the real window label; and the settings whose defaults remove a feature silently. Tauri refuses what no capability names, and its native drag handler swallows HTML5 drag events, and neither produces any output | **Done** — 6 commands, the label the capability is scoped to, and `dragDropEnabled`. Written after shipping with no capabilities at all, which refused every event for the life of the client, and extended after the same shape of bug took drag-and-drop |
 | Media | Loss and jitter injection against both `MediaTransport` impls; the fallback is expected to degrade badly and the test should record how badly, not skip it | Not started (P3) |
 
 The protocol repo's gate applies to this work too: `cargo test --workspace` and

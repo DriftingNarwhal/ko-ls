@@ -9,10 +9,12 @@
   "app": {
     "windows": [
       {
+        "label": "main",
         "title": "ko-ls",
         "width": 1100,
         "height": 720,
-        "resizable": true
+        "resizable": true,
+        "dragDropEnabled": false
       }
     ],
     "security": {

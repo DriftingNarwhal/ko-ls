@@ -1,6 +1,6 @@
 # Interface
 
-**Document status:** v0.13 — §5.1 gains the rule reordering cost: a capability whose only route is one nobody can verify needs a plain route beside it, so channels get move up and move down and the drag is one more attempt rather than the mechanism. Previously v0.12 — the row handle is removed at the tester's request, one way to a menu being enough; §5.1 keeps the two sizing rules it cost, which were never about it. Previously v0.11 — §5.1 gains the rule the sidebar bug actually needed: draw an icon rather than typing one, and take a control beside shrinkable text out of flow, because correct arithmetic is not the same as no arithmetic. Previously v0.10 — §4.3 gains the two ways a mark ends, and that it never marks your own; §5.1 gains the flex sizing rule that turned a sidebar into columns of one letter on Windows and not on macOS. Previously v0.9 — §4.1 says where the roster went and what the one number left on screen is for; §4.2 records settings becoming a screen rather than a layer, and the rule that decides which surface a thing gets; §4.3 is new and separates *where something arrived* from *what you have not seen*, which cannot be derived from it because a message is ordered by its author's clock rather than by its arrival. §7.1 and §7.3 narrowed rather than closed. Previously v0.8 — §4.2's Network section takes admission mode, the abuse limits and the retention windows, and says the three things a number on screen does not carry. Previously v0.7 — §4.2's settings sections are built, and it says what shape they took and which of them is a panel over a feature that does not exist yet; §5 gains the line between asking *whether* and asking *what*, which is what decides whether a dialog may live in the document a theme can reach. Previously v0.6 — §4.1 says plainly that presence is unbuilt, why it is last, and what the window shows instead; that was being carried in a status file. Previously v0.5 — §4.2 fixes what settings is and how it is divided, §6.4 and §6.5 settle reset and the two things that must leave the document before a theme can reach them (D36, D37). Theming remains designed and unbuilt. Previously v0.4 — D29 (a relay is never shared between networks) and what it does and does not mean for §3's direct-message bootstrap;  an interface now exists and is a first pass, not a settled one: it
+**Document status:** v0.13 — §5.1 gains the rule reordering cost: a capability whose only route is one nobody can verify has no route. Drag-and-drop never worked because Tauri's native drag handler took it first, and channels keep move up and move down beside the fixed drag. Previously v0.12 — the row handle is removed at the tester's request, one way to a menu being enough; §5.1 keeps the two sizing rules it cost, which were never about it. Previously v0.11 — §5.1 gains the rule the sidebar bug actually needed: draw an icon rather than typing one, and take a control beside shrinkable text out of flow, because correct arithmetic is not the same as no arithmetic. Previously v0.10 — §4.3 gains the two ways a mark ends, and that it never marks your own; §5.1 gains the flex sizing rule that turned a sidebar into columns of one letter on Windows and not on macOS. Previously v0.9 — §4.1 says where the roster went and what the one number left on screen is for; §4.2 records settings becoming a screen rather than a layer, and the rule that decides which surface a thing gets; §4.3 is new and separates *where something arrived* from *what you have not seen*, which cannot be derived from it because a message is ordered by its author's clock rather than by its arrival. §7.1 and §7.3 narrowed rather than closed. Previously v0.8 — §4.2's Network section takes admission mode, the abuse limits and the retention windows, and says the three things a number on screen does not carry. Previously v0.7 — §4.2's settings sections are built, and it says what shape they took and which of them is a panel over a feature that does not exist yet; §5 gains the line between asking *whether* and asking *what*, which is what decides whether a dialog may live in the document a theme can reach. Previously v0.6 — §4.1 says plainly that presence is unbuilt, why it is last, and what the window shows instead; that was being carried in a status file. Previously v0.5 — §4.2 fixes what settings is and how it is divided, §6.4 and §6.5 settle reset and the two things that must leave the document before a theme can reach them (D36, D37). Theming remains designed and unbuilt. Previously v0.4 — D29 (a relay is never shared between networks) and what it does and does not mean for §3's direct-message bootstrap;  an interface now exists and is a first pass, not a settled one: it
 creates and joins networks, runs a node, renders a channel, brings the next member in, and gates
 its chrome on permission. §1's workspace, **both halves of §5**, §4's first two questions and
 most of §7's second are built; §2's tiering, §4.1's presence and §6's theming are not, and §7's
@@ -532,18 +532,18 @@ padding** so the text's width cannot depend on the control's at all. Correct ari
 the same as no arithmetic.
 
 **And a rule about what a control may be built on.** Reordering channels was drag-and-drop and
-nothing else, and drag-and-drop has never once been observed to work in the shipped
-application. The wiring is not the problem — dispatching `dragstart`, `dragover` and `drop` by
-hand runs the whole path and reaches the command — so what is missing is the webview starting a
-drag at all, on a `<button>`, which is a form control a webview handles a press on before
-anything else gets to call it a drag. It now hangs off the row instead, and that is one attempt
-rather than a fix, because it is another thing this project cannot test.
+nothing else, and drag-and-drop had never once worked in the shipped application. The front end
+was right throughout — dispatching `dragstart`, `dragover` and `drop` by hand runs the whole
+path and reaches the command — and the events simply never arrived, because Tauri installs a
+native drag handler on the webview by default and it takes the drag first (`05` §1). So for as
+long as folders have existed there was no way to reorder a channel, and nothing in the interface
+said so.
 
-What is not an attempt is the menu: **move up** and **move down**, which folders have had since
-they existed and channels never got, because the drag was there and looked like the answer. The
-rule this leaves behind is that a capability with exactly one route to it should not have that
-route be the one nobody can verify — and where the unverifiable one is a *convenience*, the
-plain one has to exist beside it rather than after it.
+The rule this leaves is not about drag. **A capability whose only route is one nobody can verify
+has no route.** Reordering had exactly one, it depended on a layer below the interface, and the
+interface had no way to notice it was gone. So the menu keeps **move up** and **move down** now
+that the drag works: they are the route that can be tested, and a drag is a gesture some people
+cannot make while every other control here is reachable without one.
 
 **The control this was learned on is gone**, and the rules are kept because they were never
 about it. The handle existed for discoverability — the right-click menu was the only way to
