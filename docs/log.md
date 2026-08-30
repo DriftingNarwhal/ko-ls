@@ -24,6 +24,30 @@ Kept because this project keeps re-learning the same lessons and paying for them
 
 ---
 
+- **2026-08-30** — **A relay is a peer, so "nothing is connected" was never true and nothing was ever re-dialled.**
+
+  Reported as a MacBook that sleeps and does not come back without restarting the
+  application. The re-dial loop in `serve.rs` was guarded on `connected.is_empty()`, and every
+  `ConnectionEstablished` becomes a `Connected` — the relay's included. A node holding a
+  reservation is connected to its relay for as long as it holds one, because that *is* the
+  reservation. So the guard was false for the whole life of any node with a working relay, and
+  the loop ran in exactly one situation: a relay going down, which takes the relay connection
+  with it. That is the case it was written for and the reason it looked like it worked.
+
+  Sleep produces the other case. The peer connection dies, `relay_watch` gets the relay back on
+  its own, and from then on the node is connected to a relay and to nobody, with no path back
+  except a restart — which re-dials everything unconditionally at startup.
+
+  Now `to_redial` answers per peer: an address is worth dialling if the peer it names is not
+  connected. Pulled out as a function rather than fixed in place in the `select!` so the case
+  that caused it could be written down — connected to a relay, one member known and away, and
+  the address must come back. The destination is the address's **last** `/p2p/`, since a
+  circuit address opens with the relay's; taking the first would have re-asked the question
+  that caused the bug.
+
+  Ping is on with libp2p's defaults, so the dead connection is reaped and `Disconnected` does
+  fire. That half was working, which is part of why this looked like a transport problem.
+
 - **2026-08-30** — **A design grew a second command nobody asked for, and the user removed it in one line.**
 
   Yesterday's §6.5 asked for *leave* beside *forget*: leave writes the departure and keeps the

@@ -436,14 +436,24 @@ pub async fn serve(
     loop {
         let event = tokio::select! {
             event = node.next_event() => event,
-            // Only while nothing is connected. A node with a live peer has no
-            // reason to dial, and this way an unreachable peer is retried
-            // without a node that is fine doing anything at all.
-            _ = redial.tick(), if connected.is_empty() && !dialling.is_empty() => {
-                for peer in &dialling {
-                    if let Ok(address) = peer.parse::<Multiaddr>() {
-                        let _ = node.dial_candidates([address]);
-                    }
+            // Per peer, not per node.
+            //
+            // **This used to ask whether *anything* was connected, and a relay
+            // is a connection.** A node holding a reservation is permanently
+            // connected to its relay — that is what a reservation is — so the
+            // guard was satisfied for the entire life of any node that had a
+            // working relay, and nothing was ever re-dialled. The one case it
+            // did fire in is the one it was written for: a relay going down
+            // takes the relay connection with it, and only then does `connected`
+            // empty.
+            //
+            // The symptom is a laptop that sleeps. The peer connection dies, the
+            // relay connection comes back on its own, and from then on the node
+            // is connected to a relay and to nobody, with no path back except
+            // restarting the application.
+            _ = redial.tick(), if !dialling.is_empty() => {
+                for address in to_redial(&dialling, &connected) {
+                    let _ = node.dial_candidates([address]);
                 }
                 continue;
             }
@@ -1633,11 +1643,54 @@ fn render(events: &[Event]) {
 /// which is the case that actually happens.
 const RELAY_RECHECK: std::time::Duration = std::time::Duration::from_secs(20);
 
-/// How often to re-dial known peers while none is connected.
+/// How often to re-dial a known peer this node is not connected to.
 ///
 /// Long enough not to hammer a peer that is genuinely away, short enough that a
 /// relay coming back is measured in seconds rather than in restarts.
 const REDIAL_INTERVAL: std::time::Duration = std::time::Duration::from_secs(15);
+
+/// Which known addresses are worth dialling again, given who is connected.
+///
+/// # Why this is a function rather than a condition in the loop
+///
+/// The condition it replaces was `connected.is_empty()`, and that is wrong in a
+/// way no amount of reading the loop makes obvious: **a relay is a peer**. Every
+/// `ConnectionEstablished` becomes a `Connected`, the relay's included, and a
+/// node holding a reservation is connected to its relay for as long as it holds
+/// one. So "nothing is connected" was false whenever the relay was working,
+/// which is to say almost always, and the re-dial it guarded never ran.
+///
+/// Answering per peer is the fix, and pulling it out here is what lets the case
+/// that produced the bug be written down as a test: connected to a relay,
+/// connected to nobody else, one member known and away.
+///
+/// An address with no peer id is dialled whenever this runs. Nothing can say
+/// whether it is already connected — the peer it names is exactly what is
+/// missing from it — and dialling a peer already connected is a no-op the swarm
+/// absorbs, so the safe side is to dial.
+fn to_redial(dialling: &[String], connected: &BTreeSet<PeerId>) -> Vec<Multiaddr> {
+    dialling
+        .iter()
+        .filter_map(|peer| peer.parse::<Multiaddr>().ok())
+        .filter(|address| target_peer(address).is_none_or(|peer| !connected.contains(&peer)))
+        .collect()
+}
+
+/// The peer an address is *for*, which is its last `/p2p/` and not its first.
+///
+/// A circuit address names two: the relay it goes through and the member at the
+/// far end — `/…/p2p/<relay>/p2p-circuit/p2p/<member>`. Taking the first would
+/// answer "am I connected to the relay", which is the question that caused the
+/// bug above rather than the one being asked.
+///
+fn target_peer(address: &Multiaddr) -> Option<PeerId> {
+    // `last()`, because `Iter` is forward-only and the destination is the final
+    // `/p2p/` — a circuit address opens with the relay's.
+    match address.iter().last() {
+        Some(libp2p::multiaddr::Protocol::P2p(peer)) => Some(peer),
+        _ => None,
+    }
+}
 
 /// How often to walk the DHT again.
 ///
@@ -2402,5 +2455,69 @@ mod voided_tests {
         };
         assert!(mine.is_empty());
         assert_eq!(others, 1);
+    }
+}
+
+/// Which known peers are worth dialling again — the guard that shipped inverted.
+#[cfg(test)]
+mod redial_tests {
+    use super::to_redial;
+    use intranet_transport::PeerId;
+    use std::collections::BTreeSet;
+
+    /// The case that shipped: connected to a relay, connected to nobody else.
+    ///
+    /// A reservation *is* a connection to the relay, so a node with a working
+    /// relay is never "not connected" — which is what the old guard asked. A
+    /// laptop that slept lost its peer, regained its relay on its own, and from
+    /// then on re-dialled nothing until the application was restarted.
+    #[test]
+    fn a_peer_behind_a_relay_is_redialled_while_the_relay_is_connected() {
+        let relay = PeerId::random();
+        let member = PeerId::random();
+        let through_the_relay =
+            format!("/ip4/198.51.100.7/tcp/4001/p2p/{relay}/p2p-circuit/p2p/{member}");
+
+        let connected = BTreeSet::from([relay]);
+        let worth_dialling = to_redial(std::slice::from_ref(&through_the_relay), &connected);
+
+        assert_eq!(
+            worth_dialling.len(),
+            1,
+            "the relay being connected says nothing about the member behind it"
+        );
+        assert_eq!(worth_dialling[0].to_string(), through_the_relay);
+    }
+
+    #[test]
+    fn a_peer_already_connected_is_left_alone() {
+        let relay = PeerId::random();
+        let member = PeerId::random();
+        let through_the_relay =
+            format!("/ip4/198.51.100.7/tcp/4001/p2p/{relay}/p2p-circuit/p2p/{member}");
+        let direct = format!("/ip4/192.0.2.9/tcp/4001/p2p/{member}");
+
+        // Both name the same member, and it is the member that matters rather
+        // than the route: a node reachable directly does not want re-dialling
+        // through a relay.
+        let connected = BTreeSet::from([relay, member]);
+        assert!(to_redial(&[through_the_relay, direct], &connected).is_empty());
+    }
+
+    #[test]
+    fn an_address_naming_no_peer_is_always_worth_a_try() {
+        // Nothing can say whether it is already connected — the peer it names is
+        // exactly what is missing — and the swarm absorbs a dial to a peer it
+        // already holds, so the safe side is to dial.
+        let connected = BTreeSet::from([PeerId::random()]);
+        assert_eq!(
+            to_redial(&["/ip4/198.51.100.7/tcp/4001".to_owned()], &connected).len(),
+            1
+        );
+    }
+
+    #[test]
+    fn something_that_is_not_an_address_is_dropped_rather_than_dialled() {
+        assert!(to_redial(&["not an address".to_owned()], &BTreeSet::new()).is_empty());
     }
 }
