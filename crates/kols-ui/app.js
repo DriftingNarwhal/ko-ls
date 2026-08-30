@@ -657,73 +657,8 @@ function channelItem(channel, category) {
   }
 
   item.append(button);
-  // The same menu, on a handle that says it is there.
-  //
-  // Renaming, topics, folders, archiving and deletion were on a right-click and
-  // nowhere else, which is a control only for somebody who already knows. The
-  // first field test came back asking for channel controls that had shipped
-  // weeks earlier — so this is discoverability rather than function, and it
-  // opens exactly what the right-click opens rather than a second copy of it.
-  if (state.mayManage) {
-    item.classList.add("has-menu");
-    item.append(rowHandle((event) => channelMenu(event, channel, category), button));
-  }
   wireDrop(item, category);
   return item;
-}
-
-/// Three dots, drawn rather than typed.
-///
-/// A character would be sized by whichever font on the machine happens to carry
-/// it, and the one that reads best here — U+22EF — is absent from Segoe UI, so
-/// Windows fell back to something much wider and the channel names lost the row
-/// to it. Nothing about a row's width should depend on what fonts are installed,
-/// and the cheapest way to mean that is to draw the icon.
-function threeDots() {
-  const NS = "http://www.w3.org/2000/svg";
-  const svg = document.createElementNS(NS, "svg");
-  svg.setAttribute("viewBox", "0 0 16 4");
-  svg.setAttribute("width", "14");
-  svg.setAttribute("height", "4");
-  // Decorative: the button it sits in carries the label.
-  svg.setAttribute("aria-hidden", "true");
-  svg.setAttribute("focusable", "false");
-  for (const x of [2, 8, 14]) {
-    const dot = document.createElementNS(NS, "circle");
-    dot.setAttribute("cx", String(x));
-    dot.setAttribute("cy", "2");
-    dot.setAttribute("r", "1.5");
-    // Follows the button's colour, so hover and the theme both reach it.
-    dot.setAttribute("fill", "currentColor");
-    svg.append(dot);
-  }
-  return svg;
-}
-
-/// The handle that opens a row's menu.
-///
-/// `owner` is the element the menu reads as belonging to, because the menu's
-/// rename entry edits a label *inside* it — passing the handle instead would
-/// turn the handle into the text field.
-function rowHandle(open, owner) {
-  const handle = document.createElement("button");
-  handle.type = "button";
-  handle.className = "row-menu";
-  handle.append(threeDots());
-  handle.title = "rename, topic, move, archive, delete";
-  handle.setAttribute("aria-label", "channel actions");
-  handle.addEventListener("click", (event) => {
-    event.stopPropagation();
-    // `popMenu` positions off the pointer and reads `currentTarget` for the
-    // label to rename, so the owner is handed both.
-    open({
-      preventDefault: () => {},
-      clientX: event.clientX,
-      clientY: event.clientY,
-      currentTarget: owner,
-    });
-  });
-  return handle;
 }
 
 /// One folder, and the channels inside it.
@@ -747,11 +682,7 @@ function folderItem(row) {
 
   if (state.mayManage) {
     head.addEventListener("contextmenu", (event) => folderMenu(event, row));
-    head.classList.add("has-menu");
-    const handle = rowHandle((event) => folderMenu(event, row), head);
-    handle.title = "move, rename, delete";
-    handle.setAttribute("aria-label", "folder actions");
-    head.append(handle);
+    head.title = "right-click for folder actions";
   }
   item.append(head);
 

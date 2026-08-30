@@ -109,18 +109,15 @@ say("identity is a hover", el("you-line").title === "id-corey-0001");
 say("door offered to an inviter", !el("open-door").hidden);
 say("presence is on screen", !el("presence").hidden);
 
-// ── the channel row carries a visible menu handle ──────────────────────
-const handle = el("channel-list").querySelector(".row-menu");
-say("channel row has a menu handle", Boolean(handle));
-// The property that broke Windows twice: nothing about a row's width may depend
-// on what fonts the machine has, so the handle carries no text at all.
-say("the handle is drawn, not typed",
-    handle?.textContent === "" && Boolean(handle?.querySelector("svg")),
-    JSON.stringify(handle?.textContent));
-handle?.dispatchEvent(new window.MouseEvent("click", { bubbles: true, clientX: 10, clientY: 10 }));
+// ── the channel row's menu is on a right-click, and only there ─────────
+const row = el("channel-list").querySelector(".channel-item > button");
+say("the row carries nothing but the channel", el("channel-list").querySelectorAll("button").length === 1);
+row?.dispatchEvent(
+  new window.MouseEvent("contextmenu", { bubbles: true, clientX: 10, clientY: 10 }),
+);
 await settled();
 const menu = window.document.querySelector(".pop-menu");
-say("the handle opens the menu", Boolean(menu));
+say("right-click opens the menu", Boolean(menu));
 const entries = [...(menu?.querySelectorAll("button") ?? [])].map((b) => b.textContent);
 say("menu offers rename and delete", entries.includes("rename") && entries.includes("delete"), entries.join(", "));
 menu?.remove();

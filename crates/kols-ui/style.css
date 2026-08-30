@@ -273,10 +273,12 @@ body {
 
 .presence-count { font-variant-numeric: tabular-nums; font-weight: 600; }
 
-/* Drawn, not typed, for the reason `.row-menu` gives at length: a glyph is sized
-   by whichever font on the machine carries it, and this one sits in a flex row
-   next to a channel title that is allowed to shrink. Same shape of bug, smaller
-   blast radius, and no reason to leave it standing. */
+/* Drawn, not typed. A glyph is sized by whichever font on the machine happens to
+   carry it, and this one sits in a flex row beside a channel title that is
+   allowed to shrink — which is how `⋯` (absent from Segoe UI) squeezed the
+   sidebar's channel names to nothing on Windows and not on macOS. That handle is
+   gone; this caret is the same shape of risk and there is no reason to leave it
+   depending on what fonts are installed. */
 .presence-caret {
   border-left: 4px solid transparent;
   border-right: 4px solid transparent;
@@ -1023,90 +1025,6 @@ body {
 .channels li button.archived { opacity: 0.55; }
 .channels li.empty { color: var(--dim); font-size: 12px; padding: 5px 8px; }
 
-/* Renaming, topics, folders and deletion were on a right-click and nowhere
- * else, which is not a control so much as a rumour: the first field test came
- * back asking for channel controls that had been there the whole time. The menu
- * is the same one; this is the handle that says it exists.
- *
- * On hover, and on keyboard focus, and permanently on the open channel — so
- * there is always one visible instance of it to find by accident. Shown only
- * where the capability is held, like everything else here. */
-.channel-item, .folder-head {
-  align-items: center;
-  display: flex;
-  gap: 2px;
-  /* The handle is taken out of flow below, and this is what it positions
-     against. */
-  position: relative;
-}
-/* `1 1 0` rather than `1 1 auto`, and the difference is the whole of a bug that
- * only appeared on Windows.
- *
- * The button carries `width: 100%`, which under `flex-basis: auto` becomes a
- * basis of the *full* row — so the row wants 100% plus the handle beside it,
- * overflows, and both items shrink. How far the button may shrink is its
- * automatic minimum, which is its min-content width, and `overflow-wrap:
- * anywhere` on the name inside it makes min-content **one character**. That is
- * the vertical column: a channel name wrapped after every letter.
- *
- * It reproduced on Windows and not on macOS because the amount of overflow
- * depends on how wide the handle renders, which is a font question — Segoe UI
- * and the `⋯` glyph against the macOS system font. The bug was in the sizing
- * either way and the engine only decided whether it showed.
- *
- * A zero basis takes `width: 100%` out of the calculation: the row asks for the
- * handle plus nothing, never overflows, and the button grows into what is left. */
-.channel-item > button:first-child { flex: 1 1 0; min-width: 0; }
-.folder-head > .folder-name { flex: 1 1 0; min-width: 0; }
-
-/* The strip the handle is laid over. Only on rows that have one, so a member
-   who cannot manage channels loses no width to a control they are not shown. */
-.channel-item.has-menu > button:first-child { padding-right: 28px; }
-.folder-head.has-menu > .folder-name { padding-right: 28px; }
-
-/* A fixed box, and the size is the point rather than the styling.
- *
- * This was a `⋯` character sized by `flex: none` — that is, by whatever the font
- * decided. Segoe UI has no U+22EF, so Windows fell back to a symbol font whose
- * advance is far wider, the handle took most of the row, and the channel names
- * were squeezed to nothing. Twice: the first attempt fixed the flex arithmetic
- * and left the glyph, so the same cause produced a different symptom.
- *
- * Twenty by twenty, containing a drawn icon rather than a typed one. There is no
- * font in this path any more, so the row's arithmetic is the same everywhere and
- * cannot be changed by what is installed on the machine. */
-.row-menu {
-  align-items: center;
-  /* **Out of flow, so the name's width cannot depend on the handle at all.**
-     The fixed box below already closes the arithmetic; this closes the question.
-     Two rounds of this bug were spent adjusting how the row divides itself
-     between a name and a handle, and the third fix is to stop dividing: the
-     button gets the whole row and reserves a fixed strip of padding, and
-     whatever the handle turns out to measure it is laid over that strip instead
-     of taking anything from the text. */
-  position: absolute;
-  right: 4px;
-  top: 50%;
-  transform: translateY(-50%);
-  background: none;
-  border: 0;
-  border-radius: var(--radius);
-  color: var(--dim);
-  cursor: pointer;
-  display: flex;
-  flex: 0 0 20px;
-  height: 20px;
-  justify-content: center;
-  opacity: 0;
-  padding: 0;
-  width: 20px;
-}
-.row-menu svg { display: block; }
-.row-menu:hover { background: var(--sunken); color: var(--text); }
-.channel-item:hover .row-menu,
-.folder-head:hover .row-menu,
-.row-menu:focus-visible,
-.channel-item:has(button.current) .row-menu { opacity: 1; }
 
 .state {
   border-top: 1px solid var(--line);

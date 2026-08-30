@@ -24,6 +24,27 @@ Kept because this project keeps re-learning the same lessons and paying for them
 
 ---
 
+- **2026-08-30** — **The handle is removed, and the two CSS lessons it cost are kept.**
+
+  It worked in the end — drawn icon, out of flow, correct on both platforms — and the tester
+  asked for it gone: the right-click menu is enough, and there is no need for two ways to the
+  same menu. Removed, along with the SVG that existed only for it and a `has-menu` class that
+  reserved space for it. The folder head gets back the `right-click for folder actions` tooltip
+  it had before, which is a hint rather than a second control.
+
+  Worth writing down because the *reason* it was added has not gone away. The first field test
+  came back asking for channel controls that had shipped weeks earlier, because a right-click
+  is a control only for somebody who already knows. The person who asked for it removed is the
+  same person who could not find the menu three weeks ago and can now — which is exactly the
+  position from which a discoverability affordance looks redundant. It is still their call and
+  it is made; what is recorded here is that the next person to arrive will be where the tester
+  was, not where they are.
+
+  The two sizing rules in `09` §5.1 stay, because neither was about this control: a glyph is
+  sized by whatever font carries it, and a control beside shrinkable text should be out of flow
+  rather than merely measured correctly. Three rounds of Windows bugs bought those, and they
+  outlive the thing that taught them.
+
 - **2026-08-30** — **The sidebar broke a third time, and the fix was to stop the row having an opinion.**
 
   Second report from Windows: the handle now renders *"significantly larger than the channel

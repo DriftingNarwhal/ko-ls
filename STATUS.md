@@ -81,7 +81,7 @@ Where that milestone stands:
 | The window hearing what the node tells it | **done, and it never had.** The application declared no Tauri capabilities, so its ACL was empty and every `plugin:` command was refused — `listen` included. No node event had ever reached the window for the life of the client; three polls had been written as fixes for what was one denial, and the features with no poll behind them read as unbuilt (`design/05` §1) |
 | Coming back after a laptop sleeps | **done** — the re-dial loop asked whether *anything* was connected, and a relay is a connection, so a node holding a reservation never re-dialled a lost peer. Sleep, wake, and the only way back was restarting the application |
 | A network's name reaching the people in it | **done** — `genesis` never wrote `chat:network-name`, so a founder's name lived on their machine alone and every joiner saw an id. Networks created before this need it set once under settings → network |
-| An interface that survives being used | **done** — the first field test's list, worked through: a visible handle on the channel controls that were right-click-only, first-sight marks on messages that land mid-timeline, the roster as a counted dropdown at the top right, the door as a sheet behind a counted button, and settings as a screen rather than a sheet over a dimmed channel (`design/09` §4.1–§4.3) |
+| An interface that survives being used | **done** — the first field test's list, worked through: first-sight marks on messages that land mid-timeline, the roster as a counted dropdown at the top right, the door as a sheet behind a counted button, and settings as a screen rather than a sheet over a dimmed channel (`design/09` §4.1–§4.3) |
 
 **Runnable.** `kols-desktop` is the product (`design/00` D30); `kols` is a development tool
 over the same `kols-api` boundary, owed no feature parity and no end-user documentation.
@@ -162,7 +162,7 @@ produced, which the whole segment model rests on, are in `design/08` §4.
 
 ## 4. Log
 
-Moved to [`docs/log.md`](docs/log.md) — 107 entries, newest first.
+Moved to [`docs/log.md`](docs/log.md) — 108 entries, newest first.
 
 What happened *lately* is §1. The log is why things are the way they are: the reasoning behind
 a change, the thing tried and abandoned, the bug that turned out to be a different bug. It
