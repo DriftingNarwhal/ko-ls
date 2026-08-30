@@ -24,6 +24,39 @@ Kept because this project keeps re-learning the same lessons and paying for them
 
 ---
 
+- **2026-08-30** — **The first drag that actually ran found that two of its four destinations had no target.**
+
+  It works, and the notes back were "the drop zones are too small" and "once every channel was
+  in a folder it was impossible to drag them out". Neither is about dragging.
+
+  **A drag needs a target for every destination, not for every thing.** The destinations in a
+  sidebar are: before a row, after a row, inside a folder, and out at the top level. Rows meant
+  *before this one* and folders meant *inside this one*, so two of the four were reachable. A
+  list of five channels had five places to drop and six places to want one, and the only route
+  to the end of a list was a folder that happened to sit below it.
+
+  Every row is two targets now, split at the midpoint — above or below the thing being pointed
+  at, which is the question somebody is actually asking. And the sidebar's own empty space is
+  the top level, which is the area a person aims at when they mean "out here" anyway. Without
+  it a sidebar could be arranged into a state nothing could be dragged out of, which is the
+  report.
+
+  Three things found while doing it, none of them reported:
+
+  - **Dropping a channel on itself moved it to the top.** The channel being moved is filtered
+    out of its own siblings, so "before itself" matched nothing — and `Math.max(0, findIndex)`
+    turned that nothing into index zero. Caught by the same guard that now ignores the drop.
+  - **`Math.max(0, …)` was hiding a -1 in general**, so any `before` naming a channel that was
+    not a sibling meant the top of the list rather than the end. The wrong end, silently, for
+    every caller.
+  - **The grab cursor had stopped appearing.** `draggable` moved from the button to the row
+    while chasing the Tauri default; the CSS selector did not follow. Nothing depended on it,
+    which is why nothing noticed.
+
+  And a two-pixel margin between folders belonged to nothing, so a drag crossing it fell through
+  to the sidebar and read as "out to the top level" — in the middle of a list of folders, which
+  is never what was meant. Padding now, so the space belongs to the folder above it.
+
 - **2026-08-30** — **Drag-and-drop was swallowed by a Tauri default, which is the second time that sentence has been written this week.**
 
   The tester asked to actually solve it rather than remove it. Right, and the previous entry's

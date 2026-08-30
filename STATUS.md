@@ -79,6 +79,7 @@ Where that milestone stands:
 | **Two nodes on separate networks** | **Done — this milestone's stated first test passes.** Two of the user's own laptops, one on a mobile hotspot, and then a third person on a third network: connection worked across all three, survived close and reopen, reconnected, and roles, permissions and every chat function (posting, voting, withdraw, edit, channel creation by an invited member) worked. The one defect that test found — a node losing its whole servable contribution on restart — is the row above |
 | Invites short enough to send somebody | **done** — one real machine's invite went from ~4,750 characters to ~1,324, about half from carrying only the addresses a recipient could dial and about half from an encoding that stops repeating the peer id once per address (`design/02` §6.1, Core §5.6) |
 | The window hearing what the node tells it | **done, and it never had.** The application declared no Tauri capabilities, so its ACL was empty and every `plugin:` command was refused — `listen` included. No node event had ever reached the window for the life of the client; three polls had been written as fixes for what was one denial, and the features with no poll behind them read as unbuilt (`design/05` §1) |
+| Dragging a channel where you meant | **done** — a drag needs a target for every destination rather than for every thing, and two of four had none: the end of a list, and the top level once every channel was in a folder. Rows are two targets split at the midpoint, and the sidebar's empty space is the way back out |
 | Reordering channels at all | **done, and it never had been.** Drag was the only route and never once started: Tauri installs a native drag handler on the webview by default and it takes the drag before the page sees it, so for as long as folders have existed no channel could be reordered. `dragDropEnabled: false` is the fix, asserted by a test; the menu keeps move up and move down beside it |
 | Closing the window without losing anything | **done** — there was no shutdown path at all, and the risk was not the one expected: every durable write went straight at its destination, so a process ending mid-write could leave a governance log that no longer decoded and a network that would not open again. Writes are atomic now, and the node is stopped on exit so its claim and its relay slot are released rather than left to expire (`design/05` §1.1) |
 | Coming back after a laptop sleeps | **done** — the re-dial loop asked whether *anything* was connected, and a relay is a connection, so a node holding a reservation never re-dialled a lost peer. Sleep, wake, and the only way back was restarting the application |
@@ -164,7 +165,7 @@ produced, which the whole segment model rests on, are in `design/08` §4.
 
 ## 4. Log
 
-Moved to [`docs/log.md`](docs/log.md) — 111 entries, newest first.
+Moved to [`docs/log.md`](docs/log.md) — 112 entries, newest first.
 
 What happened *lately* is §1. The log is why things are the way they are: the reasoning behind
 a change, the thing tried and abandoned, the bug that turned out to be a different bug. It

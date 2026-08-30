@@ -1435,7 +1435,11 @@ body {
 
 /* ── folders and moving things (spec 07 §1.6, §1.8) ─────────────────── */
 
-.folder { margin: 2px 0; }
+/* Padding rather than margin, so the space between folders belongs to the folder
+   above it. As a margin it belonged to nothing, which during a drag meant a
+   two-pixel band that fell through to the sidebar and read as "out to the top
+   level" — in the middle of a list of folders, which is never what was meant. */
+.folder { padding: 2px 0; }
 
 .folder-head {
   display: flex;
@@ -1468,10 +1472,23 @@ body {
 /* Where a drop would land. Two marks because they mean different things: a line
    is "before this row", a wash is "into this folder, at the end". */
 .drop-before { box-shadow: inset 0 2px 0 0 var(--accent); }
+.drop-after { box-shadow: inset 0 -2px 0 0 var(--accent); }
 .drop-into { background: var(--sunken); border-radius: var(--radius); }
 
-#channel-list button[draggable="true"] { cursor: grab; }
-#channel-list button[draggable="true"]:active { cursor: grabbing; }
+/* The sidebar's empty space, when a drag is over it: the way back to the top
+   level. An outline rather than `.drop-into`'s fill, because filling the whole
+   nav would say the drop was going into something rather than out of it. */
+.channels.drop-into {
+  background: none;
+  box-shadow: inset 0 0 0 2px var(--accent);
+}
+
+/* The row is what carries `draggable` now — Tauri's native drag handler was
+   taking every drag before the page saw it, and while chasing that the
+   attribute moved off the button. This selector did not follow, so the grab
+   cursor quietly stopped appearing. */
+#channel-list .channel-item[draggable="true"] { cursor: grab; }
+#channel-list .channel-item[draggable="true"]:active { cursor: grabbing; }
 
 .pop-menu {
   position: fixed;

@@ -735,27 +735,65 @@ function clearDropMarks() {
   }
 }
 
-/// Makes a node accept a dropped channel. `into` marks a folder body rather than
-/// a row, which means "at the end of this folder" instead of "before this row".
+/// Makes a node accept a dropped channel. `into` marks a container rather than a
+/// row, which means "at the end of this list" instead of "beside this row".
+///
+/// # Every row is two targets, not one
+///
+/// A row used to mean *before this one*, which left a list of five channels with
+/// five places to drop and six places to want one — there was no way to say
+/// "last", and the only route to the end of a list was a drag onto a folder that
+/// happened to be below it. Half a row each way costs nothing and answers the
+/// question people are actually asking, which is *above or below the thing I am
+/// pointing at*.
 function wireDrop(node, category, into = false) {
   node.addEventListener("dragover", (event) => {
     if (!state.dragging) return;
     event.preventDefault();
+    // The innermost target decides. A row sits inside a folder which sits inside
+    // the list, and all three accept a drop — without this the outermost would
+    // win the marker and say the drop was going somewhere it was not.
     event.stopPropagation();
     event.dataTransfer.dropEffect = "move";
     clearDropMarks();
-    node.classList.add(into ? "drop-into" : "drop-before");
+    node.classList.add(
+      into ? "drop-into" : landsAfter(node, event) ? "drop-after" : "drop-before",
+    );
   });
   node.addEventListener("drop", async (event) => {
     if (!state.dragging) return;
     event.preventDefault();
     event.stopPropagation();
     const moved = state.dragging.channel;
+    const onto = node.dataset.channel;
+    const after = !into && landsAfter(node, event);
     state.dragging = null;
     clearDropMarks();
-    const before = into ? null : node.dataset.channel;
+
+    // Dropped on itself. Not a move, and worth catching here rather than letting
+    // it through: the channel being moved is filtered out of its own siblings,
+    // so "before itself" resolves to nothing and would land it at the top.
+    if (!into && onto === moved) return;
+
+    const before = into ? null : after ? nextIn(category, onto, moved) : onto;
     await moveChannelTo(moved, category, before);
   });
+}
+
+/// Whether the pointer is in the lower half of a row.
+function landsAfter(node, event) {
+  const box = node.getBoundingClientRect();
+  return event.clientY > box.top + box.height / 2;
+}
+
+/// The channel after `onto` in `category`, ignoring the one being moved.
+///
+/// `null` means the end of the list, which is what makes the lower half of the
+/// last row reachable at all.
+function nextIn(category, onto, moved) {
+  const siblings = siblingsIn(category).filter((channel) => channel.id !== moved);
+  const at = siblings.findIndex((channel) => channel.id === onto);
+  return at < 0 ? null : (siblings[at + 1]?.id ?? null);
 }
 
 /// The channels that would be siblings in `category`, in their drawn order.
@@ -781,13 +819,14 @@ function siblingsIn(category) {
 /// channel, and it happens once per folder rather than once per drag.
 async function moveChannelTo(channel, category, before) {
   const siblings = siblingsIn(category).filter((c) => c.id !== channel);
-  const index =
+  const at_before =
     before === null || before === undefined
-      ? siblings.length
-      : Math.max(
-          0,
-          siblings.findIndex((c) => c.id === before),
-        );
+      ? -1
+      : siblings.findIndex((c) => c.id === before);
+  // A `before` naming nothing in this list means the end, not the beginning.
+  // `Math.max(0, …)` used to sit here, which turned every unmatched name into
+  // "put it at the top" — the wrong end, silently.
+  const index = at_before < 0 ? siblings.length : at_before;
 
   const at = index < siblings.length ? index : siblings.length;
   const unpositioned = siblings.some((c) => c.position === null);
@@ -1933,6 +1972,19 @@ el("joiner").addEventListener("submit", async (event) => {
     button.textContent = "join";
   }
 });
+
+// The way back out of a folder, and the only one once every channel is in one.
+//
+// **Reported from a sidebar somebody could not escape.** Drop targets were rows
+// and folders, so with every channel filed away there was no element on screen
+// that meant *top level* — the drag had nowhere to land and the channels stayed
+// where they were. This is the sidebar's own empty space, which is exactly the
+// area a person aims at when they mean "out here".
+//
+// Wired once rather than per draw, since the nav outlives every redraw of the
+// list inside it. Rows and folders stop propagation, so this only ever sees a
+// drag that reached open space.
+wireDrop(document.querySelector(".channels"), null, true);
 
 el("switcher").addEventListener("click", drawPicker);
 

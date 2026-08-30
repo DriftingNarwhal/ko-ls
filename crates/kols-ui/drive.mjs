@@ -157,18 +157,46 @@ say("the row itself is draggable, not the button inside it",
     sidebarRows[0].draggable === true &&
       sidebarRows[0].querySelector("button").draggable === false);
 const carry = { setData() {}, effectAllowed: "", dropEffect: "" };
-const fire = (type, target) => {
+// jsdom lays nothing out, so every box is zero-sized and `landsAfter` compares
+// against a midpoint of zero. `clientY` decides which half regardless, which is
+// what these are actually asserting.
+const fire = (type, target, clientY = -1) => {
   const event = new window.Event(type, { bubbles: true, cancelable: true });
   event.dataTransfer = carry;
+  event.clientY = clientY;
   target.dispatchEvent(event);
   return event;
 };
 fire("dragstart", sidebarRows[1]);
 say("dragging over a row offers a drop", fire("dragover", sidebarRows[0]).defaultPrevented);
+say("the upper half marks before",
+    sidebarRows[0].classList.contains("drop-before"), sidebarRows[0].className);
+fire("dragover", sidebarRows[0], 1);
+say("the lower half marks after",
+    sidebarRows[0].classList.contains("drop-after"), sidebarRows[0].className);
 calls.length = 0;
 fire("drop", sidebarRows[0]);
 await settled();
 say("dropping asks the core to move it", calls.includes("move_channel"), calls.join(", "));
+
+// Dropping a channel on itself is not a move — it used to resolve to "before
+// nothing" and land the channel at the top of the list.
+fire("dragstart", sidebarRows[0]);
+calls.length = 0;
+fire("drop", sidebarRows[0]);
+await settled();
+say("dropping a channel on itself does nothing", !calls.includes("move_channel"),
+    calls.join(", ") || "(nothing)");
+
+// The way out of a folder, which is the only way once every channel is in one.
+const nav = window.document.querySelector(".channels");
+fire("dragstart", sidebarRows[1]);
+say("the sidebar's empty space takes a drop", fire("dragover", nav).defaultPrevented);
+say("and says it means the top level", nav.classList.contains("drop-into"));
+calls.length = 0;
+fire("drop", nav);
+await settled();
+say("dropping there moves it out", calls.includes("move_channel"), calls.join(", "));
 
 // ── who is here ────────────────────────────────────────────────────────
 say("count starts at zero", el("presence-count").textContent === "0");
