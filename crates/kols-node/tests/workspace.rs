@@ -145,6 +145,47 @@ fn a_created_network_lives_where_its_id_says_it_does() {
     );
 }
 
+/// The name a founder types has to travel, and for a long time it did not.
+///
+/// It was written to the local label and nowhere else, so the network had a name
+/// on exactly one machine: its creator saw what they typed, and everybody they
+/// invited saw an id in the picker and "unnamed network" over the channel list.
+/// Spec 07 §1.7 has had the policy key throughout and the settings sheet has
+/// written it throughout — nothing carried it at the one moment somebody is
+/// unambiguously naming the thing.
+#[test]
+fn the_name_a_founder_types_is_the_networks_name_and_not_just_this_machines() {
+    let dir = Dir::new("create-named");
+    let workspace = Workspace::at(dir.0.clone());
+
+    let store = workspace.create("the workshop", Vec::new()).expect("creates");
+    let state = store.state().expect("replays");
+
+    assert_eq!(
+        kols_core::ChatPolicy::of(&state.policy).network_name(),
+        Some("the workshop"),
+        "the name belongs in replayed policy, where every joiner sees it"
+    );
+    assert_eq!(store.label().as_deref(), Some("the workshop"));
+}
+
+/// An unnamed network *has* no name, which is a different claim from being
+/// called nothing — and the second is the one a joiner would replay forever.
+#[test]
+fn a_network_created_without_a_name_declares_none() {
+    let dir = Dir::new("create-unnamed");
+    let workspace = Workspace::at(dir.0.clone());
+
+    let store = workspace.create("   ", Vec::new()).expect("creates");
+    let state = store.state().expect("replays");
+
+    assert_eq!(
+        kols_core::ChatPolicy::of(&state.policy).network_name(),
+        None,
+        "blank is absent, not an empty name"
+    );
+}
+
 #[test]
 fn forgetting_removes_the_store_and_leaves_the_others() {
     let dir = Dir::new("forget");

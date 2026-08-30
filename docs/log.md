@@ -48,6 +48,34 @@ Kept because this project keeps re-learning the same lessons and paying for them
   Ping is on with libp2p's defaults, so the dead connection is reaped and `Disconnected` does
   fire. That half was working, which is part of why this looked like a transport problem.
 
+- **2026-08-30** — **A network's name existed on one machine, and the spec had said so all along.**
+
+  Reported as a joined network showing an id in the picker and "unnamed network" over the
+  channel list. `network::genesis` set the bootstrap relays, the content-type allowlist, the
+  capability namespaces and the history policy, and never wrote `chat:network-name` — so the
+  name a founder types at creation went to the local label and nowhere else. The creator saw
+  it; everybody invited saw nothing.
+
+  Spec 07 §1.7 has carried this key throughout, the settings sheet has written it throughout,
+  and `Me` has carried `network_name` throughout. Nothing was missing except the one write at
+  the moment somebody is unambiguously naming the thing. **No spec change; a client that had
+  not implemented what was already normative.** Blank stays absent rather than stored empty,
+  for §1.7's own reason: a network with no name declared *has* no name, whereas an empty string
+  in policy is a claim that it is called nothing, replayed forever.
+
+  The interface had a second half of the same bug. `drawMe` read `me.label` — this
+  installation's local label — and fell back to "unnamed network", so even a network whose name
+  *was* in policy rendered as unnamed to anybody who had joined rather than created it. It now
+  prefers the network's own name, which is the one that travels.
+
+  And the picker, which cannot afford to replay every store's log to draw a list, keeps the
+  label as a **cache** of the name: `me` writes it through whenever the two disagree. That is a
+  write inside a read and worth being explicit about rather than tidy — the alternative is a
+  picker that lists ids.
+
+  Networks created before this have no name in policy and will not grow one; setting it once
+  under settings → network fixes them for every member.
+
 - **2026-08-30** — **A design grew a second command nobody asked for, and the user removed it in one line.**
 
   Yesterday's §6.5 asked for *leave* beside *forget*: leave writes the departure and keeps the

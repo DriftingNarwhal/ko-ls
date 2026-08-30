@@ -166,11 +166,35 @@ fn me_of(executor: &Executor) -> Result<dto::Me, String> {
 
     let names = executor.names(&state).map_err(|e| e.to_string())?;
 
+    // The local label follows the network's own name once this node knows it.
+    //
+    // The picker cannot afford to answer this properly — it lists every network
+    // in the workspace and the name lives in replayed policy, so showing it
+    // there means replaying every store's log to draw a list. The label is a
+    // file, which is what makes the picker cheap, so it is kept as a cache of
+    // the name rather than as a second opinion about it.
+    //
+    // A joiner has no label at all: nothing on the join path ever set one, so
+    // networks somebody was invited to listed as an id. This is where they get
+    // one, and it corrects itself if the network is renamed later.
+    let network_name = kols_core::ChatPolicy::of(&state.policy)
+        .network_name()
+        .map(str::to_owned);
+    let label = match (&network_name, store.label()) {
+        (Some(name), held) if held.as_deref() != Some(name.as_str()) => {
+            // Best effort: a label that cannot be written is a picker entry that
+            // still says the id, which is what it said before.
+            let _ = store.set_label(name);
+            name.clone()
+        }
+        (_, held) => held.unwrap_or_default(),
+    };
+
     Ok(dto::Me {
         identity: identity.id().short(),
         name: names.of(&identity.id()).map(str::to_owned),
         network: to_hex(store.network().as_bytes()),
-        label: store.label().unwrap_or_default(),
+        label,
         has_key: store.epoch_key().is_ok(),
         may_post: holds("chat:post:*"),
         may_create_channel: holds("chat:create-channel:*"),
@@ -190,9 +214,7 @@ fn me_of(executor: &Executor) -> Result<dto::Me, String> {
                 &intranet_governance::Capability::manage_membership(group.clone()),
             )
         }),
-        network_name: kols_core::ChatPolicy::of(&state.policy)
-            .network_name()
-            .map(str::to_owned),
+        network_name,
         admission_mode: match state.policy.admission_mode {
             intranet_governance::AdmissionMode::AutoAdmit => "auto".to_owned(),
             intranet_governance::AdmissionMode::ExplicitIntake => "intake".to_owned(),

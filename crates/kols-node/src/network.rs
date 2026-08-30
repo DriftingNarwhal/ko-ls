@@ -34,12 +34,33 @@ pub fn genesis(
     founder: &PerNetworkIdentity,
     network: NetworkId,
     relays: Vec<String>,
+    name: &str,
 ) -> LogEntry {
     let mut policy = NetworkPolicy::conservative_default();
     // Core §5.5: a network with no designated relay is reachable only by members
     // who can already dial each other, which two people behind NAT cannot. The
     // set is chosen at creation and replaced later by `define-policy`.
     policy.bootstrap_relays = relays;
+    // The name the founder typed, put where it travels.
+    //
+    // **It used to be kept only as this installation's local label**, which
+    // meant the network had a name on exactly one machine: the creator saw what
+    // they typed, and every joiner saw an id in the picker and "unnamed network"
+    // over the channel list. Spec 07 §1.7 already has the policy key for this
+    // (D32) and the settings sheet already writes it — nothing carried it at the
+    // one moment somebody is unambiguously naming the thing.
+    //
+    // Empty is left absent rather than stored empty, for the reason
+    // `set_network_name` gives: a network with no name declared *has* no name,
+    // whereas an empty string in policy is a declaration that it is called
+    // nothing, replayed by every joiner forever.
+    let named = name.trim();
+    if !named.is_empty() && named.len() <= kols_core::MAX_NETWORK_NAME_BYTES {
+        policy.app_policy.insert(
+            kols_core::keys::NETWORK_NAME.to_owned(),
+            intranet_governance::PolicyValue::Text(named.to_owned()),
+        );
+    }
     policy
         .content_type_allowlist
         .insert(ContentType::new(CHAT_LOG_CONTENT_TYPE));

@@ -238,7 +238,7 @@ impl Workspace {
         let store = Store::create(path, id, entropy).map_err(|e| e.to_string())?;
         let founder = store.identity().map_err(|e| e.to_string())?;
         store
-            .append_entry(&network::genesis(&founder, id, relays.clone()))
+            .append_entry(&network::genesis(&founder, id, relays.clone(), label))
             .map_err(|e| e.to_string())?;
         store.set_label(label).map_err(|e| e.to_string())?;
         store.set_relays(&relays).map_err(|e| e.to_string())?;
