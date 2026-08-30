@@ -76,6 +76,34 @@ Kept because this project keeps re-learning the same lessons and paying for them
   Networks created before this have no name in policy and will not grow one; setting it once
   under settings → network fixes them for every member.
 
+- **2026-08-30** — **Field notes on the marks, and a sidebar that only broke on Windows.**
+
+  Four notes back from the second test. Three were about the same thing: a first-sight mark is
+  a nudge and was behaving like state. It marked your own messages — the interface telling you
+  that you had not seen something you had just typed — and once up it stayed up until you
+  changed channel. Now it never marks your own, it clears on hover, and it clears fifteen
+  seconds after the window becomes the focused one.
+
+  **Focus is the trigger rather than arrival**, which was the user's own framing and is the
+  right one: marks earned while somebody was away are exactly the ones worth keeping until they
+  are back to see them. The timer is deliberately not restarted by a redraw — a channel busy
+  enough to redraw every few seconds would never settle, and that is the case where the marks
+  are worth least.
+
+  **The sidebar drew channel names as vertical columns on Windows and was fine on macOS**, and
+  the split is the interesting part. `.channels li button` carries `width: 100%`; as a flex item
+  with `flex-basis: auto` that becomes a basis of the whole row, so the row overflows by the
+  width of the new `⋯` handle and both items shrink. How far the button *may* shrink is its
+  min-content width, and `overflow-wrap: anywhere` on the name inside reduces min-content to
+  the widest single glyph — which is precisely what `break-word` does not do. One letter per
+  line.
+
+  The engine decided whether it was visible, not whether it was there: how much the row
+  overflows by depends on how wide `⋯` renders, which is Segoe UI against the macOS system
+  font. Fixed by sizing the flex items from `0` rather than `auto`, and by cutting names with
+  an ellipsis rather than wrapping them — a 260px column is not a place to wrap a name, and the
+  full one is on the row's `title`.
+
 - **2026-08-30** — **A design grew a second command nobody asked for, and the user removed it in one line.**
 
   Yesterday's §6.5 asked for *leave* beside *forget*: leave writes the departure and keeps the

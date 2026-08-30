@@ -1,6 +1,6 @@
 # Interface
 
-**Document status:** v0.9 — §4.1 says where the roster went and what the one number left on screen is for; §4.2 records settings becoming a screen rather than a layer, and the rule that decides which surface a thing gets; §4.3 is new and separates *where something arrived* from *what you have not seen*, which cannot be derived from it because a message is ordered by its author's clock rather than by its arrival. §7.1 and §7.3 narrowed rather than closed. Previously v0.8 — §4.2's Network section takes admission mode, the abuse limits and the retention windows, and says the three things a number on screen does not carry. Previously v0.7 — §4.2's settings sections are built, and it says what shape they took and which of them is a panel over a feature that does not exist yet; §5 gains the line between asking *whether* and asking *what*, which is what decides whether a dialog may live in the document a theme can reach. Previously v0.6 — §4.1 says plainly that presence is unbuilt, why it is last, and what the window shows instead; that was being carried in a status file. Previously v0.5 — §4.2 fixes what settings is and how it is divided, §6.4 and §6.5 settle reset and the two things that must leave the document before a theme can reach them (D36, D37). Theming remains designed and unbuilt. Previously v0.4 — D29 (a relay is never shared between networks) and what it does and does not mean for §3's direct-message bootstrap;  an interface now exists and is a first pass, not a settled one: it
+**Document status:** v0.10 — §4.3 gains the two ways a mark ends, and that it never marks your own; §5.1 gains the flex sizing rule that turned a sidebar into columns of one letter on Windows and not on macOS. Previously v0.9 — §4.1 says where the roster went and what the one number left on screen is for; §4.2 records settings becoming a screen rather than a layer, and the rule that decides which surface a thing gets; §4.3 is new and separates *where something arrived* from *what you have not seen*, which cannot be derived from it because a message is ordered by its author's clock rather than by its arrival. §7.1 and §7.3 narrowed rather than closed. Previously v0.8 — §4.2's Network section takes admission mode, the abuse limits and the retention windows, and says the three things a number on screen does not carry. Previously v0.7 — §4.2's settings sections are built, and it says what shape they took and which of them is a panel over a feature that does not exist yet; §5 gains the line between asking *whether* and asking *what*, which is what decides whether a dialog may live in the document a theme can reach. Previously v0.6 — §4.1 says plainly that presence is unbuilt, why it is last, and what the window shows instead; that was being carried in a status file. Previously v0.5 — §4.2 fixes what settings is and how it is divided, §6.4 and §6.5 settle reset and the two things that must leave the document before a theme can reach them (D36, D37). Theming remains designed and unbuilt. Previously v0.4 — D29 (a relay is never shared between networks) and what it does and does not mean for §3's direct-message bootstrap;  an interface now exists and is a first pass, not a settled one: it
 creates and joins networks, runs a node, renders a channel, brings the next member in, and gates
 its chrome on permission. §1's workspace, **both halves of §5**, §4's first two questions and
 most of §7's second are built; §2's tiering, §4.1's presence and §6's theming are not, and §7's
@@ -456,6 +456,15 @@ Three properties it commits to:
   has not moved must not erase them, or the second message would clear the mark on the first.
   Clicking the channel — including the one you are already in, which is the only gesture
   available on a network with one channel — is what starts them again.
+- **Never your own.** You were there when it was written, and a mark saying *you have not seen
+  this* over something somebody just typed is the interface disagreeing with the person using
+  it.
+- **A mark is a nudge and expires like one.** It clears when the eye reaches it — hovering the
+  message — and otherwise fifteen seconds after the window becomes the focused one. Focus is
+  the trigger rather than arrival, because marks earned while somebody was away are exactly
+  the ones worth keeping until they are back to see them; and the timer is not restarted by a
+  redraw, or a busy channel would never settle, which is the case where the marks are worth
+  least. Left standing, a mark stops being a signal and becomes state to be dismissed.
 - **It is local, and says so.** What somebody has read is not a fact about the network, and
   writing it to the log would publish a reading habit to every member. §7.7 is what to revisit:
   read state becomes shared when multi-device lands, and this is per device until it does.
@@ -511,6 +520,17 @@ So the line runs between the two questions rather than around every dialog. Data
 in the document, styled like the rest of the interface and fully themeable. Approval stays
 native. Stated here because the rule is easy to read as *"dialogs are native"*, which is
 stricter than §6.5 asks and makes the interface worse for nothing.
+
+**A second sizing rule, learned the same way.** A flex row whose item carries `width: 100%`
+gets a flex basis of the whole row, so the row overflows by whatever sits beside it and both
+items shrink. How far an item *may* shrink is its min-content width — and `overflow-wrap:
+anywhere` reduces min-content to the widest single glyph, which `break-word` deliberately does
+not. Put together: adding a menu handle beside a channel name turned the sidebar into columns
+of one letter per line. It reproduced on Windows and not on macOS, because how much the row
+overflows by depends on how wide the handle renders, which is a font question — so the engine
+decided whether the bug was visible and not whether it was there. Size flex items from `0`
+rather than `auto` when they carry a percentage width, and prefer an ellipsis to wrapping in a
+column 260px wide.
 
 **One thing the interface must not get wrong about hiding, learned by getting it wrong.**
 `hidden` is an attribute, and the browser's `[hidden] { display: none }` is the weakest rule

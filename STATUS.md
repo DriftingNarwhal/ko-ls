@@ -98,7 +98,7 @@ over the same `kols-api` boundary, owed no feature parity and no end-user docume
   serve, post, read, edit, delete, react, pin, and channel
   create/list/rename/topic/slowmode/archive.
 
-**Gates green as of this date:** 299 tests here, 666 in `../distributed-intranet`, clippy
+**Gates green as of this date:** 305 tests here, 666 in `../distributed-intranet`, clippy
 clean in both. O20's starved-run flake did not reproduce on this full-width run; it is not
 fixed, and one green run is not evidence that it is.
 
@@ -162,7 +162,7 @@ produced, which the whole segment model rests on, are in `design/08` §4.
 
 ## 4. Log
 
-Moved to [`docs/log.md`](docs/log.md) — 105 entries, newest first.
+Moved to [`docs/log.md`](docs/log.md) — 106 entries, newest first.
 
 What happened *lately* is §1. The log is why things are the way they are: the reasoning behind
 a change, the thing tried and abandoned, the bug that turned out to be a different bug. It

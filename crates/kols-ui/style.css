@@ -194,7 +194,22 @@ body {
 /* Unread. Weight rather than colour, so it reads at a glance without competing
    with the channel you are actually in, and so a theme that recolours
    everything cannot accidentally erase it. */
-.channel-name { flex: 1 1 auto; min-width: 0; overflow-wrap: anywhere; }
+/* One line, cut with an ellipsis rather than wrapped.
+ *
+ * `overflow-wrap: anywhere` was here to keep a long name inside the rail, and it
+ * did — by breaking it across as many lines as it took, which in a 260px column
+ * is how a sidebar becomes a paragraph. It is also what let the row collapse to
+ * one character above, since `anywhere` reduces min-content width to the widest
+ * glyph in a way `break-word` deliberately does not.
+ *
+ * The full name is on the row's `title`, so nothing is lost to the ellipsis. */
+.channel-name {
+  flex: 1 1 0;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 #channel-list button.unread .channel-name {
   color: var(--text);
   font-weight: 700;
@@ -309,7 +324,13 @@ body {
   font-size: 12px;
   color: var(--dim);
 }
-.person .who { flex: 1 1 auto; min-width: 0; overflow-wrap: anywhere; }
+.person .who {
+  flex: 1 1 0;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 .person.connected .who { color: var(--text); }
 .person .person-id { font-size: 10px; opacity: 0.7; }
 /* Lit means connected to this node. Deliberately a ring rather than a filled
@@ -1002,8 +1023,25 @@ body {
   display: flex;
   gap: 2px;
 }
-.channel-item > button:first-child { flex: 1 1 auto; min-width: 0; }
-.folder-head > .folder-name { flex: 1 1 auto; min-width: 0; }
+/* `1 1 0` rather than `1 1 auto`, and the difference is the whole of a bug that
+ * only appeared on Windows.
+ *
+ * The button carries `width: 100%`, which under `flex-basis: auto` becomes a
+ * basis of the *full* row — so the row wants 100% plus the handle beside it,
+ * overflows, and both items shrink. How far the button may shrink is its
+ * automatic minimum, which is its min-content width, and `overflow-wrap:
+ * anywhere` on the name inside it makes min-content **one character**. That is
+ * the vertical column: a channel name wrapped after every letter.
+ *
+ * It reproduced on Windows and not on macOS because the amount of overflow
+ * depends on how wide the handle renders, which is a font question — Segoe UI
+ * and the `⋯` glyph against the macOS system font. The bug was in the sizing
+ * either way and the engine only decided whether it showed.
+ *
+ * A zero basis takes `width: 100%` out of the calculation: the row asks for the
+ * handle plus nothing, never overflows, and the button grows into what is left. */
+.channel-item > button:first-child { flex: 1 1 0; min-width: 0; }
+.folder-head > .folder-name { flex: 1 1 0; min-width: 0; }
 
 .row-menu {
   background: none;
@@ -1447,7 +1485,13 @@ body {
   user-select: none;
 }
 
-.folder-name { flex: 1 1 auto; min-width: 0; overflow-wrap: anywhere; }
+.folder-name {
+  flex: 1 1 0;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 
 /* A category a channel names but nothing ever defined. Saying so beats an empty
    row nobody can account for. */

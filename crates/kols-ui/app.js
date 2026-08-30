@@ -48,6 +48,8 @@ const state = {
   // a visit rather than recomputed per draw, so a highlight does not blink out
   // two seconds later when the poll redraws the same channel.
   holding: null,
+  // The countdown that drops them once somebody has had a chance to look.
+  settle: null,
   // How many are at the door, so the count survives the sheet being closed.
   waiting: 0,
   // What `me` and the channel list looked like when last drawn, so a tick that
@@ -192,7 +194,15 @@ function drawKeyState(me) {
 function drawMe(me) {
   state.me = me;
   state.meSignature = signatureOfMe(me);
-  el("network-label").textContent = me.label || "unnamed network";
+  // The network's own name first, then this installation's label, then nothing.
+  //
+  // The order matters and used to be missing its first term: the name in policy
+  // is the one every member sees and the one that travels (D32, spec 07 §1.7),
+  // while the label is local and a joiner has never had one. So a network with a
+  // perfectly good name rendered as "unnamed network" to everybody who had been
+  // invited to it.
+  el("network-label").textContent =
+    me.network_name || me.label || "unnamed network";
   // A hover rather than two permanent lines of hex under the name.
   //
   // Spec 07 §8's obligation is that a *name* must never stand in for an
@@ -455,6 +465,7 @@ async function drawPeople() {
     who.className = "who";
     who.textContent = person.name ?? person.short;
     if (person.you) who.textContent += " (you)";
+    who.title = who.textContent;
 
     // Spec 07 §8: a name never stands in for an identity, because uniqueness is
     // decided on a key that does not fold confusables.
@@ -602,7 +613,9 @@ function channelItem(channel, category) {
   const button = document.createElement("button");
   button.dataset.id = channel.id;
   button.className = channel.id === state.current ? "current" : "";
-  if (channel.private) button.title = "private";
+  // The row cuts a long name with an ellipsis rather than wrapping it down the
+  // sidebar, so the whole name has to be reachable from somewhere.
+  button.title = channel.private ? `#${channel.name} — private` : `#${channel.name}`;
   if (channel.archived) button.classList.add("archived");
 
   const name = document.createElement("span");
@@ -699,6 +712,7 @@ function folderItem(row) {
   // not an error and not a blank: saying so is better than an empty row nobody
   // can explain.
   label.textContent = row.name || "unnamed folder";
+  label.title = row.name || "unnamed folder";
   if (!row.name) label.classList.add("unnamed");
   head.append(label);
 
@@ -1270,7 +1284,19 @@ function drawMessages(opened) {
     if (message.withdrawn) row.classList.add("withdrawn");
     if (message.redacted) row.classList.add("redacted");
     if (message.pinned) row.classList.add("pinned");
-    if (fresh.has(message.id)) row.classList.add("fresh");
+    if (fresh.has(message.id)) {
+      row.classList.add("fresh");
+      // Hovering it is reading it. Per row rather than per channel, because the
+      // rows a reader passes over are the ones they have got to.
+      row.addEventListener(
+        "mouseenter",
+        () => {
+          row.classList.remove("fresh");
+          state.holding?.ids.delete(message.id);
+        },
+        { once: true },
+      );
+    }
 
     const who = document.createElement("span");
     who.className = "author";
@@ -1361,6 +1387,9 @@ function drawMessages(opened) {
 
   // A record this node refused is one another client may be showing. Silence
   // would make the two look like they agree.
+  // After the marks are on screen, since this does nothing when there are none.
+  settleMarksSoon();
+
   const refused = el("refused");
   refused.hidden = opened.refused.length === 0;
   refused.textContent = opened.refused.length
@@ -1505,7 +1534,10 @@ function freshIn(opened) {
   for (const message of opened.messages) {
     const key = message.id.slice(0, SEEN_ID_CHARS);
     now.push(key);
-    if (before && !before.has(key)) state.holding.ids.add(message.id);
+    // Not your own. You were there when it was written, and a mark saying
+    // "you have not seen this" over something you just typed is the interface
+    // disagreeing with the person using it.
+    if (before && !before.has(key) && !message.mine) state.holding.ids.add(message.id);
   }
 
   // Written only when the set actually moved. Ids never change once a record
@@ -1516,6 +1548,41 @@ function freshIn(opened) {
   state.seen[opened.channel] = now;
   if (moved) rememberSeen();
   return state.holding.ids;
+}
+
+/// How long a mark stays up once somebody is actually looking at the window.
+///
+/// The point of a mark is to catch an eye, and an eye is caught once. Left
+/// standing it stops being a signal and becomes decoration that has to be
+/// dismissed — and a reader who has been in a channel for a minute does not need
+/// telling which message arrived while they were watching it happen.
+const SETTLE_MILLIS = 15_000;
+
+/// Clears the marks a short while after somebody starts looking at the window.
+///
+/// **Started on focus rather than on arrival, and not restarted by a redraw.**
+/// The channel is redrawn whenever anything lands in it, so resetting this each
+/// time would mean a busy channel never settles — the one case where the marks
+/// are worth least. A new batch arriving after a settle gets its own window.
+function settleMarksSoon() {
+  if (state.settle) return;
+  if (!state.holding || state.holding.ids.size === 0) return;
+  // Only while somebody is here. Counting down at a window nobody is looking at
+  // would clear the marks before they had been seen, which is the whole job.
+  if (!document.hasFocus()) return;
+  state.settle = setTimeout(() => {
+    state.settle = null;
+    forgetMarks();
+  }, SETTLE_MILLIS);
+}
+
+/// Drops every mark on screen. The ids are already in `seen`, so nothing brings
+/// them back.
+function forgetMarks() {
+  if (state.holding) state.holding.ids.clear();
+  for (const row of document.querySelectorAll(".message.fresh")) {
+    row.classList.remove("fresh");
+  }
 }
 
 function rememberSeen() {
@@ -2123,6 +2190,15 @@ el("door").addEventListener("click", (event) => {
 });
 
 // ── the roster ─────────────────────────────────────────────────────────
+
+// Coming back to the window is what starts the clock — the user's own framing,
+// and the right one: marks earned while you were away are exactly the ones worth
+// keeping until you are here to see them.
+window.addEventListener("focus", settleMarksSoon);
+window.addEventListener("blur", () => {
+  clearTimeout(state.settle);
+  state.settle = null;
+});
 
 el("presence-toggle").addEventListener("click", (event) => {
   event.stopPropagation();
@@ -2787,6 +2863,8 @@ function clearNetworkView() {
   // visit is over.
   state.seen = {};
   state.holding = null;
+  clearTimeout(state.settle);
+  state.settle = null;
 }
 
 async function start() {

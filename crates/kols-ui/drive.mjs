@@ -26,7 +26,7 @@ const app = fs.readFileSync(`${UI}/app.js`, "utf8");
 
 // ── a node that answers ────────────────────────────────────────────────
 const me = {
-  network: "ab".repeat(32), label: "the workshop", name: "corey",
+  network: "ab".repeat(32), label: "", name: "corey",
   identity: "id-corey-0001", network_name: "the workshop", has_key: true,
   may_post: true, may_create_channel: true, may_manage_channel: true,
   may_invite: true, may_moderate: true, may_set_relays: true,
@@ -100,7 +100,10 @@ await settled();
 // ── the app came up ────────────────────────────────────────────────────
 say("app view is showing", !window.document.querySelector(".app").hidden);
 say("settings is not", el("settings").hidden);
-say("network name drawn", el("network-label").textContent === "the workshop");
+// A joiner has no local label at all, so the network's own name is the only one
+// there is — this used to render as "unnamed network".
+say("the network's own name is drawn", el("network-label").textContent === "the workshop",
+    el("network-label").textContent);
 say("network id is a hover", el("network-label").title.includes(me.network), el("network-label").title.slice(0, 20));
 say("identity is a hover", el("you-line").title === "id-corey-0001");
 say("door offered to an inviter", !el("open-door").hidden);
@@ -177,6 +180,25 @@ say("another arrival keeps the earlier mark", JSON.stringify(rows()) === "[false
 el("channel-list").querySelector("button").dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
 await settled();
 say("clicking the channel clears them", rows().every((f) => !f), JSON.stringify(rows()));
+
+// ── what a mark is not for ─────────────────────────────────────────────
+messages = [
+  ...messages,
+  { id: "m4", author: "corey", author_id: "id-corey-0001", at: "10:02", body: "mine",
+    edited: false, withdrawn: false, redacted: false, pinned: false, reactions: [], mine: true },
+  { id: "m5", author: "sam", author_id: "id-sam-0002", at: "10:03", body: "theirs",
+    edited: false, withdrawn: false, redacted: false, pinned: false, reactions: [], mine: false },
+];
+await listeners["kols://records"]({ payload: ["c1", true] });
+await settled();
+say("your own message is never marked", JSON.stringify(rows()) === "[false,false,false,false,true]",
+    JSON.stringify(rows()));
+
+// Hovering it is reading it.
+const marked = [...el("messages").children].find((r) => r.classList.contains("fresh"));
+marked?.dispatchEvent(new window.MouseEvent("mouseenter", { bubbles: false }));
+await settled();
+say("hovering a marked message clears it", rows().every((f) => !f), JSON.stringify(rows()));
 
 // ── being told from outside the window ─────────────────────────────────
 await listeners["kols://records"]({ payload: ["c2", true] });
