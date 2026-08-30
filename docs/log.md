@@ -24,6 +24,37 @@ Kept because this project keeps re-learning the same lessons and paying for them
 
 ---
 
+- **2026-08-30** — **A design grew a second command nobody asked for, and the user removed it in one line.**
+
+  Yesterday's §6.5 asked for *leave* beside *forget*: leave writes the departure and keeps the
+  seed, forget does that and then destroys it. The reasoning was that they answer different
+  questions, which is true. Asked directly, the answer was "I'm fine with it being all or
+  nothing" — the second question is not one anybody has.
+
+  Worth recording because of how the extra command got there. It was not requested; it fell
+  out of writing down what leaving *could* mean, and once written it read like a requirement.
+  A seed-preserving leave buys re-admission as the same member later, which is a real property
+  and one nobody wanted, and it would have cost a second confirmation, a second explanation of
+  which one destroys what, and a whole class of "I clicked the wrong one".
+
+  **The protocol half does not follow the client half, and that is the point of keeping them
+  in separate documents.** E16 still says a self-removal is valid without a capability and
+  says nothing about whether the remover kept their keys — because another consumer may want a
+  leave that can be undone, and a spec that assumed the seed goes with the departure would have
+  written one client's product decision into the wire.
+
+  **Announcing still matters even though nobody can come back**, which is the reading
+  all-or-nothing makes easy to get wrong. The departure entry is the only thing that takes the
+  leaf out of the MLS group; without it the network rotates key material forever for a member
+  who deliberately destroyed their half of it. What it buys is the network's hygiene, not the
+  leaver's.
+
+  Turned up while checking this: `kols-node`'s executor refuses *any* self-removal from
+  `everyone`, on the grounds that it would leave the network unable to rotate its key. True of
+  a last holder of `revoke-node`, false of everybody else, and it would have silently defeated
+  E16 on its own — a protocol change landing into a client that refuses the entry before it is
+  signed.
+
 - **2026-08-30** — **The most destructive thing this client does was asserted by a dialog and by nothing else.**
 
   Forgetting a network deletes the store and the seed inside it, and the confirmation says

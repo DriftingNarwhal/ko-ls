@@ -1,6 +1,6 @@
 # Required Protocol Extensions
 
-**Document status:** v2.2 — **E16 added**: there is no way to leave a network, because every membership change is gated on `revoke-node` and the one member who knows they are leaving is the one who cannot say so; §16 also settles the rejoin question the client was carrying as open, which turns out to be answered already for `forget` and live only for a leave that keeps the seed. Previously v2.1 — §13 records that D29 turned E13 from a friction item into the mechanism, and §12 records that `Discovery::Off` is a privacy requirement rather than a saving; both were being carried in a status file. Previously v2.0 — **E14 landed**, as leaf replacement rather than the re-delivery this document asked for;  E1 and E3 withdrawn, **E9, E2, E5, E4, E11 and E12 landed**; E12 narrowed to its protocol half on landing, E13 added from `09`, E14 added from a bug, **E15 added from a divergence this document should have been carrying already**. §2's branch-length and profile-enforcement claims corrected to what landed
+**Document status:** v2.2 — **E16 added**: there is no way to leave a network, because every membership change is gated on `revoke-node` and the one member who knows they are leaving is the one who cannot say so; §16 also settles the rejoin question the client was carrying as open, which turns out to be answered already for `forget` and settled since for the leave that would have kept the seed — the client is deliberately not growing one, and §16 says why the protocol should permit it anyway. Previously v2.1 — §13 records that D29 turned E13 from a friction item into the mechanism, and §12 records that `Discovery::Off` is a privacy requirement rather than a saving; both were being carried in a status file. Previously v2.0 — **E14 landed**, as leaf replacement rather than the re-delivery this document asked for;  E1 and E3 withdrawn, **E9, E2, E5, E4, E11 and E12 landed**; E12 narrowed to its protocol half on landing, E13 added from `09`, E14 added from a bug, **E15 added from a divergence this document should have been carrying already**. §2's branch-length and profile-enforcement claims corrected to what landed
 **Depends on:** all preceding documents
 **Consumed by:** work in `distributed-intranet`
 
@@ -798,12 +798,20 @@ Whether a departed member may rejoin **is already answered for `forget`, and not
 extension**: `forget` destroys the seed, so that identity cannot return under any rule we
 write. The old record is orphaned by construction. Nothing has to decide it.
 
-The question is live only for a **leave that keeps the seed**, which is a thing the client
-does not have and should (`02`). There the answer should be that leaving is not banishment:
-the log records *added, removed, added*, re-admission is ordinary admission, and everything
-they wrote stays attributed to the identity that wrote it. Anything stronger would be a ban,
-and this protocol has no such concept — building one in as a side effect of leaving would be
-the largest thing in this section and nobody asked for it.
+The question would be live for a **leave that keeps the seed**, and `02` §6.5 records that the
+client is deliberately not growing one: leaving is what people do when they are done with a
+network, and re-admission as the same member is a property nobody asked for. So for this
+consumer the question is settled in both directions.
+
+**The protocol should still permit it, and this is the one place that distinction earns its
+keep.** A rule saying a self-removal is valid says nothing about whether the remover kept
+their keys, and it must not — another consumer of this platform may well want a leave that can
+be undone, and a spec that assumed the seed goes with the departure would have written one
+client's product decision into the wire. Re-admission after a self-removal is ordinary
+admission: the log records *added, removed, added*, and everything they wrote stays attributed
+to the identity that wrote it. Anything stronger would be a ban, and this protocol has no such
+concept — building one in as a side effect of leaving would be the largest thing in this
+section and nobody asked for it.
 
 **Ordering, which the client owes and the protocol should say plainly.** The departure entry
 is signed by the key being destroyed, so it must be written *and published* before the seed

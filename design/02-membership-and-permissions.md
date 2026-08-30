@@ -1,6 +1,6 @@
 # Membership and Permissions
 
-**Document status:** v1.1 — §6.5 records that leaving a network is a gap rather than a design, and what the client owes once `06` §16 lands: two commands rather than one, and an order that cannot be reversed. Previously v1.0 — permission resolution implemented and reached through `kols-api`'s gate; E11 landed, so §2.2's per-scope registration problem is gone
+**Document status:** v1.2 — §6.5 settles the shape: `forget` stays all-or-nothing by decision rather than by default, what it owes is the announcement, and the executor guard that would defeat `06` §16 on its own is named. Previously v1.1 — §6.5 records that leaving a network is a gap rather than a design, and what the client owes once `06` §16 lands. Previously v1.0 — permission resolution implemented and reached through `kols-api`'s gate; E11 landed, so §2.2's per-scope registration problem is gone
 **Depends on:** Core Protocol Spec §1 (identity), §2 (governance), §5.6 (invites)
 **Consumed by:** `01-messaging-model`, `03-confidentiality`, `04-realtime`
 
@@ -338,24 +338,37 @@ but its signer, and is proved by the same signature that proves the identity it 
 Until that lands there is no entry a departing member is allowed to write, and this section
 records what the client should do once there is.
 
-**Two commands, not one, because they answer different questions.**
+**One command, not two, and that is a decision rather than a default.** An earlier draft of
+this section asked for a *leave* that keeps the seed beside the *forget* that destroys it, on
+the grounds that they answer different questions. They do, and the second question turned out
+not to be one anybody is asking: leaving a network is something a person does when they are
+done with it, and being done with it means wanting it off the machine. A seed-preserving leave
+buys the ability to be re-admitted as the same member later, which is a real property and one
+nobody has wanted. Recorded here rather than deleted, because a section that quietly grew a
+second command would be a design nobody chose.
 
-- **Leave** — write the departure, keep the seed. The answer to *I do not want to be in this
-  network any more*. Nothing stops re-admission later: the log records added, removed,
-  added, and everything written stays attributed to the identity that wrote it. Leaving is
-  not banishment, and a protocol with no concept of a ban should not grow one as a side
-  effect of somebody walking out.
-- **Forget** — leave, then destroy the store and the seed. The answer to *I want this off
-  this machine*. It is the stronger act and stays behind the existing native confirmation,
-  because the seed has no recovery path.
+So `forget` stays all-or-nothing, behind the native confirmation it already has, and what it
+gains is the announcement.
 
 **The order is load-bearing and easy to get backwards.** The departure entry is signed by
 the key `forget` is about to destroy, so it must be written **and published** first. A node
-that is offline, unkeyed, or without a route cannot announce anything — so leaving is
-best-effort, and the interface must distinguish *told the network* from *could not tell the
+that is offline, unkeyed, or without a route cannot announce anything — so the announcement
+is best-effort, and the interface must distinguish *told the network* from *could not tell the
 network* rather than reporting success either way. A forget that cannot announce is still a
 forget; it is just one the network will not learn about, and saying so is the difference
 between an honest limit and a lie.
+
+**Announcing still matters even though nobody can come back.** It is tempting to read
+all-or-nothing as making the departure entry pointless — the identity is gone either way. It
+is not: the entry is the only thing that takes the leaf out of the MLS group, and without it
+the network rotates key material for a member who deliberately destroyed their half of it,
+forever. What the departure buys is the *network's* hygiene, not the leaver's.
+
+**One guard has to move with it, and it is not in the protocol.** `kols-node`'s executor
+refuses any self-removal from `everyone` outright, on the grounds that it would leave the
+network unmanaged by the only node that can rotate its key. That is true of a *last* holder of
+`revoke-node` and false of everybody else, and it would silently defeat `06` §16 on its own.
+It becomes a check for the condition it actually means.
 
 **What the network does with a departure is the network's business, not the leaver's.**
 The removal takes effect on replay; the epoch does not rotate on the departure itself, for

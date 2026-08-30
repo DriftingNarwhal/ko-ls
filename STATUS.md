@@ -125,7 +125,7 @@ not, the dependency is named in the owning document.
 | O21 | A joiner admitted under auto-admit whose response never arrives is a member who believes they are waiting. Their client does not ask again, so nothing on either side surfaces the disagreement | `design/09` §4 |
 | O16 | Two members on one network still cannot find each other without the relay. mDNS runs and the transport caches what it finds, but never auto-dials, and nothing here handles the event it emits | `design/00` §6 |
 | O19 | **A role cannot be deleted.** `EntryBody` expresses no group removal, so what a role holds can be emptied and its members taken out, and the name stays in replayed history forever. The interface says so rather than offering a control that cannot work. Not a protocol change being asked for — nobody has needed one — but a limit somebody will meet and should not have to discover | `design/05` §3 |
-| O22 | **A member cannot leave a network.** `forget` is local — it drops this installation's store and seed, and to every other member nothing has happened: still in `everyone`, still in every role, still a leaf the epoch rotates for. Needs E16, which is small; the client half is two commands rather than one, in an order that cannot be reversed | `design/06` §16, `design/02` §6.5 |
+| O22 | **Forgetting a network does not tell it.** `forget` is local — it drops this installation's store and seed, and to every other member nothing has happened: still in `everyone`, still in every role, still a leaf the epoch rotates key material for, forever. Needs E16; the client half is an announcement published *before* the seed is destroyed, plus an executor guard that refuses every self-removal and means to refuse only the last `revoke-node` holder. `forget` stays all-or-nothing by decision — a seed-preserving leave is a property nobody wanted | `design/06` §16, `design/02` §6.5 |
 | O20 | **The daemon suite run starved is unreliable**, and `CONTRIBUTING.md` asks for exactly that run. One or two of eleven time out in `wait_for` under `taskset -c 0,1`; each passes alone. Measured at `main` on 2026-08-29, so it is the suite rather than any change — but it makes the starved run a signal to isolate rather than a gate, which is weaker than what it was added for | `CONTRIBUTING.md`, `tests/common::patience` |
 
 O8, O10, O12, O13, O14, O17 and O18 are closed. What each was, and what closing it turned up,
@@ -160,7 +160,7 @@ produced, which the whole segment model rests on, are in `design/08` §4.
 
 ## 4. Log
 
-Moved to [`docs/log.md`](docs/log.md) — 102 entries, newest first.
+Moved to [`docs/log.md`](docs/log.md) — 103 entries, newest first.
 
 What happened *lately* is §1. The log is why things are the way they are: the reasoning behind
 a change, the thing tried and abandoned, the bug that turned out to be a different bug. It
