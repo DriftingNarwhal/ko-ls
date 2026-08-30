@@ -272,7 +272,20 @@ body {
 }
 
 .presence-count { font-variant-numeric: tabular-nums; font-weight: 600; }
-.presence-caret { font-size: 9px; opacity: 0.7; }
+
+/* Drawn, not typed, for the reason `.row-menu` gives at length: a glyph is sized
+   by whichever font on the machine carries it, and this one sits in a flex row
+   next to a channel title that is allowed to shrink. Same shape of bug, smaller
+   blast radius, and no reason to leave it standing. */
+.presence-caret {
+  border-left: 4px solid transparent;
+  border-right: 4px solid transparent;
+  border-top: 4px solid currentColor;
+  flex: none;
+  height: 0;
+  opacity: 0.7;
+  width: 0;
+}
 
 .presence-panel {
   position: absolute;
@@ -1022,6 +1035,9 @@ body {
   align-items: center;
   display: flex;
   gap: 2px;
+  /* The handle is taken out of flow below, and this is what it positions
+     against. */
+  position: relative;
 }
 /* `1 1 0` rather than `1 1 auto`, and the difference is the whole of a bug that
  * only appeared on Windows.
@@ -1043,18 +1059,49 @@ body {
 .channel-item > button:first-child { flex: 1 1 0; min-width: 0; }
 .folder-head > .folder-name { flex: 1 1 0; min-width: 0; }
 
+/* The strip the handle is laid over. Only on rows that have one, so a member
+   who cannot manage channels loses no width to a control they are not shown. */
+.channel-item.has-menu > button:first-child { padding-right: 28px; }
+.folder-head.has-menu > .folder-name { padding-right: 28px; }
+
+/* A fixed box, and the size is the point rather than the styling.
+ *
+ * This was a `⋯` character sized by `flex: none` — that is, by whatever the font
+ * decided. Segoe UI has no U+22EF, so Windows fell back to a symbol font whose
+ * advance is far wider, the handle took most of the row, and the channel names
+ * were squeezed to nothing. Twice: the first attempt fixed the flex arithmetic
+ * and left the glyph, so the same cause produced a different symptom.
+ *
+ * Twenty by twenty, containing a drawn icon rather than a typed one. There is no
+ * font in this path any more, so the row's arithmetic is the same everywhere and
+ * cannot be changed by what is installed on the machine. */
 .row-menu {
+  align-items: center;
+  /* **Out of flow, so the name's width cannot depend on the handle at all.**
+     The fixed box below already closes the arithmetic; this closes the question.
+     Two rounds of this bug were spent adjusting how the row divides itself
+     between a name and a handle, and the third fix is to stop dividing: the
+     button gets the whole row and reserves a fixed strip of padding, and
+     whatever the handle turns out to measure it is laid over that strip instead
+     of taking anything from the text. */
+  position: absolute;
+  right: 4px;
+  top: 50%;
+  transform: translateY(-50%);
   background: none;
   border: 0;
   border-radius: var(--radius);
   color: var(--dim);
   cursor: pointer;
-  flex: none;
-  font: inherit;
-  line-height: 1;
+  display: flex;
+  flex: 0 0 20px;
+  height: 20px;
+  justify-content: center;
   opacity: 0;
-  padding: 3px 5px;
+  padding: 0;
+  width: 20px;
 }
+.row-menu svg { display: block; }
 .row-menu:hover { background: var(--sunken); color: var(--text); }
 .channel-item:hover .row-menu,
 .folder-head:hover .row-menu,

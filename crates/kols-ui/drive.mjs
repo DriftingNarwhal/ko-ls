@@ -112,6 +112,11 @@ say("presence is on screen", !el("presence").hidden);
 // ── the channel row carries a visible menu handle ──────────────────────
 const handle = el("channel-list").querySelector(".row-menu");
 say("channel row has a menu handle", Boolean(handle));
+// The property that broke Windows twice: nothing about a row's width may depend
+// on what fonts the machine has, so the handle carries no text at all.
+say("the handle is drawn, not typed",
+    handle?.textContent === "" && Boolean(handle?.querySelector("svg")),
+    JSON.stringify(handle?.textContent));
 handle?.dispatchEvent(new window.MouseEvent("click", { bubbles: true, clientX: 10, clientY: 10 }));
 await settled();
 const menu = window.document.querySelector(".pop-menu");

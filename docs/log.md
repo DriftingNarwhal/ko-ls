@@ -24,6 +24,35 @@ Kept because this project keeps re-learning the same lessons and paying for them
 
 ---
 
+- **2026-08-30** — **The sidebar broke a third time, and the fix was to stop the row having an opinion.**
+
+  Second report from Windows: the handle now renders *"significantly larger than the channel
+  names"*, the names show as blank, and the row is worse than before the last fix. Same
+  symptom, different cause, which is why the previous change did not touch it.
+
+  The handle was a `⋯` — U+22EF, midline horizontal ellipsis — sized by `flex: none`, which
+  means sized by its content, which means sized by the font. **Segoe UI has no U+22EF.**
+  Windows fell back to whatever does carry it, that font's advance is far wider, and a handle
+  sized by content took most of a 260px row. The previous round fixed the flex arithmetic and
+  left the glyph, so the arithmetic was correct and the input to it was not.
+
+  Two changes, and the second is the one that matters. The icon is **drawn** now — three SVG
+  circles in a 20×20 box — so nothing about the row depends on what fonts are installed. And
+  the handle is **out of flow**, absolutely positioned over a strip of padding the button
+  reserves, so the name's width does not depend on the handle's even in principle. Correct
+  arithmetic is not the same as no arithmetic, and after two rounds of adjusting how a row
+  divides itself the right move was to stop dividing it.
+
+  The same treatment for the presence caret, which was `▾` in a flex row beside a channel title
+  that is allowed to shrink — same shape, smaller blast radius, no reason to leave standing.
+  Swept the rest: `…` and `×` are Latin-1 and safe, and the folder button's emoji sits in a
+  header with nothing shrinkable in it.
+
+  **This is the third round on one row, and all three were spent on something the development
+  container cannot render.** The driver now asserts the property rather than the appearance —
+  the handle carries no text and contains an `svg` — because "does this look right on Windows"
+  is not a question this machine can answer, and "does a row's width depend on a font" is.
+
 - **2026-08-30** — **A relay is a peer, so "nothing is connected" was never true and nothing was ever re-dialled.**
 
   Reported as a MacBook that sleeps and does not come back without restarting the
