@@ -101,11 +101,13 @@ over the same `kols-api` boundary, owed no feature parity and no end-user docume
   serve, post, read, edit, delete, react, pin, and channel
   create/list/rename/topic/slowmode/archive.
 
-**Gates green as of this date:** 306 tests here, 666 in `../distributed-intranet`, clippy
-clean in both, and `crates/kols-ui/drive.mjs`'s 44 checks green by hand. O20's flake did not
-reproduce on this full-width run either — the second in a row, against a `CONTRIBUTING.md`
-paragraph that says it fails on *every* one. That paragraph is corrected to what has been
-observed. **Two green runs are not a fix**, and nothing was changed that would explain one.
+**Gates green as of this date:** 306 tests here, 672 in `../distributed-intranet`, clippy
+clean in both, and `crates/kols-ui/drive.mjs`'s 44 checks green by hand. O20 reproduced once
+across four full-width runs on 2026-08-31 and 2026-09-01, which makes it **intermittent rather
+than deterministic** — `CONTRIBUTING.md` said it failed on every full-workspace run, and that
+was a run of bad luck rather than a property. The one failure arrived directly after a
+governance change and was attributed by measurement rather than by reading; how, and why the
+comparison is worth running even when you are sure, is in `CONTRIBUTING.md`.
 
 **`v0.11.1` is the release the rows above describe**, cut 2026-09-01. It carries everything
 from 2026-08-30 — the event path, drag, shutdown, re-dial after sleep, the network's name —
@@ -140,7 +142,7 @@ not, the dependency is named in the owning document.
 | O21 | A joiner admitted under auto-admit whose response never arrives is a member who believes they are waiting. Their client does not ask again, so nothing on either side surfaces the disagreement | `design/09` §4 |
 | O16 | Two members on one network still cannot find each other without the relay. mDNS runs and the transport caches what it finds, but never auto-dials, and nothing here handles the event it emits | `design/00` §6 |
 | O19 | **A role cannot be deleted.** `EntryBody` expresses no group removal, so what a role holds can be emptied and its members taken out, and the name stays in replayed history forever. The interface says so rather than offering a control that cannot work. Not a protocol change being asked for — nobody has needed one — but a limit somebody will meet and should not have to discover | `design/05` §3 |
-| O22 | **Forgetting a network does not tell it.** `forget` is local — it drops this installation's store and seed, and to every other member nothing has happened: still in `everyone`, still in every role, still a leaf the epoch rotates key material for, forever. Needs E16, now carried in `specs/07` §7 as well as here; the client half is an announcement published *before* the seed is destroyed, plus an executor guard that refuses every self-removal and means to refuse only the last `revoke-node` holder. `forget` stays all-or-nothing by decision — a seed-preserving leave is a property nobody wanted | `design/06` §16, `design/02` §6.5 |
+| O22 | **Forgetting a network does not tell it.** `forget` is local — it drops this installation's store and seed, and to every other member nothing has happened: still in `everyone`, still in every role, still a leaf the epoch rotates key material for, forever. **E16 landed 2026-09-01** — Core §2.5.1 makes a membership removal naming its own author valid without a capability, and excludes it from fork-choice branch weight. So the protocol half is done and what is left is entirely this client's: an announcement published *before* the seed is destroyed, plus replacing the guard at `change_membership` that refuses every self-removal and means to refuse only the last `revoke-node` holder. `forget` stays all-or-nothing by decision — a seed-preserving leave is a property nobody wanted | `design/06` §16, `design/02` §6.5 |
 | O20 | **The daemon suite run starved is unreliable**, and `CONTRIBUTING.md` asks for exactly that run. One or two of eleven time out in `wait_for` under `taskset -c 0,1`; each passes alone. Measured at `main` on 2026-08-29, so it is the suite rather than any change — but it makes the starved run a signal to isolate rather than a gate, which is weaker than what it was added for | `CONTRIBUTING.md`, `tests/common::patience` |
 
 O8, O10, O12, O13, O14, O17 and O18 are closed. What each was, and what closing it turned up,
@@ -165,8 +167,9 @@ stays readable.
 
 **Protocol extensions.** [`design/06`](design/06-protocol-extensions.md) §0 carries the table
 and is the one place their state is kept. In summary: E1 and E3 withdrawn as unnecessary;
-**E2, E4, E5, E9, E11, E12 and E14 landed**; E7, E10 and E13 are P2, E6 is P3, E8 is P4,
-E15 is spec text that blocks nothing, and E16 is small and blocks leaving a network at all.
+**E2, E4, E5, E9, E11, E12, E14 and E16 landed**; E7, E10 and E13 are P2, E6 is P3, E8 is P4,
+and E15 is spec text that blocks nothing, deliberately sequenced to land beside the credentials
+work it describes rather than on its own.
 
 **P0 is closed** — all five criteria met, recorded in `design/07` §3. The measurements it
 produced, which the whole segment model rests on, are in `design/08` §4.
@@ -175,7 +178,7 @@ produced, which the whole segment model rests on, are in `design/08` §4.
 
 ## 4. Log
 
-Moved to [`docs/log.md`](docs/log.md) — 114 entries, newest first.
+Moved to [`docs/log.md`](docs/log.md) — 115 entries, newest first.
 
 What happened *lately* is §1. The log is why things are the way they are: the reasoning behind
 a change, the thing tried and abandoned, the bug that turned out to be a different bug. It

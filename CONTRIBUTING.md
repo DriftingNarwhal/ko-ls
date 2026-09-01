@@ -98,13 +98,21 @@ Three things about the suite that are not obvious, each learned by getting them 
   is scaled at all, while fourteen tests' worth of signing and encrypting daemons are up at
   once. The suite has outgrown "twelve is the width this was written on and comfortable at".
 
-  **And it did not reproduce at all on 2026-08-30 or 2026-08-31**, on the same box, at full
-  width, with nothing applied that would explain the difference. Two clean runs against a
-  paragraph that says *every* run, so "every" is what has been observed rather than what is
-  true. **That is not a fix and must not be read as one** — an intermittent failure that has
-  gone quiet is the same failure, and the next person to see it should find this paragraph
-  rather than think they broke something. What has actually changed since the measurement above
-  is that the box is quieter, which is exactly the variable the whole item is about.
+  **Measured again across four full-width runs on 2026-08-31 and 2026-09-01: three clean, one
+  failed.** So it is intermittent rather than deterministic, and the paragraph above saying it
+  fails on *every* full-workspace run described a run of bad luck rather than a property.
+  **That is not a fix and must not be read as one.** An intermittent failure is the same
+  failure, and one clean run proves nothing — which is exactly what makes it expensive: it will
+  go quiet for a day and come back on the run where you have just changed something.
+
+  **The one run that failed is worth reading for how it was attributed, because it looked
+  like a regression.** It came directly after a change to `intranet-governance` — a dependency
+  of everything here — so "the protocol change broke a live-wire test" was the obvious
+  reading. Four measurements settled it and none of them was reasoning: the named test passed
+  alone in 77 s; the full suite with the protocol change reverted passed 306; the full suite
+  with it applied passed 306 on the next run; and the change itself is inert for this client,
+  which never writes the entry it affects. **Run the comparison even when you are sure.** The
+  cost is ten minutes and it is the difference between "the flake" and "the flake, probably".
 
   **Attribute before believing it, and attribute by removing things.** Adding `three_nodes`
   looked like the cause — it holds four daemons up for two minutes beside `two_nodes`, and

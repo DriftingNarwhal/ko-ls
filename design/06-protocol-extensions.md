@@ -1,6 +1,6 @@
 # Required Protocol Extensions
 
-**Document status:** v2.2 — **E16 added**: there is no way to leave a network, because every membership change is gated on `revoke-node` and the one member who knows they are leaving is the one who cannot say so; §16 also settles the rejoin question the client was carrying as open, which turns out to be answered already for `forget` and settled since for the leave that would have kept the seed — the client is deliberately not growing one, and §16 says why the protocol should permit it anyway. Previously v2.1 — §13 records that D29 turned E13 from a friction item into the mechanism, and §12 records that `Discovery::Off` is a privacy requirement rather than a saving; both were being carried in a status file. Previously v2.0 — **E14 landed**, as leaf replacement rather than the re-delivery this document asked for;  E1 and E3 withdrawn, **E9, E2, E5, E4, E11 and E12 landed**; E12 narrowed to its protocol half on landing, E13 added from `09`, E14 added from a bug, **E15 added from a divergence this document should have been carrying already**. §2's branch-length and profile-enforcement claims corrected to what landed
+**Document status:** v2.3 — **E16 landed**, as Core §2.5.1, and it came with a second rule the proposal had not seen: an entry needing no capability must carry no fork-choice weight, so a departure is excluded from branch length alongside device certificates. §16 also corrects the capability it named: the entry is gated on `manage-membership`, not `revoke-node`, which is what the epoch rotation needs. What the client owes is unchanged and is O22. Previously v2.2 — **E16 added**: there is no way to leave a network, because every membership change is gated on `revoke-node` and the one member who knows they are leaving is the one who cannot say so; §16 also settles the rejoin question the client was carrying as open, which turns out to be answered already for `forget` and settled since for the leave that would have kept the seed — the client is deliberately not growing one, and §16 says why the protocol should permit it anyway. Previously v2.1 — §13 records that D29 turned E13 from a friction item into the mechanism, and §12 records that `Discovery::Off` is a privacy requirement rather than a saving; both were being carried in a status file. Previously v2.0 — **E14 landed**, as leaf replacement rather than the re-delivery this document asked for;  E1 and E3 withdrawn, **E9, E2, E5, E4, E11 and E12 landed**; E12 narrowed to its protocol half on landing, E13 added from `09`, E14 added from a bug, **E15 added from a divergence this document should have been carrying already**. §2's branch-length and profile-enforcement claims corrected to what landed
 **Depends on:** all preceding documents
 **Consumed by:** work in `distributed-intranet`
 
@@ -41,7 +41,7 @@ Two rules govern this list:
 | E13 | Cross-network connection bootstrap, for direct messages — **load-bearing since D29, not merely convenient**: without it a conversation across NAT needs its own relay, so there are no DMs at all (§13) | P2 | Medium |
 | ~~E14~~ | Idempotent epoch-key delivery — **landed**, Core §3.5.1. Asked as key re-delivery; landed as leaf replacement, because re-delivery restores no group state and re-adding silently breaks revocation | — | Done |
 | E15 | Independent per-network seeds — Core §1.1's master seed is not what this client implements (D28) | Nothing; conformance rather than function | Spec text only |
-| E16 | Self-removal from a group — a member cannot say they are leaving, because every membership change is gated on `revoke-node` (§16) | Leaving a network at all | Small |
+| ~~E16~~ | Self-removal from a group — **landed**, Core §2.5.1. Asked as a capability exemption; landed with a fork-choice exclusion the proposal had not seen, because an entry needing no capability must carry no branch weight | — | Done |
 
 ---
 
@@ -732,7 +732,7 @@ sufficient.
 
 ---
 
-## 16. E16 — Self-Removal From a Group
+## 16. E16 — Self-Removal From a Group ✅ **landed**
 
 **There is no way to leave a network, and the client's `forget` is not one.** It deletes
 this installation's store and the seed with it. To every other member nothing has happened:
@@ -759,10 +759,16 @@ leaks — but three things are wrong in a way that compounds:
 ### What the log can express, and what it cannot
 
 `EntryBody::MembershipChange { group, identity, action: Remove { cascade } }` is the right
-entry and already exists. It is gated on `Capability::RevokeNode`, which a departing member
-almost never holds — so the one member who knows they are leaving is the one member who
-cannot say so. The protocol has no concept of leaving at all: Core §2 covers admission and
-revocation, and both are things done *to* a member.
+entry and already exists. It is gated on `Capability::ManageMembership(group)`, which a
+departing member almost never holds — so the one member who knows they are leaving is the one
+member who cannot say so. The protocol has no concept of leaving at all: Core §2 covers
+admission and revocation, and both are things done *to* a member.
+
+**Corrected on landing: this section said `RevokeNode`, and the entry is gated on
+`manage-membership:<group>`.** `revoke-node` is what the *epoch rotation* needs, and what this
+client's own `RevokeMember` command asks for on top of the protocol's gate — three different
+checks that all sit on the same act, which is how one stood in for another here. It changes
+nothing about the argument: a departing ordinary member holds neither.
 
 ### The rule this asks for
 
@@ -819,9 +825,24 @@ goes. A node that is offline or has no route cannot announce anything, so leavin
 best-effort and the interface must say which of the two happened rather than reporting
 success either way.
 
-**Recorded in the protocol repository as of 2026-08-31**, as a row in `specs/07` §7 — where
-the platform work is actually scoped. It was specified here for a week and nowhere over there,
+**Landed 2026-09-01 as Core §2.5.1**, a day after being recorded in `specs/07` §7 — where the
+platform work is actually scoped. It had been specified here for a week and nowhere over there,
 which meant the one list a protocol reader consults did not carry it.
+
+**Implementing it found a consequence this section had not.** §2.7.1 measures fork-choice branch
+length in *capability-gated* actions precisely so that entries which are free to mint cannot
+grind a branch to victory, and it generalises past device certificates to "any other future
+entry type that similarly requires no capability to produce". A self-removal is now exactly
+such a type — and the cheapest one to grind, because under `admission: auto` a multi-use invite
+mints identities freely and each could leave every group it was in. So the rule below is two
+rules: the entry needs no capability, **and it carries no branch weight**. Asking the entry body
+alone cannot answer the second, since the body holds the identity being removed and not the
+signer; `LogEntry::is_capability_gated` answers it instead.
+
+**What the client still owes is unchanged**, and is `STATUS.md`'s O22: publishing the departure
+before destroying the seed, and replacing the executor's blanket refusal of self-removal with a
+check for the last `revoke-node` holder — which is the case that guard's own comment describes
+and the only one it should catch.
 
 **Acceptance:** Core §2 states that a membership removal naming its own author is valid
 without a capability, and says what it does and does not do to the epoch; `intranet-governance`
@@ -844,8 +865,7 @@ P3   E6   — lands when it lands
 P4   E8
 —    E15  (blocks nothing; land it beside the credentials and backup work `00` §5 carries as a
           release gate and `02` §6.3 shapes, which is what it describes)
-—    E16  (blocks leaving a network, which nothing else waits on; small, and independent of
-          every other item here)
+—    E16 ✅ (landed; the client half of leaving a network is O22 and waits on nothing)
 ```
 
 E9 is small and unblocks the rest. E2 is the first item requiring real spec work.

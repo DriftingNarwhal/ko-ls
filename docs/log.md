@@ -24,6 +24,63 @@ Kept because this project keeps re-learning the same lessons and paying for them
 
 ---
 
+- **2026-09-01** — **E16 landed, and it turned out to be two rules rather than one.**
+
+  The rule as specified: a `MembershipChange` removing the entry's own author is valid without a
+  capability. Core §2.5.1 now says it, `intranet-governance` enforces it, and six conformance
+  tests cover it. The protocol had no concept of leaving at all before this — §2.4 covers
+  admission and §2.5 covers revocation, and both are things done *to* a member by a capability
+  holder, so the one member who knew they were leaving was the one who could not record it.
+
+  **What implementing it found was a second rule, in a document that already generalised to
+  it.** §2.7.1 measures fork-choice branch length in *capability-gated* actions specifically, so
+  that entries free to mint cannot grind a branch to victory — a correction made after device
+  certificates turned out to be exactly such an entry. It generalises past them in as many
+  words: "any other future entry type that similarly requires no capability to produce". A
+  self-removal is now such a type, and the cheapest one yet to grind: under `admission: auto` a
+  multi-use invite mints identities freely, and each could then leave every group it was in,
+  turning free entries into branch weight. Excluding it is not a refinement of E16 — it is the
+  half of E16 that keeps the first half from being an attack.
+
+  **The design document had not seen it, and the code's own comment had.** `design/06` §16 asked
+  only for the capability exemption. The comment above `is_capability_gated` already named
+  `RotationReason::SelfInitiated` as a member of the excluded class and said why, which is what
+  made the question obvious the moment the exemption was written. A comment that explains a rule
+  rather than restating it is what makes the next instance of that rule findable.
+
+  **It moved a function's question from the body to the entry.** `EntryBody::is_capability_gated`
+  is a pure function of the body and cannot see the author, so it cannot tell a departure from an
+  ejection — they differ only in who signed. `LogEntry::is_capability_gated` can, and now answers
+  there. The body still reports `MembershipChange` as gated, which stays right for the general
+  case; the entry subtracts the self-directed one.
+
+  **Both halves were verified by breaking them.** Disabling the authorization change turns four
+  tests red; disabling the fork-choice exclusion turns exactly one red. An assertion nobody has
+  watched fail is a comment.
+
+  **The harness got the second half as a runnable check.** `governance grinding-check` already
+  padded a losing branch with device certificates and asserted it still lost; it now takes
+  `--with departures` and pads with self-removals instead. With the exclusion in place the honest
+  branch wins; with it removed, twenty departures beat two genuine governance actions and the
+  command says so. Spec 06 §3 is widened to ask for the whole class rather than the one member of
+  it that was found first, which is what it should have said the second time this happened.
+
+  **And the O20 flake picked this change to reappear on.** The full workspace failed
+  `a_node_offline_across_a_rotation_catches_up_and_can_still_read` on the first run after a
+  governance change — which reads exactly like the protocol change breaking a live-wire test.
+  It is not: the named test passes alone in 77 s, the suite with the change reverted passes 306,
+  the suite with it applied passes 306 on the next run, and the change is inert for this client,
+  which never writes the entry it affects. Ten minutes of comparison, and the reason to spend
+  them is that reading the diff had already produced the right answer with no way to tell it
+  apart from a comfortable one. It also corrects `CONTRIBUTING.md`: three clean runs and one
+  failure make this intermittent, not the every-run failure that paragraph claimed.
+
+  E15 was not done, deliberately: `design/06` §17 sequences it to land beside the credentials
+  work it describes, because that is where the client has to say what a per-network seed means to
+  a user, and amending the spec while writing that is cheaper than amending it twice. Everything
+  else the protocol still owes — E7, E10, E13, E6, E8 — belongs to P2 and later.
+
+
 - **2026-09-01** — **`v0.11.1` is cut, and the interesting number is forty.**
 
   That is how many commits `main` had taken since `v0.11.0` on 2026-08-23 — eight days, and
