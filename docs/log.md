@@ -24,6 +24,80 @@ Kept because this project keeps re-learning the same lessons and paying for them
 
 ---
 
+- **2026-09-01** — **`v0.11.1` is cut, and the interesting number is forty.**
+
+  That is how many commits `main` had taken since `v0.11.0` on 2026-08-23 — eight days, and
+  every fix that made the client work: the Tauri ACL that had refused every node event for the
+  life of the application, the native drag handler that ate every drag, a shutdown path that did
+  not exist, a re-dial loop that counted the relay as a connection, and a founder's network name
+  that never reached the log. None of it was in a published release, while `README.md` and
+  `docs/two-machine-test.md` both send a new user to Releases.
+
+  **A distributable that trails `main` is indistinguishable, from the far end, from work that
+  was never done.** Field testing here has been on CI dispatch artifacts, which is the right way
+  to get a build into a tester's hands quickly and is invisible to anybody else — so the gap
+  went unnoticed for exactly as long as the only people running it were being handed builds by
+  hand. The audit found it by comparing the newest tag against the newest commit, which is a
+  check worth making whenever `STATUS.md` gains a row saying **done**.
+
+  **Both version fields moved**, `Cargo.toml` and `crates/kols-app/tauri.conf.json`, which is
+  the lesson `v0.11.0` already paid for: the second names the installer the runbook tells people
+  to download, and bumping only the first publishes a release containing an installer labelled
+  with the previous version.
+
+  Cut as a patch rather than a minor deliberately — nothing in it is new, and every one of the
+  five items above is a thing that was always meant to work and did not.
+
+
+- **2026-08-31** — **A full audit across the three repositories, and the drift was all in one direction.**
+
+  Nothing was found wrong with the code. Every gate is green — 306 tests here, 666 in
+  `distributed-intranet`, clippy clean in both, `drive.mjs`'s 44 checks green — every internal
+  document link resolves, every `§` cross-reference resolves to a heading that exists, and there
+  is not a `TODO`, a `dbg!` or a `console.log` in the tree. What the audit found instead was six
+  places where a document had been overtaken by the work it describes, and they have a shape.
+
+  **A document goes stale in the direction the work moved, and the repository that owns a
+  subject is not the one that notices.** `design/06` §16 specifies E16 in full — the rule, why it
+  is safe, what it must settle about epoch rotation, an acceptance criterion naming
+  `intranet-governance`. All of that sat in the *client's* ledger. `specs/07` §7, which is the
+  list the protocol repository actually works from, had nine amendments and no E16; the protocol
+  README said "nine amendments, six landed"; its `CLAUDE.md` said the same. So the one place a
+  reader would look to find out what the platform still owes was the one place the debt was not
+  recorded. This project has a rule for exactly this — *a needed protocol change is recorded in
+  `design/06` rather than assumed into existence* — and it turns out to have been running in one
+  direction only. E16 is now a row in §7 with the rule stated normatively, and both summaries
+  count ten.
+
+  **The worst of the six was not in a document at all.** The picker's own help text told a
+  founder that a relay is set under **relay** *in the sidebar*. It has not been in the sidebar
+  since settings became a screen: it is under settings → network. A stale sentence in a design
+  document costs a reader a minute; a stale sentence in the interface is a wrong instruction
+  given to the person least able to check it, at the one step of setup that has an order they
+  cannot guess. Worth carrying: moving a control means grepping the interface for the old name,
+  not only the docs.
+
+  **`docs/two-machine-test.md` still opened by saying the test had never been run.** It passed
+  eight days ago, on three machines across three networks. The document carried its own
+  instruction for that moment — *delete it or fold what survived into the README* — and neither
+  happened, so it spent a week disagreeing with `STATUS.md` about the project's headline claim
+  while also directing people to a relay panel and an invite button that had both moved. It is a
+  runbook now, with the navigation corrected. The delete-or-fold instruction is not being obeyed
+  literally: most of it is relay deployment and failure modes, which belong on a project's front
+  page even less than they belong here.
+
+  **Two numbers, in opposite directions, and the interesting one is whose.** `README.md` here
+  claimed 189 tests against 306. The protocol repository claimed 656 against 666 — while
+  `STATUS.md` in *this* repository had 666 exactly right. A count is easiest to get wrong about
+  yourself, because nobody re-derives a number they already believe.
+
+  **And the distributable trails `main` by everything that made it work.** The newest tag is
+  `v0.11.0` from 2026-08-23. The event path, drag, shutdown, re-dial after sleep and the
+  network's name all landed on the 30th, and two documents send a new user to Releases — so
+  following the README today gets a build in which none of it works. Recorded in `STATUS.md` §1
+  rather than fixed, because cutting a release is a decision rather than a repair.
+
+
 - **2026-08-30** — **The first drag that actually ran found that two of its four destinations had no target.**
 
   It works, and the notes back were "the drop zones are too small" and "once every channel was

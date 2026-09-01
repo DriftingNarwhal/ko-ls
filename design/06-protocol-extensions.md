@@ -819,6 +819,10 @@ goes. A node that is offline or has no route cannot announce anything, so leavin
 best-effort and the interface must say which of the two happened rather than reporting
 success either way.
 
+**Recorded in the protocol repository as of 2026-08-31**, as a row in `specs/07` §7 — where
+the platform work is actually scoped. It was specified here for a week and nowhere over there,
+which meant the one list a protocol reader consults did not carry it.
+
 **Acceptance:** Core §2 states that a membership removal naming its own author is valid
 without a capability, and says what it does and does not do to the epoch; `intranet-governance`
 accepts such an entry and refuses one that removes anybody else; a member with no grants can

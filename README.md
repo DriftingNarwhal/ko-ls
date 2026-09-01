@@ -82,7 +82,7 @@ crates/kols-node   the executor, the node loop, the store, the workspace — wha
                    development client over the same boundary (D30), not a product
 crates/kols-app    `kols-desktop` — the Tauri shell, holding a workspace and running a node
 crates/kols-ui     the interface: HTML, CSS and one script, holding no keys and no sockets
-design/            00-08 at v1.0, 09 the interface
+design/            00-08 the design set, 09 the interface
 .devcontainer/     the environment for this repo and the protocol beside it
 .github/           release.yml — Windows and macOS builds, on a tag or on demand
 scripts/           cross-check.sh — runs the encoding on a big-endian target
@@ -106,7 +106,7 @@ still landing. The dev container in `.devcontainer/` has the whole toolchain if 
 rather not assemble one.
 
 ```bash
-cargo test                                   # 189 tests; the two-node ones spawn real nodes on loopback
+cargo test                                   # 306 tests; the two-node ones spawn real nodes on loopback
 cargo clippy --workspace --all-targets       # must stay clean
 ./scripts/cross-check.sh                     # big-endian verification, see below
 ```
@@ -207,9 +207,11 @@ refused, and the other way round. The claim expires after six seconds without a 
 because a window is closed by the window manager and that runs no destructors — a crash costs a
 pause rather than a stuck store.
 
-What it does **not** do is presence: `design/09` §4's third question, who is here and are they
-around, has no answer in the interface yet, because nothing implements the ephemeral gossip it
-needs. `design/09` §4.1 carries what is owed there, and why it is last.
+What it does **not** do is presence. `design/09` §4's third question — who is here, and are
+they around — has no answer, because nothing implements the ephemeral gossip it needs. What the
+window shows instead is the narrower thing it can actually know: how many members this node is
+connected to, and whether that is more than none. `design/09` §4.1 carries what is still owed
+there, and why it is last.
 
 ## What exists
 

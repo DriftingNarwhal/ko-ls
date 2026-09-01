@@ -1,12 +1,17 @@
 # The Two-Machine Test
 
 **Purpose:** two laptops on entirely separate networks, one on a mobile hotspot, talking
-through a bootstrap relay and no VPS. Everything below is built; none of it has crossed a real
-network.
+through a bootstrap relay and no VPS.
 
-**Status:** this document exists because that test has not been run yet. When it has, and the
-path it describes is either routine or wrong, delete it or fold what survived into the README —
-a runbook kept past its usefulness is another thing to disagree with `STATUS.md`.
+**Status: run, and it passed.** Two of the author's own laptops, one on a mobile hotspot, and
+then a third person on a third network — connection worked across all three, survived close and
+reopen, reconnected, and every chat function worked. `STATUS.md` §1 carries what it established
+and the defects it found. So this is a **runbook** now rather than a plan: the path below is the
+one that was walked, corrected where walking it proved it wrong.
+
+It is still worth keeping separate from the README, because most of it is the relay deployment
+and the failure modes — neither of which belongs in a project's front page, and both of which
+are what somebody standing at a stalled join actually needs.
 
 **The window does all of it.** No terminal, at any step — including making the relay's identity,
 which used to need one. Deploying the relay happens in a browser. The `kols` binaries in the
@@ -71,7 +76,8 @@ knows this network's id.
 
 ## 3. Make the relay's identity — **A**
 
-In the sidebar, **relay** → *set the relay*.
+**settings** — the button at the top of the left rail, beside *networks* — then **network**,
+then *set the relay*.
 
 **generate a relay identity**, then **copy**. That is a BIP-39 phrase and it is the relay's
 private key — anyone holding it can answer as this relay. It is shown once and stored nowhere,
@@ -129,7 +135,8 @@ That is why the two are exposed separately.
 
 ## 5. Designate it — **A**
 
-Paste that address into the same **relay** panel and press **designate**.
+Paste that address into the same **relay** panel — settings → network — and press
+**designate**.
 
 The address is checked before it becomes policy — one naming no peer id is refused here, because
 this entry is replayed by every member and a relay nothing can verify is worse than none.
@@ -157,7 +164,10 @@ Then post something.
 
 ## 7. Mint the invite — **A**
 
-Under *people*, press **invite**, then **copy**.
+**invite**, at the top of the left rail, then **mint an invite** and **copy**.
+
+The button is shown only to a holder of `approve-node`, which is the same capability admitting
+somebody needs — so a member who could not let anybody in is not shown a door at all.
 
 An invite needs an address and only a running node knows one, so this carries what your node is
 currently reachable on. **Keep this window open** — it is what answers when B redeems it.
@@ -177,7 +187,8 @@ window says so rather than showing you an empty network.
 
 ## 9. Admit them — **A**
 
-Under *people*, the waiting list fills. Press **admit**.
+The count on the **invite** button fills. Open it, and press **admit** beside whoever is
+waiting.
 
 The waiting room is live state in the running node, so it is stale by construction and refreshes
 as the daemon sees things.
@@ -291,8 +302,9 @@ always on the *other* machine. That has cost this project two rounds of guessing
 
 Capture, from **both** machines:
 
-- **The relay panel**, in the sidebar. It says which of four states that node is in — a circuit
-  reserved, none designated, designated and none usable, or not yet reported — and lists what
+- **The relay panel**, under settings → network. It says which of four states that node is in
+  — a circuit reserved, none designated, designated and none usable, or not yet reported — and
+  lists what
   replay designates above what this node cached, italicised where the two differ. A node whose
   cache names a relay that is gone behaves differently from one that never had a relay, and this
   is where you see which you have.
@@ -341,12 +353,20 @@ It establishes that the path works across real networks: relay reachability, adm
 epoch-key delivery, pointer sync, segment fetch and a merged view between two nodes that have
 never been on the same machine.
 
-**It tests two unproven things at once, and that is worth going in knowing.** The window has
-been opened once and rendered, but nothing was wired to it then, so every path
-through it is unexercised — as is the network path across real machines. A failure could be
-either. When something does not work, the question to ask first is whether the *other* window
-shows the state you expect: if A's says B was admitted and keyed, and B's shows nothing, the
-fault is between them rather than in the interface.
+**It tested two unproven things at once, which is why the first run's failures took reading.**
+The window and the network path were both unexercised, so a failure could have been either. That
+is no longer the position — both have been walked end to end — but the diagnostic habit it
+forced is the one to keep: when something does not work, ask first whether the *other* window shows the
+state you expect. If A's says B was admitted and keyed and B's shows nothing, the fault is
+between them rather than in the interface.
+
+**What the first runs actually found was never in the chat path.** Every defect was a layer
+below the interface, behaving correctly by its own lights and quietly removing a feature: an
+empty Tauri ACL that had refused every node event for the life of the client, a native drag
+handler that took the drag before the page saw it, a re-dial loop that counted the relay as a
+connection and so never re-dialled after a laptop slept, and a founder's network name that was
+never written to the log. `docs/log.md` carries each. Worth knowing before running it again:
+the interface is not usually the thing that is wrong, and it is not usually able to say so.
 
 It does not exercise private channels, direct messages, voice or search, none of which exist.
 And it says nothing about behaviour over days — retention, key retirement and segment sealing

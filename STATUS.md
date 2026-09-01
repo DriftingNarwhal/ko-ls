@@ -1,6 +1,6 @@
 # ko-ls — Status
 
-**Updated:** 2026-08-30
+**Updated:** 2026-09-01
 **Phase:** P1 — two nodes talk live and durably, a joiner reads back through sealed history,
 and the boundary carries commands in and events out.
 
@@ -73,7 +73,7 @@ Where that milestone stands:
 | One string to join | **done** |
 | A window that creates, joins, opens and runs a node for a network | **done** |
 | Minting an invite from the window, with the waiting room and admitting beside it | **done** — no step of the flow needs a terminal |
-| Windows and macOS builds | **done**, in CI. `kols.exe` runs; `kols-desktop.exe` is built and unrun. It no longer opens a console behind the window — and the attribute that does that had to land with `kols_node::Report`, since a GUI-subsystem process has no stdout and Rust *panics* on the write rather than dropping it |
+| Windows and macOS builds | **done**, in CI, and both have now been run in the field across several rounds of testing. `kols-desktop.exe` opens no console behind the window — the attribute that does that had to land with `kols_node::Report`, since a GUI-subsystem process has no stdout and Rust *panics* on the write rather than dropping it |
 | Two nodes meeting through the deployed relay | **Done, on one LAN.** Both ends ran the window, connected and reconnected several times, messages crossed both ways, and an established connection survived the relay going down |
 | Content outliving the node that wrote it | **done** — a member reads what an offline member wrote, because a third kept it, and a restart no longer discards what a node kept (`three_nodes.rs`). Before this a node was a member of the storage swarm only until its process ended |
 | **Two nodes on separate networks** | **Done — this milestone's stated first test passes.** Two of the user's own laptops, one on a mobile hotspot, and then a third person on a third network: connection worked across all three, survived close and reopen, reconnected, and roles, permissions and every chat function (posting, voting, withdraw, edit, channel creation by an invited member) worked. The one defect that test found — a node losing its whole servable contribution on restart — is the row above |
@@ -102,8 +102,18 @@ over the same `kols-api` boundary, owed no feature parity and no end-user docume
   create/list/rename/topic/slowmode/archive.
 
 **Gates green as of this date:** 306 tests here, 666 in `../distributed-intranet`, clippy
-clean in both. O20's starved-run flake did not reproduce on this full-width run; it is not
-fixed, and one green run is not evidence that it is.
+clean in both, and `crates/kols-ui/drive.mjs`'s 44 checks green by hand. O20's flake did not
+reproduce on this full-width run either — the second in a row, against a `CONTRIBUTING.md`
+paragraph that says it fails on *every* one. That paragraph is corrected to what has been
+observed. **Two green runs are not a fix**, and nothing was changed that would explain one.
+
+**`v0.11.1` is the release the rows above describe**, cut 2026-09-01. It carries everything
+from 2026-08-30 — the event path, drag, shutdown, re-dial after sleep, the network's name —
+none of which was in a published release until now: `v0.11.0` was eight days and forty
+commits behind, while `README.md` and `docs/two-machine-test.md` both send a new user to
+Releases. That gap is the thing to watch rather than the version number; a distributable that
+trails `main` by a week of fixes is indistinguishable, from the far end, from fixes that were
+never made.
 
 ---
 
@@ -130,7 +140,7 @@ not, the dependency is named in the owning document.
 | O21 | A joiner admitted under auto-admit whose response never arrives is a member who believes they are waiting. Their client does not ask again, so nothing on either side surfaces the disagreement | `design/09` §4 |
 | O16 | Two members on one network still cannot find each other without the relay. mDNS runs and the transport caches what it finds, but never auto-dials, and nothing here handles the event it emits | `design/00` §6 |
 | O19 | **A role cannot be deleted.** `EntryBody` expresses no group removal, so what a role holds can be emptied and its members taken out, and the name stays in replayed history forever. The interface says so rather than offering a control that cannot work. Not a protocol change being asked for — nobody has needed one — but a limit somebody will meet and should not have to discover | `design/05` §3 |
-| O22 | **Forgetting a network does not tell it.** `forget` is local — it drops this installation's store and seed, and to every other member nothing has happened: still in `everyone`, still in every role, still a leaf the epoch rotates key material for, forever. Needs E16; the client half is an announcement published *before* the seed is destroyed, plus an executor guard that refuses every self-removal and means to refuse only the last `revoke-node` holder. `forget` stays all-or-nothing by decision — a seed-preserving leave is a property nobody wanted | `design/06` §16, `design/02` §6.5 |
+| O22 | **Forgetting a network does not tell it.** `forget` is local — it drops this installation's store and seed, and to every other member nothing has happened: still in `everyone`, still in every role, still a leaf the epoch rotates key material for, forever. Needs E16, now carried in `specs/07` §7 as well as here; the client half is an announcement published *before* the seed is destroyed, plus an executor guard that refuses every self-removal and means to refuse only the last `revoke-node` holder. `forget` stays all-or-nothing by decision — a seed-preserving leave is a property nobody wanted | `design/06` §16, `design/02` §6.5 |
 | O20 | **The daemon suite run starved is unreliable**, and `CONTRIBUTING.md` asks for exactly that run. One or two of eleven time out in `wait_for` under `taskset -c 0,1`; each passes alone. Measured at `main` on 2026-08-29, so it is the suite rather than any change — but it makes the starved run a signal to isolate rather than a gate, which is weaker than what it was added for | `CONTRIBUTING.md`, `tests/common::patience` |
 
 O8, O10, O12, O13, O14, O17 and O18 are closed. What each was, and what closing it turned up,
@@ -147,8 +157,8 @@ stays readable.
 |---|---|
 | `kols-core` | Encoding, author logs, merge, collision recovery, chat policy, channel structure, `sidebar_order`, reader-side limits, and `Scope` — the one construction of a capability's name, used by the writer and the resolver alike. 126 tests |
 | `kols-net` | Publish and fetch over a running node. Two live two-node tests |
-| `kols-api` | The whole boundary — all three of `design/05` §3's properties held. 39 tests, and the consent drift test is now guarded at both ends: a new command stops the suite compiling until it is sampled |
-| `kols-node` | `kols`, its node daemon, the executor, the store and the workspace — the window's entire backend. Ten tests over a live wire between two processes, and eight in-process over roles and grants |
+| `kols-api` | The whole boundary — all three of `design/05` §3's properties held. 49 tests, and the consent drift test is guarded at both ends: a new command stops the suite compiling until it is sampled |
+| `kols-node` | `kols`, its node daemon, the executor, the store and the workspace — the window's entire backend, and the largest crate here at 121 tests. Fifteen of them run over a live wire between separate processes (`two_nodes`, `three_nodes`, `relay`); thirteen are in-process over roles and grants; the rest cover the workspace, the store, invites, names and records |
 | `kols-app` | The Tauri shell, holding a workspace and an executor for whichever network is open. Builds `kols-desktop`. 8 tests, one of which resolves the webview's ACL against the real configuration — the boundary whose failure produces no output |
 | `kols-ui` | The interface: HTML, CSS and one script, holding no keys, no sockets and no files |
 | `kols-store`, `kols-media` | Not created. A crate is made when there is code for it — an empty one is a claim that something exists |
@@ -165,7 +175,7 @@ produced, which the whole segment model rests on, are in `design/08` §4.
 
 ## 4. Log
 
-Moved to [`docs/log.md`](docs/log.md) — 112 entries, newest first.
+Moved to [`docs/log.md`](docs/log.md) — 114 entries, newest first.
 
 What happened *lately* is §1. The log is why things are the way they are: the reasoning behind
 a change, the thing tried and abandoned, the bug that turned out to be a different bug. It

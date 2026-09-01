@@ -45,9 +45,9 @@ the minute it appears, which is the difference between diagnosing a fault and co
 log fragments at one.
 
 **The front end has no gate, and one thing to run by hand instead.** `crates/kols-ui` is
-2,600 lines of JavaScript that nothing asks questions of. `drive.mjs` beside it loads the
-real `index.html` and `app.js` into `jsdom` with a stubbed `invoke`, walks the interface,
-and reports:
+some three thousand lines of JavaScript that nothing asks questions of. `drive.mjs` beside it
+loads the real `index.html` and `app.js` into `jsdom` with a stubbed `invoke`, walks the
+interface, and reports:
 
 ```
 cd crates/kols-ui && npm install jsdom && node drive.mjs
@@ -97,6 +97,14 @@ Three things about the suite that are not obvious, each learned by getting them 
   not starvation in the two-core sense — `factor()` returns 1 at this width, so no deadline
   is scaled at all, while fourteen tests' worth of signing and encrypting daemons are up at
   once. The suite has outgrown "twelve is the width this was written on and comfortable at".
+
+  **And it did not reproduce at all on 2026-08-30 or 2026-08-31**, on the same box, at full
+  width, with nothing applied that would explain the difference. Two clean runs against a
+  paragraph that says *every* run, so "every" is what has been observed rather than what is
+  true. **That is not a fix and must not be read as one** — an intermittent failure that has
+  gone quiet is the same failure, and the next person to see it should find this paragraph
+  rather than think they broke something. What has actually changed since the measurement above
+  is that the box is quieter, which is exactly the variable the whole item is about.
 
   **Attribute before believing it, and attribute by removing things.** Adding `three_nodes`
   looked like the cause — it holds four daemons up for two minutes beside `two_nodes`, and
