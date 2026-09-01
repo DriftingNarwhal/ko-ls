@@ -273,6 +273,131 @@ fn a_role_member_is_added_and_removed_without_leaving_the_network() {
     );
 }
 
+// ---------------------------------------------------------------------------
+// Leaving a network — Core §2.5.1, `design/02` §6.5
+// ---------------------------------------------------------------------------
+
+#[test]
+fn the_only_revoke_node_holder_cannot_leave() {
+    // The guard that replaced a blanket refusal of every self-removal. This is
+    // the case that refusal *meant*: a network whose last `revoke-node` holder
+    // walks out has nobody left who can rotate the epoch, so nobody who can
+    // ever remove anybody — including the member who just left with a copy of
+    // the key material.
+    let lab = Lab::new("last-holder");
+    let refusal = lab
+        .run(Command::LeaveNetwork)
+        .expect_err("the only founder holds the only `revoke-node`");
+    assert!(
+        refusal.contains("revoke-node"),
+        "the refusal has to say which capability strands the network: {refusal}"
+    );
+    assert!(
+        lab.state().is_member(&lab.me()),
+        "a refused departure must leave membership exactly as it was"
+    );
+}
+
+#[test]
+fn a_member_who_is_not_the_last_holder_may_leave() {
+    // The same founder, once somebody else can rotate. Nothing else changed —
+    // which is the point of asking the question about the network rather than
+    // about who is asking.
+    let lab = Lab::new("hand-over");
+    let heir = lab.subject();
+    lab.run(Command::SetRoleMember {
+        group: GroupId::founders(),
+        identity: heir,
+        member: true,
+    })
+    .expect("a founder may make another");
+
+    lab.run(Command::LeaveNetwork).expect("now it is ordinary");
+    assert!(
+        !lab.state().is_member(&lab.me()),
+        "leaving means out of every group, not out of one"
+    );
+    assert!(
+        lab.state().is_member(&heir),
+        "leaving is self-directed and touches nobody else"
+    );
+}
+
+#[test]
+fn leaving_writes_one_entry_per_group() {
+    // Core §2.5.1 declines to make leaving `everyone` imply the rest, so this
+    // is several entries rather than one. Asserted because the alternative —
+    // writing only the `everyone` removal — leaves the departed member holding
+    // roles in replayed state, which is the state the whole item exists to
+    // avoid.
+    let lab = Lab::new("every-group");
+    let heir = lab.subject();
+    lab.run(Command::SetRoleMember {
+        group: GroupId::founders(),
+        identity: heir,
+        member: true,
+    })
+    .expect("hands over `revoke-node`");
+    lab.run(Command::CreateRole { group: role("Team") })
+        .expect("creates");
+    lab.run(Command::SetRoleMember {
+        group: role("Team"),
+        identity: lab.me(),
+        member: true,
+    })
+    .expect("joins");
+
+    let held: Vec<GroupId> = lab
+        .state()
+        .groups
+        .iter()
+        .filter(|(_, found)| found.contains(&lab.me()))
+        .map(|(id, _)| id.clone())
+        .collect();
+    // `Founders` and the role, and **not** `everyone` — genesis puts the
+    // founder in the implicit root group and leaves `everyone` empty (Core
+    // §2.3, §2.4). Worth asserting rather than assuming: a departure that only
+    // wrote the `everyone` removal would be a no-op for exactly this member.
+    assert_eq!(
+        held,
+        vec![GroupId::founders(), role("Team")],
+        "the groups a founder is actually in"
+    );
+
+    lab.run(Command::LeaveNetwork).expect("leaves");
+    for group in &held {
+        assert!(
+            !lab.state().groups[group].contains(&lab.me()),
+            "still in {group} after leaving"
+        );
+    }
+}
+
+#[test]
+fn stepping_out_of_one_role_is_not_leaving_and_is_not_guarded() {
+    // The regression the new guard could most easily introduce. `would_strand`
+    // asks whether the capability survives the departure, and a founder leaving
+    // an ordinary role keeps it through `Founders` — so this must stay the
+    // ordinary act it was, with no mention of stranding anything.
+    let lab = Lab::new("step-down");
+    lab.run(Command::CreateRole { group: role("Team") })
+        .expect("creates");
+    lab.run(Command::SetRoleMember {
+        group: role("Team"),
+        identity: lab.me(),
+        member: true,
+    })
+    .expect("joins");
+
+    lab.run(Command::SetRoleMember {
+        group: role("Team"),
+        identity: lab.me(),
+        member: false,
+    })
+    .expect("stepping out of a role is not leaving the network");
+    assert!(lab.state().is_member(&lab.me()));
+}
+
 #[test]
 fn the_everyone_ceiling_holds_at_the_executor_too() {
     // The gate refuses this before anything is signed, and the protocol refuses

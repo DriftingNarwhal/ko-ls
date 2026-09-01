@@ -201,6 +201,14 @@ enum Command {
         /// The member's identity in this network, as hex.
         identity: String,
     },
+    /// Leave this network, telling it so — Core §2.5.1.
+    ///
+    /// Writes one membership removal per group you are in, signed by you and
+    /// needing no capability. It does **not** delete anything: the store and the
+    /// seed stay, and `forget` in the window is what removes those. The order
+    /// matters in the other direction though — these entries are signed by the
+    /// seed, so they cannot be written after it is gone.
+    Leave,
     /// Prepare a store for a network created elsewhere, before syncing it.
     Attach {
         /// The network id, as hex.
@@ -396,6 +404,7 @@ fn submit(root: std::path::PathBuf, command: Command) -> Result<(), String> {
         Command::Revoke { identity } => ApiCommand::RevokeMember {
             identity: kols_node::parse_identity(&identity)?,
         },
+        Command::Leave => ApiCommand::LeaveNetwork,
         Command::Channel(ChannelCommand::Create {
             name,
             private,
@@ -609,6 +618,22 @@ fn render(outcome: &Outcome, names: &kols_core::Names) {
                 &to_hex(category.as_bytes())[..12]
             );
         }
+        Outcome::Departed { groups } => {
+            let named = groups
+                .iter()
+                .map(ToString::to_string)
+                .collect::<Vec<_>>()
+                .join(", ");
+            println!("left this network: {named}");
+            // Said plainly because the difference is the whole of `design/02`
+            // §6.5: writing the departure and having anybody hear it are two
+            // events, and only the first has happened here.
+            println!(
+                "The entries are written locally. Other members learn of it when this \
+                 node next reaches them, so keep `kols serve` running until it has."
+            );
+        }
+
         Outcome::MembershipChanged {
             identity,
             admitted,

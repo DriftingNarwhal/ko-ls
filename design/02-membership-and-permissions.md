@@ -1,6 +1,6 @@
 # Membership and Permissions
 
-**Document status:** v1.2 — §6.5 settles the shape: `forget` stays all-or-nothing by decision rather than by default, what it owes is the announcement, and the executor guard that would defeat `06` §16 on its own is named. Previously v1.1 — §6.5 records that leaving a network is a gap rather than a design, and what the client owes once `06` §16 lands. Previously v1.0 — permission resolution implemented and reached through `kols-api`'s gate; E11 landed, so §2.2's per-scope registration problem is gone
+**Document status:** v1.3 — **§6.5 is built.** `Command::LeaveNetwork` writes one membership removal per group, the executor's blanket refusal of self-removal becomes a last-`revoke-node`-holder check, and `forget` announces before it deletes — which inverted a rule that had been exactly backwards, since it used to refuse the one case (an open network) that had a node able to publish anything. One limit follows and is recorded there: the sole founder of a network cannot leave it. Previously v1.2 — §6.5 settles the shape: `forget` stays all-or-nothing by decision rather than by default, what it owes is the announcement, and the executor guard that would defeat `06` §16 on its own is named. Previously v1.1 — §6.5 records that leaving a network is a gap rather than a design, and what the client owes once `06` §16 lands. Previously v1.0 — permission resolution implemented and reached through `kols-api`'s gate; E11 landed, so §2.2's per-scope registration problem is gone
 **Depends on:** Core Protocol Spec §1 (identity), §2 (governance), §5.6 (invites)
 **Consumed by:** `01-messaging-model`, `03-confidentiality`, `04-realtime`
 
@@ -325,18 +325,18 @@ would exceed them. Two client consequences:
   already looking at what they volunteered. A steady stream of them is what "I offered more
   upload than I have" looks like from the inside, and there is no other signal for it.
 
-### 6.5 Leaving, which the client currently cannot do
+### 6.5 Leaving, which the client can now do ✅ **built**
 
 The client offers **forget**, and the word is honest about what it does: it deletes this
 installation's store and the seed with it. It is deliberately not called *leave*, because
 membership is governance state and nothing in the log expresses resignation — so to every
 other member, nothing has happened.
 
-**That is a gap rather than a design.** `06` §16 (E16) has the protocol half: a membership
-removal naming its own author needs no capability, because it grants nothing, names nobody
-but its signer, and is proved by the same signature that proves the identity it removes.
-Until that lands there is no entry a departing member is allowed to write, and this section
-records what the client should do once there is.
+**That was a gap rather than a design, and it is closed.** `06` §16 (E16) has the protocol
+half, landed 2026-09-01 as Core §2.5.1: a membership removal naming its own author needs no
+capability, because it grants nothing, names nobody but its signer, and is proved by the same
+signature that proves the identity it removes. The client half landed with it, and the rest of
+this section is what it does rather than what it should.
 
 **One command, not two, and that is a decision rather than a default.** An earlier draft of
 this section asked for a *leave* that keeps the seed beside the *forget* that destroys it, on
@@ -348,7 +348,8 @@ nobody has wanted. Recorded here rather than deleted, because a section that qui
 second command would be a design nobody chose.
 
 So `forget` stays all-or-nothing, behind the native confirmation it already has, and what it
-gains is the announcement.
+gained is the announcement — `Command::LeaveNetwork`, which writes one membership removal per
+group the member is in and needs no capability to do it.
 
 **The order is load-bearing and easy to get backwards.** The departure entry is signed by
 the key `forget` is about to destroy, so it must be written **and published** first. A node
@@ -358,17 +359,43 @@ network* rather than reporting success either way. A forget that cannot announce
 forget; it is just one the network will not learn about, and saying so is the difference
 between an honest limit and a lie.
 
+**Building it inverted a rule that had been exactly backwards.** `forget` used to refuse the
+network that was currently *open*, on the sound reasoning that deleting a store under a
+running node loses key material. But a running node is the only thing that can publish
+anything — so the one case that could announce was the one case that was refused, and the
+requirement was correct right up until there was something to announce. The open network is
+now the good path: the departure is submitted, the node is given a tick to adopt and gossip
+it, and only then is the node stopped and the store removed. A closed network is still
+forgettable and says plainly that nobody was told.
+
+**What the interface reports is who could have heard, never who did.** Gossip acknowledges
+nothing, so the honest number is how many members this node held a connection to when the
+departure went out. Zero connections is reported as *not told* rather than as success —
+and pointedly, because it is unrecoverable: the seed that signed the entry is gone, so it
+cannot be sent again.
+
 **Announcing still matters even though nobody can come back.** It is tempting to read
 all-or-nothing as making the departure entry pointless — the identity is gone either way. It
 is not: the entry is the only thing that takes the leaf out of the MLS group, and without it
 the network rotates key material for a member who deliberately destroyed their half of it,
 forever. What the departure buys is the *network's* hygiene, not the leaver's.
 
-**One guard has to move with it, and it is not in the protocol.** `kols-node`'s executor
-refuses any self-removal from `everyone` outright, on the grounds that it would leave the
+**One guard had to move with it, and it is not in the protocol.** `kols-node`'s executor
+refused any self-removal from `everyone` outright, on the grounds that it would leave the
 network unmanaged by the only node that can rotate its key. That is true of a *last* holder of
-`revoke-node` and false of everybody else, and it would silently defeat `06` §16 on its own.
-It becomes a check for the condition it actually means.
+`revoke-node` and false of everybody else, and it would have silently defeated `06` §16 on its
+own. It is now a check for the condition it actually means — and asked of the whole network
+rather than of one group, since the capability is held through whichever group grants it and
+stepping out of a role that carries it strands the network exactly as leaving `everyone`
+would.
+
+**The limit that check leaves, stated because somebody will meet it.** This client can grant
+only the chat vocabulary, and `revoke-node` is not in it — the capability comes from
+`Founders`, which holds everything. So **the sole founder of a network cannot leave it**, and
+the refusal says what to do about it: add somebody else to `Founders` first. That is a real
+constraint rather than a missing feature, and it is the same one the network itself has —
+a network whose only capability holder walks out has nobody who can ever remove anybody
+again.
 
 **What the network does with a departure is the network's business, not the leaver's.**
 The removal takes effect on replay; the epoch does not rotate on the departure itself, for

@@ -1,6 +1,6 @@
 # Interface
 
-**Document status:** v0.14 — §5.1 records what the first working drag found: a drag needs a target for every destination rather than for every thing, and two of four were unreachable — the end of a list, and the top level once every channel was in a folder. Previously v0.13 — §5.1 gains the rule reordering cost: a capability whose only route is one nobody can verify has no route. Drag-and-drop never worked because Tauri's native drag handler took it first, and channels keep move up and move down beside the fixed drag. Previously v0.12 — the row handle is removed at the tester's request, one way to a menu being enough; §5.1 keeps the two sizing rules it cost, which were never about it. Previously v0.11 — §5.1 gains the rule the sidebar bug actually needed: draw an icon rather than typing one, and take a control beside shrinkable text out of flow, because correct arithmetic is not the same as no arithmetic. Previously v0.10 — §4.3 gains the two ways a mark ends, and that it never marks your own; §5.1 gains the flex sizing rule that turned a sidebar into columns of one letter on Windows and not on macOS. Previously v0.9 — §4.1 says where the roster went and what the one number left on screen is for; §4.2 records settings becoming a screen rather than a layer, and the rule that decides which surface a thing gets; §4.3 is new and separates *where something arrived* from *what you have not seen*, which cannot be derived from it because a message is ordered by its author's clock rather than by its arrival. §7.1 and §7.3 narrowed rather than closed. Previously v0.8 — §4.2's Network section takes admission mode, the abuse limits and the retention windows, and says the three things a number on screen does not carry. Previously v0.7 — §4.2's settings sections are built, and it says what shape they took and which of them is a panel over a feature that does not exist yet; §5 gains the line between asking *whether* and asking *what*, which is what decides whether a dialog may live in the document a theme can reach. Previously v0.6 — §4.1 says plainly that presence is unbuilt, why it is last, and what the window shows instead; that was being carried in a status file. Previously v0.5 — §4.2 fixes what settings is and how it is divided, §6.4 and §6.5 settle reset and the two things that must leave the document before a theme can reach them (D36, D37). Theming remains designed and unbuilt. Previously v0.4 — D29 (a relay is never shared between networks) and what it does and does not mean for §3's direct-message bootstrap;  an interface now exists and is a first pass, not a settled one: it
+**Document status:** v0.15 — §2 records that the picker's *forget* becomes *leave* on the open network, since publishing a departure needs a running node and only the open one has one; and that what it reports afterwards is how many members could have heard rather than how many did. Previously v0.14 — §5.1 records what the first working drag found: a drag needs a target for every destination rather than for every thing, and two of four were unreachable — the end of a list, and the top level once every channel was in a folder. Previously v0.13 — §5.1 gains the rule reordering cost: a capability whose only route is one nobody can verify has no route. Drag-and-drop never worked because Tauri's native drag handler took it first, and channels keep move up and move down beside the fixed drag. Previously v0.12 — the row handle is removed at the tester's request, one way to a menu being enough; §5.1 keeps the two sizing rules it cost, which were never about it. Previously v0.11 — §5.1 gains the rule the sidebar bug actually needed: draw an icon rather than typing one, and take a control beside shrinkable text out of flow, because correct arithmetic is not the same as no arithmetic. Previously v0.10 — §4.3 gains the two ways a mark ends, and that it never marks your own; §5.1 gains the flex sizing rule that turned a sidebar into columns of one letter on Windows and not on macOS. Previously v0.9 — §4.1 says where the roster went and what the one number left on screen is for; §4.2 records settings becoming a screen rather than a layer, and the rule that decides which surface a thing gets; §4.3 is new and separates *where something arrived* from *what you have not seen*, which cannot be derived from it because a message is ordered by its author's clock rather than by its arrival. §7.1 and §7.3 narrowed rather than closed. Previously v0.8 — §4.2's Network section takes admission mode, the abuse limits and the retention windows, and says the three things a number on screen does not carry. Previously v0.7 — §4.2's settings sections are built, and it says what shape they took and which of them is a panel over a feature that does not exist yet; §5 gains the line between asking *whether* and asking *what*, which is what decides whether a dialog may live in the document a theme can reach. Previously v0.6 — §4.1 says plainly that presence is unbuilt, why it is last, and what the window shows instead; that was being carried in a status file. Previously v0.5 — §4.2 fixes what settings is and how it is divided, §6.4 and §6.5 settle reset and the two things that must leave the document before a theme can reach them (D36, D37). Theming remains designed and unbuilt. Previously v0.4 — D29 (a relay is never shared between networks) and what it does and does not mean for §3's direct-message bootstrap;  an interface now exists and is a first pass, not a settled one: it
 creates and joins networks, runs a node, renders a channel, brings the next member in, and gates
 its chrome on permission. §1's workspace, **both halves of §5**, §4's first two questions and
 most of §7's second are built; §2's tiering, §4.1's presence and §6's theming are not, and §7's
@@ -67,15 +67,30 @@ without a second copy of the genesis requirements, and each of those is silent w
 the network looks fine until the first post is refused by its own author's node. One path, two
 front ends.
 
-**A network can be forgotten, and forgotten is the honest word.** There is no leaving:
-membership is governance state, so resigning would mean holding `revoke-node` and revoking
-yourself, and §5 of `02` declines the hierarchy that would make that a lesser act. What the
-picker offers is dropping this installation's store — the log every other member replays is
-untouched, and to them nothing has happened. **The seed goes with it**, and the seed is the
-identity (`02` §6.3), so a later join arrives as a stranger rather than as the member the log
-already names. The confirmation says that, and says the lighter thing when there was never a
-key to lose, because a network that was never joined costs nothing to drop and most of the
-uses of this will be exactly that.
+**A network can be left, and the button says which of the two acts it is about to do.** It
+used to say only *forget*, because forgetting was all it could do: nothing in the log expressed
+resignation, so dropping this installation's store was the whole of it and the log every other
+member replayed was untouched. Core §2.5.1 changed that, and `02` §6.5 carries what the client
+does with it.
+
+**One button, two words, decided by whether a node is running.** Leaving means publishing a
+departure, publishing needs a node, and only the network that is *open* has one — so the button
+reads **leave** there and **forget** everywhere else. That is not a cosmetic difference and the
+confirmation spells it out: one tells the network and the other cannot, and a person choosing
+between them should not have to infer which they are getting from whether they happened to open
+it first.
+
+**The seed goes either way**, and the seed is the identity (`02` §6.3), so a later join arrives
+as a stranger rather than as the member the log already names. The confirmation says that, and
+says the lighter thing when there was never a key to lose, because a network that was never
+joined costs nothing to drop and most of the uses of this will be exactly that.
+
+**Afterwards it reports who could have heard, and never who did.** Gossip acknowledges nothing.
+So the line under the picker counts the members this node was connected to when the departure
+went out, and where that count is zero it says the network was not told — in the same place, in
+a different colour, because those are two outcomes and rendering them identically is the failure
+`02` §6.5 is written against. Zero is worth saying plainly rather than softening: the seed that
+signed the entry is gone, so it cannot be sent again.
 
 **Having no network open is where somebody starts, not a failure.** The interface opens on a
 picker; with exactly one network it opens that one, because being asked to choose between one

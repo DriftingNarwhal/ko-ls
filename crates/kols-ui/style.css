@@ -1433,6 +1433,12 @@ body {
 #joiner button[disabled] { opacity: 0.6; cursor: default; }
 .picker-error { line-height: 1.6; white-space: pre-wrap; }
 
+/* The same line, reporting something that worked. A departure that went out is
+   not a warning, and the colour is the only thing on screen saying which of the
+   two a person is reading — `design/02` §6.5 turns on that distinction, so it
+   would be an odd place to render both identically. */
+.picker-error.told { color: var(--dim); }
+
 /* ── folders and moving things (spec 07 §1.6, §1.8) ─────────────────── */
 
 /* Padding rather than margin, so the space between folders belongs to the folder

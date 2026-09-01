@@ -384,6 +384,8 @@ impl Executor {
                 self.change_membership(who, false, identity, GroupId::everyone())
             }
 
+            Command::LeaveNetwork => self.depart(identity),
+
             Command::SetNetworkName { name } => self.set_network_name(name, identity, state),
 
             Command::SetChatSetting { setting, value } => {
@@ -955,6 +957,151 @@ impl Executor {
     /// other (`design/02` §1) and assigning one is the same act as admitting
     /// somebody to the network — the difference is entirely which group and
     /// therefore which `manage-membership` the gate asked for.
+    /// Writes this member out of every group they are in — Core §2.5.1.
+    ///
+    /// **One entry per group, because the protocol declines to make leaving
+    /// `everyone` imply the rest.** Core §2.5.1 says why: a member removed from
+    /// a role is still a member, so the two are already distinguishable, and an
+    /// implicit cascade here would differ from what §2.5's explicit cascade
+    /// does. The consequence is that leaving is several entries and can be
+    /// interrupted between them — which is survivable, since a member out of
+    /// some groups and in others is an ordinary state rather than a corrupt one.
+    ///
+    /// **This writes; it does not publish and it does not delete.** Both matter.
+    /// The entries reach other members through the running node's ordinary
+    /// adoption of what the store gained, so a caller with no node up has
+    /// written a departure nobody will ever see — and `design/02` §6.5 requires
+    /// that an interface distinguish those two outcomes rather than reporting
+    /// success for both. Destroying the store and the seed is `Workspace::forget`,
+    /// and it must come second, since these entries are signed by the key it
+    /// destroys.
+    fn depart(
+        &self,
+        identity: &intranet_identity::PerNetworkIdentity,
+    ) -> Result<Outcome, ExecuteError> {
+        let me = identity.id();
+        let state = self.store.state()?;
+
+        let groups: Vec<GroupId> = state
+            .groups
+            .iter()
+            .filter(|(_, found)| found.contains(&me))
+            .map(|(id, _)| id.clone())
+            .collect();
+        if groups.is_empty() {
+            return Err(ExecuteError::Rejected(
+                "you are not a member of this network, so there is nothing to leave"
+                    .to_owned(),
+            ));
+        }
+
+        // The same question `would_strand` asks of one group, asked of all of
+        // them at once: leaving every group certainly loses the capability, so
+        // what is left is whether anybody else holds it.
+        let revoke = intranet_governance::Capability::RevokeNode;
+        if state.identity_holds(&me, &revoke)
+            && !state
+                .groups
+                .values()
+                .flat_map(|found| found.members.keys())
+                .any(|member| member != &me && state.identity_holds(member, &revoke))
+        {
+            return Err(ExecuteError::Rejected(
+                "you hold this network's only `revoke-node`, and leaving would take it \
+                 with you — nobody left could rotate the epoch, so nobody could ever \
+                 remove anybody. Somebody who is staying has to hold it first, which \
+                 here means adding them to Founders"
+                    .to_owned(),
+            ));
+        }
+
+        let _lock = self.store.lock()?;
+        for group in &groups {
+            let head = self
+                .store
+                .head()?
+                .ok_or_else(|| ExecuteError::Rejected("this network has no genesis".to_owned()))?;
+            let entry = LogEntry::create(
+                identity,
+                Some(head),
+                Timestamp::from_millis(now_millis()),
+                EntryBody::MembershipChange {
+                    group: group.clone(),
+                    identity: me,
+                    // Never cascading. Everybody this member admitted was
+                    // validly admitted at the time, and Core §2.5 makes a
+                    // cascade a deliberate, visible choice at the moment of
+                    // removal — which leaving is not: walking out is not a
+                    // judgement about anybody you let in.
+                    action: MembershipAction::Remove { cascade: None },
+                },
+            );
+            self.store.append_entry(&entry)?;
+        }
+
+        // Replay rather than trust, the same check `change_membership` makes:
+        // an entry the log accepts structurally is still refused by replay, and
+        // a departure reported as written but not applied is exactly the case
+        // where somebody then destroys the seed that could have rewritten it.
+        let after = self.store.state()?;
+        if after.is_member(&me) {
+            return Err(ExecuteError::Rejected(
+                "the departure was written but replay still shows you as a member".to_owned(),
+            ));
+        }
+
+        Ok(Outcome::Departed { groups })
+    }
+
+    /// Whether leaving `group` would take the network's last `revoke-node` away.
+    ///
+    /// **The one thing a self-removal can break that no other removal can.**
+    /// Every capability except this one can be regranted by somebody else; a
+    /// network with no `revoke-node` holder left has no way to rotate its epoch,
+    /// and therefore no way to remove anybody ever again — including the member
+    /// who has just walked out with the key material.
+    ///
+    /// Asked of the network and not of one group, because the capability is held
+    /// through whichever group grants it: stepping out of a role that carries
+    /// `revoke-node` strands the network exactly as leaving `everyone` would, and
+    /// a check that only looked at `everyone` would miss it. It is also asked in
+    /// two parts rather than one — whether anybody *else* holds it, and failing
+    /// that whether this member would still hold it through some group they are
+    /// staying in — because a member in two groups that both grant it loses
+    /// nothing by leaving one.
+    fn would_strand(
+        &self,
+        group: &GroupId,
+        leaving: &intranet_identity::PerNetworkIdentityId,
+    ) -> Result<bool, ExecuteError> {
+        let state = self.store.state()?;
+        let holds_revoke = |identity: &intranet_identity::PerNetworkIdentityId| {
+            state.identity_holds(identity, &intranet_governance::Capability::RevokeNode)
+        };
+
+        if !holds_revoke(leaving) {
+            return Ok(false);
+        }
+        let anybody_else = state
+            .groups
+            .values()
+            .flat_map(|found| found.members.keys())
+            .any(|member| member != leaving && holds_revoke(member));
+        if anybody_else {
+            return Ok(false);
+        }
+
+        // Nobody else holds it, so it comes down to whether this member keeps
+        // it: any *other* group they are in that grants it leaves the network
+        // covered, and the departure is ordinary.
+        let kept_elsewhere = state.groups.iter().any(|(id, found)| {
+            id != group
+                && found.contains(leaving)
+                && found.capabilities.grants(&intranet_governance::Capability::RevokeNode)
+        });
+        Ok(!kept_elsewhere)
+    }
+
     fn change_membership(
         &self,
         target: PerNetworkIdentityId,
@@ -962,14 +1109,25 @@ impl Executor {
         identity: &intranet_identity::PerNetworkIdentity,
         group: GroupId,
     ) -> Result<Outcome, ExecuteError> {
-        // Only for network membership. Taking yourself out of a *role* is
-        // ordinary — stepping down from Moderators is a thing people do, and
-        // `design/02` §5 says plainly there is no hierarchy protecting anyone —
-        // whereas leaving `everyone` is leaving the network, which strands it.
-        if !admit && target == identity.id() && group.is_everyone() {
+        // **Removing yourself is ordinary, and was refused outright.** Core
+        // §2.5.1 makes a membership removal naming its own author valid without
+        // a capability, which is the entry a departing member writes — so a
+        // blanket refusal here would defeat that rule one layer up and leave
+        // the client unable to express the verb the protocol had just gained.
+        //
+        // The concern the old guard named is real and much narrower than the
+        // guard was: a network whose *only* `revoke-node` holder walks out has
+        // nobody left who can rotate its epoch, so nobody who can ever remove
+        // anybody. That is a property of the last holder and of nobody else,
+        // and it is asked of the whole network rather than of one group —
+        // leaving a role that carries the capability strands it exactly as
+        // leaving `everyone` would.
+        if !admit && target == identity.id() && self.would_strand(&group, &target)? {
             return Err(ExecuteError::Rejected(
-                "that is you. Removing yourself would leave the network unmanaged \
-                 by the only node that can rotate its key"
+                "you hold this network's only `revoke-node`, and leaving would take it \
+                 with you — nobody left could rotate the epoch, so nobody could ever \
+                 remove anybody. Somebody who is staying has to hold it first, which \
+                 here means adding them to Founders"
                     .to_owned(),
             ));
         }

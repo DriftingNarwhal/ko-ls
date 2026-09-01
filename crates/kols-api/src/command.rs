@@ -155,6 +155,23 @@ pub enum Command {
         /// Who.
         identity: intranet_identity::PerNetworkIdentityId,
     },
+    /// Leave this network — Core §2.5.1, `design/02` §6.5.
+    ///
+    /// **The one command that needs no capability and still signs something.**
+    /// A membership removal naming its own author is valid without one: it
+    /// grants nothing, names nobody but its signer, and is proved by the same
+    /// signature that proves the identity it removes. So the gate asks only
+    /// that the actor is currently a member, which is the floor for appending
+    /// to this log at all.
+    ///
+    /// Writes one entry per group, because a membership change names a single
+    /// group and Core §2.5.1 declines to make leaving `everyone` imply the rest.
+    ///
+    /// **It does not delete anything.** Destroying the store and the seed is
+    /// `forget`, which is a workspace act rather than a command — and the order
+    /// between them is load-bearing, since this entry is signed by the key
+    /// `forget` destroys.
+    LeaveNetwork,
     /// Name this network, for every member — D32, spec 07 §1.7.
     ///
     /// A policy value rather than a local label, so one name travels with the
@@ -298,17 +315,28 @@ impl Command {
             // a finer class is never a weaker one. The cost is prompting a
             // little harder than necessary for a powerless role; the cost of
             // guessing the other way is not prompting at all for a powerful one.
-            | Self::SetRoleMember { .. } => Sensitivity::Governs,
+            | Self::SetRoleMember { .. }
+            // **The tier rule has no answer here, so this takes the stricter
+            // reading — the same move `SetRoleMember` above makes.** D26 says a
+            // command's class follows the tier of the capability it needs, and
+            // this one needs none at all (Core §2.5.1). `Signs` would be the
+            // literal reading of "not governance-tier" and would be wrong about
+            // what it is: the same `MembershipChange` entry `RevokeMember`
+            // writes, irreversible, and the last act an identity ever performs.
+            // A finer class is never a weaker one.
+            | Self::LeaveNetwork => Sensitivity::Governs,
         }
     }
 
     /// The chat verb this command needs, if it needs one.
     ///
-    /// `None` for the two that are gated on the protocol's own capabilities
-    /// rather than the chat vocabulary — admission and removal are the
-    /// network's business, not a channel's, and `approve-node` and
-    /// `revoke-node` are governance-tier by the protocol's own definition
-    /// rather than by anything `design/02` assigns.
+    /// `None` for those gated on the protocol's own capabilities rather than
+    /// the chat vocabulary — admission and removal are the network's business,
+    /// not a channel's, and `approve-node` and `revoke-node` are
+    /// governance-tier by the protocol's own definition rather than by anything
+    /// `design/02` assigns. Also `None` for [`Command::LeaveNetwork`], which is
+    /// gated on no capability at all: there is no verb to name, and inventing
+    /// one would put a grant between a member and the door.
     ///
     /// This is the mapping [`Sensitivity`] is derived from, exposed so the two
     /// can be checked against `kols_core::capabilities::VERBS` rather than
@@ -335,7 +363,8 @@ impl Command {
             | Self::SetAdmissionMode { .. }
             | Self::CreateRole { .. }
             | Self::SetPermission { .. }
-            | Self::SetRoleMember { .. } => None,
+            | Self::SetRoleMember { .. }
+            | Self::LeaveNetwork => None,
         }
     }
 
@@ -363,6 +392,7 @@ impl Command {
             Self::CreateRole { .. } => "create-role",
             Self::SetPermission { .. } => "set-permission",
             Self::SetRoleMember { .. } => "set-role-member",
+            Self::LeaveNetwork => "leave-network",
         }
     }
 }

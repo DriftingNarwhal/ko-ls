@@ -84,6 +84,7 @@ Where that milestone stands:
 | Closing the window without losing anything | **done** — there was no shutdown path at all, and the risk was not the one expected: every durable write went straight at its destination, so a process ending mid-write could leave a governance log that no longer decoded and a network that would not open again. Writes are atomic now, and the node is stopped on exit so its claim and its relay slot are released rather than left to expire (`design/05` §1.1) |
 | Coming back after a laptop sleeps | **done** — the re-dial loop asked whether *anything* was connected, and a relay is a connection, so a node holding a reservation never re-dialled a lost peer. Sleep, wake, and the only way back was restarting the application |
 | A network's name reaching the people in it | **done** — `genesis` never wrote `chat:network-name`, so a founder's name lived on their machine alone and every joiner saw an id. Networks created before this need it set once under settings → network |
+| Leaving a network, and the network hearing about it | **done** — and it had never been possible in either half. The protocol had no entry a departing member was allowed to write (Core §2.5.1 now does), and the client refused every self-removal outright on a concern that is true only of the last `revoke-node` holder. `forget` announces before it deletes, and reports how many members were connected when it went out rather than claiming they received it (`design/02` §6.5) |
 | An interface that survives being used | **done** — the first field test's list, worked through: first-sight marks on messages that land mid-timeline, the roster as a counted dropdown at the top right, the door as a sheet behind a counted button, and settings as a screen rather than a sheet over a dimmed channel (`design/09` §4.1–§4.3) |
 
 **Runnable.** `kols-desktop` is the product (`design/00` D30); `kols` is a development tool
@@ -97,11 +98,11 @@ over the same `kols-api` boundary, owed no feature parity and no end-user docume
   network's name (D32), a **role-first permissions surface** — roles, what each holds and at
   which scope, and who is in them — and the network's own policy: admission mode, the abuse
   limits of spec 07 §4.3 and the two retention windows of §2.8.
-- **`kols`** — init, relay list/set, invite, join, waiting, attach, admit, revoke, name,
+- **`kols`** — init, relay list/set, invite, join, waiting, attach, admit, revoke, leave, name,
   serve, post, read, edit, delete, react, pin, and channel
   create/list/rename/topic/slowmode/archive.
 
-**Gates green as of this date:** 306 tests here, 672 in `../distributed-intranet`, clippy
+**Gates green as of this date:** 310 tests here, 672 in `../distributed-intranet`, clippy
 clean in both, and `crates/kols-ui/drive.mjs`'s 44 checks green by hand. O20 reproduced once
 across four full-width runs on 2026-08-31 and 2026-09-01, which makes it **intermittent rather
 than deterministic** — `CONTRIBUTING.md` said it failed on every full-workspace run, and that
@@ -142,10 +143,9 @@ not, the dependency is named in the owning document.
 | O21 | A joiner admitted under auto-admit whose response never arrives is a member who believes they are waiting. Their client does not ask again, so nothing on either side surfaces the disagreement | `design/09` §4 |
 | O16 | Two members on one network still cannot find each other without the relay. mDNS runs and the transport caches what it finds, but never auto-dials, and nothing here handles the event it emits | `design/00` §6 |
 | O19 | **A role cannot be deleted.** `EntryBody` expresses no group removal, so what a role holds can be emptied and its members taken out, and the name stays in replayed history forever. The interface says so rather than offering a control that cannot work. Not a protocol change being asked for — nobody has needed one — but a limit somebody will meet and should not have to discover | `design/05` §3 |
-| O22 | **Forgetting a network does not tell it.** `forget` is local — it drops this installation's store and seed, and to every other member nothing has happened: still in `everyone`, still in every role, still a leaf the epoch rotates key material for, forever. **E16 landed 2026-09-01** — Core §2.5.1 makes a membership removal naming its own author valid without a capability, and excludes it from fork-choice branch weight. So the protocol half is done and what is left is entirely this client's: an announcement published *before* the seed is destroyed, plus replacing the guard at `change_membership` that refuses every self-removal and means to refuse only the last `revoke-node` holder. `forget` stays all-or-nothing by decision — a seed-preserving leave is a property nobody wanted | `design/06` §16, `design/02` §6.5 |
 | O20 | **The daemon suite run starved is unreliable**, and `CONTRIBUTING.md` asks for exactly that run. One or two of eleven time out in `wait_for` under `taskset -c 0,1`; each passes alone. Measured at `main` on 2026-08-29, so it is the suite rather than any change — but it makes the starved run a signal to isolate rather than a gate, which is weaker than what it was added for | `CONTRIBUTING.md`, `tests/common::patience` |
 
-O8, O10, O12, O13, O14, O17 and O18 are closed. What each was, and what closing it turned up,
+O8, O10, O12, O13, O14, O17, O18 and O22 are closed. What each was, and what closing it turned up,
 is in [`docs/log.md`](docs/log.md). The numbers are retired rather than reused, so the log
 stays readable.
 
@@ -159,7 +159,7 @@ stays readable.
 |---|---|
 | `kols-core` | Encoding, author logs, merge, collision recovery, chat policy, channel structure, `sidebar_order`, reader-side limits, and `Scope` — the one construction of a capability's name, used by the writer and the resolver alike. 126 tests |
 | `kols-net` | Publish and fetch over a running node. Two live two-node tests |
-| `kols-api` | The whole boundary — all three of `design/05` §3's properties held. 49 tests, and the consent drift test is guarded at both ends: a new command stops the suite compiling until it is sampled |
+| `kols-api` | The whole boundary — all three of `design/05` §3's properties held. 22 commands, 49 tests, and the consent drift test is guarded at both ends: a new command stops the suite compiling until it is sampled, which is how `LeaveNetwork` was caught unsampled the moment it existed |
 | `kols-node` | `kols`, its node daemon, the executor, the store and the workspace — the window's entire backend, and the largest crate here at 121 tests. Fifteen of them run over a live wire between separate processes (`two_nodes`, `three_nodes`, `relay`); thirteen are in-process over roles and grants; the rest cover the workspace, the store, invites, names and records |
 | `kols-app` | The Tauri shell, holding a workspace and an executor for whichever network is open. Builds `kols-desktop`. 8 tests, one of which resolves the webview's ACL against the real configuration — the boundary whose failure produces no output |
 | `kols-ui` | The interface: HTML, CSS and one script, holding no keys, no sockets and no files |
@@ -178,7 +178,7 @@ produced, which the whole segment model rests on, are in `design/08` §4.
 
 ## 4. Log
 
-Moved to [`docs/log.md`](docs/log.md) — 115 entries, newest first.
+Moved to [`docs/log.md`](docs/log.md) — 116 entries, newest first.
 
 What happened *lately* is §1. The log is why things are the way they are: the reasoning behind
 a change, the thing tried and abandoned, the bug that turned out to be a different bug. It

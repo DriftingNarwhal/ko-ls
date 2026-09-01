@@ -1418,19 +1418,32 @@ async fn join_network(
     })
 }
 
-/// Removes this installation's store for a network — permanently.
+/// Leaves a network and removes this installation's store for it — permanently.
 ///
-/// **Forgetting, not leaving**, and the command is named for what it does.
-/// Membership is governance state, so there is no resigning: the log every other
-/// member replays is untouched, and to them nothing happened. What goes is this
-/// machine's copy — and the seed with it, which *is* the identity, so a later
-/// join arrives as a stranger rather than as the member the log already names.
+/// **Two acts, in an order that cannot be reversed.** The departure entry is
+/// signed by the seed the deletion destroys (Core §2.5.1), so it is written and
+/// handed to the running node *first*; then the node is stopped and the store
+/// goes. Doing it the other way round produces a member the network can never
+/// be told about, which is the state `design/02` §6.5 exists to end.
 ///
-/// Refuses the network that is currently open rather than quietly closing it: a
-/// node is running for that one, and removing live MLS state out from under a
-/// running node is how key material goes missing with no step reporting it.
+/// **The open network is now the good case rather than the refused one.** This
+/// used to insist the network be closed first, which guaranteed no node was
+/// running and therefore that nothing could ever be announced — the requirement
+/// was exactly backwards once there was something to announce. Forgetting a
+/// closed network still works and still deletes everything; it simply cannot
+/// tell anybody, and says so rather than reporting the same success.
+///
+/// What comes back is what actually happened rather than what was attempted.
+/// [`dto::Forgotten`] carries whether a departure went out and how many members
+/// this node was connected to when it did — who *could* have heard, since
+/// gossip acknowledges nothing and presenting that number as receipt would be
+/// the same lie one layer along.
 #[tauri::command]
-fn forget_network(app: tauri::State<'_, App>, network: String) -> Result<(), String> {
+fn forget_network(
+    handle: tauri::AppHandle,
+    app: tauri::State<'_, App>,
+    network: String,
+) -> Result<dto::Forgotten, String> {
     let id = intranet_crypto::from_hex(network.trim())
         .and_then(|bytes| <[u8; 32]>::try_from(bytes.as_slice()).ok())
         .map(intranet_identity::NetworkId::from_bytes)
@@ -1442,14 +1455,52 @@ fn forget_network(app: tauri::State<'_, App>, network: String) -> Result<(), Str
         .map_err(|_| "the workspace lock is poisoned")?
         .as_ref()
         .is_some_and(|executor| *executor.store().network() == id);
-    if open_here {
-        return Err(
-            "that network is open. Switch to another one first — its node is running, and              removing the store under it is how a key group goes missing quietly"
+
+    if !open_here {
+        app.workspace.forget(&id)?;
+        return Ok(dto::Forgotten {
+            announced: false,
+            reached: 0,
+            reason: "this network was not open, so no node was running to tell it. Its \
+                     members still have you in their logs"
                 .to_owned(),
-        );
+        });
     }
 
-    app.workspace.forget(&id)
+    // Written before anything is torn down, and refused loudly if it cannot be:
+    // the last `revoke-node` holder is stopped here rather than left to delete
+    // their store and strand the network silently.
+    let reached = app.with(|executor| {
+        executor
+            .submit(Command::LeaveNetwork)
+            .map_err(|err| err.to_string())?;
+        Ok(executor.store().connected().len())
+    })?;
+
+    // One tick of the node's two-second refresh is what carries the entry from
+    // the store into the node's own log and out to its peers. Waited for rather
+    // than assumed, because the alternative is aborting the node between the
+    // append and the adoption — which writes a departure into a store that is
+    // about to be deleted and tells nobody at all.
+    std::thread::sleep(ANNOUNCE_GRACE);
+
+    stop_node(&handle);
+    *app.open
+        .lock()
+        .map_err(|_| "the workspace lock is poisoned")? = None;
+
+    app.workspace.forget(&id)?;
+    Ok(dto::Forgotten {
+        announced: true,
+        reached,
+        reason: if reached == 0 {
+            "no member was connected, so the departure is written and nobody has heard \
+             it. It cannot be sent again — the seed that signed it is gone"
+                .to_owned()
+        } else {
+            String::new()
+        },
+    })
 }
 
 /// Opens one of this client's networks, and starts a node for it.
@@ -1714,6 +1765,14 @@ fn main() {
 /// the case where it does not — closing a window must never be the thing that
 /// hangs, and everything below is recoverable by expiry anyway.
 const SHUTDOWN_GRACE: std::time::Duration = std::time::Duration::from_millis(1500);
+
+/// How long a departure is given to reach the node before the store is deleted.
+///
+/// The node adopts what the store gained on a two-second refresh, so this is
+/// that plus room for a slow tick. A wait rather than a handshake because there
+/// is nothing to shake hands with: gossip acknowledges nothing, and the honest
+/// report is how many peers were connected rather than how many received it.
+const ANNOUNCE_GRACE: std::time::Duration = std::time::Duration::from_millis(5000);
 
 /// Stops the node before the process goes.
 ///

@@ -24,6 +24,51 @@ Kept because this project keeps re-learning the same lessons and paying for them
 
 ---
 
+- **2026-09-01** — **Leaving a network works, and building the client half found a rule that was exactly backwards.**
+
+  The protocol gained the entry this morning (Core §2.5.1). The client can now write it:
+  `Command::LeaveNetwork`, one membership removal per group the member is in, gated on nothing
+  but current membership — the only command at this boundary that needs no capability, which the
+  consent classification had no rule for and took the stricter reading of.
+
+  **`forget` used to refuse the open network, and that was the one case that could work.**
+  The reasoning behind the refusal was sound and remains true: deleting a store under a running
+  node loses live MLS state with nothing reporting it. But a running node is the *only* thing
+  that can publish anything, so requiring the network be closed first guaranteed no departure
+  could ever be announced. The requirement was correct right up until there was something to
+  announce, and then it was precisely inverted. The open network is now the good path — submit,
+  give the node a tick to adopt and gossip, stop the node, delete — and a closed one still
+  forgets and says plainly that nobody was told.
+
+  **The guard that had to move was a true statement about one member applied to everybody.**
+  The executor refused any self-removal from `everyone` on the grounds that it would leave the
+  network unable to rotate its key. That is true of the *last* `revoke-node` holder and false of
+  every other member, and left alone it would have defeated the protocol change one layer up.
+  It now asks the question it meant — and asks it of the whole network rather than of one group,
+  because the capability is held through whichever group grants it, so stepping out of a role
+  that carries it strands the network exactly as leaving `everyone` would.
+
+  **The limit that leaves, which is worth stating rather than discovering.** This client grants
+  only the chat vocabulary and `revoke-node` is not in it — the capability comes from `Founders`,
+  which holds everything. So the sole founder of a network cannot leave it, and the refusal says
+  what to do: add somebody else to `Founders` first. That is the network's own constraint rather
+  than a missing feature.
+
+  **What the interface reports is who could have heard, never who did.** Gossip acknowledges
+  nothing, so the honest figure is how many members this node held a connection to when the
+  departure went out. Zero is reported as *not told* rather than as success, and pointedly:
+  it is unrecoverable, because the seed that signed the entry is gone and it cannot be sent
+  again.
+
+  **One test was not written, and the reason is a budget rather than an oversight.** The
+  untested composition is "another member's node accepts a departure over the wire", which would
+  be a twelfth daemon test in `two_nodes.rs` — and O20 is already the suite's worst behaviour,
+  made worse by exactly that. Both halves are covered separately: acceptance without a
+  capability by six conformance tests in `intranet-governance`, and the wire path by the
+  revocation test that carries an ordinary `MembershipChange` end to end. Recorded so the gap is
+  a decision somebody can revisit rather than a thing nobody noticed.
+
+
 - **2026-09-01** — **E16 landed, and it turned out to be two rules rather than one.**
 
   The rule as specified: a `MembershipChange` removing the entry's own author is valid without a

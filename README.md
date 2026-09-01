@@ -229,7 +229,17 @@ Keying is whole: group state survives a restart, so a founder can still admit an
 new members after one, and the epoch rotates on both add and remove.
 
 `kols revoke` drives a real removal: the membership entry from the command, the epoch
-rotation from the daemon, in that order because the protocol requires it. Records also
+rotation from the daemon, in that order because the protocol requires it.
+
+**And a member can now leave**, which nothing here could express until the protocol gained
+the entry for it (Core §2.5.1): a membership removal naming its own author needs no
+capability, because it grants nothing and names nobody but its signer. `kols leave` writes
+one per group; in the window, forgetting a network that is open publishes the departure
+before it deletes anything — the order is fixed, since that entry is signed by the seed the
+deletion destroys. It reports how many members were connected when the departure went out,
+and never claims they received it: gossip acknowledges nothing.
+
+Records also
 travel **live** over gossipsub as they are written — sealed under the channel's content key
 — while remaining fully carried by the durable path, so a node with the live path silent is
 slower and completely correct. `kols serve --no-live` turns gossip off outright, which is

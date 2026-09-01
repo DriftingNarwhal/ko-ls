@@ -222,6 +222,13 @@ must agree regardless of who posted when.
 
 ## 12. Take it back off both machines
 
+**Leave first, if you want the other machine to know.** With the network open, the picker's
+button reads **leave** rather than **forget**: it publishes a departure — one entry per group
+you are in — and only then deletes the store. Forgetting a network that is *not* open still
+works and still deletes everything, but no node is running to tell anybody, and the interface
+says so rather than reporting the same success. The order cannot be reversed: the departure is
+signed by the seed the deletion destroys.
+
 There is no server, so **nothing is deleted anywhere else when you delete it here.** These
 stores *are* the network — remove them from both machines and it is gone, with no account left
 behind and nobody to ask. The seed is the identity and there is no recovery service, so this is

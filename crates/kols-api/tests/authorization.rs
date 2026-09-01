@@ -918,6 +918,7 @@ fn every_command() -> Vec<Command> {
             identity: person(3).id(),
             member: true,
         },
+        Command::LeaveNetwork,
     ]
 }
 
@@ -955,7 +956,8 @@ fn _every_variant_is_sampled(command: &Command) {
         | Command::SetAdmissionMode { .. }
         | Command::CreateRole { .. }
         | Command::SetPermission { .. }
-        | Command::SetRoleMember { .. } => (),
+        | Command::SetRoleMember { .. }
+        | Command::LeaveNetwork => (),
     }
 }
 
@@ -975,7 +977,7 @@ fn every_command_has_a_sample() {
     }
     assert_eq!(
         seen.len(),
-        21,
+        22,
         "every_command samples {} of Command's variants — update both this count \
          and the list when the boundary grows",
         seen.len()

@@ -185,6 +185,7 @@ Command  = OpenChannel { channel_id, before: Option<Hlc>, limit }
          | CreateRole { group }                                    — `02` §1
          | SetPermission { group, verb, scope, grant }
          | SetRoleMember { group, identity, member }
+         | LeaveNetwork                                            — Core §2.5.1, `02` §6.5
 
 Event    = Records { channel_id, records }        — live and backfilled alike
          | Backfill | Governance | Adopted | EpochRotated | MemberKeyed

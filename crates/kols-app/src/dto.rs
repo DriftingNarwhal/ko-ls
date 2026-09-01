@@ -220,6 +220,29 @@ pub struct Joined {
     pub identity: String,
 }
 
+/// What forgetting a network did, and what it could not do.
+///
+/// **Two events, and reporting one for both would be the lie `design/02` §6.5
+/// names.** Deleting this installation's store always succeeds; telling the
+/// network is a separate act that needs a running node, a route and somebody
+/// listening, and any of the three can be absent. A forget that could not
+/// announce is still a forget — it is just one the network will never learn
+/// about, and saying so is the difference between an honest limit and a claim
+/// that the leaver has been removed from a log nobody has told.
+#[derive(Debug, Serialize)]
+pub struct Forgotten {
+    /// Whether a departure entry was written and given to a running node.
+    pub announced: bool,
+    /// Members this node held a connection to when the departure went out.
+    ///
+    /// Not proof of receipt, and named so an interface does not present it as
+    /// one: this is who could have heard, which is the strongest thing a node
+    /// knows about its own gossip.
+    pub reached: usize,
+    /// Why the network was not told. Empty when it was.
+    pub reason: String,
+}
+
 /// A freshly minted invite, ready to be handed to somebody.
 ///
 /// The URI rather than the bytes, because carrying one is presentation and this

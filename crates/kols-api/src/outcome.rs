@@ -103,6 +103,23 @@ pub enum Outcome {
         /// Which group — `everyone` for admission to the network, a role otherwise.
         group: intranet_governance::GroupId,
     },
+    /// This member left the network — Core §2.5.1, `design/02` §6.5.
+    ///
+    /// **The entries are written and local; whether anybody heard is a
+    /// different question and this does not answer it.** A departure is signed
+    /// by the key that is usually destroyed straight afterwards, so it must be
+    /// published before that happens — and a node that is offline, unkeyed or
+    /// without a route cannot publish anything. Reporting "left" from the fact
+    /// that entries were appended would be the lie `design/02` §6.5 names.
+    Departed {
+        /// Every group departed, one entry apiece.
+        ///
+        /// A membership change names one group and Core §2.5.1 declines to make
+        /// leaving `everyone` imply the rest, so leaving a network is as many
+        /// entries as the member had memberships. Carried so an interface can
+        /// say what was actually written rather than "done".
+        groups: Vec<intranet_governance::GroupId>,
+    },
     /// The network's name changed — D32, spec 07 §1.7.
     NetworkNamed {
         /// What it is now. Empty means the network is unnamed, which is a real

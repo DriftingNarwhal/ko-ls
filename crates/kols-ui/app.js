@@ -118,32 +118,49 @@ async function drawPicker() {
     // normal place to be, and saying so is better than an empty channel list.
     note.textContent = network.keyed ? "" : "not keyed in yet";
 
-    // **Forget, not leave**, and the word is the honest one. Membership is
-    // governance state, so there is no resigning — the log every other member
-    // replays is untouched and to them nothing has happened. This drops the
-    // local store, which is a different act and is the one a person actually
-    // wants after a join that never worked.
+    // **Forget still destroys, and now it announces first.** Core §2.5.1 gave a
+    // member an entry they may write for themselves, so the departure is signed
+    // and handed to the running node before the store goes — the order is
+    // fixed, because that entry is signed by the seed this deletes.
+    //
+    // Only the *open* network has a node to announce through, which is what
+    // decides which warning is shown. Telling somebody the network will be
+    // informed when no node is running would be the exact lie `design/02` §6.5
+    // is written against, so the two cases say different things.
     const forget = document.createElement("button");
     forget.className = "forget";
-    forget.textContent = "forget";
-    forget.title = "remove this installation's copy of this network";
+    forget.textContent = network.open ? "leave" : "forget";
+    forget.title = network.open
+      ? "tell this network you are leaving, then remove this installation's copy"
+      : "remove this installation's copy — with no node running, the network is not told";
     forget.addEventListener("click", async (event) => {
         event.stopPropagation();
         // Native, because this asks whether to destroy something rather than
         // what to call it (`design/09` §5.1) — and because the seed is the one
         // thing here with no recovery path.
+        const gone =
+          "\n\nThis deletes the seed, which is your identity here. You cannot come " +
+          "back as the same member — a later join would arrive as a stranger, and the " +
+          "log would still name the member you were.";
+        const told = network.open
+          ? "\n\nThis network is open, so it is told: your departure is written and " +
+            "published before anything is deleted. Members who are connected right now " +
+            "hear it; anybody offline learns of it from them."
+          : "\n\nThis network is not open, so **it is not told** — no node is running to " +
+            "publish anything, and to every other member you stay a member who is simply " +
+            "never connected. Open it first if you would rather it knew.";
         const loss = network.keyed
-          ? "\n\nThis deletes the seed, which is your identity here. You cannot come " +
-            "back as the same member — a later join would arrive as a stranger, and the " +
-            "log would still name the member you were.\n\nThe network is not told. " +
-            "Nothing in the log expresses leaving, so to every other member you stay a " +
-            "member who is simply never connected."
+          ? gone + told
           : "\n\nYou were never keyed into this one, so there is nothing to lose but the " +
             "attempt.";
-        if (!confirm(`Forget ${network.label || network.id.slice(0, 12)}?${loss}`)) return;
+        if (!confirm(`${network.open ? "Leave" : "Forget"} ${network.label || network.id.slice(0, 12)}?${loss}`)) return;
         try {
-          await invoke("forget_network", { network: network.id });
+          const outcome = await invoke("forget_network", { network: network.id });
+          // The open one is gone with its node, so whatever is on screen behind
+          // the picker belongs to a network that no longer exists.
+          if (network.open) clearNetworkView();
           await drawPicker();
+          said(outcome);
         } catch (err) {
           fail(err);
         }
@@ -176,6 +193,10 @@ async function openNetwork(id) {
 
 function fail(err) {
   el("picker-error").hidden = false;
+  // Cleared rather than assumed absent: `said` above dims this same line to
+  // report a departure that worked, and a refusal arriving after one would
+  // otherwise be drawn as though it had also gone well.
+  el("picker-error").classList.remove("told");
   el("picker-error").textContent = String(err);
 }
 
@@ -2926,6 +2947,30 @@ function clearNetworkView() {
   state.holding = null;
   clearTimeout(state.settle);
   state.settle = null;
+}
+
+/// Says what forgetting actually did, which is two facts rather than one.
+///
+/// **The store is always gone; the network is not always told**, and reporting
+/// the first as though it covered the second is the failure `design/02` §6.5
+/// names. So this says which happened, and where it says "published" it counts
+/// the members that were connected — who could have heard, never who did. There
+/// is no acknowledgement in gossip to report, and inventing confidence here
+/// would be worse than the silence it replaced.
+function said(outcome) {
+  const line = el("picker-error");
+  line.hidden = false;
+  if (!outcome || !outcome.announced || outcome.reached === 0) {
+    line.classList.remove("told");
+    line.textContent =
+      (outcome && outcome.reason) || "The store is gone. The network was not told.";
+    return;
+  }
+  const who =
+    outcome.reached === 1 ? "1 connected member" : `${outcome.reached} connected members`;
+  line.classList.add("told");
+  line.textContent =
+    `Left, and the departure went out to ${who}. Anybody offline learns of it from them.`;
 }
 
 async function start() {

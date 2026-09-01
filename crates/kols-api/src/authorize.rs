@@ -534,6 +534,22 @@ pub fn authorize<A: Authority, C: Channels>(
             "revoke-node",
         )?,
 
+        // **No capability, deliberately, and this is the only arm that says so.**
+        // Core §2.5.1: a membership removal naming its own author is valid
+        // without one, because it grants nothing and names nobody but its
+        // signer. The floor is current membership — the same floor
+        // self-initiated rotation and vote proposal stand on — and it is a real
+        // check rather than a formality: a joiner still in the waiting room
+        // holds no group at all, and has nothing to leave.
+        //
+        // The refusal names `membership` rather than a capability, because
+        // there is no capability to be missing. A refusal reading "you lack
+        // `revoke-node`" would send somebody looking for a grant that would not
+        // help them.
+        Command::LeaveNetwork => {
+            require(actor.state.is_member(&actor.identity), name, "membership")?
+        }
+
         Command::SetNetworkName { name: network_name } => {
             require(
                 actor
