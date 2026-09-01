@@ -127,7 +127,7 @@ not, the dependency is named in the owning document.
 
 | # | Owed | Specified in |
 |---|---|---|
-| O1 | Commands for direct messages, search, voice and stage — each has a line in the boundary and no code behind it | `design/05` §3, `design/00` §5 |
+| O1 | Commands for direct messages, search, voice and stage — each has a line in `design/05` §3's boundary *grammar* and nothing in `kols-api`, which carries only the twenty-two commands that are built | `design/05` §3, `design/00` §5 |
 | O2 | `Discovery::Off` for conversation-profile networks. **Load-bearing for privacy rather than merely leaner**: with discovery on, a DM node meeting a peer at the shared network's relay lands in its routing table, which is the correlation D29 forbids | `design/06` §12, `design/09` §3 |
 | O3 | `may_moderate_at` answers from current state, ignoring the head it is given — so demoting a moderator retroactively invalidates redactions that should stand | `specs/07` §9 Q1, `design/01` §6 |
 | O4 | `kols-store` does not exist; `kols-node` carries a file-backed store instead of the SQLite projection | `design/05` §2, §5 |
