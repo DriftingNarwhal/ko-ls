@@ -1,6 +1,6 @@
 # Confidentiality: Channel Keying, Private Channels and Direct Messages
 
-**Document status:** v1.0 — design reviewed. Only the network tier is implemented; channel and session tiers are P2/P3
+**Document status:** v1.1 — §3.5 is new and carries the durability constraint the storage work turned up: a node holds only what it can read, so a private channel is replicated by its roster and nobody else — and placement must therefore rank over the roster rather than over the ledger, or the effective replica set becomes *roster ∩ top-k* and can be empty. An obligation on whoever builds §3, written before the work rather than discovered after it. Previously v1.0 — design reviewed. Only the network tier is implemented; channel and session tiers are P2/P3
 **Depends on:** Core Protocol Spec §3 (epoch keying), Storage Spec §5 (envelope encryption), Search Spec §3, Real-Time Spec §3.5
 **Consumed by:** `01-messaging-model`, `04-realtime`, `05-client-architecture`
 
@@ -127,6 +127,52 @@ and where they disagree the design fails closed:
   against timing correlation.
 - **Anything from its own members.** Membership means readership; that is what it means
   everywhere in this design.
+
+### 3.5 Durability: a private channel is replicated by its roster and nobody else
+
+**Recorded 2026-09-08, from the storage work rather than from this document.** It is the
+constraint that decides whether private channels are durable, and it does not exist yet
+only because the keying above does not.
+
+A node holds what it can read. The history walk stops at a segment whose DEK it cannot
+unwrap (`05` §5.1), so a member outside a channel's roster never fetches, links or holds
+that channel's content — and never takes replica duty for it. **That is deliberate and is
+kept**: the alternative is nodes hoarding ciphertext against keys they do not have, which
+gives up the forward secrecy §3.1 chose MLS for. An epoch key compromised later cannot open
+bytes a node never kept.
+
+**What it costs is that a private channel's effective replica set is its roster**, not the
+network. A three-person channel inside a fifty-member network is replicated across three
+machines. That is the honest price of the paragraph above and is accepted.
+
+**What must not be got wrong is placement.** Replica placement ranks over the capability
+ledger — every node that offered storage — because today every member can read everything,
+so any of them can hold any object. The moment roster keying lands that stops being true,
+and the ranking would assign a private channel's segments to nodes that cannot hold them.
+The effective replica set becomes *roster ∩ top-k*, which can be **empty in a large
+network**: the ranked holders cannot fetch it, and the roster members who can are ranked out
+and keep it only as sheddable cache, with none of the last-copy protection duty carries.
+
+So, as an obligation on whoever builds §3:
+
+- **Placement for a channel-keyed object ranks over the channel's roster**, not the
+  network's contributors. The roster is in the governance log (§3.4 — it is one of the
+  things a private channel does not hide), so this stays deterministic and independently
+  recomputable, which is the property Storage §3.3 rests on.
+- **A member who can read something nobody else is both ranked for and able to hold must
+  take duty for it**, so it gets the census, the two-holders rule and the grace window
+  rather than being shed as an ordinary cached copy.
+- **Under-replication must be reported against the roster size**, or a three-person channel
+  in a network with a replication factor of five reports permanent degradation that no
+  amount of volunteering can fix.
+
+**None of it needs a protocol change.** `intranet_ledger::placement::rank` takes its candidate
+set as a parameter, so *which* set to rank over has always been the application's choice —
+which is why this is an obligation on `design/03`'s own work rather than an entry in `06`.
+
+None of this is buildable before the keying is, and building it against a feature that does
+not exist is the mistake this project keeps paying for. It is written down here so that it
+is a requirement of the work rather than a discovery after it.
 
 ---
 

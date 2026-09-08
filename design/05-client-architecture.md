@@ -1,6 +1,6 @@
 # Client Architecture
 
-**Document status:** v1.12 — §3 gains `SetPresence` and `MemberPresence`. The event is deliberately one-directional: a member goes quiet because nothing arrived, which is not an event and can never be one, so a consumer decides that by a beat going stale against its own clock. Previously v1.11 — §5.1 is new and carries the storage work built on 2026-09-07 and 08: tiers as reasons rather than places, replica duty over sealed segments, the two ceilings, the order things are given up in under pressure, and the one rule the whole thing turns on — that a provider count is safe in one direction only, so *nobody answered* and *nobody holds it* must never collapse into one answer. Previously v1.10 — §3's event list matches the enum, which it had stopped doing in three places at once: `Backfill` was named as an event when it is a variant of `Arrival` inside `Records`, the count said six when nine existed, and §8 said there was nothing for events "which do not exist" beside a row testing five cases over them. All three are the same gap — the command half of the boundary has a compile-time drift guard and the event half has none — and §8 now carries that guard as owed rather than the count as a fact. Previously v1.9 — §1 records the second Tauri default to remove a feature silently: the native drag handler takes the drag before the page sees it, so channel reordering never worked. Twice is a pattern, and §8's row is now about shell configuration rather than the ACL alone. Previously v1.8 — §1.1 is new: closing the window *is* the shutdown path, so no durable write may happen in place, and what is held rather than written wants stopping. Previously v1.7 — §1 records the shell's second boundary: Tauri's ACL refuses every `plugin:` command an application declares no capability for, silently, and this client shipped with none — so no node event ever reached the window and three polls were written as fixes for what was one denial. §8 gains the row that keeps it fixed. Previously v1.6 — §4 takes the single-node-per-network claim and its six-second expiry, §5 takes what the missing projection costs, and §8 gains the content-routing row; all three moved here from a status file that was carrying them. Previously v1.5 — §3 lists `CreateCategory` and `UpdateCategory`, which landed in the code before they reached this page. Previously v1.4 — §1 and §2 describe the layout that was built: `kols-node` holds the executor, the daemon and the event loop, and `kols-net` is publish and fetch over it. §3 separates what crosses the boundary from what is designed and unbuilt, and `GovernanceReorg` has moved into the first list. The store and media crates still do not exist
+**Document status:** v1.13 — §5.1's last owed item is settled rather than built: a node holds only what it can read, kept for the forward secrecy it buys, and what that will cost private channels is recorded in `03` §3.5 as a requirement of the work that makes it true. Previously v1.12 — §3 gains `SetPresence` and `MemberPresence`. The event is deliberately one-directional: a member goes quiet because nothing arrived, which is not an event and can never be one, so a consumer decides that by a beat going stale against its own clock. Previously v1.11 — §5.1 is new and carries the storage work built on 2026-09-07 and 08: tiers as reasons rather than places, replica duty over sealed segments, the two ceilings, the order things are given up in under pressure, and the one rule the whole thing turns on — that a provider count is safe in one direction only, so *nobody answered* and *nobody holds it* must never collapse into one answer. Previously v1.10 — §3's event list matches the enum, which it had stopped doing in three places at once: `Backfill` was named as an event when it is a variant of `Arrival` inside `Records`, the count said six when nine existed, and §8 said there was nothing for events "which do not exist" beside a row testing five cases over them. All three are the same gap — the command half of the boundary has a compile-time drift guard and the event half has none — and §8 now carries that guard as owed rather than the count as a fact. Previously v1.9 — §1 records the second Tauri default to remove a feature silently: the native drag handler takes the drag before the page sees it, so channel reordering never worked. Twice is a pattern, and §8's row is now about shell configuration rather than the ACL alone. Previously v1.8 — §1.1 is new: closing the window *is* the shutdown path, so no durable write may happen in place, and what is held rather than written wants stopping. Previously v1.7 — §1 records the shell's second boundary: Tauri's ACL refuses every `plugin:` command an application declares no capability for, silently, and this client shipped with none — so no node event ever reached the window and three polls were written as fixes for what was one denial. §8 gains the row that keeps it fixed. Previously v1.6 — §4 takes the single-node-per-network claim and its six-second expiry, §5 takes what the missing projection costs, and §8 gains the content-routing row; all three moved here from a status file that was carrying them. Previously v1.5 — §3 lists `CreateCategory` and `UpdateCategory`, which landed in the code before they reached this page. Previously v1.4 — §1 and §2 describe the layout that was built: `kols-node` holds the executor, the daemon and the event loop, and `kols-net` is publish and fetch over it. §3 separates what crosses the boundary from what is designed and unbuilt, and `GovernanceReorg` has moved into the first list. The store and media crates still do not exist
 **Depends on:** all preceding documents; App Hosting Spec §1–§3 for the sandbox path
 **Consumed by:** implementation; `09` for the interface built on §3's boundary
 
@@ -669,15 +669,24 @@ path is owed here.
 The reading that falls out and belongs on the settings screen: an offer is a **ceiling on
 willingness rather than a target**. A 50 GB offer on a network holding 2 GB holds 2 GB.
 
-### What is still owed
+### A node holds only what it can read, and that is kept (O25)
 
-**A node never holds content it cannot decrypt** (`STATUS.md` O25). The walk stops at a segment
-whose DEK it cannot unwrap, so a private channel a member is not keyed for is never fetched,
-linked or held — and a storage offer therefore funds durability only for the channels that member
-can already read. The pointer is public and carries the object's CID, so the ciphertext is
-fetchable without the key; nothing does it. Holding bytes it cannot read is what a contributing
-node is *for* (Core §4.2 defines `storage_offered` over replicated content, not readable content),
-so this is a gap rather than a definition.
+The walk stops at a segment whose DEK it cannot unwrap, so a member outside a channel's roster
+never fetches, links or holds that channel's content and never takes duty for it. The pointer is
+public and carries the object's CID, so the ciphertext *is* fetchable without the key — nothing
+does it, and that is the decision rather than the omission.
+
+**What it buys is forward secrecy.** An epoch key compromised later cannot open bytes this node
+never kept, which is the property `03` §3.1 chose MLS for in the first place. Holding ciphertext
+leaks nothing today — the holder can no more read it than a stranger could — so the trade is
+entirely between that hardening and durability, and the hardening wins.
+
+**It costs nothing at all right now.** Roster keying is unbuilt: `channel_dek` derives from the
+network epoch regardless of a channel's privacy flag, so every member can decrypt every channel
+and there is no content a node is excluded from. What it will cost when private channels land —
+placement ranking over the roster rather than the ledger, or the effective replica set becomes
+*roster ∩ top-k* and can be empty — is recorded as a requirement of that work in `03` §3.5 and
+against E2, rather than left to be found during it.
 
 ---
 

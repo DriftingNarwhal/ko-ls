@@ -123,6 +123,16 @@ losing branch is voided and appears in the voided-actions report; a `DekWrapping
 `rotation_ref` names a voided channel rotation is treated as stale and re-wrapped
 (Storage §5.3.1, unchanged mechanism).
 
+**And a client-side obligation these entries create, added 2026-09-08:** once a channel is
+roster-keyed, replica placement for its objects must rank over the **roster** rather than
+over the capability ledger. A node holds only what it can read, so ranking over every
+contributor assigns a private channel's segments to nodes that cannot hold them, and the
+effective replica set becomes *roster ∩ top-k* — which can be empty in a large network.
+`03` §3.5 carries the reasoning and the three obligations that go with it. **No protocol
+change is needed**: `placement::rank` takes its candidate set as a parameter, so which set to
+rank over is the application's choice and always was. Nothing here changes; it is recorded
+against E2 because E2 is what makes it true.
+
 **Known cost:** log growth at high channel counts and high private-channel churn. No
 message, edit, reaction or redaction ever enters the log — only channel structure does.
 Carried as `00` §6 item 3 with checkpointed replay as the mitigation.

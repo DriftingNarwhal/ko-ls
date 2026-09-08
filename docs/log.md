@@ -24,6 +24,38 @@ Kept because this project keeps re-learning the same lessons and paying for them
 
 ---
 
+- **2026-09-08** — **O25 was a requirement for unbuilt work, not a defect in built work.**
+
+  Filed the day before as "a node never holds content it cannot decrypt", with a trade-off to
+  settle: forward secrecy against durability. The user settled it — keep the current behaviour —
+  and checking what to build then showed there was nothing to build **yet**, for a reason worth
+  recording.
+
+  **Roster keying does not exist.** `channel_dek` derives from the network epoch regardless of a
+  channel's privacy flag, and nothing in the key path branches on it; `ChannelMembership` and
+  `ChannelRotation` are E2, unbuilt. So today every member can decrypt every channel and there is
+  no content any node is excluded from. O25 costs exactly nothing, and a fix would have been code
+  written against a feature that is not there — the mistake this log already records three times
+  from the storage work.
+
+  **The real finding is sharper than the item was**, and it is about placement rather than about
+  holding ciphertext. Replica placement ranks over the capability ledger — every node that offered
+  storage — which is right precisely because everyone can read everything. The moment a channel is
+  roster-keyed that stops being true: the ranking would assign its segments to nodes that cannot
+  fetch them, so the effective replica set becomes **roster ∩ top-k**, which can be *empty* in a
+  large network. Worse quietly: the roster members who can hold it are ranked out, so they keep it
+  as ordinary cache — sheddable, with none of the census, two-holders rule or grace window that
+  duty carries. A private channel could lose its last copy to disk pressure on a machine that
+  could read it.
+
+  So the outcome is three obligations written into `03` §3.5 and against E2, before the work
+  rather than after it: rank over the roster, take duty for what nobody else can hold, and report
+  under-replication against the roster size rather than the network's replication factor — or a
+  three-person channel reports permanent degradation that no amount of volunteering can fix.
+
+  O25 moves to the accepted-limits table beside O16 and O19. An accepted limit left in the owed
+  register reads as a fix nobody got round to, and this one is a decision.
+
 - **2026-09-08** — **Presence, and the word that had to be absent rather than unused.**
 
   O6 closed. `01` §9 had specified the mechanism for a long time and neither front end

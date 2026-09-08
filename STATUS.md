@@ -63,7 +63,7 @@ sequencing.
 |---|---|
 | **Milestone** | A client that can be handed to somebody else, so two people **on entirely separate networks** can talk, using a bootstrap relay and no VPS. The first test is two of the user's own laptops, one on a mobile hotspot |
 | **Blocked on** | Nothing |
-| **Next decision needed** | Nothing blocking. **O25 is next by decision** — a node holding content it cannot decrypt — and the security reading it rests on is worth settling first: see the row's own note |
+| **Next decision needed** | Nothing blocking |
 
 Where that milestone stands:
 
@@ -149,20 +149,21 @@ not, the dependency is named in the owning document.
 | O11 | A relay may not be shared between two of a member's networks, and **nothing enforces it**. Enforcing it means network-scoping the protocol names, which is a wire change rather than a client fix | `design/00` D29, `design/09` §3 |
 | O15 | **Provider discovery through a peer that is not the holder has never been observed.** Narrower than this entry used to claim: `three_nodes.rs` does prove a node serves an object it did not author, with the fetcher pointed at one peer and the author offline. But the fetcher is *connected* to the holder there, so a one-hop table and a working DHT behave identically — forcing the two apart is the remaining test, and needs the Docker NAT matrix rather than local daemons | `design/05` §8 |
 | O20 | **The daemon suite run starved is unreliable**, and `CONTRIBUTING.md` asks for exactly that run. One or two of eleven time out in `wait_for` under `taskset -c 0,1`; each passes alone. Measured at `main` on 2026-08-29, so it is the suite rather than any change — but it makes the starved run a signal to isolate rather than a gate, which is weaker than what it was added for | `CONTRIBUTING.md`, `tests/common::patience` |
-| O25 | **Next up, by decision on 2026-09-08.** **A node never holds content it cannot decrypt.** The walk stops at a segment whose DEK it cannot unwrap, so a private channel a member is not keyed for is never fetched, linked or held — and a storage offer funds durability only for the channels that member can already read. The pointer is public and carries the CID, so the ciphertext is fetchable without the key; nothing does it. Found while checking D38 rather than by design. **The security reading needs settling before the code does**, because it is a trade rather than a free win in either direction: holding ciphertext leaks nothing today — the content is encrypted, the pointer is already public, and the holder can no more read it than a stranger could — so what the current behaviour actually buys is *forward secrecy*, since an epoch key compromised later cannot open bytes this node never kept. What it costs is durability: a three-person private channel inside a fifty-member network is replicated across three machines rather than fifty, and Core §4.2 defines `storage_offered` over *replicated* content rather than readable content | `design/03` §2, `design/05` §5.1 |
 
 O3, O6, O8, O9, O10, O12, O13, O14, O17, O18, O21, O22, O23 and O24 are closed. What each was, and what closing it turned up,
 is in [`docs/log.md`](docs/log.md). The numbers are retired rather than reused, so the log
 stays readable.
 
-**O16 and O19 are accepted rather than closed, which is a different thing and is why they are
-named separately.** Neither was fixed; both were decided against, on 2026-09-07, and an
-accepted limit left in the table above would read as a fix nobody had got round to.
+**O16, O19 and O25 are accepted rather than closed, which is a different thing and is why they
+are named separately.** None was fixed; all were decided against — O16 and O19 on 2026-09-07,
+O25 on 2026-09-08 — and an accepted limit left in the table above would read as a fix nobody
+had got round to.
 
 | # | Accepted limit | Decided in |
 |---|---|---|
 | O16 | **This client does not dial a LAN peer that mDNS finds.** A node that did would make two of a member's networks correlatable by anyone watching that LAN — D29 one layer down, reached with no relay involved. The cost is that two members in one room still need a routable third party to meet, which is narrow and is the price of the property | `design/00` §6 |
 | O19 | **A role cannot be deleted.** `EntryBody` expresses no group removal, so a role can be emptied of capabilities and members and its name stays in replayed history. A role holding nothing grants nothing, and no protocol change is being asked for — the interface explains the limit instead | `design/05` §3 |
+| O25 | **A node holds only what it can read**, so a storage offer funds durability for the channels its owner is keyed for and no others. Kept deliberately: the alternative is nodes hoarding ciphertext against keys they do not have, which gives up the forward secrecy `03` §3.1 chose MLS for — an epoch key compromised later cannot open bytes a node never kept. **It costs nothing today**, because roster keying is unbuilt and every member can decrypt every channel; `channel_dek` derives from the network epoch regardless of a channel's privacy flag. What it will cost when private channels land is written down as a requirement of that work rather than left to be discovered during it | `design/03` §3.5, `design/06` E2 |
 
 ---
 
@@ -193,7 +194,7 @@ produced, which the whole segment model rests on, are in `design/08` §4.
 
 ## 4. Log
 
-Moved to [`docs/log.md`](docs/log.md) — 120 entries, newest first.
+Moved to [`docs/log.md`](docs/log.md) — 121 entries, newest first.
 
 What happened *lately* is §1. The log is why things are the way they are: the reasoning behind
 a change, the thing tried and abandoned, the bug that turned out to be a different bug. It
