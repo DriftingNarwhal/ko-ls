@@ -24,6 +24,36 @@ Kept because this project keeps re-learning the same lessons and paying for them
 
 ---
 
+- **2026-09-08** — **O15 named the wrong obstacle, and naming it wrongly is what kept it open.**
+
+  The entry said the remaining content-routing test needed the Docker NAT matrix. It did not. It
+  needed **topology control** — the fetcher must never be handed the holder's address — and
+  address translation has nothing to do with that. Docker was where topology control happened to
+  live, and the entry recorded the location rather than the requirement.
+
+  What is true, and is the half worth keeping: the *client's* daemons cannot provide it. Every
+  `kols` process can dial every other, and there is no way to withhold one address from one node
+  without turning off the very discovery under test. So the conclusion "not with local daemons"
+  was right and "therefore Docker" did not follow — the transport's own in-process tests build
+  the graph directly, and that is where the test belongs.
+
+  **Why no existing test caught this, which is the general shape.** `provider_discovery.rs` had
+  seven tests and every one connected the fetcher to the holder. With the answer already in your
+  routing table, an implementation that simply asks whichever peers it has a socket to passes all
+  of them — and that is not routing, it is polling your neighbours. The discriminator is a single
+  line of setup: dial the middle node and nothing else. Everything else in the test is
+  consequence.
+
+  Two things asserted rather than assumed, because both are ways this could pass hollow: the
+  intermediary must hold no copy of its own, or the three-node shape collapses back to the
+  one-hop case wearing more nodes; and the fetch must complete, because finding a holder is worth
+  nothing if the bytes cannot then be got from it. Probed by removing the announcement — the
+  lookup returns nothing, which is what says the DHT is carrying the answer.
+
+  mDNS cannot produce a false pass in either direction here, and it is worth writing down why
+  rather than reasoning about it again later: it discovers *addresses* and carries no provider
+  records. Knowing where a peer is is not knowing what it holds.
+
 - **2026-09-08** — **The second bottleneck was invisible until the first was gone, which is an
   argument for measuring after every step rather than after the last one.**
 
