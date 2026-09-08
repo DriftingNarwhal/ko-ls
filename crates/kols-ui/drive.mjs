@@ -44,7 +44,17 @@ let messages = [
 ];
 let waiting = [];
 let people = [
-  { identity: "id-corey-0001", short: "id-cor", name: "corey", connected: false, you: true },
+  {
+    identity: "id-corey-0001",
+    short: "id-cor",
+    name: "corey",
+    connected: false,
+    presence: "here",
+    you: true,
+  },
+  // No `presence` at all: nothing has been heard from them. Deliberately not
+  // the string "offline", which is the claim `design/09` §4.1 forbids and which
+  // this fixture would otherwise make it easy to start rendering.
   { identity: "id-sam-0002", short: "id-sam", name: "sam", connected: false, you: false },
 ];
 
@@ -61,6 +71,11 @@ const answers = {
   settings: () => [],
   roles: () => [],
   contribution: () => offer,
+  set_presence: (args) => {
+    const you = people.find((person) => person.you);
+    you.presence = args.state;
+    return null;
+  },
   storage_ceiling: () => ceiling,
   set_storage_ceiling: (args) => {
     ceiling = { ...ceiling, ceiling: args.bytes };
@@ -452,6 +467,36 @@ el("ceiling-form").dispatchEvent(
 await settled();
 say("a ceiling is floored at one gigabyte, never zero",
     ceiling.ceiling === 1024 * 1024 * 1024, String(ceiling.ceiling));
+
+// ── presence, and the word that must never appear ──────────────────────
+await window.drawPeople();
+const rosterRows = () => [...el("roster-list").querySelectorAll(".person")];
+say("a member who said something has it shown beside their name",
+    rosterRows()[0].querySelector(".said")?.textContent === "here");
+// **The whole of §4.1.** Nothing has been heard from sam, which is not a claim
+// that sam is away — so the row carries no word at all rather than a wrong one.
+say("a member nothing has been heard from is not labelled",
+    rosterRows()[1].querySelector(".said") === null);
+say("and the roster never says offline",
+    !/offline/i.test(el("roster-list").textContent + el("roster-note").textContent),
+    el("roster-note").textContent);
+say("the note explains both marks",
+    /lit dot/i.test(el("roster-note").textContent) &&
+      /nothing has been heard/i.test(el("roster-note").textContent));
+
+// Choosing invisible has to say what it actually does, because the failure
+// worth avoiding is somebody believing they are hidden while a beat goes out.
+el("my-presence").value = "invisible";
+el("my-presence").dispatchEvent(new window.Event("change", { bubbles: true }));
+await settled();
+say("choosing invisible reaches the shell with that exact value",
+    people.find((person) => person.you).presence === "invisible");
+say("and the window says nothing at all is published",
+    !el("my-presence-note").hidden &&
+      /not even that you are hiding/i.test(el("my-presence-note").textContent),
+    el("my-presence-note").textContent);
+say("the selector shows what is published rather than what was clicked",
+    el("my-presence").value === "invisible");
 
 // ── what the contribution panel promises ───────────────────────────────
 // **A shipped sentence that contradicts the code is worse than no sentence.**

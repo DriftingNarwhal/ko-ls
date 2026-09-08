@@ -416,6 +416,17 @@ pub async fn serve(
     // member ever acted on it.
     let mut reorged: BTreeSet<intranet_crypto::Hash> = BTreeSet::new();
     let mut broadcast: BTreeSet<kols_core::MessageId> = BTreeSet::new();
+    // **Yesterday's roster is not an observation.** Presence is ephemeral and
+    // dropped on restart (`design/01` §9); it only reaches the interface through
+    // a file because the daemon and the executor are different processes here.
+    // Left in place it would be a claim about who is around, made by a process
+    // that was not running.
+    if let Err(err) = store.forget_beats() {
+        sink(&[Event::Degraded {
+            reason: format!("could not clear the presence heard before this run: {err}"),
+        }]);
+    }
+    let mut last_beat = 0i64;
     let mut announced = BTreeSet::new();
     let mut fetched = BTreeSet::new();
     // Older segments discovered by walking a `previous` chain and not held yet.
@@ -532,6 +543,7 @@ pub async fn serve(
                         &mut broadcast,
                         live_window,
                     )?;
+                    beat_presence(&store, &mut node, &identity, &mut last_beat)?;
                 }
                 if holds_group {
                     catch_up_epochs(&store, &mut node)?;
@@ -1195,6 +1207,28 @@ pub async fn serve(
             // record arrive" depend on which way it happened to come — and a
             // record that arrived live is *already stored*, so the durable
             // absorb that follows correctly reports nothing.
+            // **Presence rides its own topic**, so it is separated here rather
+            // than by trying both decoders on every payload. A beat and a record
+            // are different claims about different things, and a path that
+            // guessed which it had would eventually admit one as the other.
+            NodeEvent::LiveReceived { topic, payload, .. }
+                if topic == kols_core::presence_topic(store.network()) =>
+            {
+                match admit_beat(&store, &payload, crate::chat::now_millis()) {
+                    Ok(Some(beat)) => sink(&[Event::MemberPresence {
+                        identity: intranet_crypto::to_hex(beat.who.verifying_key().as_bytes()),
+                        state: beat.state.name().to_owned(),
+                    }]),
+                    Ok(None) => {}
+                    // Worth seeing and not worth stopping, the same as a refused
+                    // record: either a peer is sending what it should not, or
+                    // this node is missing a key it should have.
+                    Err(why) => sink(&[Event::Degraded {
+                        reason: format!("refused a presence beat: {why}"),
+                    }]),
+                }
+            }
+
             NodeEvent::LiveReceived { payload, .. } => match admit_live(&store, &payload) {
                 Ok(Some(record)) => sink(&[Event::Records {
                     channel: record.channel,
@@ -1977,6 +2011,12 @@ fn render(events: &[Event]) {
                 println!("rotated the epoch to exclude {excluded} removed member(s)");
             }
             Event::MemberKeyed { identity } => println!("keyed in {}", identity.short()),
+            // Trimmed to what a terminal can use: a beat every thirty seconds
+            // per member would drown everything else, and the terminal has no
+            // roster to update. The window is where this matters.
+            Event::MemberPresence { identity, state } => {
+                println!("{} is {state}", &identity[..identity.len().min(8)]);
+            }
             Event::JoinAnswered { joiner, accepted } => {
                 if *accepted {
                     println!("let {} in — `kols waiting` shows who is waiting", joiner.short());
@@ -2476,6 +2516,118 @@ fn subscribe_channels(store: &Store, node: &mut MemberNode) -> Result<(), String
             .map_err(|err| format!("could not subscribe: {err}"))?;
     }
     Ok(())
+}
+
+/// Says this node is here, at most once every [`kols_core::BEAT_MILLIS`].
+///
+/// # What silence means, and why it is the default for invisible
+///
+/// A member who has chosen `invisible` publishes **nothing** — not a beat saying
+/// invisible, which would tell every member of the network that this node is
+/// running and hiding, and so give away most of what the setting withholds. The
+/// type system carries that rule (`Presence::to_beat` yields nothing), and this
+/// is where it turns into an absence on the wire.
+///
+/// A member who has chosen nothing at all is *here*, not hidden: not having
+/// picked is not a request for privacy, and defaulting the other way would make
+/// the roster of a working network permanently empty.
+///
+/// # Why failure is ignored
+///
+/// The commonest failure is having nobody subscribed to the topic, which is the
+/// ordinary state of a network with one member awake. Presence is a hint that
+/// decays on its own; a node that treated a failed publish as an error would be
+/// reporting a problem that does not exist. `last_beat` moves only on success,
+/// so a beat that could not go out is retried on the next tick rather than
+/// waited out.
+fn beat_presence(
+    store: &Store,
+    node: &mut MemberNode,
+    identity: &intranet_identity::PerNetworkIdentity,
+    last_beat: &mut i64,
+) -> Result<(), String> {
+    let Some(beat) = store
+        .presence()
+        .unwrap_or(kols_core::Presence::Show(kols_core::Beat::Here))
+        .to_beat()
+    else {
+        return Ok(());
+    };
+    let now = crate::chat::now_millis();
+    if now.saturating_sub(*last_beat) < kols_core::BEAT_MILLIS {
+        return Ok(());
+    }
+    let (Ok(epoch), Ok(rotation)) = (store.epoch_key(), store.rotation_ref()) else {
+        return Ok(());
+    };
+    node.subscribe_live(&kols_core::presence_topic(store.network()))
+        .map_err(|err| format!("could not subscribe to presence: {err}"))?;
+    let sealed = kols_core::PresenceBeat::seal(identity, beat, now, &epoch, rotation);
+    if node
+        .publish_live(
+            &kols_core::presence_topic(store.network()),
+            sealed.encode(),
+        )
+        .is_ok()
+    {
+        *last_beat = now;
+    }
+    Ok(())
+}
+
+/// Opens a presence beat and records it, if it is one this node should believe.
+///
+/// Returns the beat when it taught this node something, so the caller can say so
+/// once rather than on every heartbeat.
+///
+/// # The three refusals, and why none of them can move
+///
+/// - **A beat that does not open** is from outside the epoch, so it is not this
+///   network's business. The seal is what keeps a derivable topic from being a
+///   live attendance register for anybody who knows the network id.
+/// - **A beat whose signature does not check** is refused inside
+///   [`kols_core::SealedBeat::open`]. Gossip delivers to every subscriber and any
+///   of them can republish, so without this any member could announce any other
+///   as present — including one who had chosen to be invisible.
+/// - **A beat from somebody who is not a current member** is dropped here,
+///   because that is a question about replayed governance and `kols-core` holds
+///   none. A removed member with a copy of the epoch key would otherwise go on
+///   appearing in the roster.
+///
+/// A member beating about *themselves* is ignored: this node knows where it is,
+/// and a roster that counted its own beat would answer a different question from
+/// the one it asks (`design/09` §4.1's rule about the count being of others).
+fn admit_beat(
+    store: &Store,
+    payload: &[u8],
+    now: i64,
+) -> Result<Option<kols_core::PresenceBeat>, String> {
+    let sealed = kols_core::SealedBeat::decode(payload).map_err(|e| e.to_string())?;
+    let epoch = store.epoch_key().map_err(|e| e.to_string())?;
+    let beat = sealed.open(&epoch).map_err(|e| e.to_string())?;
+
+    let identity = store.identity().map_err(|e| e.to_string())?;
+    if beat.who == identity.id() {
+        return Ok(None);
+    }
+    let Some(state) = replayable(store) else {
+        return Ok(None);
+    };
+    if !state.is_member(&beat.who) {
+        return Err(format!(
+            "{} is not a member of this network",
+            beat.who.short()
+        ));
+    }
+
+    let who = intranet_crypto::to_hex(beat.who.verifying_key().as_bytes());
+    // **Heard-at rather than the beat's own timestamp.** Clocks disagree, and
+    // `at` is signed by the sender — so a member whose clock reads next year
+    // could pin themselves as present indefinitely with one message.
+    store
+        .record_beat(&who, beat.state, now)
+        .map_err(|e| e.to_string())?;
+    Ok(Some(beat))
 }
 
 /// Broadcasts this node's own records that have not gone out live yet.

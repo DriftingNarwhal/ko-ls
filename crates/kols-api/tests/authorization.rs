@@ -929,6 +929,9 @@ fn every_command() -> Vec<Command> {
             download_offered: 8_000_000,
             relay_willing: false,
         },
+        Command::SetPresence {
+            state: "invisible".to_owned(),
+        },
     ]
 }
 
@@ -969,7 +972,8 @@ fn _every_variant_is_sampled(command: &Command) {
         | Command::SetRoleMember { .. }
         | Command::LeaveNetwork
         | Command::FetchHistory { .. }
-        | Command::SetContribution { .. } => (),
+        | Command::SetContribution { .. }
+        | Command::SetPresence { .. } => (),
     }
 }
 
@@ -989,7 +993,7 @@ fn every_command_has_a_sample() {
     }
     assert_eq!(
         seen.len(),
-        24,
+        25,
         "every_command samples {} of Command's variants — update both this count \
          and the list when the boundary grows",
         seen.len()
@@ -1020,7 +1024,14 @@ fn sensitivity_agrees_with_the_capability_vocabulary() {
             // `_every_variant_is_sampled` — a new command cannot arrive without
             // somebody classifying it here.
             let expected = match command {
-                Command::SetContribution { .. } => Sensitivity::Signs,
+                // Both are gated on nothing, are reversible, and reach other
+                // members: one changes a signed advertisement, the other starts
+                // a signed heartbeat. Neither governs anything, and neither is
+                // `Local`, because in both cases something leaves this node on
+                // the member's behalf.
+                Command::SetContribution { .. } | Command::SetPresence { .. } => {
+                    Sensitivity::Signs
+                }
                 _ => Sensitivity::Governs,
             };
             assert_eq!(

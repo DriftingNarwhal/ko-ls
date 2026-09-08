@@ -672,3 +672,81 @@ fn a_channel_created_after_a_member_joins_reaches_them() {
         every_daemon_log()
     );
 }
+
+/// A beat crosses the wire, and invisible really does send nothing.
+///
+/// # Why both halves are one test
+///
+/// The negative claim is the one that needs care. "Bob never saw a beat" is
+/// worthless on its own — it is equally satisfied by a broken gossip mesh, a
+/// node that never connected, or a test that did not wait long enough. So the
+/// invisible phase runs *first*, and is bracketed by a record travelling live
+/// between the same two nodes on the same tick loop: that proves the path
+/// works, the peers are subscribed to each other, and the only reason no beat
+/// arrived is that none was sent.
+///
+/// Then Alice becomes visible and the beat arrives, which proves the silence was
+/// the setting rather than the feature.
+///
+/// # What "is here" means in the daemon's output
+///
+/// It is printed only after the beat has been opened with the network's epoch
+/// key, had its signature verified against the identity it names, and been
+/// checked against replayed membership. So the line standing in for the whole
+/// path is not a shortcut — nothing else produces it.
+#[test]
+fn presence_travels_and_invisible_sends_nothing() {
+    let alice = Home::new("presence-alice");
+    let bob = Home::new("presence-bob");
+
+    let created = ok(&alice, &["init", "around"]);
+    let network = field(&created, "network   ");
+    let attached = ok(&bob, &["attach", &network]);
+    ok(&alice, &["admit", &field(&attached, "kols admit ")]);
+
+    // Chosen before her daemon starts, so there is no window in which a default
+    // beat could go out and make the negative half meaningless.
+    let hidden = ok(&alice, &["presence", "invisible"]);
+    assert!(
+        hidden.contains("nothing is published about you"),
+        "invisible must say that nothing goes out, not that 'invisible' does:\n{hidden}"
+    );
+
+    // 45171/45172: ports are assigned per test here, because two tests sharing
+    // one means the second daemon binds nothing and reports nothing — which
+    // reads as the feature under test failing.
+    let mut alice_node = serve(&alice, 45171, None);
+    let address = field(
+        &alice_node.wait_for("listening", Duration::from_secs(20)),
+        "listening ",
+    );
+    ok(&alice, &["channel", "create", "general"]);
+
+    let mut bob_node = serve(&bob, 45172, Some(&address));
+    bob_node.wait_for("keyed into this network", Duration::from_secs(45));
+
+    // The bracket. A record going out live is the same mesh a beat would ride,
+    // between these two nodes, right now.
+    ok(&alice, &["post", "general", "still here, just not saying so"]);
+    alice_node.wait_for("broadcast 1 record(s) live", Duration::from_secs(45));
+    bob_node.wait_for("learned 1 record", Duration::from_secs(45));
+
+    // Longer than one beat interval, so a node that was going to say anything
+    // has had more than one chance to.
+    std::thread::sleep(patience(Duration::from_secs(40)));
+    let quiet = bob_node.output();
+    assert!(
+        !quiet.contains("is here"),
+        "an invisible member must publish nothing at all — a beat arrived while \
+         she had chosen to be unseen, over a mesh this test has just shown is \
+         carrying her records:\n{quiet}"
+    );
+
+    // And now she is not hiding.
+    let shown = ok(&alice, &["presence", "here"]);
+    assert!(
+        shown.contains("you are here"),
+        "the visible case must say what is being sent:\n{shown}"
+    );
+    bob_node.wait_for("is here", patience(Duration::from_secs(90)));
+}

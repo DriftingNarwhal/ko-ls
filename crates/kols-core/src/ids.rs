@@ -18,6 +18,7 @@ const LOG_POINTER_DOMAIN: &str = "intranet.chat-log-pointer.v1";
 const MODERATION_POINTER_DOMAIN: &str = "intranet.chat-moderation-pointer.v1";
 const SEGMENT_POINTER_DOMAIN: &str = "intranet.chat-segment-pointer.v1";
 const TOPIC_DOMAIN: &str = "intranet.chat-topic.v1";
+const PRESENCE_TOPIC_DOMAIN: &str = "intranet.chat-presence-topic.v1";
 
 /// A channel's stable identifier.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -173,6 +174,21 @@ pub fn moderation_log_pointer(channel: &ChannelId, moderator: &PerNetworkIdentit
 /// The gossip topic carrying a channel's live records.
 pub fn gossip_topic(channel: &ChannelId) -> String {
     to_hex(&derive(TOPIC_DOMAIN, |e| channel.encode(e)))
+}
+
+/// The gossip topic a network's presence rides.
+///
+/// **Network-wide rather than per channel**, which `design/01` §9 names as the
+/// thing to revisit at scale: a 5,000-member server should subscribe per channel
+/// in view instead of gossiping a full roster heartbeat to everybody. At the
+/// sizes this client is being built for, one topic is one mesh to maintain
+/// rather than one per open channel, and a member's presence does not change
+/// depending on which room you are looking at — so the narrower version is a
+/// scaling change and not a correctness one.
+///
+/// Domain-separated from the channel topic so the two can never collide.
+pub fn presence_topic(network: &NetworkId) -> String {
+    to_hex(&derive(PRESENCE_TOPIC_DOMAIN, |e| network.encode(e)))
 }
 
 /// The append-set collection naming who has posted in a channel.

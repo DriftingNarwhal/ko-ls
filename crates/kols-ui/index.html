@@ -147,6 +147,21 @@
                 <h3>people</h3>
                 <span class="dim" id="roster-count"></span>
               </div>
+              <!-- Filed here rather than in settings on purpose. Settings is a
+                   place you go to finish something and leave; this is changed in
+                   the moment, and the moment is when you are looking at who is
+                   around. It is also the only control in the window whose whole
+                   point is that other people see the result. -->
+              <label class="roster-mine" for="my-presence">
+                <span class="dim small">you are</span>
+                <select id="my-presence">
+                  <option value="here">here</option>
+                  <option value="idle">idle</option>
+                  <option value="busy">busy</option>
+                  <option value="invisible">invisible</option>
+                </select>
+              </label>
+              <p class="dim small" id="my-presence-note" hidden></p>
               <ul class="roster-list" id="roster-list"></ul>
               <p class="dim small" id="roster-note"></p>
             </div>

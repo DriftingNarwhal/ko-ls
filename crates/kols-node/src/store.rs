@@ -786,6 +786,100 @@ impl Store {
             .unwrap_or_default()
     }
 
+    /// What this member has chosen to tell the network about themselves.
+    ///
+    /// **Persisted, unlike the beats themselves**, and the asymmetry is the
+    /// point. `design/01` §9 makes presence ephemeral and dropped on restart —
+    /// that is about what has been *heard*, which is an observation and goes
+    /// stale. A member's own choice is a setting, and one of its values is
+    /// invisible: a choice that did not survive a restart would put somebody
+    /// back on the network's roster the next time they opened the application,
+    /// which is the one failure this setting exists to prevent.
+    ///
+    /// `None` means never chosen, which the caller reads as the default rather
+    /// than as invisible — the safe direction here is the ordinary one, since a
+    /// member who has not chosen is not asking to hide.
+    pub fn set_presence(&self, choice: kols_core::Presence) -> Result<(), StoreError> {
+        write_atomically(
+            &self.root,
+            self.root.join("presence"),
+            choice.name().as_bytes(),
+        )?;
+        Ok(())
+    }
+
+    /// What this member last chose, or `None` if they never have.
+    ///
+    /// An unreadable or unrecognised value reads as `None` rather than as
+    /// anything in particular. The alternative is guessing, and every guess here
+    /// is either publishing somebody who asked to hide or hiding somebody who
+    /// did not ask to.
+    pub fn presence(&self) -> Option<kols_core::Presence> {
+        let raw = fs::read_to_string(self.root.join("presence")).ok()?;
+        kols_core::Presence::from_name(raw.trim())
+    }
+
+    /// Records a beat this node heard, replacing any earlier one from that member.
+    ///
+    /// `heard_at` is **this node's** clock rather than the sender's, because
+    /// that is what freshness is judged against (`kols_core::PresenceBeat`).
+    pub fn record_beat(
+        &self,
+        who: &str,
+        state: kols_core::Beat,
+        heard_at: i64,
+    ) -> Result<(), StoreError> {
+        let mut heard: std::collections::BTreeMap<String, (String, i64)> = self
+            .beats()
+            .into_iter()
+            .map(|(who, state, at)| (who, (state.name().to_owned(), at)))
+            .collect();
+        heard.insert(who.to_owned(), (state.name().to_owned(), heard_at));
+        let text = heard
+            .iter()
+            .map(|(who, (state, at))| format!("{who} {state} {at}"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        write_atomically(&self.root, self.root.join("beats"), text.as_bytes())?;
+        Ok(())
+    }
+
+    /// The beats this node has heard, with when it heard each.
+    ///
+    /// Freshness is **not** applied here: this returns observations, and how old
+    /// an observation may be before it stops meaning anything is a question for
+    /// whoever is answering it. A store that filtered would make "heard nothing
+    /// recently" and "heard nothing ever" indistinguishable at exactly the layer
+    /// that still has both.
+    pub fn beats(&self) -> Vec<(String, kols_core::Beat, i64)> {
+        let Ok(text) = fs::read_to_string(self.root.join("beats")) else {
+            return Vec::new();
+        };
+        text.lines()
+            .filter_map(|line| {
+                let mut parts = line.split_whitespace();
+                let who = parts.next()?.to_owned();
+                let state = kols_core::Presence::from_name(parts.next()?)?.to_beat()?;
+                let at = parts.next()?.parse().ok()?;
+                Some((who, state, at))
+            })
+            .collect()
+    }
+
+    /// Forgets every beat heard, which is what a daemon does when it starts.
+    ///
+    /// **Presence is ephemeral and dropped on restart** (`design/01` §9). It
+    /// reaches the interface through a file only because the daemon and the
+    /// executor are different processes here; that is a transport detail, and
+    /// leaving yesterday's roster on disk would turn it into a claim.
+    pub fn forget_beats(&self) -> Result<(), StoreError> {
+        match fs::remove_file(self.root.join("beats")) {
+            Ok(()) => Ok(()),
+            Err(err) if err.kind() == io::ErrorKind::NotFound => Ok(()),
+            Err(err) => Err(StoreError::Io(err)),
+        }
+    }
+
     /// Who the daemon last saw waiting to be admitted.
     pub fn waiting(&self) -> Vec<String> {
         fs::read_to_string(self.root.join("waiting"))

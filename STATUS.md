@@ -63,7 +63,7 @@ sequencing.
 |---|---|
 | **Milestone** | A client that can be handed to somebody else, so two people **on entirely separate networks** can talk, using a bootstrap relay and no VPS. The first test is two of the user's own laptops, one on a mobile hotspot |
 | **Blocked on** | Nothing |
-| **Next decision needed** | Nothing blocking. The fetch-to-repair question is closed as **D38**: an offer buys ranking, not a crawl |
+| **Next decision needed** | Nothing blocking. **O25 is next by decision** — a node holding content it cannot decrypt — and the security reading it rests on is worth settling first: see the row's own note |
 
 Where that milestone stands:
 
@@ -89,6 +89,7 @@ Where that milestone stands:
 | A disk that does not fill up | **done** — an installation-wide ceiling, with the fetch bounded by it, cached copies shed before replicas, replicas given back only when two others demonstrably hold them, and a last known copy held past the ceiling for a week with a warning before it goes. What is given up is recorded |
 | Saying what a contribution is, and is not | **done** — storage, upload, download and relay willingness are all settable per network, relaying offered only where this node has been seen from outside. Contributing nothing is an ordinary configuration and the interface says so, because a phone, a metered link and a full disk are all reasons and none makes somebody a lesser member |
 | A member who offers a lot actually catching what falls | **done** — repair, the other half of Storage §3.4. A node ranked past the replica set takes on content the network is short of, and how deep that reaches follows the size of the hole rather than who noticed: one missing copy wakes one standby, three wake three. Before this, offering a great deal of disk caught falling content only where placement had already ranked you — a backstop by coincidence. The offer buys **ranking rather than a crawl** (D38), so it is a ceiling on willingness and not a target: a 50 GB offer on a network holding 2 GB holds 2 GB |
+| Knowing who is around | **done** — presence, `design/01` §9's ephemeral gossip: a signed beat every thirty seconds under the network's epoch key, and a roster carrying two marks that may never stand in for each other — a ring for *this node has a connection to them*, a word for *what they said*. **No word is silence rather than "offline"**, because a stale beat, a member who chose to be invisible and one never heard from are three different things and nothing here tells them apart. Invisible publishes nothing at all, not the word "invisible" |
 | An interface that survives being used | **done** — the first field test's list, worked through: first-sight marks on messages that land mid-timeline, the roster as a counted dropdown at the top right, the door as a sheet behind a counted button, and settings as a screen rather than a sheet over a dimmed channel (`design/09` §4.1–§4.3) |
 
 **Runnable.** `kols-desktop` is the product (`design/00` D30); `kols` is a development tool
@@ -103,11 +104,11 @@ over the same `kols-api` boundary, owed no feature parity and no end-user docume
   which scope, and who is in them — and the network's own policy: admission mode, the abuse
   limits of spec 07 §4.3 and the two retention windows of §2.8.
 - **`kols`** — init, relay list/set, invite, join, waiting, attach, admit, revoke, leave, name,
-  serve, post, read, edit, delete, react, pin, contribute, storage, history, and channel
+  serve, post, read, edit, delete, react, pin, contribute, presence, storage, history, and channel
   create/list/rename/topic/slowmode/archive.
 
-**Gates green as of this date:** 324 tests here, 672 in `../distributed-intranet`, clippy
-clean in both, and `crates/kols-ui/drive.mjs`'s 71 checks green by hand. O20 reproduced once
+**Gates green as of this date:** 332 tests here, 672 in `../distributed-intranet`, clippy
+clean in both, and `crates/kols-ui/drive.mjs`'s 78 checks green by hand. O20 reproduced once
 across four full-width runs on 2026-08-31 and 2026-09-01, which makes it **intermittent rather
 than deterministic** — `CONTRIBUTING.md` said it failed on every full-workspace run, and that
 was a run of bad luck rather than a property. The one failure arrived directly after a
@@ -134,18 +135,17 @@ not, the dependency is named in the owning document.
 
 | # | Owed | Specified in |
 |---|---|---|
-| O1 | Commands for direct messages, search, voice and stage — each has a line in `design/05` §3's boundary *grammar* and nothing in `kols-api`. **`SetContribution` is built** (23 commands now), which was the only one of them blocked on nothing; the rest wait on E10/E13, `03` §6's indexes, and `kols-media` | `design/05` §3, `design/00` §5 |
+| O1 | Commands for direct messages, search, voice and stage — each has a line in `design/05` §3's boundary *grammar* and nothing in `kols-api`. **`SetContribution` and `SetPresence` are built** (25 commands now); the rest wait on E10/E13, `03` §6's indexes, and `kols-media` | `design/05` §3, `design/00` §5 |
 | O2 | `Discovery::Off` for conversation-profile networks. **Load-bearing for privacy rather than merely leaner**: with discovery on, a DM node meeting a peer at the shared network's relay lands in its routing table, which is the correlation D29 forbids | `design/06` §12, `design/09` §3 |
 | O4 | `kols-store` does not exist; `kols-node` carries a file-backed store instead of the SQLite projection | `design/05` §2, §5 |
 | O5 | The executor rebuilds an author's whole log to append one record, and replay walks the log once per question | `design/05` §5 |
-| O6 | The window has no presence — `design/09` §4's third question has no answer, and is last deliberately. What it shows instead now answers a narrower question in the frame rather than behind a click: how many members this node is connected to, and whether that is more than none | `design/09` §4.1 |
 | O7 | **No credentials and no backup.** Seeds are written to `<home>/seed` in the clear, so anything with read access to that disk is that member. **A release gate, not a feature** | `design/02` §6.3, `design/00` §5 |
 | O11 | A relay may not be shared between two of a member's networks, and **nothing enforces it**. Enforcing it means network-scoping the protocol names, which is a wire change rather than a client fix | `design/00` D29, `design/09` §3 |
 | O15 | **Provider discovery through a peer that is not the holder has never been observed.** Narrower than this entry used to claim: `three_nodes.rs` does prove a node serves an object it did not author, with the fetcher pointed at one peer and the author offline. But the fetcher is *connected* to the holder there, so a one-hop table and a working DHT behave identically — forcing the two apart is the remaining test, and needs the Docker NAT matrix rather than local daemons | `design/05` §8 |
 | O20 | **The daemon suite run starved is unreliable**, and `CONTRIBUTING.md` asks for exactly that run. One or two of eleven time out in `wait_for` under `taskset -c 0,1`; each passes alone. Measured at `main` on 2026-08-29, so it is the suite rather than any change — but it makes the starved run a signal to isolate rather than a gate, which is weaker than what it was added for | `CONTRIBUTING.md`, `tests/common::patience` |
-| O25 | **A node never holds content it cannot decrypt.** The walk stops at a segment whose DEK it cannot unwrap, so a private channel a member is not keyed for is never fetched, linked or held — and a storage offer funds durability only for the channels that member can already read. The pointer is public and carries the CID, so the ciphertext is fetchable without the key; nothing does it. Found while checking D38 rather than by design, and it is a gap rather than a definition: Core §4.2 defines `storage_offered` over *replicated* content, not readable content | `design/03` §2, `design/05` §5.1 |
+| O25 | **Next up, by decision on 2026-09-08.** **A node never holds content it cannot decrypt.** The walk stops at a segment whose DEK it cannot unwrap, so a private channel a member is not keyed for is never fetched, linked or held — and a storage offer funds durability only for the channels that member can already read. The pointer is public and carries the CID, so the ciphertext is fetchable without the key; nothing does it. Found while checking D38 rather than by design. **The security reading needs settling before the code does**, because it is a trade rather than a free win in either direction: holding ciphertext leaks nothing today — the content is encrypted, the pointer is already public, and the holder can no more read it than a stranger could — so what the current behaviour actually buys is *forward secrecy*, since an epoch key compromised later cannot open bytes this node never kept. What it costs is durability: a three-person private channel inside a fifty-member network is replicated across three machines rather than fifty, and Core §4.2 defines `storage_offered` over *replicated* content rather than readable content | `design/03` §2, `design/05` §5.1 |
 
-O3, O8, O9, O10, O12, O13, O14, O17, O18, O21, O22, O23 and O24 are closed. What each was, and what closing it turned up,
+O3, O6, O8, O9, O10, O12, O13, O14, O17, O18, O21, O22, O23 and O24 are closed. What each was, and what closing it turned up,
 is in [`docs/log.md`](docs/log.md). The numbers are retired rather than reused, so the log
 stays readable.
 
@@ -187,7 +187,7 @@ produced, which the whole segment model rests on, are in `design/08` §4.
 
 ## 4. Log
 
-Moved to [`docs/log.md`](docs/log.md) — 119 entries, newest first.
+Moved to [`docs/log.md`](docs/log.md) — 120 entries, newest first.
 
 What happened *lately* is §1. The log is why things are the way they are: the reasoning behind
 a change, the thing tried and abandoned, the bug that turned out to be a different bug. It

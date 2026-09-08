@@ -227,6 +227,16 @@ enum Command {
         #[arg(long, conflicts_with = "relay")]
         no_relay: bool,
     },
+    /// Say what to tell this network about yourself — `design/01` §9.
+    ///
+    /// `invisible` publishes nothing at all, so it is indistinguishable from a
+    /// machine that is switched off. There is deliberately no `offline`: with no
+    /// server, nobody can tell somebody being away from somebody being
+    /// unreachable from where you are standing.
+    Presence {
+        /// here, idle, busy or invisible.
+        state: String,
+    },
     /// Work with this network's relays.
     #[command(subcommand)]
     Relay(RelayCommand),
@@ -446,6 +456,8 @@ fn submit(root: std::path::PathBuf, command: Command) -> Result<(), String> {
         // changing their upload has not said anything about their disk, and a
         // command that reset the rest to defaults would be a setting that
         // quietly undoes the others every time it is used.
+        Command::Presence { state } => ApiCommand::SetPresence { state },
+
         Command::Contribute {
             storage,
             upload,
@@ -684,6 +696,24 @@ fn render(outcome: &Outcome, names: &kols_core::Names) {
             println!();
             println!("The node collects it on its next pass, making room by giving back the");
             println!("coldest copies it holds for others. Read the channel again in a moment.");
+        }
+
+        Outcome::PresenceSet {
+            state,
+            broadcasting,
+        } => {
+            if *broadcasting {
+                println!("this network is told you are {state}");
+                println!();
+                println!("Sent every 30 seconds while this node runs, and nothing is stored:");
+                println!("members stop seeing it about a minute and a half after you stop.");
+            } else {
+                println!("nothing is published about you");
+                println!();
+                println!("Invisible does not broadcast \"invisible\" — it broadcasts nothing, so");
+                println!("this node is indistinguishable from one that is switched off. Everything");
+                println!("else keeps working: you read, post and hold content exactly as before.");
+            }
         }
 
         Outcome::ContributionSet {

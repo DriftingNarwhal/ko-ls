@@ -278,6 +278,10 @@ fn every_event() -> Vec<Event> {
             joiner: who,
             accepted: true,
         },
+        Event::MemberPresence {
+            identity: "ab".to_owned(),
+            state: "here".to_owned(),
+        },
         Event::Relay {
             reserved: None,
             designated: 0,
@@ -314,6 +318,7 @@ fn name_of(event: &Event) -> &'static str {
         Event::EpochRotated { .. } => "EpochRotated",
         Event::MemberKeyed { .. } => "MemberKeyed",
         Event::JoinAnswered { .. } => "JoinAnswered",
+        Event::MemberPresence { .. } => "MemberPresence",
         Event::Relay { .. } => "Relay",
         Event::Degraded { .. } => "Degraded",
         Event::GovernanceReorg { .. } => "GovernanceReorg",
@@ -337,7 +342,7 @@ fn every_event_has_a_sample() {
     }
     assert_eq!(
         seen.len(),
-        9,
+        10,
         "every_event samples {} of Event's variants — update this count, the \
          list, and `design/05` §3 when the boundary grows",
         seen.len()

@@ -238,6 +238,27 @@ pub enum Command {
         /// (`design/09` §5).
         relay_willing: bool,
     },
+    /// Say what to tell the network about yourself — `design/01` §9.
+    ///
+    /// Local state, per network, needing no capability: what a member says about
+    /// their own availability is theirs to say, and there is nobody to ask.
+    ///
+    /// **`invisible` is the reason this is a command rather than a preference.**
+    /// It does not publish "invisible" — it publishes *nothing*, so a member who
+    /// chooses it is indistinguishable from one whose machine is off. That is
+    /// the only implementation of the setting that means what it says, and it is
+    /// why this classifies as [`Sensitivity::Signs`] despite touching no
+    /// governance: moving somebody off invisible starts a signed claim about
+    /// them going out to every member of the network, which is exactly what
+    /// hosted code (`design/05` §7) must not be able to do quietly.
+    SetPresence {
+        /// One of `here`, `idle`, `busy` or `invisible`.
+        ///
+        /// Deliberately not `offline`. With no server there is no observation
+        /// that would justify the word, so it is absent from the vocabulary
+        /// rather than merely unused — see `design/09` §4.1.
+        state: String,
+    },
     /// Name this network, for every member — D32, spec 07 §1.7.
     ///
     /// A policy value rather than a local label, so one name travels with the
@@ -409,6 +430,15 @@ impl Command {
             // either: it governs nothing, reaches no other member's machine,
             // and is revocable at any moment.
             Self::SetContribution { .. } => Sensitivity::Signs,
+
+            // **Not `Local`, for the same reason and one of its own.** Choosing
+            // a state starts a signed beat going out to every member of the
+            // network on a thirty-second heartbeat, so "nothing leaves this node
+            // on the user's behalf" is false. And the specific act to guard is
+            // moving somebody *off* invisible: a member who has chosen to be
+            // unseen must not be put back on the roster by anything they did not
+            // do themselves.
+            Self::SetPresence { .. } => Sensitivity::Signs,
         }
     }
 
@@ -457,7 +487,8 @@ impl Command {
             | Self::SetPermission { .. }
             | Self::SetRoleMember { .. }
             | Self::LeaveNetwork
-            | Self::SetContribution { .. } => None,
+            | Self::SetContribution { .. }
+            | Self::SetPresence { .. } => None,
         }
     }
 
@@ -488,6 +519,7 @@ impl Command {
             Self::SetRoleMember { .. } => "set-role-member",
             Self::LeaveNetwork => "leave-network",
             Self::SetContribution { .. } => "set-contribution",
+            Self::SetPresence { .. } => "set-presence",
         }
     }
 }

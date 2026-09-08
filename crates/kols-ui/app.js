@@ -481,7 +481,7 @@ async function drawPeople() {
   }
 
   const signature = people
-    .map((p) => `${p.identity}|${p.name ?? ""}|${p.connected}`)
+    .map((p) => `${p.identity}|${p.name ?? ""}|${p.connected}|${p.presence ?? ""}`)
     .join(",");
   if (signature === state.peopleSignature) return;
   state.peopleSignature = signature;
@@ -491,6 +491,7 @@ async function drawPeople() {
   for (const person of people) {
     const row = document.createElement("li");
     row.className = person.connected ? "person connected" : "person";
+    if (person.presence === "here") row.classList.add("here");
 
     const dot = document.createElement("span");
     dot.className = "dot";
@@ -512,7 +513,22 @@ async function drawPeople() {
     id.className = "mono person-id";
     id.textContent = person.short;
 
-    row.append(dot, who, id);
+    // **What they said, when they said it recently enough to still mean
+    // something.** Absent is *no signal* and never "offline": it covers a beat
+    // gone stale, somebody who chose to be invisible, and somebody this node has
+    // never heard from, and nothing here can tell those apart. So the row shows
+    // nothing rather than showing a word for it.
+    row.append(dot, who);
+    if (person.presence) {
+      const said = document.createElement("span");
+      said.className = "said";
+      said.textContent = person.presence;
+      said.title = person.you
+        ? "what this network is being told about you"
+        : `they said they are ${person.presence}, within the last minute or two`;
+      row.append(said);
+    }
+    row.append(id);
     list.append(row);
   }
 
@@ -535,9 +551,43 @@ async function drawPeople() {
   el("presence-toggle").title = el("me-dot").title;
 
   el("roster-count").textContent = `${connected + 1}/${people.length}`;
+  // Two marks, two sentences, because they answer different questions and the
+  // whole point of §4.1 is not to let one stand in for the other.
   el("roster-note").textContent =
     "A lit dot means connected to you right now. An unlit one means away, " +
-    "unreachable from here, or never dialled — this client cannot tell those apart.";
+    "unreachable from here, or never dialled — this client cannot tell those apart. " +
+    "A word beside a name is what that member said in the last minute or two. " +
+    "No word means nothing has been heard, which is not the same as being away.";
+
+  // The selector reflects what is actually being published rather than what was
+  // last clicked, so it survives a restart and a change made from the terminal.
+  const you = people.find((person) => person.you);
+  if (you?.presence) el("my-presence").value = you.presence;
+  const hidden = you?.presence === "invisible";
+  el("my-presence-note").hidden = !hidden;
+  el("my-presence-note").textContent = hidden
+    ? "Nothing at all is published about you — not even that you are hiding, " +
+      "which is what would give it away. Everything else works exactly as before."
+    : "";
+}
+
+/// Says what to tell this network about you.
+///
+/// **Applied by re-reading the roster rather than by moving the control**, so
+/// what is on screen is always what is being published. A refused change leaves
+/// the selector showing the truth rather than the click — which matters here
+/// more than elsewhere, since the failure worth avoiding is somebody believing
+/// they are invisible while a beat keeps going out.
+async function setPresence(choice) {
+  try {
+    await invoke("set_presence", { state: choice });
+    el("my-presence-note").hidden = true;
+  } catch (err) {
+    el("my-presence-note").hidden = false;
+    el("my-presence-note").textContent = String(err);
+  }
+  state.peopleSignature = null;
+  await drawPeople();
 }
 
 /// Opens or closes the roster.
@@ -2429,6 +2479,14 @@ window.addEventListener("blur", () => {
   state.settle = null;
 });
 
+el("my-presence").addEventListener("change", (event) => {
+  setPresence(event.target.value);
+});
+
+// The selector lives inside the dropdown, so a click on it must not be read as
+// a click away from the panel that closes it.
+el("my-presence").addEventListener("click", (event) => event.stopPropagation());
+
 el("presence-toggle").addEventListener("click", (event) => {
   event.stopPropagation();
   showPeople(el("presence-panel").hidden);
@@ -3033,6 +3091,14 @@ async function watch() {
 
   await listen("kols://keys", async () => {
     drawMe(await invoke("me"));
+  });
+
+  // **A beat arrived. Nothing tells us when one stops**, and nothing can: a
+  // member stops being here because nothing came, which is not an event. So the
+  // roster also redraws on the poll below, and this only makes somebody
+  // appearing feel immediate rather than up to a poll late.
+  await listen("kols://presence", async () => {
+    await drawPeople();
   });
 
   // The node's standing with the relay, reported once at startup — and

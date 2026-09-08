@@ -149,6 +149,12 @@ pub enum Refusal {
     NoSuchRole(String),
     /// A role by that name already exists.
     RoleExists(String),
+    /// A presence state outside the four this vocabulary has.
+    ///
+    /// Refused rather than stored, because the store reads an unrecognised value
+    /// as "never chosen" and that reads as the default — which is visible. A
+    /// mistyped state must not be the way somebody stops being invisible.
+    UnknownPresence(String),
 }
 
 impl std::fmt::Display for Refusal {
@@ -189,6 +195,12 @@ impl std::fmt::Display for Refusal {
                 f,
                 "{group} holds every capability there is, so there is no set to take one \
                  out of. Narrowing it means replacing that with an explicit list"
+            ),
+            Self::UnknownPresence(state) => write!(
+                f,
+                "{state:?} is not one of here, idle, busy or invisible. There is no \
+                 \"offline\": with no server, nobody can tell somebody being away from \
+                 somebody being unreachable from here"
             ),
             Self::Negative { field } => write!(
                 f,
@@ -562,6 +574,18 @@ pub fn authorize<A: Authority, C: Channels>(
         // this node from every replica set, which is a thing a member is allowed
         // to want (`design/02` §6.4).
         Command::SetContribution { .. } => {}
+
+        // Nothing to check for the same reason, and one more: this is a claim a
+        // member makes about themselves, so there is no other party whose
+        // permission could be relevant. **The value is validated rather than
+        // trusted**, because an unrecognised state would otherwise be written to
+        // the store and read back as `None` — which is the default, and the
+        // default is visible. A typo must not quietly un-hide somebody.
+        Command::SetPresence { state } => {
+            if kols_core::Presence::from_name(state).is_none() {
+                return Err(Refusal::UnknownPresence(state.clone()));
+            }
+        }
 
         Command::SetNetworkName { name: network_name } => {
             require(

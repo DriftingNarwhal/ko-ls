@@ -24,6 +24,7 @@ mod hlc;
 mod log;
 mod permissions;
 mod policy;
+mod presence;
 mod ids;
 mod limits;
 mod live;
@@ -40,6 +41,9 @@ pub use channel::{
 };
 pub use hlc::Hlc;
 pub use live::{LivePayload, channel_content_key};
+pub use presence::{
+    BEAT_MILLIS, Beat, FRESH_MILLIS, Presence, PresenceBeat, SealedBeat, presence_key,
+};
 pub use names::{
     MAX_NAME_BYTES, MAX_NAME_GRAPHEMES, NAME_CLAIM_DOMAIN, NAME_CLAIM_KIND, NAME_CLAIM_TAG,
     NameClaim, NameRefusal, Names, name_key, replay_names,
@@ -48,7 +52,7 @@ pub use log::{AuthorLog, CHAT_LOG_CONTENT_TYPE, Published, publish_head_index};
 pub use ids::{
     ChannelId, MessageId, author_log_pointer, author_segment_pointer, category_id,
     channel_browse_collection, conversation_channel_id, gossip_topic, moderation_log_pointer,
-    participant_index_collection, server_channel_id, thread_channel_id,
+    participant_index_collection, presence_topic, server_channel_id, thread_channel_id,
 };
 pub use record::{
     Attachment, DEFAULT_MAX_BODY_BYTES, MAX_ATTACHMENT_NAME_BYTES, MAX_REACTION_KEY_BYTES,

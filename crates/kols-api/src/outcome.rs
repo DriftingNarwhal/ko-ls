@@ -123,6 +123,18 @@ pub enum Outcome {
         /// Whether this node volunteers as a bootstrap relay.
         relay_willing: bool,
     },
+    /// What this member tells the network about themselves changed — `01` §9.
+    PresenceSet {
+        /// The state now in force: `here`, `idle`, `busy` or `invisible`.
+        state: String,
+        /// Whether anything will now go out at all.
+        ///
+        /// False for `invisible`, and worth returning rather than deriving from
+        /// the name: the whole of that setting is that nothing is published, and
+        /// an interface that said "you are invisible" while a beat kept going
+        /// would be the failure this is here to make visible.
+        broadcasting: bool,
+    },
     /// The network's membership changed.
     MembershipChanged {
         /// Whose.

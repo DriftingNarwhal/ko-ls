@@ -24,6 +24,44 @@ Kept because this project keeps re-learning the same lessons and paying for them
 
 ---
 
+- **2026-09-08** — **Presence, and the word that had to be absent rather than unused.**
+
+  O6 closed. `01` §9 had specified the mechanism for a long time and neither front end
+  implemented it, so §4's third question — who is here — had no answer and the window showed a
+  narrower honest thing instead: who this node holds a connection to. That ordering was correct
+  and is worth recording as such, because the tempting shortcut was always available: draw a dot
+  from the connection list and call it presence. It would have been reachability wearing
+  presence's clothes, and it gets *more* wrong as a network grows.
+
+  **The design turns on there being two facts, not one.** A ring is this node's own observation;
+  a word beside a name is what that member said. Presence travels by gossip, so somebody can be
+  *here* without this node holding a connection to them — which is exactly why the two marks
+  cannot be merged, and why the roster carries a sentence about each.
+
+  **No word at all is the case that took the care.** It covers a beat gone stale, a member who
+  chose invisible, and a member never heard from; nothing distinguishes them, so the row says
+  nothing. There is no `offline` anywhere — not the interface, not the boundary event, not the
+  wire format. A word that cannot be justified is better absent than unused, because an unused
+  one gets reached for. `drive.mjs` asserts the roster never renders it, and the guard was
+  mutation-checked by making the absent case render "offline": two checks fired.
+
+  **Invisible publishes nothing rather than publishing "invisible"**, which is the whole setting.
+  A beat saying so tells every member this node is running and hiding. It is two types in the
+  implementation rather than one enum used twice, so the mistake cannot be made by accident, and
+  the choice is persisted even though the beats are not — a member who chose to hide must not be
+  back on the roster after a restart. The two-node test proves the silence: Alice is invisible
+  *first*, a record crosses live between the same two nodes to show the mesh works, and only then
+  is the absence of a beat meaningful. Mutation-checked by ignoring the setting; it failed.
+
+  **Two things the spec had left and the code had to settle.** `01` §9 said the states were
+  `online | idle | dnd | invisible`; `online` is the word §4.1 forbids for the absence case and
+  is misleading for the present one too, since there is no server to be on a line to. And a beat
+  is **signed** as well as sealed: the seal keeps presence inside the epoch but says nothing
+  about who sent what, and gossip lets any subscriber republish — so without it one member could
+  announce another as present, or keep announcing them after they had gone. The signature covers
+  the time as well, and freshness is judged by when a beat was *heard*, because a signed
+  timestamp from a sender's clock would otherwise pin somebody present forever.
+
 - **2026-09-08** — **An offer buys ranking, not a crawl (D38) — and checking that closed the
   question rather than answering it.**
 

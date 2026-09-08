@@ -362,6 +362,32 @@ body {
   background: var(--good);
   border-color: var(--good);
 }
+/* What somebody said, beside the dot that says whether we can reach them. Two
+   different facts, so two different marks: the dot is this node's own
+   observation and this is the member's own claim, and a design that merged them
+   would be back to asserting "online". */
+.person .said {
+  font-size: 10px;
+  flex: none;
+  padding: 0 4px;
+  border-radius: 6px;
+  border: 1px solid var(--dim);
+  opacity: 0.8;
+}
+.person.here .said { color: var(--good); border-color: var(--good); }
+
+.roster-mine {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding-bottom: 6px;
+  border-bottom: 1px solid var(--line);
+  margin-bottom: 6px;
+}
+.roster-mine select {
+  flex: 1 1 0;
+  min-width: 0;
+}
 
 /* ---- settings ----------------------------------------------------------- */
 

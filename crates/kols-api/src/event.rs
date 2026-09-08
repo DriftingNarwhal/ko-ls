@@ -112,6 +112,26 @@ pub enum Event {
         /// Whether the invite was good.
         accepted: bool,
     },
+    /// A member said they are here — `design/01` §9, `design/09` §4.1.
+    ///
+    /// **This is positive evidence and nothing else.** Hearing a beat says
+    /// somebody was there; hearing none says nothing at all, because with no
+    /// server *offline* and *I have not heard from them* are the same
+    /// observation. There is deliberately no event for a member going away: a
+    /// consumer decides that by a beat going stale against its own clock
+    /// (`kols_core::PresenceBeat::fresh_at`), which is the only judgement this
+    /// node is entitled to make.
+    ///
+    /// `state` is one of `here`, `idle` or `busy`, and never `offline` — the
+    /// word does not exist in this vocabulary because the claim behind it cannot
+    /// be made. An invisible member emits nothing at all, so there is no state
+    /// for that either.
+    MemberPresence {
+        /// Who, as a hex identity — the same spelling the roster is keyed on.
+        identity: String,
+        /// What they said.
+        state: String,
+    },
     /// This node's standing with the network's relays, settled at startup.
     ///
     /// Reported on **success as well as failure**, which is the point of it.

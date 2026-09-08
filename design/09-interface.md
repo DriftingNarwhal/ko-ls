@@ -1,9 +1,9 @@
 # Interface
 
-**Document status:** v0.19 — §4.2 gains the rule a stale contribution panel cost: copy that describes an unbuilt mechanism rots into a false claim about what the software does, and is guarded by a check that reads the live document rather than by remembering to revisit it. Previously v0.18 — §4.2 gains a third settings group, *this machine, here*, for contribution: local and revocable like *mine*, and broadcast, which the *mine* heading explicitly says its contents are not. Previously v0.17 — §1 gains the third landing a join can have: the request reached the issuer and nothing came back, which is not a refusal and used to be reported as one — costing somebody a use-limited invite on a retry into a network that already held them. Membership now comes from replay rather than from what the handshake said, and the interface tells *not admitted* apart from *admitted and not yet keyed*. Previously v0.16 — §3 revises what the client does about a relay shared between two networks: it warns and never refuses, since a refusal is unenforceable anyway and would block a member legitimately relaying on their own LAN for two of their own networks. Previously v0.15 — §2 records that the picker's *forget* becomes *leave* on the open network, since publishing a departure needs a running node and only the open one has one; and that what it reports afterwards is how many members could have heard rather than how many did. Previously v0.14 — §5.1 records what the first working drag found: a drag needs a target for every destination rather than for every thing, and two of four were unreachable — the end of a list, and the top level once every channel was in a folder. Previously v0.13 — §5.1 gains the rule reordering cost: a capability whose only route is one nobody can verify has no route. Drag-and-drop never worked because Tauri's native drag handler took it first, and channels keep move up and move down beside the fixed drag. Previously v0.12 — the row handle is removed at the tester's request, one way to a menu being enough; §5.1 keeps the two sizing rules it cost, which were never about it. Previously v0.11 — §5.1 gains the rule the sidebar bug actually needed: draw an icon rather than typing one, and take a control beside shrinkable text out of flow, because correct arithmetic is not the same as no arithmetic. Previously v0.10 — §4.3 gains the two ways a mark ends, and that it never marks your own; §5.1 gains the flex sizing rule that turned a sidebar into columns of one letter on Windows and not on macOS. Previously v0.9 — §4.1 says where the roster went and what the one number left on screen is for; §4.2 records settings becoming a screen rather than a layer, and the rule that decides which surface a thing gets; §4.3 is new and separates *where something arrived* from *what you have not seen*, which cannot be derived from it because a message is ordered by its author's clock rather than by its arrival. §7.1 and §7.3 narrowed rather than closed. Previously v0.8 — §4.2's Network section takes admission mode, the abuse limits and the retention windows, and says the three things a number on screen does not carry. Previously v0.7 — §4.2's settings sections are built, and it says what shape they took and which of them is a panel over a feature that does not exist yet; §5 gains the line between asking *whether* and asking *what*, which is what decides whether a dialog may live in the document a theme can reach. Previously v0.6 — §4.1 says plainly that presence is unbuilt, why it is last, and what the window shows instead; that was being carried in a status file. Previously v0.5 — §4.2 fixes what settings is and how it is divided, §6.4 and §6.5 settle reset and the two things that must leave the document before a theme can reach them (D36, D37). Theming remains designed and unbuilt. Previously v0.4 — D29 (a relay is never shared between networks) and what it does and does not mean for §3's direct-message bootstrap;  an interface now exists and is a first pass, not a settled one: it
+**Document status:** v0.20 — §4.1's presence is built, and the section is rewritten around what that cost: two marks that may never stand in for each other, an absence case that stays deliberately silent, and invisible as *publishes nothing* rather than *publishes "invisible"*. The control sits in the roster rather than settings, which is an argued exception to §4.2's grouping. Previously v0.19 — §4.2 gains the rule a stale contribution panel cost: copy that describes an unbuilt mechanism rots into a false claim about what the software does, and is guarded by a check that reads the live document rather than by remembering to revisit it. Previously v0.18 — §4.2 gains a third settings group, *this machine, here*, for contribution: local and revocable like *mine*, and broadcast, which the *mine* heading explicitly says its contents are not. Previously v0.17 — §1 gains the third landing a join can have: the request reached the issuer and nothing came back, which is not a refusal and used to be reported as one — costing somebody a use-limited invite on a retry into a network that already held them. Membership now comes from replay rather than from what the handshake said, and the interface tells *not admitted* apart from *admitted and not yet keyed*. Previously v0.16 — §3 revises what the client does about a relay shared between two networks: it warns and never refuses, since a refusal is unenforceable anyway and would block a member legitimately relaying on their own LAN for two of their own networks. Previously v0.15 — §2 records that the picker's *forget* becomes *leave* on the open network, since publishing a departure needs a running node and only the open one has one; and that what it reports afterwards is how many members could have heard rather than how many did. Previously v0.14 — §5.1 records what the first working drag found: a drag needs a target for every destination rather than for every thing, and two of four were unreachable — the end of a list, and the top level once every channel was in a folder. Previously v0.13 — §5.1 gains the rule reordering cost: a capability whose only route is one nobody can verify has no route. Drag-and-drop never worked because Tauri's native drag handler took it first, and channels keep move up and move down beside the fixed drag. Previously v0.12 — the row handle is removed at the tester's request, one way to a menu being enough; §5.1 keeps the two sizing rules it cost, which were never about it. Previously v0.11 — §5.1 gains the rule the sidebar bug actually needed: draw an icon rather than typing one, and take a control beside shrinkable text out of flow, because correct arithmetic is not the same as no arithmetic. Previously v0.10 — §4.3 gains the two ways a mark ends, and that it never marks your own; §5.1 gains the flex sizing rule that turned a sidebar into columns of one letter on Windows and not on macOS. Previously v0.9 — §4.1 says where the roster went and what the one number left on screen is for; §4.2 records settings becoming a screen rather than a layer, and the rule that decides which surface a thing gets; §4.3 is new and separates *where something arrived* from *what you have not seen*, which cannot be derived from it because a message is ordered by its author's clock rather than by its arrival. §7.1 and §7.3 narrowed rather than closed. Previously v0.8 — §4.2's Network section takes admission mode, the abuse limits and the retention windows, and says the three things a number on screen does not carry. Previously v0.7 — §4.2's settings sections are built, and it says what shape they took and which of them is a panel over a feature that does not exist yet; §5 gains the line between asking *whether* and asking *what*, which is what decides whether a dialog may live in the document a theme can reach. Previously v0.6 — §4.1 says plainly that presence is unbuilt, why it is last, and what the window shows instead; that was being carried in a status file. Previously v0.5 — §4.2 fixes what settings is and how it is divided, §6.4 and §6.5 settle reset and the two things that must leave the document before a theme can reach them (D36, D37). Theming remains designed and unbuilt. Previously v0.4 — D29 (a relay is never shared between networks) and what it does and does not mean for §3's direct-message bootstrap;  an interface now exists and is a first pass, not a settled one: it
 creates and joins networks, runs a node, renders a channel, brings the next member in, and gates
-its chrome on permission. §1's workspace, **both halves of §5**, §4's first two questions and
-most of §7's second are built; §2's tiering, §4.1's presence and §6's theming are not, and §7's
+its chrome on permission. §1's workspace, **both halves of §5**, all three of §4's questions and
+most of §7's second are built; §2's tiering and §6's theming are not, and §7's
 navigation question stays open by default rather than by decision
 **Depends on:** `05` for the crate layout and API boundary; `01` §9 for presence; `03` §4 for
 direct messages; App Hosting Spec §1.2 and §3.3 for the sandbox path
@@ -347,17 +347,44 @@ So the roster distinguishes **heard recently** from **no signal**, and never cla
 is offline. The wording carries more weight than the colour of the dot: an interface that
 renders "Offline" is stating something it does not know.
 
-**None of this is built, and it is last deliberately.** Neither front end implements the
-ephemeral gossip `01` §9 specifies, so §4's third question — who is here, and are they around
-— has no answer in the interface. That ordering is the point rather than an accident: the
-mechanism has to exist before the dot does, because a dot drawn without it would be reporting
-reachability from this node and calling it presence, which is precisely the claim the section
-above forbids.
+**Built 2026-09-08, and the ordering it waited for was the point.** The mechanism had to exist
+before the dot did, because a dot drawn without it would be reporting reachability from this
+node and calling it presence — precisely the claim the paragraph above forbids. It is last in
+this section because it was last in the work.
 
-What the window shows instead is narrower and honest about being narrower: a roster marking
-who is **connected to you right now**, drawn as an empty ring rather than an unlit light,
-with the wording saying so where it is shown. An unmarked member may be away, unreachable
-from here, or never dialled, and nothing on this machine distinguishes them.
+**Two marks, because there are two facts and neither may stand in for the other.**
+
+- The **ring** is this node's own observation: a connection to that member right now. It is
+  drawn as an empty ring rather than an unlit light, so its absence reads as *no information*
+  rather than as a red light saying somebody is away.
+- The **word** beside a name is what that member said about themselves, and it appears only
+  while their beat is still current. It travels by gossip, so somebody can be *here* without
+  this node holding a connection to them, and that difference is exactly why the two marks
+  cannot be merged.
+
+**No word at all is the absence case, and it is deliberately silent.** It covers a beat gone
+stale, a member who chose to be invisible, and a member this node has never heard from — three
+different situations that nothing here distinguishes, so the row says nothing rather than
+inventing a word that would collapse them. There is no *offline* in this vocabulary: not in the
+interface, not in the boundary's event, not in the wire format. A word that cannot be justified
+is better absent than unused, because an unused one gets reached for.
+
+**Invisible publishes nothing rather than publishing "invisible".** A beat saying so would tell
+every member that this node is running and hiding, which is most of what the setting withholds
+— so a member who chooses it is indistinguishable from one whose machine is off, which is the
+only implementation that means what it says. The window states that where the choice is made,
+because the failure worth preventing is somebody believing they are hidden while a beat goes
+out. It is the one setting whose correctness a member cannot check for themselves.
+
+**Freshness is judged by when this node heard, never by the time the beat carries.** Clocks
+disagree, and the timestamp is signed by the sender — so a member whose clock reads next year
+could otherwise pin themselves as present forever with one message.
+
+**The control lives in the roster rather than in settings**, which is an exception to §4.2's
+grouping and has a reason: presence is local and other members see it, so by that section's own
+rule it belongs under *this machine, here*. But settings is a place you go to finish something
+and leave, and this is changed in the moment — and the moment is when you are already looking at
+who is around.
 
 **Where it lives, and the one number that stays on screen.** The roster is a dropdown at the
 top right rather than a permanent column, and what remains visible is a count of the members

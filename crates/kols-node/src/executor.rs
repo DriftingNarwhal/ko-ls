@@ -419,6 +419,22 @@ impl Executor {
                 })
             }
 
+            // Same shape as the contribution above and for the same reason:
+            // this writes a file, and the daemon folds it into the beat it was
+            // already sending on its next tick. **Refused earlier if it is not a
+            // state**, so nothing unrecognised can be written and later read
+            // back as the default — which is visible, and would be a typo
+            // un-hiding somebody.
+            Command::SetPresence { state } => {
+                let choice = kols_core::Presence::from_name(&state)
+                    .expect("authorize refuses any other value");
+                self.store.set_presence(choice)?;
+                Ok(Outcome::PresenceSet {
+                    state: choice.name().to_owned(),
+                    broadcasting: choice.to_beat().is_some(),
+                })
+            }
+
             Command::SetNetworkName { name } => self.set_network_name(name, identity, state),
 
             Command::SetChatSetting { setting, value } => {

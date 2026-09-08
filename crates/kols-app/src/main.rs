@@ -393,6 +393,22 @@ fn set_contribution(
     })
 }
 
+/// Says what to tell this network about you — `design/01` §9.
+///
+/// One of `here`, `idle`, `busy` or `invisible`, and refused otherwise: an
+/// unrecognised value would be read back as *never chosen*, and never chosen is
+/// visible. There is no `offline`, because there is no observation that would
+/// justify the word (`design/09` §4.1).
+#[tauri::command]
+fn set_presence(app: tauri::State<'_, App>, state: String) -> Result<(), String> {
+    app.with(|executor| {
+        executor
+            .submit(Command::SetPresence { state })
+            .map(|_| ())
+            .map_err(|err| err.to_string())
+    })
+}
+
 /// Asks this node to collect history older than the oldest message on screen.
 ///
 /// Bounded by a reading rather than open-ended: history is a backwards chain, so
@@ -523,6 +539,10 @@ fn roles(app: tauri::State<'_, App>) -> Result<Vec<dto::Role>, String> {
                         // is replayed state and does not change when a socket
                         // does.
                         connected: false,
+                        // Nor this, for the same reason: what somebody is
+                        // telling the network right now is not part of who
+                        // holds a role.
+                        presence: None,
                         you: *who == me,
                     })
                     .collect();
@@ -1345,6 +1365,17 @@ fn people(app: tauri::State<'_, App>) -> Result<Vec<dto::Member>, String> {
         let names = executor.names(&state).map_err(|e| e.to_string())?;
         let connected: std::collections::BTreeSet<String> =
             store.connected().into_iter().collect();
+        // **Freshness is applied here rather than in the store**, because this
+        // is the layer that is answering a question. The store keeps
+        // observations, and an observation that has gone stale is still an
+        // observation; what expires is the *claim* built on it.
+        let now = kols_node::chat::now_millis();
+        let heard: std::collections::BTreeMap<String, String> = store
+            .beats()
+            .into_iter()
+            .filter(|(_, _, at)| kols_core::PresenceBeat::fresh_at(*at, now))
+            .map(|(who, state, _)| (who, state.name().to_owned()))
+            .collect();
 
         let mut people: Vec<dto::Member> = state
             .groups
@@ -1356,6 +1387,24 @@ fn people(app: tauri::State<'_, App>) -> Result<Vec<dto::Member>, String> {
                 let hex = to_hex(identity.verifying_key().as_bytes());
                 dto::Member {
                     connected: connected.contains(&hex),
+                    // **Your own row is your own choice, not an observation.**
+                    // This node ignores its own beats — a roster that counted
+                    // them would answer a different question — so there is
+                    // nothing heard to report here, and what somebody wants to
+                    // see beside their own name is what the network is being
+                    // told. That includes `invisible`, which is the one state
+                    // nobody else can see and the one worth being sure about.
+                    presence: if identity == me {
+                        Some(
+                            store
+                                .presence()
+                                .unwrap_or(kols_core::Presence::Show(kols_core::Beat::Here))
+                                .name()
+                                .to_owned(),
+                        )
+                    } else {
+                        heard.get(&hex).cloned()
+                    },
                     you: identity == me,
                     short: identity.short(),
                     name: names.of(&identity).map(str::to_owned),
@@ -1675,6 +1724,12 @@ fn start_node(handle: &tauri::AppHandle, app: tauri::State<'_, App>, root: std::
                     "kols://keys"
                 }
                 kols_api::Event::JoinAnswered { .. } => "kols://joins",
+                // **Redrawn from the roster rather than applied from the
+                // payload**, like everything else here: the beat is already in
+                // the store with the time it was heard, and freshness has to be
+                // recomputed anyway — a member stops being here because nothing
+                // arrived, which is not an event and can never be one.
+                kols_api::Event::MemberPresence { .. } => "kols://presence",
                 kols_api::Event::GovernanceReorg { mine, others } => {
                     // Recorded before it is emitted, like the relay standing:
                     // the emit makes it prompt, the record makes it reliable.
@@ -1849,6 +1904,7 @@ fn main() {
             set_admission_mode,
             contribution,
             set_contribution,
+            set_presence,
             storage_ceiling,
             set_storage_ceiling,
             fetch_history,

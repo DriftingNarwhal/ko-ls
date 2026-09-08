@@ -1,6 +1,6 @@
 # Messaging Model
 
-**Document status:** v1.3 — §6's redaction rule is enforced as of the cited governance head, which it had not been: `may_moderate_at` took the head and answered from current state, so a demotion reached backwards and un-hid every message that moderator had ever redacted. Both halves are asserted together — a demotion stops new redactions and leaves past ones standing. Previously v1.2 — §2.3 makes categories nameable and ordered, §2.4 fixes the sidebar's two-level order. Both are implemented in `kols-core`; spec 07 is normative where they overlap
+**Document status:** v1.4 — §9's presence is built, and the section records what building it settled: the states are `here | idle | busy | invisible` rather than the `online`/`dnd` this once said, `invisible` has no wire form at all, a beat is signed as well as sealed, and freshness is judged by when a beat was heard rather than by the time it carries. Typing is still unbuilt. Previously v1.3 — §6's redaction rule is enforced as of the cited governance head, which it had not been: `may_moderate_at` took the head and answered from current state, so a demotion reached backwards and un-hid every message that moderator had ever redacted. Both halves are asserted together — a demotion stops new redactions and leaves past ones standing. Previously v1.2 — §2.3 makes categories nameable and ordered, §2.4 fixes the sidebar's two-level order. Both are implemented in `kols-core`; spec 07 is normative where they overlap
 **Depends on:** Core Protocol Spec §2 (governance log), Storage Spec §1–§5, Search Spec §3
 **Consumed by:** `02-membership-and-permissions`, `03-confidentiality`, `05-client-architecture`
 
@@ -621,10 +621,34 @@ does not prevent an existing member from pasting old content into a new message.
 ## 9. Presence, Typing and Read State
 
 **Presence and typing are ephemeral and never stored.** They ride a gossipsub topic and
-are dropped on restart: presence heartbeats every 30 s with a coarse state
-(`online | idle | dnd | invisible`), typing indicators with a 5 s TTL. `invisible` is a
-real per-user setting, not a UI courtesy — presence in this system is visible to every
-member of the network, and a user who does not want that must be able to say so.
+are dropped on restart: presence heartbeats every 30 s with a coarse state, typing
+indicators with a 5 s TTL. `invisible` is a real per-user setting, not a UI courtesy —
+presence in this system is visible to every member of the network, and a user who does not
+want that must be able to say so.
+
+**Presence is built (2026-09-08); typing is not.** Four things the implementation settled,
+which this section had left to whoever wrote it:
+
+- **The states are `here | idle | busy | invisible`**, and the first three are what goes on
+  the wire. This section originally said `online`, which is the word `09` §4.1 forbids for
+  the *absence* case and is misleading for the present one too — there is no server to be on
+  a line to. `busy` replaces `dnd` for the same reason a name should say what it means.
+- **`invisible` has no wire representation.** It is the choice to publish nothing, not a
+  state to publish: a beat saying "invisible" tells every member that this node is running
+  and hiding, which is most of what the setting withholds. The two are different types in
+  the implementation so that they cannot be confused by accident.
+- **A beat is signed as well as sealed.** The seal keeps presence inside the epoch; it does
+  not say who sent what, and gossip delivers to every subscriber and lets any of them
+  republish. Without a signature over the state *and* the time, one member could announce
+  another as present, or keep announcing them after they had gone. The choice is persisted
+  even though the beats are not — a member who chose to be invisible must not be back on the
+  roster after a restart.
+- **Freshness is judged by when a beat was heard**, never by the time it carries: that
+  timestamp is the sender's and is signed, so trusting it would let one message pin somebody
+  as present indefinitely. Ninety seconds — three beats, so two may be lost.
+
+The topic is network-wide rather than per channel, which is the scaling change this section
+already names below rather than a correctness one.
 
 At larger scales presence is subscribed **per channel currently in view**, not
 network-wide, so a 5,000-member server does not gossip a full roster heartbeat to

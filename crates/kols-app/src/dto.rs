@@ -364,6 +364,18 @@ pub struct Member {
     /// covers three different situations — away, unreachable from here, or
     /// simply never dialled — and nothing on this machine distinguishes them.
     pub connected: bool,
+    /// What they last told the network, while that is still current.
+    ///
+    /// `None` is **no signal** and never "offline" — the two are different
+    /// claims and only the first is one this node can make. It covers a member
+    /// whose beat has gone stale, one who has chosen to be invisible, and one
+    /// this node has simply never heard from, and nothing here distinguishes
+    /// them. Anywhere it is shown has to say so (`design/09` §4.1).
+    ///
+    /// Distinct from `connected`, which is narrower: presence travels by gossip
+    /// and so reaches this node through other members, meaning somebody can be
+    /// `here` without this node holding a connection to them.
+    pub presence: Option<String>,
     /// Whether this is the member reading the list.
     pub you: bool,
 }
