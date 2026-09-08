@@ -265,6 +265,10 @@
             <button type="button" class="settings-tab" data-tab="appearance">appearance</button>
             <button type="button" class="settings-tab" data-tab="device">this device</button>
 
+            <h3>this machine, here</h3>
+            <p class="settings-nav-note">local and revocable, and other members read it</p>
+            <button type="button" class="settings-tab" data-tab="contribution">contribution</button>
+
             <h3>the network's</h3>
             <p class="settings-nav-note">signed, replayed by every joiner, permanent</p>
             <button type="button" class="settings-tab" data-tab="identity">identity</button>
@@ -300,9 +304,95 @@
           <section class="settings-panel" data-panel="device" data-kols="device" hidden>
             <h3>this device</h3>
             <p class="dim">
-              Anything nothing else needs to know. Empty today, and named so the
-              first local preference has somewhere obvious to land instead of
-              being filed under the network's business.
+              Anything nothing else needs to know — local to this installation,
+              across every network on it.
+            </p>
+
+            <form id="ceiling-form" class="settings-form">
+              <label for="ceiling-gb">most disk this application may use, GB</label>
+              <input id="ceiling-gb" type="number" min="1" step="1" />
+              <button type="submit">save</button>
+            </form>
+            <p class="settings-error" id="ceiling-error" hidden></p>
+            <p class="dim" id="ceiling-usage"></p>
+            <p class="dim">
+              <strong>This is the one that stops a disk filling up</strong>, and it
+              binds before any single network's offer does. It covers everything
+              kept here — what you fetched to read and what you hold for other
+              members alike.
+            </p>
+            <p class="dim">
+              Set per installation rather than per network, because a disk does
+              not know how many networks are on it. That matters more than it
+              sounds: a direct message is its own network, so this is the only
+              number that answers <em>how much is this costing me</em> once you
+              have more than a couple.
+            </p>
+            <p class="dim">
+              At the ceiling, no network here takes on new content for other
+              members until there is room. Your own reading is never what gives
+              way.
+            </p>
+          </section>
+
+          <!-- ── this machine, to this network ─────────────────────────── -->
+
+          <section class="settings-panel" data-panel="contribution" data-kols="contribution" hidden>
+            <h3>contribution</h3>
+            <p class="dim">
+              How much disk this network may use on this machine. Yours to set
+              and yours to take back at any time — no capability, nobody to ask,
+              and it applies to this network only.
+            </p>
+            <form id="contribution-form" class="settings-form">
+              <label for="contribution-storage">storage for others, MB</label>
+              <input id="contribution-storage" type="number" min="0" step="64" />
+
+              <label for="contribution-upload">upload, KB/s</label>
+              <input id="contribution-upload" type="number" min="0" step="100" />
+
+              <label for="contribution-download">download, KB/s</label>
+              <input id="contribution-download" type="number" min="0" step="100" />
+
+              <label id="contribution-relay-row" hidden>
+                <input id="contribution-relay" type="checkbox" />
+                help other members connect to each other
+              </label>
+
+              <button type="submit">save</button>
+            </form>
+            <p class="settings-error" id="contribution-error" hidden></p>
+            <p class="dim" id="contribution-usage"></p>
+            <p class="dim" id="contribution-default" hidden>
+              Nothing has been set here, so these are the shipped defaults. A
+              default that has never been chosen follows a revised one; a number
+              you set stays where you put it.
+            </p>
+            <p class="dim" id="contribution-unreachable">
+              <strong>Relaying is not offered here.</strong> This node has not
+              been seen from outside, so it could not help two members reach each
+              other — that job is being dialable by peers who cannot dial each
+              other. Not confirmed is weaker than not reachable: it may simply
+              not have been told yet.
+            </p>
+            <p class="dim">
+              <strong>None of this affects using the application.</strong>
+              Contributing nothing still lets you read, post and keep your own
+              history. There are ordinary reasons to contribute nothing — a
+              phone, a metered connection, a full disk — and none of them makes
+              you a lesser member.
+            </p>
+            <p class="dim">
+              <strong>Upload at zero means nobody fetches from you.</strong> Other
+              members read an offer of no upload as not having volunteered. Your
+              own reading is unaffected, since that asks the same question of
+              other people's machines.
+            </p>
+            <p class="dim">
+              <strong>Storage is an offer rather than a ceiling today.</strong>
+              Nothing enforces it against what is already on disk, and this node
+              takes on no storage duty for others yet. Both are being built; this
+              says so rather than letting the number look like a cap.
             </p>
           </section>
 

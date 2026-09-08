@@ -137,6 +137,15 @@ pub struct Message {
     pub author_id: String,
     /// The author's clock reading, as a wall time.
     pub at: String,
+    /// The same reading, unformatted.
+    ///
+    /// Carried beside the display form because asking for older history needs a
+    /// *boundary* and not a label — the oldest message on screen is where a
+    /// member's view stops, which is exactly the point to ask from. Deriving it
+    /// by parsing `at` back would make the request depend on a formatting
+    /// choice, which is the kind of coupling that survives right up until
+    /// somebody localises a date.
+    pub at_millis: i64,
     /// Its current text, after any edits by its author.
     pub body: String,
     /// Whether its author revised it.
@@ -173,6 +182,66 @@ pub struct Opened {
     /// a record this node refuses is one some other client may be showing, and
     /// silence would make the two look like they agree.
     pub refused: Vec<String>,
+    /// Whether history exists behind this that the node does not hold.
+    ///
+    /// A bounded channel and a quiet one render identically, and only one is
+    /// worth saying. Without this, a member at their storage ceiling has no
+    /// reason to think anything but that nobody said much.
+    pub more_history: bool,
+}
+
+/// The ceiling on everything this installation stores, and what it is using.
+#[derive(Debug, Serialize)]
+pub struct StorageCeiling {
+    /// The most this installation may use, across every network.
+    pub ceiling: u64,
+    /// What every network here is costing this disk, together.
+    pub used: u64,
+    /// How many networks that is spread across.
+    ///
+    /// Sent because the number is meaningless without it once a member has
+    /// several: "1.2 GB" reads very differently at one network and at thirty,
+    /// and at P2 every conversation is one.
+    pub networks: usize,
+}
+
+/// What this machine offers one network — Core §4.3.
+#[derive(Debug, Serialize)]
+pub struct Contribution {
+    /// Bytes of other members' content this network may store here.
+    pub storage_offered: u64,
+    /// Bytes per second this node will upload for others.
+    pub upload_offered: u64,
+    /// Bytes per second this node will accept downstream.
+    pub download_offered: u64,
+    /// Whether this node volunteers as a bootstrap relay.
+    pub relay_willing: bool,
+    /// Whether these are the shipped defaults rather than something a member chose.
+    ///
+    /// Carried for the same reason `design/09` §4.2 marks a policy value as
+    /// riding its default: the two behave differently, since only an unset one
+    /// picks up a revised default, and nothing else on screen tells them apart.
+    pub is_default: bool,
+    /// Bytes currently held for other members, against the offer above.
+    ///
+    /// The number that turns an offer into something a member can check. It is
+    /// the duty tier alone.
+    pub storage_used: u64,
+    /// Bytes this network occupies on this disk altogether.
+    ///
+    /// Deliberately a **second** number and never merged with the first: it
+    /// includes what this member fetched to read, which is theirs and is not a
+    /// contribution. Reporting one figure would either overstate what somebody
+    /// is giving or understate what the application is costing them, and both
+    /// are the kind of small dishonesty this surface exists to avoid.
+    pub storage_total: u64,
+    /// The external address this node was last confirmed reachable on.
+    ///
+    /// `None` means *not confirmed*, which is weaker than *not reachable* — the
+    /// same distinction §4.1 draws for presence. It decides whether the relay
+    /// option is worth offering, and never whether the command is allowed:
+    /// hiding a control is presentation, never enforcement (§5).
+    pub reachable: Option<String>,
 }
 
 /// A network this client holds a store for.
@@ -218,6 +287,13 @@ pub struct Joined {
     pub admitted: bool,
     /// Their identity here, for whoever will admit them. Empty when admitted.
     pub identity: String,
+    /// Whether the network answered the join request at all.
+    ///
+    /// False means the request went out and nothing came back before the
+    /// deadline — which is **not** a refusal and must not be shown as one
+    /// (O21). The network may already hold this member; only replay knows, and
+    /// the node is started either way so that it can find out.
+    pub answered: bool,
 }
 
 /// What forgetting a network did, and what it could not do.
@@ -332,6 +408,20 @@ pub struct Me {
     pub network: String,
     /// The local label for this network.
     pub label: String,
+    /// Whether replayed governance says this identity is a member at all.
+    ///
+    /// **Separate from `has_key`, and conflating the two is O21.** They are two
+    /// different states that look identical from a node that holds no key:
+    /// *nobody has admitted me yet*, which is the waiting room and is somebody
+    /// else's move, and *I am a member and have not been keyed in*, which is
+    /// ordinary and resolves itself. The interface told both of them to go and
+    /// find an admin.
+    ///
+    /// This is also the answer to a join whose reply was lost. Membership is
+    /// decided by replaying the log rather than by remembering what the join
+    /// handshake said (`design/00` §2, third principle), so a member whose
+    /// `Admitted` never arrived stops being stuck the moment their node syncs.
+    pub is_member: bool,
     /// Whether this node holds an epoch key at all.
     pub has_key: bool,
     /// Whether this member may post.
@@ -536,6 +626,7 @@ impl Message {
                 .map_or_else(|| message.author.short(), str::to_owned),
             author_id: message.author.short(),
             at: stamp(message.hlc),
+            at_millis: message.hlc.wall_millis,
             body: message.body.clone(),
             edited: message.edited,
             withdrawn: message.withdrawn,

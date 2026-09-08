@@ -56,7 +56,7 @@ use intranet_identity::PerNetworkIdentityId;
 use kols_api::{Actor, Authorized, Command, Outcome, PlacementMap, Refusal, authorize, placement};
 use kols_core::{
     ChannelEntry, ChannelEntryBody, ChannelId, ChannelKind, ChannelView, MessageId, NameClaim,
-    Names, Placement, Record, RecordBody, StateAuthority,
+    LogAuthority, Names, Placement, Record, RecordBody, StateAuthority,
 };
 use std::path::PathBuf;
 
@@ -384,7 +384,40 @@ impl Executor {
                 self.change_membership(who, false, identity, GroupId::everyone())
             }
 
+            // Written and not acted on: the daemon holds the node and honours
+            // this on its next tick. `design/05` §3's boundary is commands out
+            // and events in, and a command that waited on the network would be
+            // the first one to block on a peer.
+            Command::FetchHistory { channel, before } => {
+                self.store.want_history(&channel, before)?;
+                Ok(Outcome::HistoryRequested { channel })
+            }
+
             Command::LeaveNetwork => self.depart(identity),
+
+            // No governance entry, no append lock, no signing here. The number
+            // is local state the daemon reads on its next tick and folds into
+            // the advertisement it was already sending — so this writes a file
+            // and stops, which is the whole of what Core §4.3 asks for.
+            Command::SetContribution {
+                storage_offered,
+                upload_offered,
+                download_offered,
+                relay_willing,
+            } => {
+                self.store.set_contribution(&crate::store::Contribution {
+                    storage_offered,
+                    upload_offered,
+                    download_offered,
+                    relay_willing,
+                })?;
+                Ok(Outcome::ContributionSet {
+                    storage_offered,
+                    upload_offered,
+                    download_offered,
+                    relay_willing,
+                })
+            }
 
             Command::SetNetworkName { name } => self.set_network_name(name, identity, state),
 
@@ -745,7 +778,14 @@ impl Executor {
             .copied()
             .unwrap_or(Placement { channel, category: None });
         let mut view = ChannelView::new(placement);
-        let authority = StateAuthority { state };
+        // **The log, not just the state — this is the rendering path.** A
+        // redaction is judged as of the governance head its author cited
+        // (`design/01` §6), which is a question about a point in the chain and
+        // cannot be answered from one snapshot. Rendering with a `StateAuthority`
+        // here is what made a demoted moderator's past redactions silently
+        // un-hide, and it now refuses rather than answering the wrong question.
+        let log = self.store.log()?;
+        let authority = LogAuthority::new(state, &log);
         let limits = reader_limits(state, channels, &channel);
 
         let records = self.store.records(&channel)?;
@@ -773,6 +813,7 @@ impl Executor {
         rejected.extend(withheld.refused.iter().map(|(id, why)| (*id, *why)));
 
         Ok(Outcome::Opened {
+            more_history: self.store.history_incomplete(),
             channel,
             messages: view.render(&limits, at),
             rejected,

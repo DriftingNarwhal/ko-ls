@@ -7,8 +7,10 @@
 
 use crate::ChannelId;
 use intranet_crypto::{Hash, to_hex};
-use intranet_governance::{Capability, ContentType, GovernanceState};
+use intranet_governance::{Capability, ContentType, GovernanceLog, GovernanceState, LogEntry};
 use intranet_identity::PerNetworkIdentityId;
+use std::cell::RefCell;
+use std::collections::BTreeMap;
 
 /// A category, the scope permissions are expected to bind at.
 ///
@@ -176,18 +178,100 @@ pub trait Authority {
     fn may_moderate_now(&self, identity: &PerNetworkIdentityId, placement: &Placement) -> bool;
 }
 
-/// [`Authority`] over one replayed state.
+/// [`Authority`] over one replayed state, which **cannot judge a redaction.**
 ///
-/// **Flagged:** `may_moderate_at` ignores `head` and answers from current state.
-/// `design/01` §6 requires the check be made against state *as of* the head the
-/// moderator cited, which needs the log rather than one state snapshot. The
-/// difference shows only when a moderator is demoted after acting: this
-/// implementation retroactively invalidates their past redactions, where the
-/// design says they should stand. Correct once a log-backed authority exists;
-/// recorded here rather than silently approximated.
+/// Every present-tense question — membership, posting, moderating *now* — is a
+/// question about one state, and this answers all of them. A redaction is not:
+/// it cites the governance head its author observed and is judged as of that
+/// moment (`design/01` §6), which needs the log.
+///
+/// So [`Authority::may_moderate_at`] here **refuses**, rather than quietly
+/// answering the present-tense question instead. It used to answer it, which
+/// meant demoting a moderator retroactively invalidated redactions that should
+/// have stood — spec 07 §9 Q1, and O3. Refusing is the fail-closed direction of
+/// `design/00` §2's second principle: an unverifiable claim does not get to
+/// remove content, so the message stays visible rather than being hidden on an
+/// authority nobody checked.
+///
+/// **Use [`LogAuthority`] to render.** This is for callers that hold no log and
+/// ask nothing about a head.
 pub struct StateAuthority<'a> {
     /// The replayed state to answer from.
     pub state: &'a GovernanceState,
+}
+
+/// [`Authority`] with the log behind it, which is what a reader needs.
+///
+/// The only implementation that can answer `design/01` §6's actual question:
+/// did this moderator hold authority *at the head their redaction cites*. That
+/// is a question about a point in the chain, and Core §2.7 is explicit that
+/// recomputing state at a point is what the log is for.
+///
+/// # Why a demotion must not reach backwards
+///
+/// A moderator who hides a message and is later demoted did a legitimate thing.
+/// Answering from current state un-hides every message they ever redacted, at
+/// the moment their role changes — so a routine permissions edit silently
+/// restores content somebody removed, which is both wrong and invisible. Judging
+/// each redaction as of its own cited head keeps it standing, and stops them
+/// making new ones, which is exactly the difference asked for.
+///
+/// # The cache is not an optimisation detail
+///
+/// A channel's redactions commonly cite a handful of distinct heads between
+/// them, and replaying per record would be quadratic in a busy moderated
+/// channel. Replayed states are memoised per head. This stays pure — same
+/// inputs, same answers, no I/O — which is what `kols-core` requires.
+pub struct LogAuthority<'a> {
+    /// Current state, for every question that is about now.
+    pub state: &'a GovernanceState,
+    /// The log, for the questions that are about a point in the chain.
+    pub log: &'a GovernanceLog,
+    /// Memoised replays, keyed by the head they were replayed to.
+    replayed: RefCell<BTreeMap<Hash, Option<GovernanceState>>>,
+}
+
+impl<'a> LogAuthority<'a> {
+    /// Builds an authority over a state and the log that produced it.
+    pub fn new(state: &'a GovernanceState, log: &'a GovernanceLog) -> Self {
+        Self {
+            state,
+            log,
+            replayed: RefCell::new(BTreeMap::new()),
+        }
+    }
+
+    /// The ancestry of `head`, oldest first, or `None` if it is not held here.
+    ///
+    /// Walked rather than taken from the log, because what is wanted is the
+    /// chain *to this head* and the log's own helper answers about the canonical
+    /// chain — which is a different question the moment a head sits on a branch
+    /// this node has not reconciled onto.
+    fn chain_to(&self, head: &Hash) -> Option<Vec<&'a LogEntry>> {
+        let mut chain = Vec::new();
+        let mut cursor = Some(*head);
+        while let Some(hash) = cursor {
+            let entry = self.log.get(&hash)?;
+            cursor = entry.parent;
+            chain.push(entry);
+        }
+        chain.reverse();
+        Some(chain)
+    }
+
+    /// Replays to `head`, memoised.
+    ///
+    /// `None` means this node cannot judge that head — it has not seen it, or
+    /// the chain behind it does not replay. Both are the same answer to the
+    /// caller and both fail closed.
+    fn state_at(&self, head: &Hash, ask: impl Fn(&GovernanceState) -> bool) -> bool {
+        let mut cache = self.replayed.borrow_mut();
+        let entry = cache.entry(*head).or_insert_with(|| {
+            self.chain_to(head)
+                .and_then(|chain| GovernanceState::replay(chain).ok())
+        });
+        entry.as_ref().is_some_and(ask)
+    }
 }
 
 impl Authority for StateAuthority<'_> {
@@ -196,26 +280,73 @@ impl Authority for StateAuthority<'_> {
     }
 
     fn may_post(&self, identity: &PerNetworkIdentityId, placement: &Placement) -> bool {
-        // Both gates: the network-level right to write a log at all, and the
-        // channel-level right to write *this* one.
-        self.state.identity_holds(
-            identity,
-            &Capability::publish(ContentType::new(crate::CHAT_LOG_CONTENT_TYPE)),
-        ) && holds(self.state, identity, "post", placement)
+        posts(self.state, identity, placement)
+    }
+
+    /// Always false: this authority holds no log and cannot judge a head.
+    ///
+    /// See the type's own documentation for why refusing beats answering the
+    /// present-tense question in its place.
+    fn may_moderate_at(
+        &self,
+        _identity: &PerNetworkIdentityId,
+        _placement: &Placement,
+        _head: &Hash,
+    ) -> bool {
+        false
+    }
+
+    fn may_moderate_now(&self, identity: &PerNetworkIdentityId, placement: &Placement) -> bool {
+        moderates(self.state, identity, placement)
+    }
+}
+
+impl Authority for LogAuthority<'_> {
+    fn is_member(&self, identity: &PerNetworkIdentityId) -> bool {
+        self.state.is_member(identity)
+    }
+
+    fn may_post(&self, identity: &PerNetworkIdentityId, placement: &Placement) -> bool {
+        posts(self.state, identity, placement)
     }
 
     fn may_moderate_at(
         &self,
         identity: &PerNetworkIdentityId,
         placement: &Placement,
-        _head: &Hash,
+        head: &Hash,
     ) -> bool {
-        self.may_moderate_now(identity, placement)
+        self.state_at(head, |state| moderates(state, identity, placement))
     }
 
     fn may_moderate_now(&self, identity: &PerNetworkIdentityId, placement: &Placement) -> bool {
-        self.state
-            .identity_holds(identity, &Capability::ModerateContent)
-            || holds(self.state, identity, "moderate", placement)
+        moderates(self.state, identity, placement)
     }
+}
+
+/// Whether `identity` may write records into this channel, in `state`.
+///
+/// Both gates: the network-level right to write a log at all, and the
+/// channel-level right to write *this* one.
+fn posts(state: &GovernanceState, identity: &PerNetworkIdentityId, placement: &Placement) -> bool {
+    state.identity_holds(
+        identity,
+        &Capability::publish(ContentType::new(crate::CHAT_LOG_CONTENT_TYPE)),
+    ) && holds(state, identity, "post", placement)
+}
+
+/// Whether `identity` holds moderation authority here, in `state`.
+///
+/// One implementation, called with *different states* by the two questions that
+/// ask it — `may_moderate_now` against current state, `may_moderate_at` against
+/// the state as of a cited head. Two copies would be two chances to answer the
+/// same question differently, which is the drift this whole distinction exists
+/// to prevent.
+fn moderates(
+    state: &GovernanceState,
+    identity: &PerNetworkIdentityId,
+    placement: &Placement,
+) -> bool {
+    state.identity_holds(identity, &Capability::ModerateContent)
+        || holds(state, identity, "moderate", placement)
 }

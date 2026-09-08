@@ -188,6 +188,45 @@ enum Command {
     },
     /// Show who has redeemed an invite and is waiting to be admitted.
     Waiting,
+    /// Ask this node to collect history older than what it already holds.
+    ///
+    /// Bounded by the oldest message held in the channel, which is where this
+    /// node's view of it stops and therefore the right point to ask from.
+    History {
+        /// The channel, by name or by the start of its id.
+        channel: String,
+    },
+    /// Show or set the most disk this installation may use, across every network.
+    ///
+    /// Installation-wide rather than per network, because a disk does not know
+    /// how many networks are on it.
+    Storage {
+        /// Gibibytes to allow in total. Omit to show what is allowed and used.
+        #[arg(long, value_name = "GIB")]
+        limit: Option<u64>,
+    },
+    /// Show or set what this machine contributes here — Core §4.3.
+    ///
+    /// With no options, shows the current offer. Any option given is changed and
+    /// the rest are left alone. Zero is a real answer everywhere and means
+    /// *contribute none of this*; none of it affects using the application.
+    Contribute {
+        /// Mebibytes of other members' content to hold.
+        #[arg(long, value_name = "MIB")]
+        storage: Option<u64>,
+        /// Kilobytes per second to upload for others. Zero means nobody fetches from this node.
+        #[arg(long, value_name = "KBPS")]
+        upload: Option<u64>,
+        /// Kilobytes per second to accept downstream.
+        #[arg(long, value_name = "KBPS")]
+        download: Option<u64>,
+        /// Volunteer as a bootstrap relay. Only useful if this node is reachable.
+        #[arg(long)]
+        relay: bool,
+        /// Stop volunteering as a bootstrap relay.
+        #[arg(long, conflicts_with = "relay")]
+        no_relay: bool,
+    },
     /// Work with this network's relays.
     #[command(subcommand)]
     Relay(RelayCommand),
@@ -299,6 +338,17 @@ fn main() -> std::process::ExitCode {
         Command::Join { invite, timeout } => kols_node::join::run(root, &invite, timeout),
         Command::Waiting => waiting(root),
         Command::Relay(RelayCommand::List) => list_relays(root),
+        // Showing is a read of local state and never a command: routing it
+        // through the executor would take the append lock and replay the log to
+        // answer a question about a file on this disk.
+        Command::Storage { limit } => storage_ceiling(root, limit),
+        Command::Contribute {
+            storage: None,
+            upload: None,
+            download: None,
+            relay: false,
+            no_relay: false,
+        } => show_contribution(root),
         other => submit(root, other),
     };
 
@@ -392,6 +442,48 @@ fn submit(root: std::path::PathBuf, command: Command) -> Result<(), String> {
             uses,
             valid_for_hours: hours,
         },
+        // Merged with what is already set rather than replacing it: a member
+        // changing their upload has not said anything about their disk, and a
+        // command that reset the rest to defaults would be a setting that
+        // quietly undoes the others every time it is used.
+        Command::Contribute {
+            storage,
+            upload,
+            download,
+            relay,
+            no_relay,
+        } => {
+            let current = executor.store().contribution().unwrap_or(kols_node::serve::DEFAULT_CONTRIBUTION);
+            ApiCommand::SetContribution {
+                storage_offered: storage
+                    .map_or(current.storage_offered, |mib| mib.saturating_mul(1024 * 1024)),
+                upload_offered: upload
+                    .map_or(current.upload_offered, |kbps| kbps.saturating_mul(1000)),
+                download_offered: download
+                    .map_or(current.download_offered, |kbps| kbps.saturating_mul(1000)),
+                relay_willing: if relay {
+                    true
+                } else if no_relay {
+                    false
+                } else {
+                    current.relay_willing
+                },
+            }
+        }
+        Command::History { channel } => {
+            let channel = executor.resolve_channel(&channel).map_err(say)?;
+            // The oldest reading held here, which is where this node's view
+            // stops. With nothing held, the whole chain is older than now.
+            let before = executor
+                .store()
+                .records(&channel)
+                .map_err(|e| e.to_string())?
+                .iter()
+                .map(|record| record.hlc)
+                .min()
+                .unwrap_or_else(|| kols_core::Hlc::new(i64::MAX, u32::MAX));
+            ApiCommand::FetchHistory { channel, before }
+        }
         Command::Relay(RelayCommand::Set { relays }) => ApiCommand::SetBootstrapRelays {
             relays: relays
                 .iter()
@@ -442,6 +534,8 @@ fn submit(root: std::path::PathBuf, command: Command) -> Result<(), String> {
         | Command::Relay(RelayCommand::List)
         | Command::Waiting
         | Command::Join { .. }
+        // Installation-wide, so it never reaches a network's executor.
+        | Command::Storage { .. }
         | Command::Serve { .. } => unreachable!("handled outside the boundary"),
     };
 
@@ -481,10 +575,18 @@ fn render(outcome: &Outcome, names: &kols_core::Names) {
             messages,
             rejected,
             authors,
+            more_history,
             ..
         } => {
             if messages.is_empty() {
                 println!("nothing here yet");
+            }
+            if *more_history {
+                // Said before the messages rather than after, because it changes
+                // what the messages *are*: the top of this list is where this
+                // node stopped collecting, not where the conversation started.
+                println!("(older history exists that this node does not hold — `kols storage`)");
+                println!();
             }
             for message in messages {
                 let mut flags = Vec::new();
@@ -577,6 +679,35 @@ fn render(outcome: &Outcome, names: &kols_core::Names) {
             println!("It carries this node's addresses, so `kols serve` has to be running");
             println!("for anybody to redeem it.");
         }
+        Outcome::HistoryRequested { .. } => {
+            println!("asked for older history");
+            println!();
+            println!("The node collects it on its next pass, making room by giving back the");
+            println!("coldest copies it holds for others. Read the channel again in a moment.");
+        }
+
+        Outcome::ContributionSet {
+            storage_offered,
+            upload_offered,
+            download_offered,
+            relay_willing,
+        } => {
+            println!("what this machine gives this network:");
+            println!();
+            println!("  storage   {} MiB", storage_offered / (1024 * 1024));
+            println!("  upload    {} KB/s", upload_offered / 1000);
+            println!("  download  {} KB/s", download_offered / 1000);
+            println!("  relay     {}", if *relay_willing { "yes" } else { "no" });
+            println!();
+            if *upload_offered == 0 {
+                println!("Upload is zero, so no other member will fetch from this node — source");
+                println!("selection reads it as not having volunteered. Your own fetching is");
+                println!("unaffected: that runs the same selection over other peers.");
+                println!();
+            }
+            println!("`kols contribute` says what these do and what they do not.");
+        }
+
         Outcome::BootstrapRelaysSet { relays } => {
             if relays.is_empty() {
                 println!("this network now designates no relays");
@@ -708,6 +839,114 @@ fn stamp(hlc: Hlc) -> String {
     let secs = hlc.wall_millis / 1000;
     let (h, m, s) = ((secs / 3600) % 24, (secs / 60) % 60, secs % 60);
     format!("{h:02}:{m:02}:{s:02}")
+}
+
+/// Shows or sets the ceiling on everything this installation stores.
+///
+/// Not a `kols-api` command, for the reason creating a network is not
+/// (`design/05` §3): that boundary is per network, and this is a fact about the
+/// workspace holding all of them.
+fn storage_ceiling(root: std::path::PathBuf, limit: Option<u64>) -> Result<(), String> {
+    // A `--home` pointing straight at one store is the terminal's long-standing
+    // shape; `Workspace::at` reads that as a workspace of one, so this is the
+    // same number either way.
+    let workspace = kols_node::workspace::Workspace::at(root);
+    if let Some(gib) = limit {
+        workspace.set_ceiling(gib.saturating_mul(1024 * 1024 * 1024))?;
+    }
+
+    let ceiling = workspace.ceiling();
+    let used = workspace.stored_bytes();
+    let mib = |bytes: u64| bytes / (1024 * 1024);
+    println!(
+        "using {} MiB of {} MiB across {} network(s)",
+        mib(used),
+        mib(ceiling),
+        workspace.list().len()
+    );
+    println!();
+    println!("This is every byte the application keeps here — what you fetched to read and");
+    println!("what you hold for other members alike. It is the ceiling that stops a disk");
+    println!("filling up, and it binds before any single network's offer does.");
+    if used >= ceiling {
+        println!();
+        println!("At the ceiling now, so no network here will take on new content for other");
+        println!("members until there is room. Your own reading is unaffected.");
+    }
+    Ok(())
+}
+
+/// Shows what this machine contributes here, and what it does not mean.
+///
+/// The honesty is the point rather than decoration. Every number here is an
+/// offer to *other members*, and none of it is what this member needs to use
+/// the application — a node contributing nothing still fetches, reads, posts and
+/// keeps its own history. Saying so is what keeps somebody on a phone or a
+/// metered link from reading zero as a broken installation.
+fn show_contribution(root: std::path::PathBuf) -> Result<(), String> {
+    let store = Store::open(root).map_err(|e| e.to_string())?;
+    let chosen = store.contribution();
+    let offer = chosen.unwrap_or(kols_node::serve::DEFAULT_CONTRIBUTION);
+
+    let held = store.duty_bytes();
+    let total = store.stored_bytes();
+    let mib = |bytes: u64| bytes / (1024 * 1024);
+
+    println!("what this machine gives this network:");
+    println!();
+    println!(
+        "  storage   {} MiB offered, {} MiB in use",
+        mib(offer.storage_offered),
+        mib(held)
+    );
+    println!("  upload    {} KB/s", offer.upload_offered / 1000);
+    println!("  download  {} KB/s", offer.download_offered / 1000);
+    println!(
+        "  relay     {}",
+        if offer.relay_willing { "yes" } else { "no" }
+    );
+    println!();
+
+    // **Two numbers, because they answer different questions and only the first
+    // is a contribution.** What this network costs the disk includes everything
+    // this member fetched to read, which is not given to anybody and must never
+    // be reported as though it were.
+    println!(
+        "This network is using {} MiB on this disk altogether, of which {} MiB is held",
+        mib(total),
+        mib(held)
+    );
+    println!("for other members. The rest is what you fetched to read, which is yours and is");
+    println!("not a contribution.");
+    println!();
+
+    if chosen.is_none() {
+        println!("Nothing has been set here, so these are the shipped defaults. A default");
+        println!("nobody chose follows a revised one; a number you set stays where you put it.");
+        println!();
+    }
+
+    // Reachability decides whether volunteering as a relay means anything, and
+    // *not confirmed* is weaker than *not reachable* — a node that has just
+    // started has met nobody who could tell it yet.
+    match store.reachable() {
+        Some(address) => println!("This node has been seen from outside on {address}, so relaying is useful here."),
+        None => {
+            println!("This node has not been confirmed reachable from outside, so volunteering");
+            println!("as a relay would advertise something it probably cannot do — a relay's job");
+            println!("is being dialable by two peers who cannot dial each other (Core §5.5).");
+            println!("Not confirmed is weaker than not reachable: it may simply not have been");
+            println!("told yet.");
+        }
+    }
+    println!();
+    println!("None of this affects using the application. Contributing nothing still lets you");
+    println!("read, post and keep your own history — there are ordinary reasons to contribute");
+    println!("nothing, and none of them makes you a lesser member.");
+    println!();
+    println!("Storage is an offer rather than a ceiling today: nothing enforces it against what");
+    println!("the store already holds, and this node takes on no replica duty at all yet.");
+    Ok(())
 }
 
 /// Shows who redeemed an invite and is waiting for somebody to admit them.

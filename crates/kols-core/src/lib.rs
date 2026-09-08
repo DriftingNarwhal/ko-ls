@@ -55,7 +55,8 @@ pub use record::{
     Record, RecordBody, RecordClass,
 };
 pub use permissions::{
-    Authority, CategoryId, Placement, Scope, StateAuthority, holds, holds_in_scope, is_verb,
+    Authority, CategoryId, LogAuthority, Placement, Scope, StateAuthority, holds, holds_in_scope,
+    is_verb,
 };
 pub use policy::{
     ChatPolicy, ChatSetting, MAX_NETWORK_NAME_BYTES, NetworkProfile, Retention, Unit, ZeroMeaning,

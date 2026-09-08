@@ -252,3 +252,94 @@ fn arrival_says_how_it_got_here_and_nothing_about_where_it_sorts() {
 
     assert_eq!(live, backfilled);
 }
+
+/// Every variant of [`Event`], sampled once.
+///
+/// The event half of the boundary had no guard at all, and drifted three times
+/// while the command half — which has two — was caught each time. `design/05`
+/// §3 named `Backfill` as an event when it is a variant of [`Arrival`] *inside*
+/// `Records`, counted six variants when nine existed, and §8 recorded that
+/// there was nothing for events "which do not exist" beside a row testing five
+/// cases over them. None of those was a hard question; all three were nobody
+/// being told to look.
+fn every_event() -> Vec<Event> {
+    let who = person(1).id();
+    vec![
+        Event::Records {
+            channel: channel(),
+            records: Vec::new(),
+            arrival: Arrival::Live,
+        },
+        Event::Governance { learned: 1 },
+        Event::Adopted { entries: 1 },
+        Event::EpochRotated { excluded: 1 },
+        Event::MemberKeyed { identity: who },
+        Event::JoinAnswered {
+            joiner: who,
+            accepted: true,
+        },
+        Event::Relay {
+            reserved: None,
+            designated: 0,
+            failures: Vec::new(),
+        },
+        Event::Degraded {
+            reason: "a reason".to_owned(),
+        },
+        Event::GovernanceReorg {
+            mine: Vec::new(),
+            others: 0,
+        },
+    ]
+}
+
+/// Names a variant, and fails to compile when one is added.
+///
+/// The match is exhaustive and carries no wildcard arm, so a new event stops
+/// this suite compiling until somebody has read this. **If you added an arm
+/// here, add a sample to `every_event` and update `design/05` §3's event list
+/// and §8's row** — that list is the one a reader consults to learn what
+/// crosses the boundary, and it has never once been updated by the change that
+/// moved the boundary.
+///
+/// A test cannot read the design document, so this does not check it. What it
+/// does is make the moment of divergence impossible to walk past, which is the
+/// same thing `_every_variant_is_sampled` does for `Command` and the reason
+/// that list is currently correct and this one was not.
+fn name_of(event: &Event) -> &'static str {
+    match event {
+        Event::Records { .. } => "Records",
+        Event::Governance { .. } => "Governance",
+        Event::Adopted { .. } => "Adopted",
+        Event::EpochRotated { .. } => "EpochRotated",
+        Event::MemberKeyed { .. } => "MemberKeyed",
+        Event::JoinAnswered { .. } => "JoinAnswered",
+        Event::Relay { .. } => "Relay",
+        Event::Degraded { .. } => "Degraded",
+        Event::GovernanceReorg { .. } => "GovernanceReorg",
+    }
+}
+
+#[test]
+fn every_event_has_a_sample() {
+    // The other half of `name_of`: that one makes adding a variant impossible
+    // to miss, and this makes leaving it out of the sample impossible to miss.
+    // Neither alone is enough — the first compiles happily with the list
+    // untouched, which is precisely how the command half drifted by four
+    // before it had both.
+    let mut seen: std::collections::BTreeSet<&str> = std::collections::BTreeSet::new();
+    for event in every_event() {
+        assert!(
+            seen.insert(name_of(&event)),
+            "{} is sampled twice, which hides whichever one drifts",
+            name_of(&event)
+        );
+    }
+    assert_eq!(
+        seen.len(),
+        9,
+        "every_event samples {} of Event's variants — update this count, the \
+         list, and `design/05` §3 when the boundary grows",
+        seen.len()
+    );
+}

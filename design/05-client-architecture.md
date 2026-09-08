@@ -1,6 +1,6 @@
 # Client Architecture
 
-**Document status:** v1.9 — §1 records the second Tauri default to remove a feature silently: the native drag handler takes the drag before the page sees it, so channel reordering never worked. Twice is a pattern, and §8's row is now about shell configuration rather than the ACL alone. Previously v1.8 — §1.1 is new: closing the window *is* the shutdown path, so no durable write may happen in place, and what is held rather than written wants stopping. Previously v1.7 — §1 records the shell's second boundary: Tauri's ACL refuses every `plugin:` command an application declares no capability for, silently, and this client shipped with none — so no node event ever reached the window and three polls were written as fixes for what was one denial. §8 gains the row that keeps it fixed. Previously v1.6 — §4 takes the single-node-per-network claim and its six-second expiry, §5 takes what the missing projection costs, and §8 gains the content-routing row; all three moved here from a status file that was carrying them. Previously v1.5 — §3 lists `CreateCategory` and `UpdateCategory`, which landed in the code before they reached this page. Previously v1.4 — §1 and §2 describe the layout that was built: `kols-node` holds the executor, the daemon and the event loop, and `kols-net` is publish and fetch over it. §3 separates what crosses the boundary from what is designed and unbuilt, and `GovernanceReorg` has moved into the first list. The store and media crates still do not exist
+**Document status:** v1.11 — §5.1 is new and carries the storage work built on 2026-09-07 and 08: tiers as reasons rather than places, replica duty over sealed segments, the two ceilings, the order things are given up in under pressure, and the one rule the whole thing turns on — that a provider count is safe in one direction only, so *nobody answered* and *nobody holds it* must never collapse into one answer. Previously v1.10 — §3's event list matches the enum, which it had stopped doing in three places at once: `Backfill` was named as an event when it is a variant of `Arrival` inside `Records`, the count said six when nine existed, and §8 said there was nothing for events "which do not exist" beside a row testing five cases over them. All three are the same gap — the command half of the boundary has a compile-time drift guard and the event half has none — and §8 now carries that guard as owed rather than the count as a fact. Previously v1.9 — §1 records the second Tauri default to remove a feature silently: the native drag handler takes the drag before the page sees it, so channel reordering never worked. Twice is a pattern, and §8's row is now about shell configuration rather than the ACL alone. Previously v1.8 — §1.1 is new: closing the window *is* the shutdown path, so no durable write may happen in place, and what is held rather than written wants stopping. Previously v1.7 — §1 records the shell's second boundary: Tauri's ACL refuses every `plugin:` command an application declares no capability for, silently, and this client shipped with none — so no node event ever reached the window and three polls were written as fixes for what was one denial. §8 gains the row that keeps it fixed. Previously v1.6 — §4 takes the single-node-per-network claim and its six-second expiry, §5 takes what the missing projection costs, and §8 gains the content-routing row; all three moved here from a status file that was carrying them. Previously v1.5 — §3 lists `CreateCategory` and `UpdateCategory`, which landed in the code before they reached this page. Previously v1.4 — §1 and §2 describe the layout that was built: `kols-node` holds the executor, the daemon and the event loop, and `kols-net` is publish and fetch over it. §3 separates what crosses the boundary from what is designed and unbuilt, and `GovernanceReorg` has moved into the first list. The store and media crates still do not exist
 **Depends on:** all preceding documents; App Hosting Spec §1–§3 for the sandbox path
 **Consumed by:** implementation; `09` for the interface built on §3's boundary
 
@@ -186,10 +186,13 @@ Command  = OpenChannel { channel_id, before: Option<Hlc>, limit }
          | SetPermission { group, verb, scope, grant }
          | SetRoleMember { group, identity, member }
          | LeaveNetwork                                            — Core §2.5.1, `02` §6.5
+         | SetContribution { storage_offered }                     — Core §4.3, `02` §6.4
 
-Event    = Records { channel_id, records }        — live and backfilled alike
-         | Backfill | Governance | Adopted | EpochRotated | MemberKeyed
-         | JoinAnswered | Relay { reserved, designated } | Degraded { reason }
+Event    = Records { channel, records, arrival }
+               — Arrival = Live | Head | Backfill { segments }
+         | Governance { learned } | Adopted { entries } | EpochRotated { excluded }
+         | MemberKeyed { identity } | JoinAnswered { joiner, accepted }
+         | Relay { reserved, designated, failures } | Degraded { reason }
          | GovernanceReorg { mine: [VoidedAction], others }  — §4, Core §2.7.1 pt 5
 
 Designed here and not built:
@@ -199,7 +202,6 @@ Command  | Search { scope, query }
          | StartStage | PromoteSpeaker
          | StartDirectMessage { with: identity, in_network }   — creates a network, `03` §4.3
          | AcceptDirectMessage | DeclineDirectMessage
-         | SetContribution { storage_offered, bandwidth_cap, relay_willing }
 
 Event    | ChannelState | PermissionsChanged | MemberPresence
          | VoiceState { participants, topology, transport: Delivery }
@@ -229,6 +231,35 @@ classifying eleven commands out of fifteen. Two guards replace the intention: an
 and an assertion that the sample list covers every name. Neither alone is enough, since the
 first compiles happily with the list untouched.
 
+**`SetContribution` carries all four of `02` §6.4's contributions** — storage, upload,
+download and relay willingness. It briefly carried only storage, on a reading of "keep it
+simple" that turned out to be the wrong simplification: the other three are things a member on
+a phone or a metered link has a real opinion about, and leaving them at a shipped default is
+the client deciding on their behalf, which is what §6.4 exists to forbid.
+
+**Relay willingness is offered only where it could work.** A bootstrap relay's job is being
+dialable by two peers who cannot dial each other (Core §5.5), so a node behind NAT
+volunteering for it advertises something it cannot do. §4 now records
+`ExternalAddressConfirmed`, and the interface hides the control until a public address has
+been seen — hiding, never enforcing, per `09` §5: the command still accepts the flag and the
+terminal can still set it. *Not confirmed* is deliberately weaker than *not reachable*, and
+the surface says the weaker thing.
+
+**It is also the first command gated on nothing that is not `Governs`, which broke an
+assumption in the drift test.** `verb()` returns `None` for two reasons that had been treated
+as one: gated on a *protocol* governance capability, or gated on no capability at all.
+`LeaveNetwork` is the second kind and is still `Governs`, on the stricter-reading rule — it
+writes the same irreversible entry `RevokeMember` does. `SetContribution` is the second kind
+and is ordinary and reversible. So the test now names the capability-free commands explicitly
+rather than assuming they are all governance, and the exhaustive match is what stops a new one
+arriving unclassified.
+
+**Not `Local`, though, and the reason is the sandbox.** `Local` means nothing is signed and
+nothing leaves this node on the user's behalf, and the second half is false here: this changes
+a public, signed claim about what the machine will give away, which the node re-advertises on
+its next tick. Under §7's sandbox path `Local` would let hosted code raise a member's donated
+disk with no prompt, which is the act App Hosting §3.3's consent decorator exists for.
+
 **`SetPermission` landed with three commands rather than one**, which is what building it
 showed. A permissions surface needs roles to exist and to have members, and `define-group`
 and `manage-membership` are separate acts at separate bars (Core §2.2) — collapsing them into
@@ -236,6 +267,14 @@ one command would have flattened the asymmetry `02` §1 asks the interface to re
 is deliberately **no `DeleteRole`**: `EntryBody` expresses no group removal, so a role's
 capabilities and members can be emptied and its name stays in replayed history. The interface
 says so rather than offering a control that cannot work.
+
+**Accepted as permanent, 2026-09-07, rather than carried as a debt.** This was `STATUS.md`'s
+O19 for as long as that file has had one, which read as a fix nobody had got round to. It is
+not: no protocol change is being asked for, because nobody has needed one — a role that has
+been emptied of capabilities and members holds nothing and grants nothing, and what remains is
+a name in history that history is entitled to keep. The cost is a member meeting a limit the
+interface has to explain, and explaining it is cheaper than an entry kind the log would carry
+forever. If somebody ever does need it, it is E17 and it starts here.
 
 **One grant at a time, not a capability set.** `DefineGroup` carries a whole set, so every
 edit is a read-modify-write; a set-shaped command would make each edit overwrite whatever a
@@ -329,11 +368,23 @@ anything is signed. Neither is *enforcement*: nobody can write into another auth
 readers refuse an over-rate record whatever the writer believed. This is the author's client
 telling them first, which is the division `01` §10.2 draws.
 
-**The event vocabulary was written from the engine rather than ahead of it.** The sketch above
-has nine variants; what exists has six, and each has something producing it — §4's loop had
-been reporting all of them in words for weeks. Two categories are deliberately excluded: this
-node's transport, because a sandboxed build gets no ambient host access (App Hosting §3.2),
-and the startup report, because that is what the node *is* rather than something that happened.
+**The event vocabulary was written from the engine rather than ahead of it.** Nine variants
+exist and each has something producing it — §4's loop had been reporting all of them in words
+for weeks. Two categories are deliberately excluded: this node's transport, because a
+sandboxed build gets no ambient host access (App Hosting §3.2), and the startup report,
+because that is what the node *is* rather than something that happened.
+
+**The event half of this list then drifted three times, and the reason is that only the
+command half is checked mechanically.** This paragraph counted six when six existed; `Relay`
+and `GovernanceReorg` landed the next day and the day after, and neither came back to this
+page. The list above named `Backfill` as an event when it is a variant of `Arrival` *inside*
+`Records` — so it was written twice, in one line, contradicting itself. §8's boundary row said
+there was nothing for events "which do not exist" while the row two below it tested five
+cases over them. Every one of these is the same mistake the commands made and stopped making:
+the consent suite's exhaustive `match` and sample-list assertion catch a new `Command` at
+compile time, and nothing does that for an `Event`. **The lesson is not that the count was
+wrong. It is that one half of a boundary has a guard and the other half does not**, and the
+half without one has now drifted every time it changed. §8 carries the guard as owed.
 
 **What is still designed rather than built.** The commands for direct messages, search, voice
 and stage, each of which has a line above and no code behind it. `00` §5 sequences them by
@@ -366,11 +417,24 @@ liveness is a different question on every platform, and a reused pid looks alive
 belonging to somebody else. Claiming also waits a stale claim out rather than refusing on
 sight, since a restart is ordinary.
 
-*Owed: a node suspended past the window can have its claim taken over while it still believes
-it holds one — the check is wall-clock, so a sleeping laptop is indistinguishable from a dead
-one. Making it impossible needs the holder to re-check ownership as it beats. Rare rather than
-impossible today, because taking over requires somebody to start a second node inside that
-window.*
+**A suspended node finds out that it lost its claim, rather than carrying on** — built
+2026-09-07, and the shape is worth keeping because the obvious fix was the wrong one. The
+expiry is wall-clock, so a sleeping laptop is indistinguishable from a dead one and its claim is
+taken over. That part is *correct*: from the store's side the two really are the same
+observation, and a longer window would only move the line rather than close anything. What was
+wrong was the waking, when the first process went on believing it held a claim it did not.
+
+So the claim carries an **owner token**, and the heartbeat checks whose claim it is refreshing
+rather than only asserting that somebody is alive. Losing it is not a fault to recover from —
+the other node is the holder and is right to be — so the loop stops and says so.
+
+**One thing this had to not break, and it is the part a reader should look for.** Releasing a
+claim on `Drop` was unconditional, which after this change would have had the *loser* delete the
+*winner's* heartbeat and directory on its way out: a store that reads as unclaimed while a node
+is actively running against it, which is a worse state than the one being fixed and reachable
+only by fixing it. `Drop` checks ownership first, and
+`tests/workspace.rs::a_claim_taken_over_while_its_holder_slept_is_reported_lost` asserts that
+half specifically rather than trusting the reasoning.
 
 Each loop, DM or server, is structured identically, with the domain layer talking to it
 through channels. Care is needed with one implemented invariant: `next_swarm_event` drains its `pending` queue only on entry, so an event pushed
@@ -462,6 +526,104 @@ Nothing in the interface should imply the system can retract bytes somebody alre
 
 ---
 
+## 5.1 What This Machine Holds, and For Whom
+
+Built over 2026-09-07 and 08. `02` §6.4 owns what a member *offers*; this owns what the client
+does with the offer, because it is architecture rather than policy.
+
+**Tiers are reasons, not places.** A chunk is not *in* a tier; it is held for a set of reasons
+and is droppable when none remain:
+
+| Reason | Held because | Bounded by | Given up |
+|---|---|---|---|
+| **duty** | placement ranked this node for it | `storage_offered` | With evidence — see below |
+| **cache** | this member fetched it to read | nothing this setting governs | Freely |
+
+One object is commonly both, and that is the case the model exists for: **withdrawing a
+contribution must never drop bytes a member is still reading.** Two directories with a chunk in
+one or the other reads simpler and is wrong — it forces a choice about a chunk that is
+genuinely both, and either answer breaks one of the two rules.
+
+### Duty
+
+`kols_core`'s placement is not ours to invent: `intranet_ledger::placement` is deterministic
+given a ledger and weighted only by gossiped capacity, and reimplementing or re-weighting it
+would break the property the scheme rests on (Storage §3.3, Core §4.6). This client chooses
+*which keys to rank over* and does no arithmetic of its own.
+
+**Sealed segments only, decided by the chain rather than a flag.** A head is republished on
+every append, so ranking over it would re-place the network on every message; a head is nobody's
+predecessor, so the set named as some held segment's `previous` is exactly the set that can never
+be republished.
+
+Three behaviours fall out of the protocol rather than being built here, which is the sign the
+layering is right. `select` returns fewer than asked for, so a network too small to meet its own
+replication factor has everybody hold everything — Storage §3.2's degraded operation by the
+ordinary path. `rank` excludes a zero-weight node entirely, so *contributing nothing* needs no
+check. And releasing duty leaves the object alone, because the mark is a reason.
+
+**Ledgers converge; they do not agree.** A node that wrongly takes duty holds a harmless extra
+copy; one that wrongly declines is caught when the ledger settles. No step may require agreement
+at an instant.
+
+### Two ceilings
+
+`storage_offered` bounds the duty tier per network. An **installation-wide** ceiling bounds
+everything — a disk does not know how many networks are on it, and at P2 every conversation is
+one, so a per-network limit would bound the total at nothing. It lives in the workspace and is
+set outside the `kols-api` vocabulary for the reason creating a network is: that boundary is per
+network and this is a fact about the workspace above them.
+
+**The arithmetic saturates.** A ceiling can be lowered below what is already held, and a plain
+subtraction underflows into an enormous allowance exactly then.
+
+### Under pressure, in order
+
+1. **Stop fetching discretionary history.** Heads are always fetched — they make a channel
+   readable, and the application working is not a contribution. History is refetchable and is
+   what grows without bound, so it stops at the ceiling.
+2. **Shed cached copies**, oldest in their chain first. A cached copy is not a replica, so this
+   needs no evidence at all. **Records are never touched**: shedding drops the *servable* copy,
+   so the cost falls on what this node gives the network and not on what its member can see.
+3. **Give back replicas two other nodes demonstrably hold**, clamped to how many members have
+   volunteered anything — a network of three cannot produce evidence of four.
+4. **Hold a last known copy past the ceiling** for seven days, saying so, then give it up and
+   record it. Exceeding a ceiling briefly beats destroying data, and the overshoot is bounded in
+   time and in size, being reached only after 1–3 are exhausted.
+
+**A provider count is a hint and is safe in one direction only.** It may overstate — records
+outlive the bytes they name — so it is a filter and never a proof, which is why the bar is two
+holders rather than one and why a stale answer reads as unknown rather than as its last value.
+*Nobody answered* and *nobody holds it* are opposite states, and a design that collapses them
+drops a last copy because the network was slow.
+
+**A node that sheds must stop announcing what it shed.** A provider record outlives the bytes,
+so a node that drops quietly sends every peer that believes it on a fetch that fails — and a
+failed fetch counts against the *serving* node. Kademlia has no un-publish; not republishing is
+the most that can be done and doing none of it was the bug.
+
+### What a member is told
+
+Three situations reach the same place and only one is ordinary, so they are three notices rather
+than one "storage is full": history has stopped arriving; content is *about to be* lost and only
+this machine holds it; content already *has been*, and here is the record. A member who was told
+and did nothing has made a choice; one who was never told had it made for them.
+
+**A member may ask for history the ceiling stopped**, bounded by the oldest reading they can see
+— which is what `OpenChannel`'s `before` was always for. Asking is not getting: the executor
+holds no node, so a want is recorded and the daemon honours it on its next pass. What arrives is
+pinned for an hour, because shedding takes the oldest history first and that is precisely what
+somebody scrolling back has just asked for.
+
+### What is still owed
+
+Nothing here **takes on** duty for content it discovers is under-replicated. Placement decides
+what a node holds, so a member offering a great deal catches what is falling only where they
+were already ranked. That is the other half of Storage §3.4's repair loop, and it is what would
+make a backstop node reliable rather than statistical.
+
+---
+
 ## 6. Multi-Device (Designed Now, Built Later)
 
 Core §1.3 is already implemented: devices are independently seeded and linked by
@@ -523,13 +685,13 @@ boundary, which is worth having regardless.
 | Encoding | Frozen vectors, round-trip, injectivity, domain separation, id stability (`08` §3) | **Done**, including on big-endian via `scripts/cross-check.sh` |
 | Wire | Two live nodes: publish, pointer sync, fetch, reassemble, render identically | **Done** — plus the delta measurement between fetch rounds |
 | Permissions | Table-driven cases over replayed governance states, including the tricky ones — frozen pointers after a narrowed grant, waiting-room members, voided revocations | Partial — non-member, forged signature and wrong-channel covered at the reader; both post gates, channel/category/network scope and governance tier covered at the boundary; frozen pointers and waiting-room members not |
-| API boundary (§3) | Every command against a replayed log, not a hand-built state: a grant reaches the scope it names and no further, an ordinary verb does not buy a governance-tier one, and the consent class agrees with the vocabulary's tier table | **Done** for the command half — 18 cases, plus a `compile_fail` doctest for the unforgeable token. Nothing for events, which do not exist |
+| API boundary (§3) | Every command against a replayed log, not a hand-built state: a grant reaches the scope it names and no further, an ordinary verb does not buy a governance-tier one, and the consent class agrees with the vocabulary's tier table | **Done** for the command half — 18 cases, plus a `compile_fail` doctest for the unforgeable token. **Owed for the event half**: nine variants exist and no test names them, so nothing fails when one is added. The command half's two guards — an exhaustive `match` with no wildcard arm, and an assertion that the sample list covers every name — are what this wants, and their absence is why §3's event list drifted three times |
 | Executor | Every record kind end to end through the real binary: the record is written, the merge renders it, and the refusals the gate cannot make — somebody else's message, the rate ceiling — happen before anything is signed | **Done** — 10 cases over a keyed node |
 | Events (§3, property 3) | A consumer that merges rather than appends: the same event twice, events out of order, a gap filled later, and the case that actually happens — a record arriving live and again inside the segment behind it | **Done** — 5 cases. The daemon's own wording is asserted by the two-node tests, which is what makes the emitter's refactor behaviour-preserving |
 | Keying | A removed member must fail to decrypt content wrapped after the rotation, and must still decrypt what they held. Assert the honest guarantee, not a stronger one | Not started (P2) |
 | Platform | The code that differs per operating system, run where it differs: the seed's permissions and the home directory's resolution. Not the daemon suite, which tests merge and gossip and is platform-neutral | **Partial** — the store's resolution is a pure function with cases; the seed's permissions are asserted on Unix by `cargo test` and on Windows only against the **built artifact** in CI, because the Rust test for it is `#[cfg(unix)]` and compiles out |
 | Multi-node | Extend the existing Docker NAT harness with chat scenarios: partition two members over a real network, heal, assert identical history | Not started — the in-process partition test is not this |
-| Content routing | Three nodes with a **forced** indirect path — A and B unable to reach each other directly while both reach C — asserting A ends up holding B's records. Two nodes cannot demonstrate this: with nobody to route *through*, a one-hop table and a working DHT behave identically | Not started, and **never once observed**. The DHT is bootstrapped and `fetch_chunks` pulls from whichever holder answers, so this should work; nothing has shown that it does. Belongs with the NAT scenarios in harness spec §2.3, which already simulate the topology |
+| Content routing | Provider discovery **through a peer that is not the holder** — a fetcher that is not connected to whoever holds the chunk, finding it anyway. This is the part a one-hop table cannot fake | **Half done, and the half that is left is the smaller one.** `three_nodes.rs` proves the adjacent property and it is not nothing: Carol is pointed at Alice and only Alice, has never heard of Bob's address, and reads Bob's message while Bob is offline — so a node genuinely serves an object it did not author, which is what "content outlives its author's uptime" rests on. What that run still does not exercise is *routing*: Carol is directly connected to Alice, so finding her needs one hop, and a one-hop table and a working DHT behave identically there. **Forcing the fetcher and the holder apart is the whole remaining test**, and it cannot be done with local daemons that can all dial each other — it needs the topology control the Docker NAT matrix already has (harness spec §2.3) |
 | Shell configuration (§1) | Every `plugin:` command the interface calls, resolved against the real capability file and the real window label; and the settings whose defaults remove a feature silently. Tauri refuses what no capability names, and its native drag handler swallows HTML5 drag events, and neither produces any output | **Done** — 6 commands, the label the capability is scoped to, and `dragDropEnabled`. Written after shipping with no capabilities at all, which refused every event for the life of the client, and extended after the same shape of bug took drag-and-drop |
 | Media | Loss and jitter injection against both `MediaTransport` impls; the fallback is expected to degrade badly and the test should record how badly, not skip it | Not started (P3) |
 

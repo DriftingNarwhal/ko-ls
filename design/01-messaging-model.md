@@ -1,6 +1,6 @@
 # Messaging Model
 
-**Document status:** v1.2 — §2.3 makes categories nameable and ordered, §2.4 fixes the sidebar's two-level order. Both are implemented in `kols-core`; spec 07 is normative where they overlap
+**Document status:** v1.3 — §6's redaction rule is enforced as of the cited governance head, which it had not been: `may_moderate_at` took the head and answered from current state, so a demotion reached backwards and un-hid every message that moderator had ever redacted. Both halves are asserted together — a demotion stops new redactions and leaves past ones standing. Previously v1.2 — §2.3 makes categories nameable and ordered, §2.4 fixes the sidebar's two-level order. Both are implemented in `kols-core`; spec 07 is normative where they overlap
 **Depends on:** Core Protocol Spec §2 (governance log), Storage Spec §1–§5, Search Spec §3
 **Consumed by:** `02-membership-and-permissions`, `03-confidentiality`, `05-client-architecture`
 
@@ -462,6 +462,33 @@ replaying governance state as of that head, its author held `chat:moderate` for 
 channel (`02` §3). This is durable (a mutable pointer, not a lapsing append-set), scales
 (nothing per-message enters the governance log), and stays verifiable by replay like
 every other authorization question in the system.
+
+**Enforced as of the cited head since 2026-09-07, and it had not been** — spec 07 §9 Q1, and
+O3. `may_moderate_at` took the head and ignored it, answering from *current* state instead. The
+difference is invisible until somebody's role changes, and then it is bad in a specific way: a
+demotion reached backwards through every message that moderator had ever hidden and un-hid all
+of them, at the moment a role was edited, with nothing on screen connecting the two.
+
+**Both halves are one property.** A demotion must stop new redactions *and* leave past ones
+standing. A fix that only stopped re-checking would keep the past correct and let a demoted
+moderator go on redacting, which is the same bug facing the other way; they are asserted
+together for that reason.
+
+`kols_core::LogAuthority` is the implementation, and it needs the log rather than a state
+snapshot — Core §2.7's point that any node can recompute state *at a point in the chain* is
+exactly what this consumes. Replayed states are memoised per cited head, since a busy moderated
+channel would otherwise replay once per redaction.
+
+**A head this node cannot replay fails closed, and the direction is worth stating.** Failing
+closed here means the redaction is *not* applied and the message stays visible — an
+unverifiable claim does not get to remove content. A node that has not yet synced the head a
+redaction cites therefore shows a message another member has already had hidden, until it
+catches up. That is the same convergence Storage §5.4 describes for serving, and saying it
+plainly beats the alternative of hiding content on an authority nobody checked.
+
+`StateAuthority` still exists for the present-tense questions and now **refuses** this one
+rather than answering the other question in its place — so a caller that renders with it loses
+redactions loudly instead of getting a subtly wrong answer.
 
 **A moderator removes an entire log.** For floods and for content that must stop being
 served rather than merely stop being shown, `ModerationEntry` (Core §2.7) delists the

@@ -195,6 +195,7 @@ fn me_of(executor: &Executor) -> Result<dto::Me, String> {
         name: names.of(&identity.id()).map(str::to_owned),
         network: to_hex(store.network().as_bytes()),
         label,
+        is_member: state.is_member(&identity.id()),
         has_key: store.epoch_key().is_ok(),
         may_post: holds("chat:post:*"),
         may_create_channel: holds("chat:create-channel:*"),
@@ -344,6 +345,92 @@ fn set_chat_setting(app: tauri::State<'_, App>, setting: String, value: i64) -> 
             .map(|_| ())
             .map_err(|err| err.to_string())
     })
+}
+
+/// What this machine offers this network, and whether anybody has said.
+///
+/// Both halves are sent because they are different answers (`Store::storage_offered`):
+/// nothing set means the shipped default is in force and would follow a revised
+/// one, while zero is a member having opted out. Rendering them identically
+/// would make opting out look like never having chosen.
+#[tauri::command]
+fn contribution(app: tauri::State<'_, App>) -> Result<dto::Contribution, String> {
+    app.with(|executor| {
+        let chosen = executor.store().contribution();
+        let offer = chosen.unwrap_or(kols_node::serve::DEFAULT_CONTRIBUTION);
+        Ok(dto::Contribution {
+            storage_offered: offer.storage_offered,
+            upload_offered: offer.upload_offered,
+            download_offered: offer.download_offered,
+            relay_willing: offer.relay_willing,
+            is_default: chosen.is_none(),
+            storage_used: executor.store().duty_bytes(),
+            storage_total: executor.store().stored_bytes(),
+            reachable: executor.store().reachable(),
+        })
+    })
+}
+
+/// Sets what this machine contributes here — Core §4.3.
+#[tauri::command]
+fn set_contribution(
+    app: tauri::State<'_, App>,
+    storage_offered: u64,
+    upload_offered: u64,
+    download_offered: u64,
+    relay_willing: bool,
+) -> Result<(), String> {
+    app.with(|executor| {
+        executor
+            .submit(Command::SetContribution {
+                storage_offered,
+                upload_offered,
+                download_offered,
+                relay_willing,
+            })
+            .map(|_| ())
+            .map_err(|err| err.to_string())
+    })
+}
+
+/// Asks this node to collect history older than the oldest message on screen.
+///
+/// Bounded by a reading rather than open-ended: history is a backwards chain, so
+/// without a stopping point the only choices are one hop or all of it. The
+/// oldest message the member can currently see is exactly the right boundary —
+/// it is where their view stops.
+#[tauri::command]
+fn fetch_history(app: tauri::State<'_, App>, channel: String, before_millis: i64) -> Result<(), String> {
+    let channel = App::channel(&channel)?;
+    app.with(|executor| {
+        executor
+            .submit(Command::FetchHistory {
+                channel,
+                before: kols_core::Hlc::new(before_millis, 0),
+            })
+            .map(|_| ())
+            .map_err(|err| err.to_string())
+    })
+}
+
+/// The ceiling on everything this installation stores, and what it is using.
+///
+/// A workspace command rather than a network one, and outside the `kols-api`
+/// vocabulary for the reason creating a network is: that boundary is per
+/// network, and a disk does not know how many networks are on it.
+#[tauri::command]
+fn storage_ceiling(app: tauri::State<'_, App>) -> Result<dto::StorageCeiling, String> {
+    Ok(dto::StorageCeiling {
+        ceiling: app.workspace.ceiling(),
+        used: app.workspace.stored_bytes(),
+        networks: app.workspace.list().len(),
+    })
+}
+
+/// Sets the ceiling on everything this installation stores.
+#[tauri::command]
+fn set_storage_ceiling(app: tauri::State<'_, App>, bytes: u64) -> Result<(), String> {
+    app.workspace.set_ceiling(bytes)
 }
 
 /// Chooses how joiners are admitted.
@@ -1026,6 +1113,7 @@ fn open_one(executor: &Executor, channel: ChannelId) -> Result<dto::Opened, Stri
         messages,
         rejected,
         authors,
+        more_history,
         ..
     } = outcome
     else {
@@ -1047,6 +1135,7 @@ fn open_one(executor: &Executor, channel: ChannelId) -> Result<dto::Opened, Stri
             .iter()
             .map(|(id, why)| format!("{}: {why:?}", &to_hex(id.as_bytes())[..8]))
             .collect(),
+        more_history,
     })
 }
 
@@ -1410,10 +1499,21 @@ async fn join_network(
         kols_node::join::Landed::Admitted => dto::Joined {
             admitted: true,
             identity: String::new(),
+            answered: true,
         },
         kols_node::join::Landed::Waiting { identity } => dto::Joined {
             admitted: false,
             identity,
+            answered: true,
+        },
+        // The node is already started above, which is the whole point: nothing
+        // here knows whether this member was admitted, and the one thing that
+        // can find out is a sync. Reporting a failure and closing the network
+        // would spend the invite on the retry it invites (O21).
+        kols_node::join::Landed::Unanswered { identity, .. } => dto::Joined {
+            admitted: false,
+            identity,
+            answered: false,
         },
     })
 }
@@ -1747,6 +1847,11 @@ fn main() {
             settings,
             set_chat_setting,
             set_admission_mode,
+            contribution,
+            set_contribution,
+            storage_ceiling,
+            set_storage_ceiling,
+            fetch_history,
             forget_network
         ])
         .build(tauri::generate_context!())

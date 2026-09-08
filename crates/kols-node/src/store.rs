@@ -23,10 +23,28 @@ use intranet_governance::{GovernanceLog, GovernanceState, LogEntry, PointerId, w
 use intranet_identity::{MasterSeed, NetworkId, PerNetworkIdentity, PerNetworkIdentityId};
 use intranet_storage::{Cid, Dek, EpochKey};
 use crate::secret;
-use kols_core::{ChannelId, Record};
+use kols_core::{ChannelId, Hlc, Record};
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
+
+/// What this machine contributes to one network — Core §4.3.
+///
+/// All four are contributions to *other members*. None of them is what this
+/// member needs to use the application: a node contributing nothing still
+/// fetches, reads, posts and keeps its own history, which is why zero
+/// everywhere is an ordinary configuration rather than a broken one.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Contribution {
+    /// Bytes of other members' content this network may store here.
+    pub storage_offered: u64,
+    /// Bytes per second this node will upload for others.
+    pub upload_offered: u64,
+    /// Bytes per second this node will accept downstream.
+    pub download_offered: u64,
+    /// Whether this node volunteers as a bootstrap relay.
+    pub relay_willing: bool,
+}
 
 /// Everything one network's membership needs on disk.
 pub struct Store {
@@ -237,8 +255,18 @@ impl Store {
         loop {
             if !claim_is_fresh(&beat) {
                 fs::create_dir_all(&path)?;
-                let claim = NodeClaim { path };
-                claim.beat();
+                // The token is written *before* the first heartbeat, so a
+                // concurrent taker sees a claim that is either wholly the old
+                // holder's or wholly this one's. Written the other way round,
+                // there would be an instant where a fresh heartbeat sat beside
+                // somebody else's token and both processes read themselves as
+                // the owner.
+                let token = claim_token();
+                let claim = NodeClaim { path, token };
+                claim.write_owner()?;
+                // Ours by construction — the owner was just written — so there
+                // is nothing for the ownership check to tell us here.
+                let _ = claim.beat();
                 // Holding the claim is the one moment this process knows no
                 // other node is writing to this store, which makes it the only
                 // safe place to sweep what an interrupted write left behind.
@@ -393,9 +421,8 @@ impl Store {
     /// Named by content, so writing the same chunk twice is a no-op and two
     /// nodes never disagree about what a name holds.
     pub fn put_chunk(&self, cid: &Cid, bytes: &[u8]) -> Result<bool, StoreError> {
-        let dir = self.root.join("chunks");
-        fs::create_dir_all(&dir)?;
-        let path = dir.join(to_hex(cid.hash().as_bytes()));
+        fs::create_dir_all(self.root.join("chunks"))?;
+        let path = self.chunk_path(cid);
         if path.exists() {
             return Ok(false);
         }
@@ -546,6 +573,79 @@ impl Store {
     /// This network's local label, if one was set.
     pub fn label(&self) -> Option<String> {
         fs::read_to_string(self.root.join("label")).ok()
+    }
+
+    /// Records what this machine contributes to this network — Core §4.3.
+    ///
+    /// One file rather than four, written whole. The four values are set
+    /// together by one command, so splitting them would create three ways for a
+    /// process that died mid-write to leave a contribution nobody chose.
+    pub fn set_contribution(&self, offer: &Contribution) -> Result<(), StoreError> {
+        let text = format!(
+            "{}\n{}\n{}\n{}\n",
+            offer.storage_offered,
+            offer.upload_offered,
+            offer.download_offered,
+            u8::from(offer.relay_willing),
+        );
+        write_atomically(
+            &self.root,
+            self.root.join("contribution"),
+            text.as_bytes(),
+        )
+    }
+
+    /// What this machine contributes here, or `None` if nobody has said.
+    ///
+    /// **`None` and a zeroed offer are different answers and the caller must
+    /// keep them apart.** Nothing set means this node has never been asked and
+    /// takes whatever defaults the daemon ships; zeros are a member having said
+    /// *contribute nothing*, which is a decision rather than an absence. A
+    /// reader that collapsed them would quietly restore a default over somebody
+    /// opting out — the same mistake spec 07 §2.8's sentinel rule exists to
+    /// prevent for retention.
+    ///
+    /// A file that does not parse whole reads as unset rather than as partly
+    /// set, for the same reason: a corrupt value must not be read as the
+    /// strongest opinion a member could have expressed.
+    pub fn contribution(&self) -> Option<Contribution> {
+        let text = fs::read_to_string(self.root.join("contribution")).ok()?;
+        let mut lines = text.lines();
+        let mut next = || lines.next()?.trim().parse::<u64>().ok();
+        let storage_offered = next()?;
+        let upload_offered = next()?;
+        let download_offered = next()?;
+        let relay_willing = next()? != 0;
+        Some(Contribution {
+            storage_offered,
+            upload_offered,
+            download_offered,
+            relay_willing,
+        })
+    }
+
+    /// Records that this node has been confirmed reachable from outside.
+    ///
+    /// Written by the daemon, which is the only thing that can know it, and read
+    /// by the interface to decide whether volunteering as a bootstrap relay is
+    /// worth *offering*. A relay's job is being dialable by two peers who cannot
+    /// dial each other (Core §5.5), so this is the difference between a real
+    /// option and one that advertises something the node cannot do.
+    pub fn set_reachable(&self, address: &str) -> Result<(), StoreError> {
+        write_atomically(&self.root, self.root.join("reachable"), address.as_bytes())
+    }
+
+    /// The external address this node was last confirmed reachable on.
+    ///
+    /// **`None` means *not confirmed*, which is weaker than *not reachable*.** A
+    /// node that has just started, or has met nobody who could tell it, has no
+    /// confirmation yet and may be perfectly reachable. An interface must say
+    /// the weaker thing — the same distinction `design/09` §4.1 draws between
+    /// having heard from a member and their being offline.
+    pub fn reachable(&self) -> Option<String> {
+        fs::read_to_string(self.root.join("reachable"))
+            .ok()
+            .filter(|address| !address.trim().is_empty())
     }
 
     /// Records the addresses this node is reachable on.
@@ -942,6 +1042,342 @@ impl Store {
         self.write_segment_mark(cid, "link", &raw)
     }
 
+    /// Every segment this node holds, as the CIDs its links were written under.
+    ///
+    /// Read from the `.link` marks rather than from the chunk store, because a
+    /// link is written exactly when a segment's records were stored — so this is
+    /// the set of segments this node has actually absorbed, not the set of
+    /// chunks it happens to have bytes for.
+    pub fn segments(&self) -> Vec<Cid> {
+        let Ok(entries) = fs::read_dir(self.root.join("segments")) else {
+            return Vec::new();
+        };
+        entries
+            .filter_map(Result::ok)
+            .filter_map(|entry| {
+                let name = entry.file_name().into_string().ok()?;
+                let hex = name.strip_suffix(".link")?;
+                let bytes: [u8; 32] = intranet_crypto::from_hex(hex)?.try_into().ok()?;
+                Some(Cid::from_hash(Hash::from_bytes(bytes)))
+            })
+            .collect()
+    }
+
+    /// Records that a member asked for history older than `before` in a channel.
+    ///
+    /// **A want rather than a fetch, because the two live on different sides.**
+    /// The executor answers commands and holds no node; the daemon holds the node
+    /// and answers to nobody. So asking is a durable note one writes and the
+    /// other reads on its next tick — the same shape the waiting room already
+    /// uses in the opposite direction.
+    ///
+    /// One outstanding want per channel. A member scrolling repeatedly is asking
+    /// for the same thing further back, not for several different things.
+    pub fn want_history(&self, channel: &ChannelId, before: Hlc) -> Result<(), StoreError> {
+        let dir = self.root.join("wants");
+        fs::create_dir_all(&dir)?;
+        write_atomically(
+            &self.root,
+            dir.join(to_hex(channel.as_bytes())),
+            &{
+                let mut raw = before.wall_millis.to_be_bytes().to_vec();
+                raw.extend_from_slice(&before.counter.to_be_bytes());
+                raw
+            },
+        )
+    }
+
+    /// Channels a member has asked for older history in.
+    pub fn wants(&self) -> Vec<(ChannelId, Hlc)> {
+        let Ok(entries) = fs::read_dir(self.root.join("wants")) else {
+            return Vec::new();
+        };
+        entries
+            .filter_map(Result::ok)
+            .filter_map(|entry| {
+                let name = entry.file_name().into_string().ok()?;
+                let bytes: [u8; 32] = intranet_crypto::from_hex(&name)?.try_into().ok()?;
+                let raw = fs::read(entry.path()).ok()?;
+                let (wall, counter) = raw.split_at_checked(8)?;
+                let before = Hlc::new(
+                    i64::from_be_bytes(wall.try_into().ok()?),
+                    u32::from_be_bytes(counter.try_into().ok()?),
+                );
+                Some((ChannelId::from_bytes(bytes), before))
+            })
+            .collect()
+    }
+
+    /// Forgets a want, once it is satisfied or cannot be.
+    pub fn forget_want(&self, channel: &ChannelId) -> Result<(), StoreError> {
+        match fs::remove_file(self.root.join("wants").join(to_hex(channel.as_bytes()))) {
+            Ok(()) => Ok(()),
+            Err(err) if err.kind() == io::ErrorKind::NotFound => Ok(()),
+            Err(err) => Err(StoreError::Io(err)),
+        }
+    }
+
+    /// Marks a segment as one a member actually asked to have here.
+    ///
+    /// **This is the pin, and without it the ceiling eats its own tail.**
+    /// Shedding drops the oldest cached history first, which is exactly what
+    /// somebody scrolling back has just asked for — so a member at their ceiling
+    /// would fetch a page and have it thrown away before they read it, forever.
+    /// A segment somebody asked for is not cold, whatever its age says.
+    pub fn mark_wanted(&self, cid: &Cid, now: i64) -> Result<(), StoreError> {
+        self.write_segment_mark(cid, "wanted", &now.to_be_bytes())
+    }
+
+    /// When a member last asked to have this segment here, if they ever did.
+    pub fn wanted_at(&self, cid: &Cid) -> Option<i64> {
+        let raw = fs::read(self.segment_path(cid, "wanted")).ok()?;
+        Some(i64::from_be_bytes(raw.try_into().ok()?))
+    }
+
+    /// Notes that this node may be the last holder of something it must give up.
+    ///
+    /// **Persisted, because the grace window is measured in days and a process
+    /// is not.** A clock kept in memory restarts with the node, so an
+    /// installation that is restarted daily would hold at-risk content forever
+    /// and never tell anybody it was stuck — which is the failure mode this
+    /// window exists to make impossible.
+    pub fn mark_at_risk(&self, cid: &Cid, now: i64) -> Result<(), StoreError> {
+        if self.at_risk_since(cid).is_some() {
+            // The window starts when the object first became at risk, not when
+            // it was last looked at — otherwise a node that checks every tick
+            // resets the clock every tick and the deadline never arrives.
+            return Ok(());
+        }
+        self.write_segment_mark(cid, "at-risk", &now.to_be_bytes())
+    }
+
+    /// When this object was first seen to be the last known copy.
+    pub fn at_risk_since(&self, cid: &Cid) -> Option<i64> {
+        let raw = fs::read(self.segment_path(cid, "at-risk")).ok()?;
+        Some(i64::from_be_bytes(raw.try_into().ok()?))
+    }
+
+    /// Forgets that an object was at risk, once somebody else holds it.
+    pub fn clear_at_risk(&self, cid: &Cid) -> Result<(), StoreError> {
+        match fs::remove_file(self.segment_path(cid, "at-risk")) {
+            Ok(()) => Ok(()),
+            Err(err) if err.kind() == io::ErrorKind::NotFound => Ok(()),
+            Err(err) => Err(StoreError::Io(err)),
+        }
+    }
+
+    /// Records that content was given up, and when.
+    ///
+    /// **A member who was told and did nothing has made a choice; a member who
+    /// was never told has had one made for them.** This is the difference,
+    /// written down: an append-only note of what this node let go, so the
+    /// question "what happened to that" has an answer that is not a shrug.
+    pub fn record_dropped(&self, cid: &Cid, now: i64) -> Result<(), StoreError> {
+        let path = self.root.join("dropped");
+        let mut log = fs::read_to_string(&path).unwrap_or_default();
+        log.push_str(&format!("{now} {}\n", to_hex(cid.hash().as_bytes())));
+        write_atomically(&self.root, path, log.as_bytes())
+    }
+
+    /// What this node has given up, newest last.
+    pub fn dropped(&self) -> Vec<(i64, String)> {
+        fs::read_to_string(self.root.join("dropped"))
+            .unwrap_or_default()
+            .lines()
+            .filter_map(|line| {
+                let (at, cid) = line.split_once(' ')?;
+                Some((at.parse().ok()?, cid.to_owned()))
+            })
+            .collect()
+    }
+
+    /// Whether any held chain runs back into history this node does not hold.
+    ///
+    /// True when some segment names a predecessor there is no link for — which is
+    /// exactly the shape of a walk that stopped, whether because the chain is
+    /// still arriving or because the ceiling stopped it.
+    ///
+    /// **This is the difference between a short channel and a bounded one**, and
+    /// nothing else on screen distinguishes them. A member at their ceiling sees
+    /// fewer messages than another member of the same network, and without this
+    /// they would have no reason to think anything but that the network is quiet.
+    pub fn history_incomplete(&self) -> bool {
+        let held: std::collections::BTreeSet<Cid> = self.segments().into_iter().collect();
+        held.iter().any(|cid| {
+            self.segment_link(cid)
+                .and_then(|(_, previous)| previous)
+                .is_some_and(|previous| !held.contains(&previous))
+        })
+    }
+
+    /// Whether this node holds `cid` on the network's behalf rather than its own.
+    ///
+    /// The distinction `design/02` §6.4 rests on: duty is what this machine gives
+    /// other members, and a cached copy is what it fetched to read. One object
+    /// commonly is both, and the reasons are kept apart so that withdrawing a
+    /// contribution never drops bytes somebody is still reading.
+    pub fn has_duty(&self, cid: &Cid) -> bool {
+        self.segment_path(cid, "duty").exists()
+    }
+
+    /// Records that this node holds `cid` on the network's behalf, and its weight.
+    ///
+    /// **The size is written once, at the moment duty is taken, rather than
+    /// recomputed.** Summing the tier then costs one small read per object
+    /// instead of parsing every manifest and stat-ing every chunk on every tick.
+    /// It is safe to fix it here because an object is whole when it is marked: a
+    /// segment is only absorbed after its chunks decoded, so there is no state in
+    /// which this records a partial weight that would later grow.
+    pub fn take_duty(&self, cid: &Cid, bytes: u64) -> Result<(), StoreError> {
+        self.write_segment_mark(cid, "duty", &bytes.to_be_bytes())
+    }
+
+    /// What this node holds for the network, in bytes.
+    ///
+    /// Read from the marks rather than the disk, per [`Store::take_duty`]. A mark
+    /// that does not parse contributes nothing rather than aborting the sum — a
+    /// tier total is a number a member reads, and refusing to produce one because
+    /// a single mark is unreadable would replace a slightly wrong figure with no
+    /// figure at all.
+    pub fn duty_bytes(&self) -> u64 {
+        let Ok(entries) = fs::read_dir(self.root.join("segments")) else {
+            return 0;
+        };
+        entries
+            .filter_map(Result::ok)
+            .filter(|entry| {
+                entry
+                    .file_name()
+                    .to_str()
+                    .is_some_and(|name| name.ends_with(".duty"))
+            })
+            .filter_map(|entry| {
+                let raw = fs::read(entry.path()).ok()?;
+                Some(u64::from_be_bytes(raw.try_into().ok()?))
+            })
+            .sum()
+    }
+
+    /// What one content object weighs here: its manifest plus the chunks it names.
+    ///
+    /// `None` when the manifest is not held or does not parse, which is the same
+    /// answer as "this node cannot say" and is never zero — a caller must not
+    /// read an unknown weight as a free one.
+    ///
+    /// **No chunk is counted twice across objects**, and that is a property of
+    /// the design rather than luck: every segment lives under its own pointer and
+    /// therefore its own DEK (`design/01` §3.1.0), and chunk encryption is
+    /// deterministic per (chunk, DEK) — so two segments never produce the same
+    /// chunk id even for identical text. Summing per object is exact.
+    pub fn object_bytes(&self, manifest: &Cid) -> Option<u64> {
+        let raw = fs::read(self.chunk_path(manifest)).ok()?;
+        let total: u64 = raw.len() as u64;
+        let manifest = intranet_storage::Manifest::from_bytes(&raw).ok()?;
+        Some(
+            manifest
+                .chunks
+                .iter()
+                .filter_map(|cid| fs::metadata(self.chunk_path(cid)).ok())
+                .map(|meta| meta.len())
+                .sum::<u64>()
+                + total,
+        )
+    }
+
+    /// Every byte this network is costing this disk.
+    ///
+    /// **Everything under the store, not just `chunks/`** — corrected 2026-09-08,
+    /// and the correction roughly doubles the number. This store keeps each
+    /// message twice by design: once as a record under `channels/`, which is what
+    /// rendering reads, and once inside a segment's chunks, which is what this
+    /// node serves and re-verifies from. Counting only the second meant a member
+    /// who set a two-gigabyte ceiling could be handed four, which is the one
+    /// direction an absolute ceiling must never be wrong in.
+    ///
+    /// Deliberately not the duty tier, either: this includes what the member
+    /// fetched to read, the governance log, and the superseded versions of head
+    /// segments. A duty figure must not be inflated by any of that, and a disk is
+    /// filled by all of it.
+    ///
+    /// **Walking a directory tree is not free**, and this is read on the daemon's
+    /// tick. Callers are expected to hold the answer for a while rather than ask
+    /// per pass; `serve` does.
+    pub fn stored_bytes(&self) -> u64 {
+        fn walk(path: &Path) -> u64 {
+            let Ok(entries) = fs::read_dir(path) else {
+                return 0;
+            };
+            entries
+                .filter_map(Result::ok)
+                .map(|entry| match entry.metadata() {
+                    Ok(meta) if meta.is_dir() => walk(&entry.path()),
+                    Ok(meta) => meta.len(),
+                    Err(_) => 0,
+                })
+                .sum()
+        }
+        walk(&self.root)
+    }
+
+    /// Removes a content object's bytes, keeping everything else about it.
+    ///
+    /// **The records stay.** They are what rendering reads, and they are this
+    /// member's own history rather than something held for the network — so
+    /// dropping the servable copy costs this node the ability to *serve* the
+    /// object and costs the member nothing they can see. That asymmetry is the
+    /// reason this is the first thing shed under pressure.
+    ///
+    /// Safe only for **sealed** segments. A head is republished on every append
+    /// and successive versions share every chunk but the tail, so deleting an
+    /// old head's chunks would take the current one's with them.
+    /// Returns the ids it removed, so the caller can stop announcing them.
+    ///
+    /// **That return value is not a convenience.** A node that drops bytes and
+    /// goes on advertising itself as a provider sends every peer that believes
+    /// it on a fetch that fails — and a failed fetch counts against the *serving*
+    /// node's reliability with whoever asked (Storage §4.4). Dropping content
+    /// and staying quiet about it is worse than not dropping it.
+    ///
+    /// The **link stays**: it is how a walk knows this segment's place in its
+    /// chain without re-fetching, and losing it would make a chain look shorter
+    /// than it is. The **records stay** for the same reason spelled out above.
+    /// What goes is only the servable copy.
+    pub fn forget_object(&self, manifest: &Cid) -> Result<Vec<Cid>, StoreError> {
+        let mut gone = Vec::new();
+        if let Ok(raw) = fs::read(self.chunk_path(manifest))
+            && let Ok(parsed) = intranet_storage::Manifest::from_bytes(&raw)
+        {
+            for chunk in &parsed.chunks {
+                if fs::remove_file(self.chunk_path(chunk)).is_ok() {
+                    gone.push(*chunk);
+                }
+            }
+        }
+        if fs::remove_file(self.chunk_path(manifest)).is_ok() {
+            gone.push(*manifest);
+        }
+        let _ = fs::remove_file(self.segment_path(manifest, "duty"));
+        Ok(gone)
+    }
+
+    fn chunk_path(&self, cid: &Cid) -> PathBuf {
+        self.root.join("chunks").join(to_hex(cid.hash().as_bytes()))
+    }
+
+    /// Withdraws duty for `cid`, leaving the bytes alone.
+    ///
+    /// **Removing the reason is not removing the object.** If this member also
+    /// fetched it to read, it stays held under that reason — which is the whole
+    /// point of the split, and the reason lowering a contribution can never take
+    /// away somebody's own history.
+    pub fn release_duty(&self, cid: &Cid) -> Result<(), StoreError> {
+        match fs::remove_file(self.segment_path(cid, "duty")) {
+            Ok(()) => Ok(()),
+            Err(err) if err.kind() == io::ErrorKind::NotFound => Ok(()),
+            Err(err) => Err(StoreError::Io(err)),
+        }
+    }
+
     fn segment_path(&self, cid: &Cid, kind: &str) -> PathBuf {
         self.root
             .join("segments")
@@ -1092,13 +1528,14 @@ fn claim_is_fresh(beat: &std::path::Path) -> bool {
 /// pause rather than a support question. The node beats every tick, so this is
 /// several missed beats rather than one.
 ///
-/// **The case this does not cover, stated because it is real:** a holder
-/// suspended for longer than this — a laptop asleep — can have its claim taken
-/// over while it still believes it holds one, and on waking both would run. What
-/// keeps that rare rather than impossible is that taking over requires somebody
-/// to actually start a second node in that window. Making it impossible needs
-/// the holder to re-check ownership as it beats, which is worth doing when
-/// anything depends on it.
+/// **A holder suspended for longer than this — a laptop asleep — can still have
+/// its claim taken over**, and that is correct rather than a defect: from the
+/// store's side a sleeping process and a dead one are the same observation, and
+/// waiting longer would only move the line. What used to make it a defect was
+/// the *waking*, when the first process carried on believing it held a claim it
+/// no longer had. [`NodeClaim::beat`] now checks whose claim it is refreshing
+/// and reports [`Beat::Lost`], so the outcome is one node stopping rather than
+/// two running.
 pub const NODE_CLAIM_STALE: i64 = 6_000;
 
 /// The right to run a node for one network.
@@ -1107,14 +1544,48 @@ pub const NODE_CLAIM_STALE: i64 = 6_000;
 /// it — see [`Store::hold_node`] for why both are needed.
 pub struct NodeClaim {
     path: PathBuf,
+    /// Which holder this is, so [`NodeClaim::beat`] can tell it is still the one.
+    token: u64,
+}
+
+/// What a heartbeat found out about the claim it was refreshing.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Beat {
+    /// Still ours. Carry on.
+    Held,
+    /// Somebody else holds this store's claim now, and this node must stop.
+    ///
+    /// The only way to reach this is to have been suspended past
+    /// [`NODE_CLAIM_STALE`] — a laptop asleep — while another process started a
+    /// node for the same network. Both would otherwise advance the same MLS
+    /// group without seeing each other, which is the failure the claim exists
+    /// to prevent and the one with no symptom at the moment it happens.
+    Lost,
 }
 
 impl NodeClaim {
-    /// Says the holder is still running.
+    /// Says the holder is still running, and checks it still is.
     ///
     /// Called from the node's own loop, so a claim outlives the process holding
     /// it by at most [`NODE_CLAIM_STALE`].
-    pub fn beat(&self) {
+    ///
+    /// # Why this reads before it writes
+    ///
+    /// The expiry above is a wall-clock rule, and wall-clock cannot tell a dead
+    /// process from a suspended one: a laptop asleep for a minute looks exactly
+    /// like a crash. Its claim goes stale, another process legitimately takes
+    /// it over, and on waking the first process would have gone on beating and
+    /// running — two nodes, one network, no symptom, until whichever saved its
+    /// group state last silently decided the network's key.
+    ///
+    /// So the beat asks whose claim this is rather than only asserting that
+    /// somebody is alive. Losing it is not an error to recover from: this node
+    /// has to stop, because the other one is now the holder and is right to be.
+    #[must_use]
+    pub fn beat(&self) -> Beat {
+        if self.owner_on_disk() != Some(self.token) {
+            return Beat::Lost;
+        }
         // Atomic like every other durable write, and for a sharper reason than
         // most: a half-written heartbeat does not parse, an unparseable one
         // reads as *stale*, and a stale claim is one another process may take
@@ -1122,16 +1593,66 @@ impl NodeClaim {
         // self-healing, and it is the one direction of failure this file must
         // not have.
         if let Some(root) = self.path.parent() {
-            let _ = write_atomically(root, self.path.join("heartbeat"), now_millis().to_string().as_bytes());
+            let _ = write_atomically(
+                root,
+                self.path.join("heartbeat"),
+                now_millis().to_string().as_bytes(),
+            );
         }
+        Beat::Held
+    }
+
+    /// Records which holder this is.
+    fn write_owner(&self) -> Result<(), StoreError> {
+        let root = self
+            .path
+            .parent()
+            .ok_or_else(|| StoreError::Corrupt("a claim with no store above it".to_owned()))?;
+        write_atomically(
+            root,
+            self.path.join("owner"),
+            self.token.to_string().as_bytes(),
+        )
+    }
+
+    /// Whose claim the store currently says this is.
+    fn owner_on_disk(&self) -> Option<u64> {
+        fs::read_to_string(self.path.join("owner"))
+            .ok()
+            .and_then(|text| text.trim().parse::<u64>().ok())
     }
 }
 
 impl Drop for NodeClaim {
+    /// Releases the claim, **unless somebody else has taken it over.**
+    ///
+    /// The check is not tidiness. Without it, a node that lost its claim while
+    /// suspended would delete the *successor's* heartbeat and directory on its
+    /// way out — turning one recoverable problem into a store that looks
+    /// unclaimed while a node is actively running against it, which is the
+    /// exact state the claim exists to make impossible.
     fn drop(&mut self) {
+        if self.owner_on_disk() != Some(self.token) {
+            return;
+        }
         let _ = fs::remove_file(self.path.join("heartbeat"));
+        let _ = fs::remove_file(self.path.join("owner"));
         let _ = fs::remove_dir(&self.path);
     }
+}
+
+/// A value distinguishing this holder from any other.
+///
+/// Not a pid, for the reason [`Store::hold_node`] gives about pids generally:
+/// they are reused, so a stale one can name a live process that is somebody
+/// else. This only has to be unlikely to repeat, and it is never compared
+/// across machines.
+fn claim_token() -> u64 {
+    use std::hash::{BuildHasher, Hasher};
+    let mut hasher = std::collections::hash_map::RandomState::new().build_hasher();
+    hasher.write_i64(now_millis());
+    hasher.write_usize(std::process::id() as usize);
+    hasher.finish()
 }
 
 /// Wall-clock now, in milliseconds.

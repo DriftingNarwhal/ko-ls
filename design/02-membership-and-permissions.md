@@ -1,6 +1,6 @@
 # Membership and Permissions
 
-**Document status:** v1.3 — **§6.5 is built.** `Command::LeaveNetwork` writes one membership removal per group, the executor's blanket refusal of self-removal becomes a last-`revoke-node`-holder check, and `forget` announces before it deletes — which inverted a rule that had been exactly backwards, since it used to refuse the one case (an open network) that had a node able to publish anything. One limit follows and is recorded there: the sole founder of a network cannot leave it. Previously v1.2 — §6.5 settles the shape: `forget` stays all-or-nothing by decision rather than by default, what it owes is the announcement, and the executor guard that would defeat `06` §16 on its own is named. Previously v1.1 — §6.5 records that leaving a network is a gap rather than a design, and what the client owes once `06` §16 lands. Previously v1.0 — permission resolution implemented and reached through `kols-api`'s gate; E11 landed, so §2.2's per-scope registration problem is gone
+**Document status:** v1.6 — §6.4's storage offer is a cap rather than a promise: the replica duty, tiering and eviction it was waiting on are built, and `05` §5.1 owns the mechanism. Previously v1.5 — §6.4 records `SetContribution`: disk is settable per network and needs no capability, the other three contributions keep their defaults, and the two things the number is *not* — zero does not stop this node serving, and an offer is not yet a ceiling — are said where a member reads it. Previously v1.4 — §6.3 gains the session: logging out locks the interface and leaves the node running, a node starts only after a login, and the three things the lock does and does not protect are stated at the strength they hold — notably that a running node holds key material in memory by necessity, so a lock is not a defence against somebody reading the process. Previously v1.3 — **§6.5 is built.** `Command::LeaveNetwork` writes one membership removal per group, the executor's blanket refusal of self-removal becomes a last-`revoke-node`-holder check, and `forget` announces before it deletes — which inverted a rule that had been exactly backwards, since it used to refuse the one case (an open network) that had a node able to publish anything. One limit follows and is recorded there: the sole founder of a network cannot leave it. Previously v1.2 — §6.5 settles the shape: `forget` stays all-or-nothing by decision rather than by default, what it owes is the announcement, and the executor guard that would defeat `06` §16 on its own is named. Previously v1.1 — §6.5 records that leaving a network is a gap rather than a design, and what the client owes once `06` §16 lands. Previously v1.0 — permission resolution implemented and reached through `kols-api`'s gate; E11 landed, so §2.2's per-scope registration problem is gone
 **Depends on:** Core Protocol Spec §1 (identity), §2 (governance), §5.6 (invites)
 **Consumed by:** `01-messaging-model`, `03-confidentiality`, `04-realtime`
 
@@ -300,6 +300,34 @@ Two protocol constraints the UI must respect rather than route around:
 3. Post-connection sync: peers, governance log replay, capability ledger, epoch key.
 4. Resolve the channel list and render.
 
+**Logging out locks the interface and does not stop the node** — `00` §6, decided 2026-09-07
+and recorded here because this is where the mechanism lives. A member who logs out must log
+back in before they can read or act. Their node keeps running, keeps serving what it holds,
+keeps its relay reservation and keeps answering for them, because *nobody at my keyboard can
+act as me* and *I want to disappear from the network* are different requests and only the first
+one is being made. Quitting the application is how a member makes the second.
+
+**A node runs only once somebody has logged in.** It survives a logout; it does not survive a
+reboot unattended. This is the half that makes the password worth having, and it is worth
+saying why rather than only what: nodes that started before anybody authenticated would need
+seeds unwrappable without the password, and a key usable without a secret is not protected by
+it. The keyring would then be a formality and `00` §5's release gate would not be one.
+
+**What the lock protects, at the strength it actually holds.** Three claims, and the second and
+third are the ones a reader will otherwise assume the wrong way round:
+
+- **It protects against somebody at the keyboard.** They cannot read messages, post, mint an
+  invite, change policy, or see which networks this installation belongs to.
+- **It does not protect key material while the application is running.** A running node holds
+  live MLS state and epoch keys in memory by necessity — that is precisely what "the node keeps
+  working" means — so anybody who can read this process's memory has them, locked or not. A
+  screen lock is not a defence against an attacker who already has code running on the machine,
+  and this one does not claim to be.
+- **It does not protect the seed at rest. The wrapped keyring does**, and the two are
+  independent halves of this section. The keyring is what makes a stolen laptop survivable; the
+  lock is what makes an unattended one survivable. Shipping either alone leaves a real gap, and
+  shipping the lock alone would be the worse of the two, because it *looks* like protection.
+
 ### 6.4 Resource contribution is a per-network choice
 
 Contribution is opt-in and revocable per network (Core §4.3), and the client must expose
@@ -311,6 +339,51 @@ Defaults should be modest and honest — a chat client that quietly volunteers a
 a media relay for a 3,000-member server has misrepresented what the user agreed to. The
 settings UI should show what the contribution is currently costing, which the capability
 ledger and local counters already make available.
+
+**All four are settable** — `Command::SetContribution`, built 2026-09-07. Per network, needing
+no capability (Core §4.3 makes contribution a node's own to declare and revoke, so there is
+nobody to ask), and read by the daemon on its next tick rather than at startup, so a change
+takes effect without a restart.
+
+**Contribution is what this machine gives *other members*, and it is not what this member
+needs to use the application.** Core §4.2 defines `storage_offered` as bytes for *replicated*
+content, and the same reading governs the rest: a node contributing nothing still fetches,
+reads, posts and keeps its own history. There are ordinary reasons to contribute nothing — a
+phone, a metered connection, a full disk — and none of them is a reason to be a lesser member.
+The interface says that sentence rather than leaving somebody to infer it from a screen full
+of zeroes.
+
+Three things the surface has to say, because none of them is visible in a number:
+
+- **Zero is a decision, not an absence of one.** A value nobody set follows a revised default;
+  a zero somebody chose does not.
+- **Zero upload means nobody fetches from you**, because source selection reads no advertised
+  upload as not having volunteered (Storage §4.3). It does not affect this member's own
+  fetching, which asks the same question of other people's machines.
+- **Relaying is only offered where it could work.** A bootstrap relay must be dialable by two
+  peers who cannot dial each other (Core §5.5), so the control appears once a public address
+  has been confirmed and says *not confirmed* — weaker than *not reachable* — until then.
+
+**Storage is a cap, built 2026-09-08.** When this was first written it was an offer and
+nothing else: the client took on no replica duty, never computed placement, and held only what
+it had fetched to read — so there was nothing for a cap to bound that would not have been the
+member's own working set, which is exactly what contribution is not.
+
+All of it is built now, and `05` §5.1 owns the mechanism: placement over sealed segments, a
+store that tells a replica from a cached copy, two ceilings, and an order things are given up in
+that always sheds the cheap thing first. Two consequences belong here rather than there, because
+they are about what a member is promised:
+
+- **The ceiling is installation-wide**, not per network. A disk does not know how many networks
+  are on it, and every direct message is one (`03` §4).
+- **A member is never quietly poorer for it.** Discretionary history stops arriving before
+  anything is given up; a member may ask for a page of what stopped; and what is given up
+  permanently is content another member is known to hold — or, past a week of warnings, is
+  recorded so the question "what happened to that" has an answer.
+
+**A number the declaring node advertises and does not enforce is what Real-Time §2.2.2 had to
+correct for media relays**, and this is the same shape. The difference is that it is named in
+the place a member reads it rather than discovered later.
 
 **The declared cap is now binding on the node that declared it** (Real-Time §2.2.2). It
 used to be read by every node *except* the one that made it — it steered other members'

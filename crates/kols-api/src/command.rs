@@ -172,6 +172,72 @@ pub enum Command {
     /// between them is load-bearing, since this entry is signed by the key
     /// `forget` destroys.
     LeaveNetwork,
+    /// Ask this node to collect history older than a point in a channel.
+    ///
+    /// **Asking is not getting, and the shape follows from that.** The executor
+    /// holds no node, so this records a want the daemon honours on its next tick
+    /// — the records arrive as an ordinary [`crate::Event::Records`] a moment
+    /// later. A command that pretended to return the page would have to block a
+    /// command path on the network, which is the one thing this boundary is
+    /// arranged to avoid.
+    ///
+    /// Bounded by `before` rather than open-ended: history is a backwards chain,
+    /// so without a stopping point the only choices are one hop or all of it.
+    /// A reading is what makes a page a page.
+    FetchHistory {
+        /// Which channel.
+        channel: ChannelId,
+        /// Collect back until this node holds records older than this.
+        before: Hlc,
+    },
+    /// Set what this machine contributes to this network — Core §4.3.
+    ///
+    /// Local state, per network, needing no capability — a node's contribution
+    /// is its own to declare and revoke, so there is nobody to ask.
+    ///
+    /// **Every field here is a contribution to *other members*, and none of it
+    /// is what this member needs to use the application.** Core §4.2 defines
+    /// `storage_offered` as bytes for *replicated* content, and the same
+    /// reading governs the rest: a node contributing nothing still fetches,
+    /// reads, posts and keeps its own history. There are ordinary reasons to
+    /// contribute nothing — a phone, a metered link, a full disk — and none of
+    /// them is a reason to be a lesser member.
+    SetContribution {
+        /// Bytes of *other members'* content this network may store here.
+        ///
+        /// Zero is meaningful and is not "unset": it means *hold nothing on
+        /// anybody else's behalf*. It does not shrink what this member keeps for
+        /// their own reading, and it does not stop this node serving what it
+        /// already holds — swarm membership follows from holding bytes (Storage
+        /// §4.2), which is not something a setting turns off.
+        storage_offered: u64,
+        /// Bytes per second this node will upload for others.
+        ///
+        /// **The one field other members act on directly.** Source selection
+        /// drops a peer advertising no upload as not having volunteered
+        /// (Storage §4.3), and relay and live-stream selection weight it
+        /// (Real-Time §2.3, §3.3). Zero therefore means *nobody fetches from
+        /// me* — a real choice, and not one that affects this member's own
+        /// fetching, which runs the same selection over *other* peers.
+        upload_offered: u64,
+        /// Bytes per second this node will accept downstream.
+        ///
+        /// Advertised for completeness — Core §4.2 carries up and down — and
+        /// read by nothing in the protocol today. Kept settable because a member
+        /// on a metered link has an opinion about it, and honest about being a
+        /// declaration rather than a lever.
+        download_offered: u64,
+        /// Whether this node will help other members establish connections.
+        ///
+        /// Only meaningful on a node that is publicly reachable: a bootstrap
+        /// relay's whole job is being dialable by two peers who cannot dial each
+        /// other (Core §5.5), so a node behind NAT volunteering for it is
+        /// advertising something it cannot do. An interface should not offer
+        /// this where reachability has not been confirmed — the command still
+        /// accepts it, because the gate is presentation and never enforcement
+        /// (`design/09` §5).
+        relay_willing: bool,
+    },
     /// Name this network, for every member — D32, spec 07 §1.7.
     ///
     /// A policy value rather than a local label, so one name travels with the
@@ -282,7 +348,10 @@ impl Command {
     /// mistake this classification cannot survive.
     pub const fn sensitivity(&self) -> Sensitivity {
         match self {
-            Self::OpenChannel { .. } => Sensitivity::Local,
+            // Reads, and asks the node to go and read more. Nothing is signed
+            // and nothing leaves on the member's behalf — the node was already
+            // fetching from these peers, and this changes only how far back.
+            Self::OpenChannel { .. } | Self::FetchHistory { .. } => Sensitivity::Local,
 
             Self::SendMessage { .. }
             | Self::EditMessage { .. }
@@ -325,6 +394,21 @@ impl Command {
             // writes, irreversible, and the last act an identity ever performs.
             // A finer class is never a weaker one.
             | Self::LeaveNetwork => Sensitivity::Governs,
+
+            // **Needs no capability, and is still not `Local`.** D26 gives no
+            // answer — there is no tier to follow — so the stricter reading
+            // applies, as it does for `LeaveNetwork` and `SetRoleMember` above.
+            //
+            // `Local` means "nothing is signed and nothing leaves this node on
+            // the user's behalf", and the second half is false: this changes a
+            // *public, signed claim* about what this machine will give away,
+            // which the node re-advertises on its next tick. Under the sandbox
+            // path (`design/05` §7) `Local` would let hosted code raise a
+            // member's donated disk with no prompt, which is exactly the act
+            // App Hosting §3.3's consent decorator exists for. Not `Governs`
+            // either: it governs nothing, reaches no other member's machine,
+            // and is revocable at any moment.
+            Self::SetContribution { .. } => Sensitivity::Signs,
         }
     }
 
@@ -334,16 +418,24 @@ impl Command {
     /// the chat vocabulary — admission and removal are the network's business,
     /// not a channel's, and `approve-node` and `revoke-node` are
     /// governance-tier by the protocol's own definition rather than by anything
-    /// `design/02` assigns. Also `None` for [`Command::LeaveNetwork`], which is
-    /// gated on no capability at all: there is no verb to name, and inventing
-    /// one would put a grant between a member and the door.
+    /// `design/02` assigns.
+    ///
+    /// Also `None` for the two commands gated on no capability at all.
+    /// [`Command::LeaveNetwork`] is one (Core §2.5.1): there is no verb to name,
+    /// and inventing one would put a grant between a member and the door.
+    /// [`Command::SetContribution`] is the other (Core §4.3): what a node gives
+    /// is its own to declare and revoke, so there is nobody to ask.
+    ///
+    /// **Those two are gated on nothing and are classified differently**, which
+    /// is why [`Sensitivity`] cannot be derived from this mapping alone —
+    /// leaving a network is irreversible and setting a number is not.
     ///
     /// This is the mapping [`Sensitivity`] is derived from, exposed so the two
     /// can be checked against `kols_core::capabilities::VERBS` rather than
     /// against somebody's recollection of it.
     pub const fn verb(&self) -> Option<&'static str> {
         match self {
-            Self::OpenChannel { .. } => Some("read"),
+            Self::OpenChannel { .. } | Self::FetchHistory { .. } => Some("read"),
             Self::SendMessage { .. }
             | Self::EditMessage { .. }
             | Self::DeleteMessage { .. }
@@ -364,7 +456,8 @@ impl Command {
             | Self::CreateRole { .. }
             | Self::SetPermission { .. }
             | Self::SetRoleMember { .. }
-            | Self::LeaveNetwork => None,
+            | Self::LeaveNetwork
+            | Self::SetContribution { .. } => None,
         }
     }
 
@@ -372,6 +465,7 @@ impl Command {
     pub const fn name(&self) -> &'static str {
         match self {
             Self::OpenChannel { .. } => "open-channel",
+            Self::FetchHistory { .. } => "fetch-history",
             Self::SendMessage { .. } => "send-message",
             Self::EditMessage { .. } => "edit-message",
             Self::DeleteMessage { .. } => "delete-message",
@@ -393,6 +487,7 @@ impl Command {
             Self::SetPermission { .. } => "set-permission",
             Self::SetRoleMember { .. } => "set-role-member",
             Self::LeaveNetwork => "leave-network",
+            Self::SetContribution { .. } => "set-contribution",
         }
     }
 }

@@ -282,7 +282,7 @@ pub fn authorize<A: Authority, C: Channels>(
     let name = command.name();
 
     match &command {
-        Command::OpenChannel { channel, .. } => {
+        Command::OpenChannel { channel, .. } | Command::FetchHistory { channel, .. } => {
             let placement = placement_of(actor, channel)?;
             require(
                 holds(actor.state, &actor.identity, "read", &placement),
@@ -549,6 +549,19 @@ pub fn authorize<A: Authority, C: Channels>(
         Command::LeaveNetwork => {
             require(actor.state.is_member(&actor.identity), name, "membership")?
         }
+
+        // **Nothing to check, and saying so is the check.** Core §4.3 makes
+        // contribution opt-in and revocable *per node*: what this machine gives
+        // is its own to declare, so there is no capability a member could be
+        // missing and nobody to ask. Membership is not required either — a node
+        // in the waiting room is still entitled to decide what its disk is for,
+        // and refusing here would mean the one setting a joiner can meaningfully
+        // touch is the one the interface has to hide from them.
+        //
+        // Any value is accepted, zero included. Zero is not "unset": it removes
+        // this node from every replica set, which is a thing a member is allowed
+        // to want (`design/02` §6.4).
+        Command::SetContribution { .. } => {}
 
         Command::SetNetworkName { name: network_name } => {
             require(

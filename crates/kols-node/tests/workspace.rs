@@ -332,3 +332,744 @@ fn forgetting_a_network_nobody_holds_is_refused() {
     let absent = intranet_identity::NetworkId::from_bytes([3u8; 32]);
     assert!(workspace.forget(&absent).is_err());
 }
+
+/// O9 — a claim taken over while its holder slept.
+///
+/// # The failure this is about
+///
+/// Only one process may run a node for a network, because the MLS group is live
+/// state: two would each advance it without seeing the other, and whichever
+/// saved last would decide the network's key, with no symptom at the moment it
+/// happens. A claim guards that, and it expires on wall-clock so a window
+/// killed by the window manager does not leave the store locked forever.
+///
+/// Wall-clock cannot tell a dead process from a suspended one. A laptop asleep
+/// past the staleness window looks exactly like a crash, so its claim is
+/// legitimately taken over — and the sleeper used to wake up still believing it
+/// held one. Two nodes, one network, and nothing to see.
+#[test]
+fn a_claim_taken_over_while_its_holder_slept_is_reported_lost() {
+    use kols_node::store::{Beat, Store};
+
+    let dir = Dir::new("claim-takeover");
+    let root = dir.0.join("net");
+    let network = intranet_identity::NetworkId::from_bytes([9u8; 32]);
+    let store = Store::create(root.clone(), network, [4u8; 32]).expect("creates");
+
+    let sleeper = store.hold_node().expect("claims");
+    assert_eq!(sleeper.beat(), Beat::Held, "its own claim, before anything else");
+
+    // The laptop sleeps. Reproduced by ageing the heartbeat rather than by
+    // waiting out the window, because what is under test is the ownership
+    // comparison and not the duration — the same reason the harness spec drives
+    // bounded finality from a virtual clock.
+    let beat = root.join("serving").join("heartbeat");
+    std::fs::write(&beat, (0i64).to_string()).expect("ages the heartbeat");
+
+    // Another process finds a stale claim and takes it, which is correct.
+    let taker = Store::open(root.clone()).expect("opens");
+    let taker = taker.hold_node().expect("takes over a stale claim");
+    assert_eq!(taker.beat(), Beat::Held);
+
+    // The sleeper wakes. It must find out rather than carry on.
+    assert_eq!(
+        sleeper.beat(),
+        Beat::Lost,
+        "a holder whose claim was taken over must be told, or two nodes advance \
+         one MLS group and neither knows"
+    );
+
+    // And on its way out it must not take the successor's claim with it. Without
+    // the ownership check in `Drop` this is where the fix would have introduced a
+    // worse bug than the one it closed: a store that looks unclaimed while a node
+    // is actively running against it.
+    drop(sleeper);
+    assert_eq!(
+        taker.beat(),
+        Beat::Held,
+        "the loser's drop must leave the winner's claim alone"
+    );
+    assert!(beat.exists(), "the successor's heartbeat survives the loser's drop");
+}
+
+/// What this machine contributes to one network — Core §4.3, and O1's `SetContribution`.
+///
+/// # Why unset and a zeroed offer are asserted apart
+///
+/// They behave differently and only one of them is a decision. Nothing set means
+/// the shipped defaults are in force and would follow revised ones; zeros are a
+/// member having said *contribute nothing*. A reader that collapsed them would
+/// restore a default over somebody who had deliberately opted out — the same
+/// failure spec 07 §2.8's sentinel rule exists to prevent for retention.
+#[test]
+fn what_this_machine_contributes_survives_a_reopen_and_zero_is_not_unset() {
+    use kols_node::store::{Contribution, Store};
+
+    let dir = Dir::new("contribution");
+    let root = dir.0.join("net");
+    let network = intranet_identity::NetworkId::from_bytes([7u8; 32]);
+    let store = Store::create(root.clone(), network, [5u8; 32]).expect("creates");
+
+    assert_eq!(
+        store.contribution(),
+        None,
+        "a fresh store has been asked nothing, which is not the same as being offered nothing"
+    );
+
+    let chosen = Contribution {
+        storage_offered: 64 * 1024 * 1024,
+        upload_offered: 250_000,
+        download_offered: 4_000_000,
+        relay_willing: true,
+    };
+    store.set_contribution(&chosen).expect("writes");
+    assert_eq!(
+        Store::open(root.clone()).expect("reopens").contribution(),
+        Some(chosen),
+        "the offer is durable — a setting that did not survive a restart would be a preference"
+    );
+
+    let nothing = Contribution {
+        storage_offered: 0,
+        upload_offered: 0,
+        download_offered: 0,
+        relay_willing: false,
+    };
+    store.set_contribution(&nothing).expect("writes zero");
+    assert_eq!(
+        Store::open(root.clone()).expect("reopens").contribution(),
+        Some(nothing),
+        "contributing nothing is a decision and must read back as one, never as unset"
+    );
+
+    // A file that does not parse whole reads as unset rather than as partly set,
+    // for the same reason: a corrupt value must not be read as the strongest
+    // opinion a member could have expressed.
+    std::fs::write(root.join("contribution"), b"64\nnot a number\n").expect("corrupts it");
+    assert_eq!(
+        Store::open(root.clone()).expect("reopens").contribution(),
+        None,
+        "a corrupt offer falls back to the defaults rather than to a partial one"
+    );
+
+    // Reachability decides only whether relaying is worth *offering*. Absent
+    // means not confirmed, which is weaker than not reachable.
+    let store = Store::open(root).expect("reopens");
+    assert_eq!(store.reachable(), None);
+    store.set_reachable("/ip4/203.0.113.7/tcp/4001").expect("writes");
+    assert_eq!(store.reachable().as_deref(), Some("/ip4/203.0.113.7/tcp/4001"));
+}
+
+/// Replica duty — Storage §3.3, and what makes a storage offer mean anything.
+///
+/// # What is under test
+///
+/// That this node holds objects *for the network* rather than only what it
+/// fetched to read, that the ranking is the protocol's and not ours, and that
+/// the three cases which decide whether an offer is honest all behave:
+/// contributing nothing takes no duty, a network too small to meet its own
+/// replication factor has everybody hold everything, and being ranked out
+/// releases the duty without touching the bytes.
+///
+/// Built on a real genesis and real membership entries rather than a hand-made
+/// state, because the layering is part of the claim: an advertisement is only
+/// accepted from a current member, so placement depends on governance having
+/// converged first (Core §4.5).
+#[test]
+fn a_node_takes_duty_for_what_placement_ranks_it_for() {
+    use intranet_governance::{EntryBody, GroupId, LogEntry, MembershipAction};
+    use intranet_ledger::{
+        BandwidthCap, CapabilityAdvertisement, CapabilityLedger, ComputeClass, WeightField,
+        placement,
+    };
+
+    let dir = Dir::new("duty");
+    let workspace = Workspace::at(dir.0.clone());
+    let store = workspace.create("the workshop", Vec::new()).expect("creates");
+    let founder = store.identity().expect("identity");
+    let me = founder.id();
+    let network = *store.network();
+
+    // Four more members, admitted for real so their advertisements are accepted.
+    let others: Vec<_> = (20u8..24)
+        .map(|n| {
+            intranet_identity::MasterSeed::from_entropy([n; 32])
+                .identity_for(&network)
+                .expect("identity")
+        })
+        .collect();
+    for member in &others {
+        let log = store.log().expect("log");
+        let parent = log.canonical_chain().last().copied();
+        store
+            .append_entry(&LogEntry::create(
+                &founder,
+                parent,
+                intranet_crypto::Timestamp::from_millis(100),
+                EntryBody::MembershipChange {
+                    group: GroupId::everyone(),
+                    identity: member.id(),
+                    action: MembershipAction::Add { via_invite: None },
+                },
+            ))
+            .expect("admits");
+    }
+    let state = store.state().expect("replays");
+
+    // A chain of three: two sealed, one head. Only the sealed pair is duty —
+    // a head's id moves under its author's next message.
+    //
+    // Stored as **real objects** rather than as bare ids, because duty now
+    // records what an object weighs and an object whose manifest is not held has
+    // no weight this node can state. That is not test scaffolding: a segment is
+    // only ever absorbed after its manifest and chunks decoded, so a link
+    // without a manifest is a state a running node never reaches.
+    let dek = intranet_storage::Dek::generate().expect("a data key");
+    let store_object = |plaintext: &[u8]| {
+        let encoded = intranet_storage::encode(
+            plaintext,
+            &dek,
+            intranet_storage::ChunkSpec::from_target(64 * 1024),
+        );
+        let cid = encoded.manifest_cid();
+        store
+            .put_chunk(&cid, &encoded.manifest.canonical_bytes())
+            .expect("manifest");
+        for (chunk, bytes) in &encoded.chunks {
+            store.put_chunk(chunk, bytes).expect("chunk");
+        }
+        cid
+    };
+    let sealed_first = store_object(b"the first sealed segment");
+    let sealed_second = store_object(b"the second sealed segment");
+    let head = store_object(b"the open head segment");
+    store.mark_segment_link(&sealed_first, 0, None).expect("link");
+    store
+        .mark_segment_link(&sealed_second, 1, Some(sealed_first))
+        .expect("link");
+    store
+        .mark_segment_link(&head, 2, Some(sealed_second))
+        .expect("link");
+
+    // The timestamp is a parameter because the ledger ignores an advertisement
+    // that is not strictly newer than the one it holds (§4.5: gossip reordering
+    // is ordinary rather than a fault). Raising an offer therefore has to be a
+    // later advertisement, which is also what a real node does.
+    let advertise = |identity: &intranet_identity::PerNetworkIdentity, storage: u64, at: i64| {
+        CapabilityAdvertisement::create(
+            identity,
+            storage,
+            BandwidthCap {
+                up_bytes_per_sec: 1_000_000,
+                down_bytes_per_sec: 8_000_000,
+                active_window: None,
+            },
+            false,
+            false,
+            ComputeClass::Modest,
+            intranet_crypto::Timestamp::from_millis(at),
+        )
+    };
+    let mut ledger = CapabilityLedger::new(network);
+    // Room enough that nothing here is refused; the ceiling has its own test.
+    let roomy = kols_node::replica::Budget {
+        offered: u64::MAX,
+        installation: u64::MAX,
+        installation_used: 0,
+    };
+
+    // **Contributing nothing takes no duty**, and is not a degraded membership.
+    // `placement::rank` excludes a zero-weight node entirely rather than ranking
+    // it last, so this is the protocol's behaviour rather than a check here.
+    ledger
+        .insert(advertise(&founder, 0, 1), &state)
+        .expect("advertises");
+    let duty = kols_node::replica::evaluate(&store, &ledger, &me, 3, roomy).expect("evaluates");
+    assert_eq!(duty.considered, 2, "only the sealed pair is considered");
+    assert_eq!(duty.mine, 0, "a node offering nothing is never conscripted");
+    assert!(!store.has_duty(&sealed_first));
+
+    // **A network too small to meet its own factor has everybody hold
+    // everything**, and it falls out of `select` returning fewer than asked for
+    // rather than out of a rule kept in step with it (Storage §3.2).
+    ledger
+        .insert(advertise(&founder, 8 << 30, 2), &state)
+        .expect("advertises");
+    let duty = kols_node::replica::evaluate(&store, &ledger, &me, 3, roomy).expect("evaluates");
+    assert_eq!(duty.mine, 2, "the only contributor holds everything");
+    assert_eq!(
+        duty.under_replicated, 2,
+        "one holder against a factor of three is degraded, and must be visible"
+    );
+    assert!(store.has_duty(&sealed_first) && store.has_duty(&sealed_second));
+    assert!(!store.has_duty(&head), "a head segment is never duty");
+
+    // **What is given and what is used are two numbers.** Duty counts the sealed
+    // pair and nothing else; the store holds the head as well, which is this
+    // member's own and is not a contribution. Reporting one figure would either
+    // overstate what somebody gives or understate what the application costs.
+    let expected: u64 = [sealed_first, sealed_second]
+        .iter()
+        .map(|cid| store.object_bytes(cid).expect("held"))
+        .sum();
+    assert_eq!(duty.mine_bytes, expected, "the tier is summed from its own marks");
+    assert_eq!(store.duty_bytes(), expected);
+    assert!(
+        store.stored_bytes() > expected,
+        "the disk holds the head too, which is this member's own reading and not given \
+         to anybody: {} against {expected}",
+        store.stored_bytes()
+    );
+
+    // **Ranked against better-resourced members**, with a factor of one so that
+    // exactly one of the five wins each object. Whichever way it falls, the
+    // marks must agree with the ranking rather than with what was there before.
+    for member in &others {
+        ledger
+            .insert(advertise(member, 64 << 30, 3), &state)
+            .expect("advertises");
+    }
+    let duty = kols_node::replica::evaluate(&store, &ledger, &me, 1, roomy).expect("evaluates");
+    assert_eq!(duty.under_replicated, 0, "five contributors meet a factor of one");
+    let candidates: Vec<_> = ledger.entries().cloned().collect();
+    let mut released = 0;
+    for cid in [sealed_first, sealed_second] {
+        let ranked = placement::select(
+            cid.hash().as_bytes(),
+            &candidates,
+            WeightField::StorageOffered,
+            1,
+        );
+        assert_eq!(
+            store.has_duty(&cid),
+            ranked.contains(&me),
+            "the mark must follow the protocol's ranking, not this node's history"
+        );
+        if !ranked.contains(&me) {
+            released += 1;
+        }
+    }
+    assert!(
+        released > 0,
+        "four members offering eight times as much should win at least one of two objects; \
+         if this ever fails, the ranking has stopped being weighted"
+    );
+
+    // And releasing duty leaves the record of the segment alone: the bytes are
+    // held for whatever other reason wanted them, which is what stops a lowered
+    // contribution taking away somebody's own reading.
+    assert!(
+        store.segment_link(&sealed_first).is_some(),
+        "withdrawing a reason must not remove the object"
+    );
+}
+
+/// The two ceilings, and the arithmetic that must not hand out room twice.
+///
+/// # Why saturating subtraction is the whole of this
+///
+/// A ceiling can be *lowered* below what is already held — a member changing
+/// their mind is the ordinary case, not an exotic one — and that is exactly when
+/// a plain subtraction underflows into an enormous allowance and a node starts
+/// taking on work because it believes it has room for four exabytes. The test is
+/// short because the failure is a single operator.
+#[test]
+fn a_budget_past_either_ceiling_offers_no_room_rather_than_underflowing() {
+    use kols_node::replica::Budget;
+
+    let gib = 1024 * 1024 * 1024;
+    let budget = Budget {
+        offered: 4 * gib,
+        installation: 8 * gib,
+        installation_used: 2 * gib,
+    };
+    assert_eq!(budget.remaining(gib), 3 * gib, "the offer binds while it is the smaller");
+
+    // The installation ceiling binds first once the disk is nearly full, even
+    // though this network has offered plenty. That is the point of having two:
+    // a member reading heavily in one network leaves no room for duty anywhere,
+    // and the contribution is what gives way rather than their own use.
+    let pressed = Budget {
+        installation_used: 7 * gib,
+        ..budget
+    };
+    assert_eq!(pressed.remaining(0), gib, "the disk binds before the offer does");
+
+    // Already past the offer, because it was lowered under what is held.
+    assert_eq!(budget.remaining(9 * gib), 0, "no room, and no underflow");
+    // Already past the installation ceiling, for the same reason.
+    let over = Budget {
+        installation_used: 99 * gib,
+        ..budget
+    };
+    assert_eq!(over.remaining(0), 0, "no room, and no underflow");
+}
+
+/// A node at its offer declines new duty rather than exceeding what it promised.
+#[test]
+fn duty_stops_at_the_offer_and_says_it_refused() {
+    use intranet_ledger::{BandwidthCap, CapabilityAdvertisement, CapabilityLedger, ComputeClass};
+    use kols_node::replica::Budget;
+
+    let dir = Dir::new("duty-ceiling");
+    let workspace = Workspace::at(dir.0.clone());
+    let store = workspace.create("the workshop", Vec::new()).expect("creates");
+    let founder = store.identity().expect("identity");
+    let me = founder.id();
+    let network = *store.network();
+    let state = store.state().expect("replays");
+
+    let dek = intranet_storage::Dek::generate().expect("a data key");
+    let store_object = |plaintext: &[u8]| {
+        let encoded =
+            intranet_storage::encode(plaintext, &dek, intranet_storage::ChunkSpec::from_target(64 * 1024));
+        let cid = encoded.manifest_cid();
+        store.put_chunk(&cid, &encoded.manifest.canonical_bytes()).expect("manifest");
+        for (chunk, bytes) in &encoded.chunks {
+            store.put_chunk(chunk, bytes).expect("chunk");
+        }
+        cid
+    };
+    let first = store_object(b"the first sealed segment");
+    let second = store_object(b"the second sealed segment");
+    let head = store_object(b"the open head");
+    store.mark_segment_link(&first, 0, None).expect("link");
+    store.mark_segment_link(&second, 1, Some(first)).expect("link");
+    store.mark_segment_link(&head, 2, Some(second)).expect("link");
+
+    let mut ledger = CapabilityLedger::new(network);
+    ledger
+        .insert(
+            CapabilityAdvertisement::create(
+                &founder,
+                8 << 30,
+                BandwidthCap {
+                    up_bytes_per_sec: 1_000_000,
+                    down_bytes_per_sec: 8_000_000,
+                    active_window: None,
+                },
+                false,
+                false,
+                ComputeClass::Modest,
+                intranet_crypto::Timestamp::from_millis(1),
+            ),
+            &state,
+        )
+        .expect("advertises");
+
+    // Room for one of the two sealed objects and not the other.
+    let one = store.object_bytes(&first).expect("held");
+    let budget = Budget {
+        offered: one,
+        installation: u64::MAX,
+        installation_used: 0,
+    };
+    let duty = kols_node::replica::evaluate(&store, &ledger, &me, 3, budget).expect("evaluates");
+    assert_eq!(duty.mine, 1, "one object fits");
+    assert_eq!(duty.refused, 1, "and declining the other is reported, not silent");
+    assert!(
+        duty.mine_bytes <= one,
+        "a node must never hold more than it offered: {} against {one}",
+        duty.mine_bytes
+    );
+
+    // The disk ceiling binds the same way even with a generous offer — a member
+    // reading heavily leaves no room for duty, and the contribution gives way.
+    let full = Budget {
+        offered: u64::MAX,
+        installation: 1,
+        installation_used: 1,
+    };
+    let store2 = workspace.create("another", Vec::new()).expect("creates");
+    drop(store2);
+    let duty = kols_node::replica::evaluate(&store, &ledger, &me, 3, full).expect("evaluates");
+    assert_eq!(duty.refused, 1, "no room on the disk means no new duty");
+}
+
+/// The census: asking who else holds something, and waiting for the answer.
+///
+/// # The three states this has to keep apart
+///
+/// *Never asked*, *asked and waiting*, and *told that nobody holds it* look the
+/// same to a caller that only stores a number. Only the third is a reason to
+/// act, and reading either of the first two as it is how a last copy gets
+/// dropped because the DHT had not answered yet.
+#[test]
+fn a_census_tells_never_asked_from_told_nobody_has_it() {
+    use kols_node::replica::{ANSWER_FRESH_MILLIS, ASK_TIMEOUT_MILLIS, Census};
+    use intranet_storage::Cid;
+
+    let object = Cid::of(b"an object");
+    let me = intranet_identity::MasterSeed::from_entropy([1u8; 32])
+        .identity_for(&intranet_identity::NetworkId::from_bytes([2u8; 32]))
+        .expect("identity")
+        .id();
+    let other = intranet_identity::MasterSeed::from_entropy([9u8; 32])
+        .identity_for(&intranet_identity::NetworkId::from_bytes([2u8; 32]))
+        .expect("identity")
+        .id();
+
+    let mut census = Census::default();
+    assert!(census.should_ask(&object, 0), "nothing known, so worth asking");
+    assert_eq!(
+        census.others_holding(&object, 0),
+        None,
+        "never asked is not zero, and a caller must not be able to read it as zero"
+    );
+
+    // Asked and waiting: not worth asking again, and still no answer.
+    census.asked(object, 0);
+    assert!(!census.should_ask(&object, 0));
+    assert_eq!(census.others_holding(&object, 0), None);
+
+    // An unanswered question times out rather than being waited on forever — a
+    // query that resolves to nothing is indistinguishable from one in flight.
+    assert!(
+        census.should_ask(&object, ASK_TIMEOUT_MILLIS),
+        "a question nobody answered must be asked again"
+    );
+
+    // **This node is excluded from its own count**, because the question is
+    // *would this survive without me* and including it answers a different one.
+    census.heard(object, &[me, other], &me, 1_000);
+    assert_eq!(
+        census.others_holding(&object, 1_000),
+        Some(1),
+        "two providers, one of them this node, is one other holder"
+    );
+
+    // Told that nobody else holds it: a real answer, and the opposite of not
+    // having asked, though both would be `None` to a lazier reader.
+    census.heard(object, &[me], &me, 2_000);
+    assert_eq!(census.others_holding(&object, 2_000), Some(0));
+
+    // An answer goes stale rather than standing forever: provider records
+    // outlive the node that stopped holding the bytes, so an old count is a
+    // claim about a network that has moved on.
+    assert_eq!(
+        census.others_holding(&object, 2_000 + ANSWER_FRESH_MILLIS),
+        None,
+        "a stale answer reads as unknown, never as its last value"
+    );
+    assert!(census.should_ask(&object, 2_000 + ANSWER_FRESH_MILLIS));
+
+    census.forget(&object);
+    assert_eq!(census.others_holding(&object, 2_000), None);
+    assert!(census.should_ask(&object, 2_000));
+}
+
+/// Shedding cached copies to stay under the ceiling.
+///
+/// # The two things this must never do
+///
+/// Drop a **duty** object, which is a promise to the network given up under a
+/// different rule with a round trip in it; and drop a member's **records**,
+/// which are what rendering reads and are their own history rather than
+/// something held for anybody else. Both are asserted, because either would
+/// turn a disk ceiling into something that takes away what a member came for.
+#[test]
+fn shedding_gives_back_cached_copies_and_never_duty_or_records() {
+    let dir = Dir::new("shed");
+    let workspace = Workspace::at(dir.0.clone());
+    let store = workspace.create("the workshop", Vec::new()).expect("creates");
+    let channel = kols_core::ChannelId::from_bytes([5u8; 32]);
+
+    let dek = intranet_storage::Dek::generate().expect("a data key");
+    let store_object = |plaintext: &[u8]| {
+        let encoded = intranet_storage::encode(
+            plaintext,
+            &dek,
+            intranet_storage::ChunkSpec::from_target(64 * 1024),
+        );
+        let cid = encoded.manifest_cid();
+        store.put_chunk(&cid, &encoded.manifest.canonical_bytes()).expect("manifest");
+        for (chunk, bytes) in &encoded.chunks {
+            store.put_chunk(chunk, bytes).expect("chunk");
+        }
+        cid
+    };
+
+    // Two sealed segments and a head. One sealed one is duty.
+    let older = store_object(&[b'a'; 4096]);
+    let newer = store_object(&[b'b'; 4096]);
+    let head = store_object(&[b'c'; 4096]);
+    store.mark_segment_link(&older, 0, None).expect("link");
+    store.mark_segment_link(&newer, 1, Some(older)).expect("link");
+    store.mark_segment_link(&head, 2, Some(newer)).expect("link");
+    store.mark_chain_whole(&newer).expect("mark");
+    store.take_duty(&newer, store.object_bytes(&newer).expect("held")).expect("duty");
+
+    // A record, standing in for the member's own history.
+    let founder = store.identity().expect("identity");
+    let record = kols_core::Record::create(
+        &founder,
+        channel,
+        kols_core::Hlc::new(10, 0),
+        kols_core::RecordBody::Message {
+            body: "mine to keep".to_owned(),
+            reply_to: None,
+            attachments: Vec::new(),
+        },
+    );
+    store.put_record(&channel, &record).expect("record");
+
+    let before = store.stored_bytes();
+    let shed = kols_node::replica::shed_cache(&store, 1, 0).expect("sheds");
+
+    assert_eq!(shed.objects, 1, "only the cached sealed segment is sheddable");
+    assert!(shed.bytes > 0);
+    assert!(
+        store.object_bytes(&older).is_none(),
+        "the oldest cached copy is the one given back"
+    );
+    assert!(
+        store.object_bytes(&newer).is_some(),
+        "duty is a promise to the network and is not shed under disk pressure"
+    );
+    assert!(
+        store.object_bytes(&head).is_some(),
+        "a head is republished on every append and shares chunks with its successors; \
+         dropping one takes the current version's bytes with it"
+    );
+    assert_eq!(
+        store.records(&channel).expect("records").len(),
+        1,
+        "records are what a member reads and are never what a storage ceiling takes"
+    );
+    assert!(store.stored_bytes() < before, "the disk actually got smaller");
+
+    // **The link and the whole-chain mark both survive, and that is correct.**
+    // Those describe the *chain*, which a walk hops along using links and never
+    // needs the bytes for. Clearing them would send the walk back down a chain it
+    // already knows, re-deriving hops it holds, to no purpose. What is gone is
+    // the servable copy, which is a different question from whether this node
+    // knows the shape of the history.
+    assert!(store.segment_link(&older).is_some());
+    assert!(store.chain_whole(&newer));
+    assert!(
+        !store.history_incomplete(),
+        "shedding a servable copy must be invisible to the member: the links still \
+         describe a whole chain and the records still render, so nothing tells them \
+         their history shrank — because it did not"
+    );
+
+    // And the ids are handed back, so the caller can stop advertising them. A
+    // node that drops bytes and keeps claiming them sends every peer that
+    // believes it on a fetch that fails, which counts against the serving node.
+    assert!(
+        !shed.dropped.is_empty(),
+        "shedding must say what went, or the announcements outlive the bytes"
+    );
+}
+
+/// Duty eviction: evidence before dropping, and a window before losing.
+///
+/// # The three answers this has to keep apart
+///
+/// *Others hold it* is a reason to give a replica back. *Nobody holds it* is a
+/// reason to hold it past the ceiling and say so. *Nobody has answered* is
+/// neither, and treating it as the second is how a last copy gets dropped
+/// because the network was slow to reply.
+#[test]
+fn duty_is_given_up_only_with_evidence_and_never_silently() {
+    use kols_node::replica::{Census, GRACE_MILLIS, shed_duty};
+
+    let dir = Dir::new("evict");
+    let workspace = Workspace::at(dir.0.clone());
+    let store = workspace.create("the workshop", Vec::new()).expect("creates");
+    let me = store.identity().expect("identity").id();
+    let network = *store.network();
+    let peer = |n: u8| {
+        intranet_identity::MasterSeed::from_entropy([n; 32])
+            .identity_for(&network)
+            .expect("identity")
+            .id()
+    };
+
+    let dek = intranet_storage::Dek::generate().expect("a data key");
+    let store_object = |plaintext: &[u8]| {
+        let encoded = intranet_storage::encode(
+            plaintext,
+            &dek,
+            intranet_storage::ChunkSpec::from_target(64 * 1024),
+        );
+        let cid = encoded.manifest_cid();
+        store.put_chunk(&cid, &encoded.manifest.canonical_bytes()).expect("manifest");
+        for (chunk, bytes) in &encoded.chunks {
+            store.put_chunk(chunk, bytes).expect("chunk");
+        }
+        store.take_duty(&cid, store.object_bytes(&cid).expect("held")).expect("duty");
+        cid
+    };
+    let held = store_object(&[b'a'; 4096]);
+    let lonely = store_object(&[b'b'; 4096]);
+    let unknown = store_object(&[b'c'; 4096]);
+    store.mark_segment_link(&held, 0, None).expect("link");
+    store.mark_segment_link(&lonely, 1, Some(held)).expect("link");
+    store.mark_segment_link(&unknown, 2, Some(lonely)).expect("link");
+
+    let mut census = Census::default();
+    census.heard(held, &[me, peer(20), peer(21)], &me, 0);
+    census.heard(lonely, &[me], &me, 0);
+    // `unknown` is deliberately never heard about.
+
+    let evicted = shed_duty(&store, &census, u64::MAX, 4, 0).expect("evicts");
+
+    assert!(
+        store.object_bytes(&held).is_none(),
+        "two other holders is evidence, and giving the replica back is the point"
+    );
+    assert!(
+        store.object_bytes(&lonely).is_some(),
+        "the last known copy is held past the ceiling rather than destroyed"
+    );
+    assert_eq!(evicted.at_risk, vec![lonely], "and is reported as at risk");
+    assert!(
+        store.object_bytes(&unknown).is_some(),
+        "nobody answered, which is not the same as nobody holding it"
+    );
+    assert_eq!(
+        evicted.awaiting,
+        vec![unknown],
+        "an unanswered question must be reported as one so it gets asked, not acted on"
+    );
+    assert!(evicted.lost.is_empty(), "nothing is lost inside the window");
+
+    // A network too small to produce evidence cannot be asked for it — and must
+    // not therefore give everything up. With one other contributor the bar is
+    // one, and with none nothing is evictable at all.
+    let mut alone = Census::default();
+    alone.heard(unknown, &[me, peer(20)], &me, 0);
+    let evicted = shed_duty(&store, &alone, u64::MAX, 0, 0).expect("evicts");
+    assert!(
+        store.object_bytes(&unknown).is_some(),
+        "with nobody else contributing there is no evidence to be had, and nothing may go"
+    );
+    assert!(evicted.objects == 0);
+
+    // **A week-old count is not evidence, and the window does not override
+    // that.** The answer recorded at zero has long since gone stale by the time
+    // the window runs out, so the object reads as unknown and is held — a last
+    // copy must not be destroyed on the strength of what the network said seven
+    // days ago.
+    let later = GRACE_MILLIS + 1;
+    let evicted = shed_duty(&store, &census, u64::MAX, 4, later).expect("evicts");
+    assert!(
+        store.object_bytes(&lonely).is_some(),
+        "an expired window plus a stale answer is still not a reason to destroy anything"
+    );
+    assert!(evicted.lost.is_empty());
+    assert!(evicted.awaiting.contains(&lonely), "it is asked about again instead");
+
+    // Asked again, and the answer is the same: still nobody. *Now* the window
+    // has run on a current answer, and the copy goes — written down, because a
+    // member who was told and did nothing chose, and one who was never told had
+    // it chosen for them.
+    census.heard(lonely, &[me], &me, later);
+    let evicted = shed_duty(&store, &census, u64::MAX, 4, later).expect("evicts");
+    assert_eq!(evicted.lost, vec![lonely], "the window runs out and the copy goes");
+    assert!(store.object_bytes(&lonely).is_none());
+    let dropped = store.dropped();
+    assert_eq!(dropped.len(), 1, "what was given up is recorded, not merely done");
+    assert_eq!(dropped[0].0, later);
+}

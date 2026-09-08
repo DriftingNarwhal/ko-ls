@@ -85,6 +85,7 @@ pub mod join;
 pub mod network;
 mod secret;
 pub mod serve;
+pub mod replica;
 pub mod store;
 pub mod workspace;
 

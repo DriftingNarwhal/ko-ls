@@ -34,6 +34,28 @@ pub enum Landed {
         /// This member's identity here, as hex, for whoever will admit them.
         identity: String,
     },
+    /// The request was delivered and no answer came back before the deadline.
+    ///
+    /// **Deliberately not an error, and this is O21.** A join that reached
+    /// nobody and a join whose *answer* was lost look identical from a timeout
+    /// and are not the same event. In the second the network may already have
+    /// admitted this identity — under auto-admit it answers by writing a
+    /// governance entry, so the entry can exist while the reply that would have
+    /// reported it does not — and calling that a failure is a client asserting
+    /// something it cannot know.
+    ///
+    /// It bites rather than merely misleads, because an invite is use-count
+    /// limited: a joiner told the join failed retries, the invite is spent, and
+    /// they are locked out of a network that has held them as a member the whole
+    /// time. So the store is kept and the answer comes from replay instead —
+    /// `design/00` §2's third principle, that authorization is a computation
+    /// rather than a cached claim, applied to this node's own membership.
+    Unanswered {
+        /// This member's identity here, as hex.
+        identity: String,
+        /// What was tried, for a person who has to decide what to do next.
+        why: String,
+    },
 }
 
 /// Redeems an invite from a terminal, printing what happened.
@@ -54,6 +76,23 @@ pub fn run(root: PathBuf, uri: &str, timeout_secs: u64) -> Result<(), String> {
             println!();
             println!("Next: `kols name <name>` claims a display name, and `kols serve`");
             println!("syncs the log and asks to be keyed in.");
+        }
+        Landed::Unanswered { identity, why } => {
+            println!("no answer — and that is not the same as a refusal");
+            println!();
+            println!("The request reached the network and nothing came back: {why}.");
+            println!();
+            println!("**This may already have worked.** Under auto-admit a network answers by");
+            println!("writing a governance entry, so the entry can exist while the reply that");
+            println!("would have told you about it does not. Do not redeem the invite again —");
+            println!("it is use-limited, and spending it is how this becomes permanent.");
+            println!();
+            println!("  kols serve");
+            println!();
+            println!("syncs the log and settles it: if the network admitted you, replay says so");
+            println!("and this node asks to be keyed in. Your identity here is:");
+            println!();
+            println!("  {identity}");
         }
         Landed::Waiting { identity } => {
             println!("waiting to be admitted");
@@ -172,6 +211,9 @@ pub async fn redeem(
 
     let deadline = tokio::time::Instant::now() + Duration::from_secs(timeout_secs);
     let mut asked = false;
+    // Whether a connection to the *issuer* was established, as opposed to one
+    // to a relay on the way to them. See the `Connected` arm below.
+    let mut reached_issuer = false;
     // **Why each dial failed, which the transport reports and this used to
     // discard.** `DialFailed` carries the reason, the match below ended in a
     // catch-all, and the join then reported a bare "nobody answered" — so a
@@ -218,6 +260,22 @@ pub async fn redeem(
                     ". Otherwise the addresses may be stale, or the node that issued the \
                      invite may not be running",
                 );
+                // **Reaching the issuer and hearing nothing is not the same
+                // event as reaching nobody**, and collapsing them is O21. If
+                // this node never connected to the issuer, nothing on the far
+                // side has heard of this identity and the join genuinely
+                // failed. If it did connect and no answer came back, the
+                // network may have admitted this member already — so the honest
+                // report is that we do not know, and the store is kept so
+                // replay can settle it.
+                if reached_issuer {
+                    return Ok(Landed::Unanswered {
+                        identity: intranet_crypto::to_hex(
+                            identity.id().verifying_key().as_bytes(),
+                        ),
+                        why,
+                    });
+                }
                 return Err(why);
             }
         };
@@ -232,6 +290,17 @@ pub async fn redeem(
                 // invite came from and is therefore the one known to be willing.
                 node.request_join(invite.issuer, invite.clone(), &identity);
                 asked = true;
+                // **Whether the request could have *arrived* is a different
+                // question from whether one was sent, and O21 turns on it.**
+                // The first connection is often a relay rather than the issuer:
+                // an invite carries a circuit address, and dialling it connects
+                // to the relay whether or not the issuer is behind it. Treating
+                // that as "delivered" would report a join that reached nobody as
+                // one whose answer was merely lost — which is the opposite of
+                // the honesty this is for, since it would tell somebody their
+                // join may have worked when nothing on the far side ever heard
+                // of them.
+                reached_issuer |= peer == invite.issuer.peer_id();
             }
 
             NodeEvent::Admitted { .. } => return Ok(Landed::Admitted),

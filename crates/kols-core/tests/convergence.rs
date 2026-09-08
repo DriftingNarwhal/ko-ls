@@ -10,8 +10,8 @@
 
 use intranet_crypto::{Hash, Timestamp};
 use intranet_governance::{
-    Capability, ContentType, EntryBody, GovernanceState, GroupId, LogEntry, MembershipAction,
-    NetworkPolicy,
+    Capability, ContentType, EntryBody, GovernanceLog, GovernanceState, GroupId, LogEntry,
+    MembershipAction, NetworkPolicy,
 };
 use intranet_identity::{MasterSeed, NetworkId, PerNetworkIdentity};
 use kols_core::*;
@@ -46,6 +46,34 @@ fn placement() -> Placement {
 
 /// A network where `everyone` may post, and identity 9 may moderate.
 fn state(members: &[&PerNetworkIdentity], moderators: &[&PerNetworkIdentity]) -> GovernanceState {
+    GovernanceState::replay(&chain_for(members, moderators)).expect("replays")
+}
+
+/// The same network, keeping the log so a redaction can cite a **real** head.
+///
+/// A redaction is judged as of the governance head its author observed
+/// (`design/01` §6), so a test that cites a head nothing has heard of is not
+/// testing redaction — it is testing what a reader does with an unverifiable
+/// claim, which is refuse. Returns the head to cite alongside the log.
+fn governance(
+    members: &[&PerNetworkIdentity],
+    moderators: &[&PerNetworkIdentity],
+) -> (GovernanceState, GovernanceLog, Hash) {
+    let chain = chain_for(members, moderators);
+    let mut log = GovernanceLog::new();
+    let mut head = Hash::ZERO;
+    for entry in chain {
+        head = log.insert(entry).expect("a well-formed chain inserts");
+    }
+    let state = log.replay_canonical().expect("replays");
+    (state, log, head)
+}
+
+/// The entries that network is made of, oldest first.
+fn chain_for(
+    members: &[&PerNetworkIdentity],
+    moderators: &[&PerNetworkIdentity],
+) -> Vec<LogEntry> {
     let founder = identity(1);
     let mut policy = NetworkPolicy::conservative_default();
     policy
@@ -116,7 +144,7 @@ fn state(members: &[&PerNetworkIdentity], moderators: &[&PerNetworkIdentity]) ->
         );
     }
 
-    GovernanceState::replay(&chain).expect("replays")
+    chain
 }
 
 fn message(text: &str) -> RecordBody {
@@ -317,8 +345,10 @@ fn a_record_for_another_channel_is_refused() {
 #[test]
 fn edits_tombstones_reactions_and_redactions_are_order_independent() {
     let (author, other, moderator) = (identity(2), identity(3), identity(9));
-    let state = state(&[&author, &other, &moderator], &[&moderator]);
-    let authority = StateAuthority { state: &state };
+    // The log rather than a bare state, because a redaction is judged as of the
+    // head it cites and only a `LogAuthority` can replay to one.
+    let (state, log, head) = governance(&[&author, &other, &moderator], &[&moderator]);
+    let authority = LogAuthority::new(&state, &log);
 
     let first = Record::create(&author, channel(), Hlc::new(10, 0), message("first"));
     let second = Record::create(&author, channel(), Hlc::new(11, 0), message("second"));
@@ -373,7 +403,7 @@ fn edits_tombstones_reactions_and_redactions_are_order_independent() {
             Hlc::new(16, 0),
             RecordBody::Redaction {
                 target: second.id(),
-                governance_head: Hash::ZERO,
+                governance_head: head,
             },
         ),
     ];
@@ -445,8 +475,11 @@ fn nobody_edits_or_withdraws_somebody_elses_message() {
 #[test]
 fn a_non_moderator_cannot_redact() {
     let (author, pretender) = (identity(2), identity(3));
-    let state = state(&[&author, &pretender], &[]);
-    let authority = StateAuthority { state: &state };
+    // Judged against a real head, so this asserts a non-moderator is refused
+    // *on the merits* rather than because the head was unverifiable — a
+    // different refusal, which would make this pass for the wrong reason.
+    let (state, log, head) = governance(&[&author, &pretender], &[]);
+    let authority = LogAuthority::new(&state, &log);
 
     let original = Record::create(&author, channel(), Hlc::new(10, 0), message("visible"));
     let target = original.id();
@@ -461,7 +494,7 @@ fn a_non_moderator_cannot_redact() {
                 Hlc::new(11, 0),
                 RecordBody::Redaction {
                     target,
-                    governance_head: Hash::ZERO,
+                    governance_head: head,
                 },
             ),
         ],
@@ -538,4 +571,94 @@ fn a_moderator_can_pin() {
 
     assert!(view.rejected().is_empty(), "{:?}", view.rejected());
     assert!(view.render(&LAX, 0)[0].pinned);
+}
+
+/// O3 — a demotion prevents new redactions and does not undo past ones.
+///
+/// # The failure this closes
+///
+/// `may_moderate_at` used to ignore the head it was given and answer from
+/// current state, so a moderator's authority was re-evaluated *now* every time
+/// their past work was rendered. Demote them and every message they had ever
+/// hidden came back — silently, at the moment somebody edited a role, with
+/// nothing on screen connecting the two. Spec 07 §9 Q1 named it; `design/01` §6
+/// requires the opposite.
+///
+/// The two halves are one property and are asserted together on purpose: a fix
+/// that made past redactions stand by simply never re-checking would also let a
+/// demoted moderator keep redacting, which is the same bug facing the other way.
+#[test]
+fn demoting_a_moderator_stops_new_redactions_and_leaves_past_ones_standing() {
+    let (author, moderator) = (identity(2), identity(9));
+
+    // While they held it: a head at which the moderator is in `moderators`.
+    let (_, mut log, while_holding) = governance(&[&author, &moderator], &[&moderator]);
+
+    // And then the role is taken away, extending the same chain.
+    let founder = identity(1);
+    let after = log
+        .insert(LogEntry::create(
+            &founder,
+            Some(while_holding),
+            Timestamp::from_millis(1_000),
+            EntryBody::MembershipChange {
+                group: GroupId::new("moderators"),
+                identity: moderator.id(),
+                action: MembershipAction::Remove { cascade: None },
+            },
+        ))
+        .expect("the demotion appends");
+    let state = log.replay_canonical().expect("replays");
+    let authority = LogAuthority::new(&state, &log);
+
+    // Sanity, so a green result cannot come from the demotion never landing.
+    assert!(
+        !authority.may_moderate_now(&moderator.id(), &placement()),
+        "the demotion must have taken effect, or this test proves nothing"
+    );
+
+    let early = Record::create(&author, channel(), Hlc::new(10, 0), message("hidden then"));
+    let late = Record::create(&author, channel(), Hlc::new(11, 0), message("hidden now"));
+    let (early_id, late_id) = (early.id(), late.id());
+
+    let mut view = ChannelView::new(placement());
+    view.admit(
+        vec![
+            early,
+            late,
+            // Cited while they held the role. This must still stand.
+            Record::create(
+                &moderator,
+                channel(),
+                Hlc::new(12, 0),
+                RecordBody::Redaction {
+                    target: early_id,
+                    governance_head: while_holding,
+                },
+            ),
+            // Cited after losing it. This must not.
+            Record::create(
+                &moderator,
+                channel(),
+                Hlc::new(13, 0),
+                RecordBody::Redaction {
+                    target: late_id,
+                    governance_head: after,
+                },
+            ),
+        ],
+        &authority,
+        &LAX,
+    );
+
+    let rendered = view.render(&LAX, 0);
+    assert!(
+        !rendered[0].is_visible(),
+        "a redaction made while its author held the role must survive their demotion — \
+         otherwise a routine permissions edit silently restores content somebody removed"
+    );
+    assert!(
+        rendered[1].is_visible(),
+        "a demoted moderator must not be able to redact anything new"
+    );
 }

@@ -24,6 +24,60 @@ Kept because this project keeps re-learning the same lessons and paying for them
 
 ---
 
+- **2026-09-08** — **A storage offer became a cap, and the thing it was capping did not exist.**
+
+  Two days of clearing the owed register turned into the storage work, by way of a finding that
+  inverted the plan. `SetContribution` landed as one number, then as four; the cap was asked for
+  next; and checking before building showed there was **nothing to cap**. `placement::rank` was
+  called nowhere and `replication_factor` read nowhere, so every byte on disk was what this node
+  had fetched to read. Content outlived its author because somebody happened to have opened that
+  channel — durability was a happy accident, and a ceiling over it would have bounded the
+  member's own working set, which is the one thing contribution is not.
+
+  So the order became duty, then tiering, then the cap. Recorded because the *check* was the
+  whole value: the plan was coherent, the specs supported it, and it was aimed at the wrong
+  layer.
+
+  **The same shape happened twice more.** "Fetch what you are ranked for" was proposed as the
+  next step and is a **no-op** — the walk queued every hop of every chain with nothing consulting
+  a ceiling, so the node already held everything it could be ranked for, and the disk was
+  ballooning through the cache path that no ceiling touched. And O24 was filed as a missing fetch
+  on a paging path when there is **no paging path**: the window opens channels with `before:
+  None`. Each time the mistake was the same one — reasoning about what the code should be doing
+  instead of reading what it does.
+
+  **Three things were wrong in ways that only measuring found.** `stored_bytes` counted `chunks/`
+  alone, and this store keeps every message twice — once as a record, which is what rendering
+  reads, and once inside a segment's chunks — so a member setting two gigabytes could have been
+  handed four. A node that sheds while still advertising sends every peer that believes it on a
+  fetch that fails, which counts against the *serving* node. And a `Degraded` message shipped
+  claiming that scrolling back would reach evicted history over the network, which was false in
+  the same session it was written: `OpenChannel` renders from stored records and the executor
+  holds no node at all.
+
+  **The rule the whole thing turns on** is that a provider count is safe in one direction only.
+  It may overstate — records outlive the bytes they name — so *nobody answered* and *nobody holds
+  it* are opposite states, and a design that collapses them drops a last copy because the network
+  was slow to reply. That is why the bar is two other holders rather than one, why a stale answer
+  reads as unknown rather than as its last value, and why the seven-day window does not override
+  freshness: a test found that a last copy past its deadline was held anyway, because the count
+  behind it had aged out. That was better than what had been designed, and it stayed.
+
+  **What a member is told turned out to be most of the design.** Three situations reach the same
+  place — history has stopped arriving, content is about to be lost and only this machine holds
+  it, content already has been — and one message for all three teaches somebody to ignore the two
+  that matter. Contributing nothing is an ordinary configuration and the interface says so in a
+  sentence, because a phone, a metered link and a full disk are all reasons and none of them
+  makes anybody a lesser member.
+
+  Also closed on the way, each with its own surprise: O9, where the fix nearly deleted the
+  successor's claim on the way out; O21, where a lost join answer was reported as a failure and
+  the retry spent a single-use invite; O3, where two tests cited `Hash::ZERO` as a governance
+  head and so were testing what a reader does with an unverifiable claim rather than testing
+  redaction at all.
+
+---
+
 - **2026-09-01** — **Leaving a network works, and building the client half found a rule that was exactly backwards.**
 
   The protocol gained the entry this morning (Core §2.5.1). The client can now write it:

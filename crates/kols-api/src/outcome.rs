@@ -29,6 +29,14 @@ pub enum Outcome {
         rejected: Vec<(MessageId, Rejection)>,
         /// How many distinct authors contributed to what was rendered.
         authors: usize,
+        /// Whether history exists behind this that the node does not hold.
+        ///
+        /// Carried because a bounded channel and a quiet one render identically,
+        /// and only one of them is worth telling somebody about. A member whose
+        /// installation is at its storage ceiling sees fewer messages than
+        /// another member of the same network — and with nothing saying so, the
+        /// honest reading available to them is that nobody said much.
+        more_history: bool,
     },
     /// A signed record was appended to the actor's own log.
     ///
@@ -93,6 +101,27 @@ pub enum Outcome {
     BootstrapRelaysSet {
         /// The set now in force.
         relays: Vec<String>,
+    },
+    /// A request for older history was recorded.
+    ///
+    /// Says the asking happened, never that the history arrived — the records
+    /// come later as an ordinary event, or do not come at all because there is
+    /// none left. A client showing "fetched" here would be reporting something
+    /// it cannot know yet.
+    HistoryRequested {
+        /// Which channel.
+        channel: ChannelId,
+    },
+    /// What this machine offers this network changed — Core §4.3.
+    ContributionSet {
+        /// Bytes of other members' content this network may store here.
+        storage_offered: u64,
+        /// Bytes per second this node will upload for others.
+        upload_offered: u64,
+        /// Bytes per second this node will accept downstream.
+        download_offered: u64,
+        /// Whether this node volunteers as a bootstrap relay.
+        relay_willing: bool,
     },
     /// The network's membership changed.
     MembershipChanged {

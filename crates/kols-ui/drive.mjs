@@ -37,9 +37,9 @@ const channels = [
   { id: "c2", name: "random", topic: "", archived: false, private: false, position: 1024 },
 ];
 let messages = [
-  { id: "m1", author: "corey", author_id: "id-corey-0001", at: "10:00", body: "one",
+  { id: "m1", author: "corey", author_id: "id-corey-0001", at: "10:00", at_millis: 1000, body: "one",
     edited: false, withdrawn: false, redacted: false, pinned: false, reactions: [], mine: true },
-  { id: "m2", author: "sam", author_id: "id-sam-0002", at: "10:01", body: "two",
+  { id: "m2", author: "sam", author_id: "id-sam-0002", at: "10:01", at_millis: 2000, body: "two",
     edited: false, withdrawn: false, redacted: false, pinned: false, reactions: [], mine: false },
 ];
 let waiting = [];
@@ -60,7 +60,34 @@ const answers = {
   reorg: () => null,
   settings: () => [],
   roles: () => [],
+  contribution: () => offer,
+  storage_ceiling: () => ceiling,
+  set_storage_ceiling: (args) => {
+    ceiling = { ...ceiling, ceiling: args.bytes };
+    return null;
+  },
+  set_contribution: (args) => {
+    saved.push(args);
+    return null;
+  },
 };
+
+// What `contribution` currently answers, and what `set_contribution` was asked
+// for — the MiB/bytes conversion happens in the interface, so it is the half a
+// test can actually be wrong about.
+let offer = {
+  storage_offered: 256 * 1024 * 1024,
+  upload_offered: 1_000_000,
+  download_offered: 8_000_000,
+  relay_willing: false,
+  is_default: true,
+  storage_used: 32 * 1024 * 1024,
+  storage_total: 200 * 1024 * 1024,
+  reachable: null,
+};
+const saved = [];
+const asked = [];
+let ceiling = { ceiling: 2 * 1024 * 1024 * 1024, used: 1_288_490_188, networks: 3 };
 
 const dom = new JSDOM(html, { runScripts: "outside-only", pretendToBeVisual: true, url: "http://localhost/" });
 const { window } = dom;
@@ -240,7 +267,7 @@ const rows = () => [...el("messages").children].map((r) => r.classList.contains(
 say("first visit highlights nothing", rows().every((f) => !f), JSON.stringify(rows()));
 messages = [
   messages[0],
-  { id: "m3", author: "sam", author_id: "id-sam-0002", at: "10:00:30", body: "late",
+  { id: "m3", author: "sam", author_id: "id-sam-0002", at: "10:00:30", at_millis: 1500, body: "late",
     edited: false, withdrawn: false, redacted: false, pinned: false, reactions: [], mine: false },
   messages[1],
 ];
@@ -262,9 +289,9 @@ say("clicking the channel clears them", rows().every((f) => !f), JSON.stringify(
 // ── what a mark is not for ─────────────────────────────────────────────
 messages = [
   ...messages,
-  { id: "m4", author: "corey", author_id: "id-corey-0001", at: "10:02", body: "mine",
+  { id: "m4", author: "corey", author_id: "id-corey-0001", at: "10:02", at_millis: 3000, body: "mine",
     edited: false, withdrawn: false, redacted: false, pinned: false, reactions: [], mine: true },
-  { id: "m5", author: "sam", author_id: "id-sam-0002", at: "10:03", body: "theirs",
+  { id: "m5", author: "sam", author_id: "id-sam-0002", at: "10:03", at_millis: 4000, body: "theirs",
     edited: false, withdrawn: false, redacted: false, pinned: false, reactions: [], mine: false },
 ];
 await listeners["kols://records"]({ payload: ["c1", true] });
@@ -282,6 +309,149 @@ say("hovering a marked message clears it", rows().every((f) => !f), JSON.stringi
 await listeners["kols://records"]({ payload: ["c2", true] });
 await settled();
 say("unread reaches the title", titles.at(-1) === "ko-ls (1)", titles.at(-1));
+
+// ── O21: a node without a key is in one of two different places ────────
+//
+// The interface used to say one thing for both, and send a member who was
+// already admitted off to find an admin who had nothing left to do. Membership
+// comes from replayed governance rather than from what the join handshake said,
+// which is what makes the middle case reachable at all.
+window.drawKeyState({ has_key: true, is_member: true });
+say("a keyed member is told nothing", el("key-state").textContent === "",
+    JSON.stringify(el("key-state").textContent));
+
+window.drawKeyState({ has_key: false, is_member: false });
+say("an unadmitted member is told to wait for one",
+    el("key-state").textContent.includes("waiting to be admitted"),
+    el("key-state").textContent);
+
+window.drawKeyState({ has_key: false, is_member: true });
+say("an admitted member is told it resolves itself, not to chase somebody",
+    el("key-state").textContent.includes("admitted, waiting to be keyed in") &&
+      !el("key-state").textContent.includes("until a member admits you"),
+    el("key-state").textContent);
+
+// ── contribution: an offer to others, never this member's own working set ──
+await window.drawContribution();
+say("storage is shown in megabytes", el("contribution-storage").value === "256",
+    el("contribution-storage").value);
+say("bandwidth is shown in KB/s",
+    el("contribution-upload").value === "1000" && el("contribution-download").value === "8000",
+    `${el("contribution-upload").value} / ${el("contribution-download").value}`);
+say("an unset offer says it is riding the defaults", !el("contribution-default").hidden);
+
+// The two numbers stay two numbers. Reporting one would either overstate what a
+// member gives or understate what the application costs them.
+say("what is held for others is reported",
+    el("contribution-usage").textContent.includes("Holding 32 MB for other members"),
+    el("contribution-usage").textContent);
+say("and the disk total is reported separately, as not a contribution",
+    el("contribution-usage").textContent.includes("200 MB on this disk") &&
+      el("contribution-usage").textContent.includes("not a contribution"));
+
+// Relaying is offered only where it could work. A node nobody has seen from
+// outside cannot help two members reach each other, so the control is absent
+// and the reason is on screen rather than left to be guessed.
+say("an unreachable node is not offered relaying", el("contribution-relay-row").hidden);
+say("and is told why", !el("contribution-unreachable").hidden);
+
+offer = { ...offer, is_default: false, reachable: "/ip4/203.0.113.7/tcp/4001" };
+await window.drawContribution();
+say("a chosen offer does not claim to be the default", el("contribution-default").hidden);
+say("a reachable node is offered relaying", !el("contribution-relay-row").hidden);
+say("and the reason is withdrawn", el("contribution-unreachable").hidden);
+
+el("contribution-storage").value = "512";
+el("contribution-upload").value = "250";
+el("contribution-relay").checked = true;
+el("contribution-form").dispatchEvent(
+  new window.Event("submit", { bubbles: true, cancelable: true }),
+);
+await settled();
+say("saving converts each unit to bytes",
+    saved.at(-1).storageOffered === 512 * 1024 * 1024 && saved.at(-1).uploadOffered === 250_000,
+    JSON.stringify(saved.at(-1)));
+say("and carries the relay choice", saved.at(-1).relayWilling === true);
+
+// Zero is a real answer everywhere and must survive the round trip rather than
+// being read as "nothing entered" and replaced by a default.
+el("contribution-storage").value = "0";
+el("contribution-upload").value = "0";
+el("contribution-form").dispatchEvent(
+  new window.Event("submit", { bubbles: true, cancelable: true }),
+);
+await settled();
+say("zero is saved as zero, not as unset",
+    saved.at(-1).storageOffered === 0 && saved.at(-1).uploadOffered === 0,
+    JSON.stringify(saved.at(-1)));
+
+// A node that stopped being reachable must not keep sending a claim it can no
+// longer back up, even with a checkbox left ticked from before.
+offer = { ...offer, reachable: null };
+await window.drawContribution();
+el("contribution-relay").checked = true;
+el("contribution-form").dispatchEvent(
+  new window.Event("submit", { bubbles: true, cancelable: true }),
+);
+await settled();
+say("an unreachable node never claims to relay", saved.at(-1).relayWilling === false);
+
+// ── a bounded channel says so, and is not mistaken for a message ───────
+//
+// A channel the ceiling stopped filling renders exactly like a quiet one, and
+// only one of them is worth telling somebody about.
+answers.open_channel = ({ channel }) => ({
+  channel, messages, authors: 2, refused: [], more_history: true,
+});
+await listeners["kols://records"]({ payload: ["c1", true] });
+await settled();
+const notice = el("messages").querySelector('[data-kols="more-history"]');
+say("a bounded channel says so at the top",
+    notice !== null && notice.textContent.includes("not lost"),
+    notice ? notice.textContent.slice(0, 60) : "(absent)");
+// Asking is bounded by the oldest message on screen — the point where this
+// member's view stops — and reports what it did rather than pretending to hold
+// the page, since the records arrive later as an event.
+answers.fetch_history = (args) => {
+  asked.push(args);
+  return null;
+};
+const ask = notice.querySelector('[data-kols="fetch-history"]');
+ask.dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
+await settled();
+say("asking is bounded by the oldest message on screen",
+    asked.at(-1)?.beforeMillis === messages[0].at_millis,
+    JSON.stringify(asked.at(-1)));
+say("and says it asked rather than claiming to have fetched",
+    ask.disabled && !ask.textContent.includes("fetched"), ask.textContent);
+
+say("and the notice is not a message",
+    notice !== null && !notice.classList.contains("message"));
+// The marks select `.message.fresh`, so the notice must be reachable by neither
+// half of that. Asserted against the live document rather than by reading the
+// class string, since the selector is what actually decides.
+say("so the first-sight marks cannot reach it",
+    ![...el("messages").querySelectorAll(".message")].includes(notice) &&
+      !notice.classList.contains("fresh"));
+
+// ── the ceiling that stops a disk filling up ───────────────────────────
+await window.drawCeiling();
+say("the ceiling is shown in whole gigabytes", el("ceiling-gb").value === "2",
+    el("ceiling-gb").value);
+say("usage is reported against it, with the network count",
+    el("ceiling-usage").textContent.includes("1.20 GB of 2 GB") &&
+      el("ceiling-usage").textContent.includes("across 3 networks"),
+    el("ceiling-usage").textContent);
+
+// A ceiling of nothing would stop the application keeping what somebody is
+// reading, which is not a contribution setting and must not behave like one.
+el("ceiling-gb").value = "0";
+el("ceiling-form").dispatchEvent(
+  new window.Event("submit", { bubbles: true, cancelable: true }),
+);
+await settled();
+say("a ceiling is floored at one gigabyte, never zero",
+    ceiling.ceiling === 1024 * 1024 * 1024, String(ceiling.ceiling));
 
 console.log(problems.length ? "\nPROBLEMS:\n" + problems.join("\n") : "\nno uncaught errors");
 process.exit(0);

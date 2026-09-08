@@ -47,6 +47,14 @@ pub struct Known {
     pub keyed: bool,
 }
 
+/// The most disk one installation gives every network together, by default.
+///
+/// A starting value rather than a considered one, and modest on purpose: a
+/// member who never opens this setting should find the application costing them
+/// something they would not have minded being asked about. Raising it is one
+/// number, and the surface says what it is for.
+pub const DEFAULT_CEILING: u64 = 2 * 1024 * 1024 * 1024;
+
 /// A directory holding several networks' stores.
 pub struct Workspace {
     root: PathBuf,
@@ -66,6 +74,48 @@ impl Workspace {
     /// Where this workspace lives.
     pub fn root(&self) -> &Path {
         &self.root
+    }
+
+    /// The most disk this installation may use, across every network.
+    ///
+    /// # Why this is not per network, and not a `Command`
+    ///
+    /// A disk does not know how many networks are on it. Per-network offers
+    /// bound what each one *gives*, and bound the total at nothing — which stops
+    /// being an academic point at P2, where every direct message is its own
+    /// network (`03` §4) and a member with thirty conversations would hold thirty
+    /// ceilings and no answer to "how much is this costing me".
+    ///
+    /// It is set outside the `kols-api` vocabulary for the reason creating a
+    /// network is (`design/05` §3): that boundary is per network, and this is a
+    /// fact about the workspace holding all of them. A command routed through
+    /// one network's executor to write a file above it would be borrowing an
+    /// authority it does not have.
+    pub fn ceiling(&self) -> u64 {
+        std::fs::read_to_string(self.root.join("ceiling"))
+            .ok()
+            .and_then(|text| text.trim().parse().ok())
+            .unwrap_or(DEFAULT_CEILING)
+    }
+
+    /// Sets the most disk this installation may use.
+    pub fn set_ceiling(&self, bytes: u64) -> Result<(), String> {
+        std::fs::create_dir_all(&self.root).map_err(|err| err.to_string())?;
+        std::fs::write(self.root.join("ceiling"), bytes.to_string()).map_err(|err| err.to_string())
+    }
+
+    /// What every network here is costing this disk, together.
+    ///
+    /// Summed across stores rather than tracked, because a total kept as a
+    /// running number is a number that drifts: a store removed by hand, a
+    /// network forgotten, or a write that failed halfway all leave it wrong in
+    /// the direction that matters, which is believing there is room.
+    pub fn stored_bytes(&self) -> u64 {
+        self.list()
+            .into_iter()
+            .filter_map(|known| Store::open(known.path).ok())
+            .map(|store| store.stored_bytes())
+            .sum()
     }
 
     /// Every network this client holds a store for.

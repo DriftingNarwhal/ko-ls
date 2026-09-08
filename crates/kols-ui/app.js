@@ -206,9 +206,27 @@ function fail(err) {
 /// else, which is an ordinary place to be rather than a fault — and looks
 /// identical to an empty network unless something says so.
 function drawKeyState(me) {
-  el("key-state").textContent = me.has_key
-    ? ""
-    : "waiting to be keyed in — you can read nothing here until a member admits you";
+  if (me.has_key) {
+    el("key-state").textContent = "";
+    return;
+  }
+  // **Three states, not two, and collapsing them is O21.** A node without a key
+  // is in one of two entirely different places, and the interface used to tell
+  // both of them to go and find an admin.
+  //
+  // Not a member: nobody has admitted this identity, which is somebody else's
+  // move and is worth naming so a person knows what they are waiting on.
+  //
+  // A member without a key: ordinary and self-resolving. The node re-asks every
+  // thirty seconds (Core §3.5.1 makes a repeat request safe), so being told to
+  // chase an admin here is being sent after a problem that does not exist.
+  //
+  // Membership comes from replayed governance rather than from what the join
+  // handshake said, which is what lets a member whose `Admitted` never arrived
+  // stop being stuck the moment their node syncs.
+  el("key-state").textContent = me.is_member
+    ? "admitted, waiting to be keyed in — this resolves itself; the node is asking"
+    : "waiting to be admitted — you can read nothing here until a member admits you";
 }
 
 /// Draws the network header and gates the chrome on what this member holds.
@@ -1346,6 +1364,61 @@ function drawMessages(opened) {
     list.scrollHeight - list.scrollTop - list.clientHeight < 40 || list.children.length === 0;
   list.replaceChildren();
 
+  // **At the top, because it changes what the list below it means.** The first
+  // message shown is where this node stopped collecting, not where the
+  // conversation started — and a bounded channel renders exactly like a quiet
+  // one. A member seeing fewer messages than everybody else in the network, with
+  // nothing saying why, has no reading available to them except that nobody said
+  // much.
+  //
+  // Not phrased as a failure: the history is not lost, other members hold it,
+  // and raising the ceiling is what collects it here. There is no fetch-a-page
+  // gesture yet, so the notice points at the thing that actually works rather
+  // than at a control that does not exist.
+  if (opened.more_history) {
+    const note = document.createElement("li");
+    // Deliberately **not** class `message`: it is a notice about the list, not an
+    // entry in it, and anything selecting `.message` — the first-sight marks do
+    // — must not find it. A row that looks like a message and is not one is the
+    // kind of thing that is fine until the day something counts them.
+    note.className = "history-note dim";
+    note.dataset.kols = "more-history";
+    note.textContent =
+      "Older history exists that this machine is not holding. It is not lost — other " +
+      "members have it. ";
+    const ask = document.createElement("button");
+    ask.type = "button";
+    ask.dataset.kols = "fetch-history";
+    ask.textContent = "fetch older messages";
+    // Bounded by the oldest message on screen, which is where this member's view
+    // stops and therefore exactly the point to ask from. Without a boundary the
+    // only choices are one hop or the whole chain.
+    //
+    // **Asking is not getting.** The node collects on its next pass and the
+    // records arrive as an event, so this reports what it did rather than
+    // pretending to hold the page — and it stays disabled afterwards, since a
+    // second click would queue a second identical want.
+    ask.addEventListener("click", async () => {
+      const oldest = opened.messages[0];
+      if (!oldest) return;
+      ask.disabled = true;
+      ask.textContent = "asking…";
+      try {
+        await invoke("fetch_history", {
+          channel: opened.channel,
+          beforeMillis: oldest.at_millis,
+        });
+        ask.textContent = "asked — it arrives shortly";
+      } catch (err) {
+        ask.disabled = false;
+        ask.textContent = "fetch older messages";
+        fail(err);
+      }
+    });
+    note.append(ask);
+    list.append(note);
+  }
+
   for (const message of opened.messages) {
     const row = document.createElement("li");
     row.className = "message";
@@ -1978,6 +2051,24 @@ el("joiner").addEventListener("submit", async (event) => {
       await start();
       return;
     }
+    if (!landed.answered) {
+      // **Not a refusal, and it must not read as one (O21).** The request went
+      // out and nothing came back. Under auto-admit a network answers by
+      // writing a governance entry, so the entry can exist while the reply that
+      // would have reported it does not — and an invite is use-limited, so
+      // telling somebody this failed is how they spend it on a retry and lock
+      // themselves out of a network that already holds them.
+      //
+      // The node is running, so the sync that settles it is already under way.
+      fail(
+        `No answer yet — which is not the same as a refusal, so do not redeem ` +
+          `the invite again. The network may already have admitted you; this ` +
+          `node is syncing now and will say so if it did. Your identity here ` +
+          `is:\n\n  ${landed.identity}`,
+      );
+      await start();
+      return;
+    }
     // Waiting is a successful join, not a failure: an invite to a network that
     // screens its members buys a connection and an identity and nothing else,
     // until somebody admits you. Saying so beats an empty channel list.
@@ -2048,6 +2139,62 @@ async function drawSettings() {
     await drawNetworkSettings();
   }
   if (state.settingsTab === "permissions") await drawRoles();
+  if (state.settingsTab === "contribution") await drawContribution();
+  if (state.settingsTab === "device") await drawCeiling();
+}
+
+/// The ceiling on everything this installation keeps, and what it is using.
+///
+/// Shown in whole gigabytes because that is the unit somebody thinks about a
+/// disk in, and reported alongside the network count: "1.2 GB" reads very
+/// differently at one network and at thirty, and once direct messages land every
+/// conversation is one.
+async function drawCeiling() {
+  const limit = await invoke("storage_ceiling");
+  const gb = (bytes) => bytes / (1024 * 1024 * 1024);
+  el("ceiling-gb").value = String(Math.max(1, Math.round(gb(limit.ceiling))));
+  el("ceiling-usage").textContent =
+    `Using ${(gb(limit.used)).toFixed(2)} GB of ${gb(limit.ceiling).toFixed(0)} GB, ` +
+    `across ${limit.networks} network${limit.networks === 1 ? "" : "s"}.`;
+}
+
+/// What this machine offers this network — Core §4.3.
+///
+/// Shown in megabytes because that is the unit a person has an opinion in; the
+/// boundary carries bytes, and the conversion happens here rather than being a
+/// second unit for the core to know about.
+///
+/// **Unset and zero are drawn differently**, because they behave differently: a
+/// number nobody has chosen follows a revised default, and a zero somebody
+/// chose does not. That is the same distinction `design/09` §4.2 already makes
+/// for a policy value riding its default.
+async function drawContribution() {
+  const offer = await invoke("contribution");
+  el("contribution-storage").value = String(Math.round(offer.storage_offered / (1024 * 1024)));
+  el("contribution-upload").value = String(Math.round(offer.upload_offered / 1000));
+  el("contribution-download").value = String(Math.round(offer.download_offered / 1000));
+  el("contribution-relay").checked = offer.relay_willing;
+  el("contribution-default").hidden = !offer.is_default;
+
+  // **Offered only where it could work.** A bootstrap relay is dialed by two
+  // members who cannot dial each other (Core §5.5), so a node nobody can reach
+  // volunteering for it advertises something it cannot do. Hiding the control
+  // is presentation and never enforcement (§5) — the command still accepts the
+  // flag, and the node still honours a value set from the terminal.
+  const reachable = Boolean(offer.reachable);
+  el("contribution-relay-row").hidden = !reachable;
+  el("contribution-unreachable").hidden = reachable;
+
+  // **Two numbers, never one.** What is held for others is the contribution;
+  // what this network costs the disk includes everything you fetched to read,
+  // which is yours. Merging them would either overstate what somebody is giving
+  // or understate what the application is taking, and both are the kind of small
+  // dishonesty this surface exists to avoid.
+  const mb = (bytes) => Math.round(bytes / (1024 * 1024));
+  el("contribution-usage").textContent =
+    `Holding ${mb(offer.storage_used)} MB for other members. This network is using ` +
+    `${mb(offer.storage_total)} MB on this disk altogether — the rest is what you ` +
+    `fetched to read, which is yours and is not a contribution.`;
 }
 
 // ── what the network runs on ───────────────────────────────────────────
@@ -2320,6 +2467,37 @@ el("network-name-form").addEventListener("submit", async (event) => {
     await invoke("set_network_name", { name: el("network-name-input").value.trim() });
     drawMe(await invoke("me"));
     await drawSettings();
+  });
+});
+
+el("contribution-form").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  // Clamped at zero rather than refused: every input already has `min="0"`, and
+  // a negative here is somebody typing rather than somebody meaning something.
+  const amount = (id) => Math.max(0, Math.floor(Number(el(id).value) || 0));
+  await settingsAct("contribution-error", async () => {
+    await invoke("set_contribution", {
+      storageOffered: amount("contribution-storage") * 1024 * 1024,
+      uploadOffered: amount("contribution-upload") * 1000,
+      downloadOffered: amount("contribution-download") * 1000,
+      // Never sent as true from a node that has not been seen from outside: the
+      // control is hidden there, and a stale checkbox state must not survive
+      // into a claim this node cannot back up.
+      relayWilling: !el("contribution-relay-row").hidden && el("contribution-relay").checked,
+    });
+    await drawContribution();
+  });
+});
+
+el("ceiling-form").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  // Floored at one gigabyte rather than zero. A ceiling of nothing would stop
+  // the application keeping anything at all, including what somebody is reading
+  // — which is not a contribution setting and must not behave like one.
+  const gb = Math.max(1, Math.floor(Number(el("ceiling-gb").value) || 0));
+  await settingsAct("ceiling-error", async () => {
+    await invoke("set_storage_ceiling", { bytes: gb * 1024 * 1024 * 1024 });
+    await drawCeiling();
   });
 });
 

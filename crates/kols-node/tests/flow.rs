@@ -442,3 +442,156 @@ fn slowmode_stops_the_second_post_and_says_how_long() {
     let read = ok(&home, &["read", "general"]);
     assert!(read.contains("second"), "{read}");
 }
+
+/// Setting what this machine contributes, end to end through the real binary.
+///
+/// The show path is a read of local state and never goes through the executor —
+/// routing it there would take the append lock and replay the log to answer a
+/// question about a file on this disk — so both halves are exercised here.
+#[test]
+fn a_member_sets_what_this_machine_contributes_and_it_survives() {
+    let home = Home::new("contribute");
+    ok(&home, &["init", "the workshop"]);
+
+    // Before anybody says: the defaults, and marked as such. A member who cannot
+    // tell "nobody chose this" from "somebody chose this" cannot tell whether
+    // their setting took.
+    let shown = ok(&home, &["contribute"]);
+    assert!(shown.contains("256 MiB"), "{shown}");
+    assert!(shown.contains("1000 KB/s"), "{shown}");
+    assert!(shown.contains("default"), "{shown}");
+
+    // One field at a time, and the rest must be left alone — a setting that
+    // reset its neighbours every time it was used would be unusable.
+    ok(&home, &["contribute", "--storage", "64"]);
+    let shown = ok(&home, &["contribute", "--upload", "250"]);
+    assert!(shown.contains("64 MiB"), "changing upload must not reset storage:\n{shown}");
+    assert!(shown.contains("250 KB/s"), "{shown}");
+    assert!(
+        !shown.contains("default"),
+        "a chosen value must not still claim to be the default:\n{shown}"
+    );
+
+    // Zero everywhere is an ordinary configuration, not a broken one.
+    let shown = ok(&home, &["contribute", "--storage", "0", "--upload", "0"]);
+    assert!(shown.contains("storage   0 MiB"), "{shown}");
+    assert!(
+        shown.contains("Upload is zero") && shown.contains("Your own fetching is"),
+        "zero upload must say both halves — that others stop fetching from you, and \
+         that your own reading is unaffected:\n{shown}"
+    );
+
+    // And the whole thing must say that contributing nothing is not the same as
+    // being a lesser member — the one sentence somebody on a phone needs.
+    let shown = ok(&home, &["contribute"]);
+    assert!(
+        shown.contains("None of this affects using the application"),
+        "the surface must say contribution is not participation:\n{shown}"
+    );
+
+    // Relaying is not offered where it could not work, and the reason says
+    // *not confirmed* rather than *not reachable*.
+    assert!(shown.contains("not been confirmed reachable"), "{shown}");
+}
+
+/// The ceiling stops history arriving, and never stops the application working.
+///
+/// # What this is actually guarding
+///
+/// The fetch path was unbounded: every member's head *and* every hop of every
+/// chain, for every channel, with nothing consulting a ceiling. So a storage
+/// setting bounded what a node promised and not what it kept, and the disk grew
+/// regardless. This asserts the two halves of the fix together, because either
+/// alone would be wrong — a ceiling that stopped a member reading would be worse
+/// than no ceiling at all.
+#[test]
+fn a_ceiling_bounds_history_and_leaves_the_application_working() {
+    let home = Home::new("ceiling");
+    ok(&home, &["init", "the workshop"]);
+    let _node = keyed(&home, 45209);
+    ok(&home, &["channel", "create", "general", "--topic", "anything"]);
+
+    // A ceiling of one gibibyte is far above anything this test writes, so
+    // nothing here is bounded by it and the network works normally.
+    let shown = ok(&home, &["storage", "--limit", "1"]);
+    assert!(shown.contains("of 1024 MiB"), "{shown}");
+    assert!(
+        shown.contains("across 1 network"),
+        "the count is what makes the total mean anything once there are several:\n{shown}"
+    );
+
+    ok(&home, &["post", "general", "written under a generous ceiling"]);
+    let read = ok(&home, &["read", "general"]);
+    assert!(read.contains("written under a generous ceiling"), "{read}");
+
+    // Now the ceiling is below what is already stored. The application must keep
+    // working in every respect a member touches: posting, reading, and its own
+    // history are not contributions and never yield to a storage setting.
+    let shown = ok(&home, &["storage", "--limit", "0"]);
+    assert!(
+        shown.contains("At the ceiling now"),
+        "being at the ceiling must be said plainly rather than inferred:\n{shown}"
+    );
+    assert!(
+        shown.contains("Your own reading is unaffected"),
+        "the one sentence that stops this reading as a broken installation:\n{shown}"
+    );
+
+    ok(&home, &["post", "general", "written at the ceiling"]);
+    let read = ok(&home, &["read", "general"]);
+    assert!(
+        read.contains("written at the ceiling"),
+        "posting must work at the ceiling — contribution is not participation:\n{read}"
+    );
+    assert!(
+        read.contains("written under a generous ceiling"),
+        "and this member's own history must still read back:\n{read}"
+    );
+
+    // And the contribution surface still answers, reporting the two numbers
+    // apart rather than merging what is given with what is used.
+    let shown = ok(&home, &["contribute"]);
+    assert!(shown.contains("MiB offered"), "{shown}");
+    assert!(shown.contains("MiB in use"), "{shown}");
+}
+
+/// Asking for older history: the want is recorded, and asking is not getting.
+///
+/// # What this is guarding
+///
+/// The executor holds no node, so a command cannot fetch — it records a want the
+/// daemon honours on its next pass. That is easy to lose sight of and easy to
+/// paper over with a message implying the page arrived, which would be a client
+/// asserting something it cannot know.
+#[test]
+fn asking_for_older_history_records_a_want_without_claiming_to_have_it() {
+    let home = Home::new("history");
+    ok(&home, &["init", "the workshop"]);
+    let _node = keyed(&home, 45211);
+    ok(&home, &["channel", "create", "general", "--topic", "anything"]);
+    ok(&home, &["post", "general", "the only message here"]);
+
+    let asked = ok(&home, &["history", "general"]);
+    assert!(
+        asked.contains("asked for older history"),
+        "the request must be reported as a request:\n{asked}"
+    );
+    assert!(
+        !asked.contains("fetched") && !asked.contains("arrived"),
+        "asking is not getting, and a client must not claim the page is here:\n{asked}"
+    );
+
+    // Recorded durably, because the daemon reads it on a later pass and the
+    // process that took the command is gone by then.
+    let store = kols_node::store::Store::open(home.path().to_path_buf()).expect("opens");
+    assert_eq!(store.wants().len(), 1, "the want survives the command that made it");
+
+    // And it is bounded by what this node already holds, rather than open-ended:
+    // history is a backwards chain, so without a boundary the only choices are
+    // one hop or all of it.
+    let (_, before) = store.wants().into_iter().next().expect("a want");
+    assert!(
+        before.wall_millis > 0 && before.wall_millis < i64::MAX,
+        "the boundary is the oldest reading held, not a sentinel: {before:?}"
+    );
+}

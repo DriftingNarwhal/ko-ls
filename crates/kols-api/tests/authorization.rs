@@ -919,6 +919,16 @@ fn every_command() -> Vec<Command> {
             member: true,
         },
         Command::LeaveNetwork,
+        Command::FetchHistory {
+            channel: channel(1),
+            before: kols_core::Hlc::new(1_000, 0),
+        },
+        Command::SetContribution {
+            storage_offered: 256 * 1024 * 1024,
+            upload_offered: 1_000_000,
+            download_offered: 8_000_000,
+            relay_willing: false,
+        },
     ]
 }
 
@@ -957,7 +967,9 @@ fn _every_variant_is_sampled(command: &Command) {
         | Command::CreateRole { .. }
         | Command::SetPermission { .. }
         | Command::SetRoleMember { .. }
-        | Command::LeaveNetwork => (),
+        | Command::LeaveNetwork
+        | Command::FetchHistory { .. }
+        | Command::SetContribution { .. } => (),
     }
 }
 
@@ -977,7 +989,7 @@ fn every_command_has_a_sample() {
     }
     assert_eq!(
         seen.len(),
-        22,
+        24,
         "every_command samples {} of Command's variants — update both this count \
          and the list when the boundary grows",
         seen.len()
@@ -994,10 +1006,28 @@ fn sensitivity_agrees_with_the_capability_vocabulary() {
 
     for command in every_command() {
         let Some(verb) = command.verb() else {
+            // **A verb-less command is not automatically governance, and this
+            // branch used to assume it was.** That held while every such command
+            // was gated on one of the protocol's own governance capabilities, or
+            // — for `LeaveNetwork` — on nothing but writing the same entry
+            // `RevokeMember` writes. `SetContribution` is the first that is
+            // gated on nothing *and* is an ordinary reversible act, so the
+            // assumption had to be named rather than quietly widened.
+            //
+            // There is no rule to derive this from: a command with no verb has
+            // no tier to check against, which is exactly why it is listed. What
+            // keeps the list honest is the exhaustive match in
+            // `_every_variant_is_sampled` — a new command cannot arrive without
+            // somebody classifying it here.
+            let expected = match command {
+                Command::SetContribution { .. } => Sensitivity::Signs,
+                _ => Sensitivity::Governs,
+            };
             assert_eq!(
                 command.sensitivity(),
-                Sensitivity::Governs,
-                "{} is gated on a protocol governance capability",
+                expected,
+                "{} is gated on no chat verb; its class is decided by hand and \
+                 must be argued in `Command::sensitivity`",
                 command.name()
             );
             continue;
@@ -1025,7 +1055,15 @@ fn only_reads_are_local() {
     // App Hosting §3.3 as a test: a sandboxed build satisfies it by prompting
     // for everything that is not `Local`, so anything that signs must not be.
     for command in every_command() {
-        let signs = !matches!(command, Command::OpenChannel { .. });
+        // The two that read. `FetchHistory` asks this node to go and collect
+        // more of what it is already entitled to read — nothing is signed and
+        // nothing leaves on the member's behalf, so a sandboxed build has
+        // nothing to prompt about. Named rather than inferred, because the
+        // difference between "reads" and "signs" is the whole of §3.3.
+        let signs = !matches!(
+            command,
+            Command::OpenChannel { .. } | Command::FetchHistory { .. }
+        );
         assert_eq!(
             command.sensitivity() != Sensitivity::Local,
             signs,

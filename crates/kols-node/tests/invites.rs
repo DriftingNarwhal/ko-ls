@@ -456,6 +456,14 @@ fn the_window_takes_the_same_path_as_the_terminal_to_join() {
             );
         }
         kols_node::join::Landed::Admitted => panic!("this network screens its members"),
+        // A local join against a running founder should never time out. If this
+        // fires it is the test's own environment rather than the property under
+        // test — which is worth distinguishing here, because `Unanswered` is
+        // deliberately *not* an error (O21) and would otherwise be silently
+        // accepted by a catch-all as though the joiner had landed somewhere.
+        kols_node::join::Landed::Unanswered { why, .. } => {
+            panic!("the founder was running and did not answer: {why}")
+        }
     }
 
     // And the workspace now holds it, so the window has something to open.

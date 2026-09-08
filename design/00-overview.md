@@ -1,7 +1,7 @@
 # ko-ls — Design Overview
 
 **Project:** ko-ls (working name, may be replaced; nothing in the design depends on it)
-**Document status:** v1.4 — §5's interface set is struck through as built: settings sections, the network's name, and permissions. Previously v1.3 — §3 carries D31–D37; §5 is sequenced against the interface and account work, with the channel, folder and voided-report items struck through as built; §6 carries four open questions, one having been withdrawn as answered by `09` §6.2 all along.
+**Document status:** v1.5 — §6 loses two of its four open questions to decisions rather than to answers arriving: a locally-discovered LAN peer is deliberately never dialled, and logging out locks the interface while the node keeps running — with nodes starting only once somebody has logged in, which is the half that decides what the password protects. Previously v1.4 — §5's interface set is struck through as built: settings sections, the network's name, and permissions. Previously v1.3 — §3 carries D31–D37; §5 is sequenced against the interface and account work, with the channel, folder and voided-report items struck through as built; §6 carries four open questions, one having been withdrawn as answered by `09` §6.2 all along.
 **Precedence:** `distributed-intranet/specs/07` is normative where it and this set overlap; this set owns client design, rationale and sequencing.
 **Depends on:** Distributed Intranet Protocol v1.0 (specs `01`–`06`) and the Chat Application Spec (`07`)
 **Consumed by:** every other document in this set
@@ -276,16 +276,33 @@ next. Estimates are deliberately absent — sequence is the useful part.
 Implementation-level tuning is listed where it belongs: media rate control, stage mixing
 limits and echo cancellation in `04` §8, and the measurement list in §4 above.
 
-**Four architectural questions are open.** This section previously said none were, which
-stopped being true as the interface grew a surface and the account layer acquired a shape.
+**Two architectural questions are open**, and both are about the account layer. This section
+said none were until the interface grew a surface and the account layer acquired a shape, then
+four, and two of those were closed on 2026-09-07 — by decisions rather than by answers
+arriving, which is worth distinguishing. Neither the LAN-dial question nor the logging-out
+question was waiting on information. Both were waiting on somebody choosing, and a question
+nobody is gathering evidence for is a decision that has not been taken yet.
 
-- **What a client does with a locally-discovered peer.** `06` §12 settles that mDNS *runs* on a
-  `Discovery::Full` node; nothing settles whether to dial what it finds. The transport declines
-  to decide on the client's behalf — it caches discovered addresses, never auto-dials, and emits
-  `LocallyDiscovered` for a client that has an opinion. This client has none, so two members one
-  room apart still need a routable third party to meet. Dialling them is not obviously right:
-  a node that dials LAN peers makes two of a member's networks correlatable by a watcher on that
-  network, which is D29's concern one layer down.
+- ~~**What a client does with a locally-discovered peer.**~~ **Decided, 2026-09-07: nothing.
+  This client does not dial what mDNS finds, and that is a choice rather than a gap.** `06` §12
+  settles that mDNS *runs* on a `Discovery::Full` node; the transport declines to decide on the
+  client's behalf, caching discovered addresses, never auto-dialling, and emitting
+  `LocallyDiscovered` for a client that has an opinion. This client's opinion is to ignore it.
+
+  **The risk that decided it, stated plainly rather than left as a reason not to act.** A node
+  that dials LAN peers makes two of a member's networks correlatable by anyone watching that
+  LAN — D29's concern one layer down, and reached without any relay being involved. Two of a
+  person's identities answering on one local network at one moment is the same inference D29
+  refuses to let a shared relay draw, and mDNS would hand it to a housemate.
+
+  **What it costs, equally plainly.** Two members of one network sitting in the same room still
+  need a routable third party to meet, and there is no local shortcut for them. That is a real
+  cost paid for a real property, and it is small: the case is narrow, and everything else about
+  those two members already works through the ordinary path.
+
+  Note the scope, because the entry that carried this read wider than it was. **This is LAN
+  only.** It has no bearing on two members in different houses, who meet through a relay and
+  always did, and none on whether content routes — that is `05` §8's separate question.
 - ~~**Whether the interface may load a stylesheet the user supplies.**~~ **Withdrawn: it was
   never open.** `09` §6 decided it, and §6.2 carries the argument in full — CSS leaks only by
   causing a network request, `url()`/`@import`/`@font-face src` are the complete set of ways to
@@ -295,10 +312,31 @@ stopped being true as the interface grew a surface and the account layer acquire
   survives a theme that hides it. Raised here by reasoning from `05` §3 instead of reading the
   document that owns the interface — the same mistake the audit that produced this section was
   written to catch.
-- **What logging out means for a node that is running.** A member who logs out is still a
-  member: their node holds a reservation, serves content and answers for them. Stopping it makes
-  them look offline when what they chose was privacy; leaving it running means a locked window is
-  still publishing. Both are visible to other members, so this is not a local decision.
+- ~~**What logging out means for a node that is running.**~~ **Decided, 2026-09-07: logging out
+  locks the interface and does not stop the node.** A member who logs out must log back in
+  before they can read or act; their node keeps running, keeps serving what it holds, keeps its
+  relay reservation and keeps answering for them. Going actually offline is a separate act, and
+  it is quitting the application.
+
+  **The two things a person might want are different, and collapsing them was the error.**
+  *Nobody at my keyboard can act as me* is local security; *I want to disappear from the
+  network* is a social act other members can see. Stopping the node on logout would broadcast an
+  absence the member did not choose, every time they locked the screen — and `09` §4.1 is
+  careful not to claim a member is absent when it does not know, which a lock that faked one
+  would undo from the inside.
+
+  **A node runs only once somebody has logged in, and that half decides what the password is
+  worth.** It keeps running across a logout, but a reboot leaves the machine serving nothing
+  until a person unlocks it. The alternative — nodes from launch, before anybody authenticates —
+  requires the seeds to be unwrappable without the password, at which point the password
+  protects nothing at rest and O7 is a lock over an unlocked door rather than the release gate
+  §5 calls it. The cost is an unattended machine that stops contributing after a power cut,
+  which is narrow: a machine that reboots is a machine somebody is at.
+
+  What this does **not** protect is stated in `02` §6.3 rather than here, because the limit
+  belongs with the mechanism: a running node holds live MLS state and epoch keys in memory by
+  necessity, so a lock defends against somebody at the keyboard and not against somebody reading
+  the process.
 - **How an account reaches a second device.** `05` §6 and Core §1.3 settle device *enrolment* —
   certificates, per-network, and deliberately no single object that grants every network at once.
   An account unlocking a keyring of every seed is precisely such an object, so syncing one to a

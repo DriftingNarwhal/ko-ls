@@ -24,7 +24,7 @@
 //! always one of those two rather than a bug in the fetch.
 
 use crate::network;
-use crate::store::Store;
+use crate::store::{Beat, Store};
 use intranet_crypto::Timestamp;
 use intranet_ledger::{BandwidthCap, CapabilityAdvertisement, ComputeClass};
 use intranet_storage::ChunkSpec;
@@ -38,15 +38,28 @@ use libp2p::{Multiaddr, PeerId};
 use std::collections::BTreeSet;
 use std::time::Instant;
 
-/// How much this node offers other members.
+/// How much this node offers other members when nobody has said.
 ///
 /// Modest on purpose. `design/02` §6.4 is explicit that a client which quietly
 /// volunteers a laptop as infrastructure has misrepresented what its user
-/// agreed to, so these are starting values a real client would put behind a
-/// settings screen rather than defaults chosen to look generous.
-const OFFERED_STORAGE_BYTES: u64 = 256 * 1024 * 1024;
-const OFFERED_UPLOAD_BYTES_PER_SEC: u64 = 1_000_000;
-const OFFERED_DOWNLOAD_BYTES_PER_SEC: u64 = 8_000_000;
+/// agreed to, so this is a starting value rather than one chosen to look
+/// generous.
+///
+/// **A default, not the value.** `Command::SetContribution` writes the store and
+/// this is what a store with nothing written falls back to — which is why the
+/// distinction between *unset* and *zero* is kept all the way down
+/// (`Store::storage_offered`): collapsing them here would restore this number
+/// over a member who had deliberately opted out.
+pub const DEFAULT_CONTRIBUTION: crate::store::Contribution = crate::store::Contribution {
+    storage_offered: 256 * 1024 * 1024,
+    upload_offered: 1_000_000,
+    download_offered: 8_000_000,
+    // **Off by default, and not merely modest.** A bootstrap relay is dialed by
+    // strangers mid-join, and volunteering a member's machine for that without
+    // being asked is exactly what `design/02` §6.4 means by misrepresenting what
+    // a user agreed to. It is also useless on a node behind NAT, which most are.
+    relay_willing: false,
+};
 
 /// When an open segment gets sealed and a fresh one starts.
 ///
@@ -152,6 +165,14 @@ pub fn run(
     ))
 }
 
+/// How many objects one tick may ask the network about.
+///
+/// Small deliberately. The census is background work nothing is waiting on, and
+/// a node holding thousands of objects that queried all of them per tick would
+/// be spending the network's routing capacity to keep a number fresh that only
+/// matters when a ceiling is crossed.
+const CENSUS_PER_TICK: usize = 4;
+
 /// How long an unkeyed node waits before saying so.
 ///
 /// Well past a normal answer on any link, because this reports a stall rather
@@ -186,7 +207,7 @@ pub async fn serve(
     // Claimed before anything else, and held for the whole loop: only one
     // process may run a node for a network, because the key group is live state
     // and two would each advance it without seeing the other.
-    let _claim = store.hold_node().map_err(|e| e.to_string())?;
+    let claim = store.hold_node().map_err(|e| e.to_string())?;
     let identity = store.identity().map_err(|e| e.to_string())?;
 
     let mut node = MemberNode::new(&identity).map_err(|err| format!("could not start: {err}"))?;
@@ -245,6 +266,20 @@ pub async fn serve(
     let mut keyed = store.epoch_key().is_ok();
     // When this node started waiting for a key, so a stall can say so.
     let mut unkeyed_since: Option<Instant> = None;
+    // Reported on change rather than on every tick — see the duty pass below.
+    let mut last_under_replicated = 0usize;
+    // Likewise for the ceiling: a standing condition announced every two seconds
+    // trains somebody to ignore the one time it mattered.
+    let mut had_room = true;
+    // Who else holds what this node holds for the network. Lives across ticks
+    // because the answers arrive as events rather than as return values.
+    let mut census = crate::replica::Census::default();
+    // Measured rather than guessed, and held rather than re-walked per tick.
+    let mut disk = DiskWatch {
+        used: 0,
+        ceiling: u64::MAX,
+        taken: Instant::now() - DISK_MEASURE_EVERY,
+    };
     let mut said_unkeyed = false;
     // When this node last asked to be keyed in, so the ask can be repeated on a
     // schedule rather than being a single chance.
@@ -506,6 +541,182 @@ pub async fn serve(
                     }
                 }
 
+                // **What this node holds for the network rather than for
+                // itself** — Storage §3.3, and the thing that turns "content
+                // survived because somebody read it" into a property.
+                //
+                // Evaluated on the tick rather than at absorption because the
+                // answer moves without this node fetching anything: a member
+                // joining, leaving, or changing what they offer re-ranks every
+                // object. Re-running a pure computation over held links is
+                // cheap, and it is what makes the ledger's convergence
+                // self-correcting rather than something to detect.
+                // **Said once when it starts, not every tick.** At the
+                // ceiling, older history stops arriving — which looks exactly
+                // like history that is missing, and a member who was not told
+                // would reasonably report it as a fault. This is the one
+                // symptom of a working ceiling that is indistinguishable from a
+                // broken node.
+                let over_by = disk.refresh(&store).over_by();
+                if over_by > 0 {
+                    let now = crate::chat::now_millis();
+                    // **Shed the cheap thing first.** A cached copy is not a
+                    // replica — the nodes placement ranked for it still hold it —
+                    // so this needs none of the census machinery and costs the
+                    // member nothing they can see, since records are untouched.
+                    let shed = crate::replica::shed_cache(&store, over_by, now)?;
+                    // **Stop claiming what is gone, in the same breath as
+                    // dropping it.** A provider record outlives the bytes it
+                    // names, so a node that sheds quietly sends every peer that
+                    // believes it on a fetch that fails — and a failed fetch
+                    // counts against the *serving* node with whoever asked.
+                    // Kademlia has no un-publish, so this stops republishing and
+                    // the stale records age out; that is the most that can be
+                    // done, and doing none of it is what makes a shedding node
+                    // look unreliable.
+                    for cid in &shed.dropped {
+                        node.forget_chunk(cid);
+                    }
+                    if shed.objects > 0 {
+                        crate::say!(
+                            report,
+                            "gave back {} object(s) to stay under the storage ceiling",
+                            shed.objects
+                        );
+                        // The measurement is stale the moment anything is
+                        // dropped, and believing it would shed the same objects
+                        // again on the next pass.
+                        disk.used = disk.used.saturating_sub(shed.bytes);
+                    }
+                    if shed.still_over > 0 {
+                        // Cache is exhausted, so this starts giving back what it
+                        // *promised* — and only with evidence somebody else
+                        // holds it. What cannot be given back safely is held
+                        // past the ceiling and said out loud, because exceeding
+                        // a ceiling briefly beats destroying data.
+                        let contributors = node
+                            .capability_ledger()
+                            .entries()
+                            .filter(|advert| {
+                                advert.storage_offered > 0 && advert.node != identity.id()
+                            })
+                            .count();
+                        let evicted = crate::replica::shed_duty(
+                            &store,
+                            &census,
+                            shed.still_over,
+                            contributors,
+                            now,
+                        )?;
+                        for cid in &evicted.dropped {
+                            node.forget_chunk(cid);
+                        }
+                        disk.used = disk.used.saturating_sub(evicted.bytes);
+
+                        // Asked about directly rather than waiting for the
+                        // background census to reach them. These are the objects
+                        // a decision is actually pending on, and the four-a-tick
+                        // trickle exists for the case where nothing is waiting.
+                        for cid in evicted.awaiting.iter().take(HISTORY_PAGE) {
+                            if census.should_ask(cid, now) && node.find_providers(*cid).is_some() {
+                                census.asked(*cid, now);
+                            }
+                        }
+
+                        report_pressure(sink, &evicted, shed.still_over);
+                    }
+                }
+
+                // **A member asking is not the node prefetching**, and the
+                // ceiling treats them differently on purpose. Discretionary
+                // history stops when the disk is full; history somebody went
+                // looking for is honoured, bounded to a page's worth, after the
+                // shed above has made room for it. Operation does not yield to a
+                // contribution setting — it yields to nothing.
+                // **Wants are retired when they are met, or they repeat
+                // forever.** A want asks for history older than a reading; once
+                // this node holds a record older than that in the channel, the
+                // question is answered. A chain that has run out answers it too
+                // — there is no more, and re-asking every tick would be a node
+                // arguing with the start of history.
+                for (channel, before) in store.wants() {
+                    let satisfied = store
+                        .records(&channel)
+                        .map(|records| records.iter().any(|record| record.hlc < before))
+                        .unwrap_or(false);
+                    if satisfied || !store.history_incomplete() {
+                        let _ = store.forget_want(&channel);
+                    }
+                }
+
+                let room = disk.room_for_history();
+                if room != had_room {
+                    had_room = room;
+                    if !room {
+                        sink(&[Event::Degraded {
+                            reason: "This installation is at its storage ceiling, so older \
+                                     history has stopped being fetched. It is not lost — other \
+                                     members hold it — but this client cannot fetch it on \
+                                     demand yet, so history that is not already here cannot be \
+                                     read here. Raising the ceiling under settings lets this \
+                                     node collect it again."
+                                .to_owned(),
+                        }]);
+                    }
+                }
+
+                // **Asked a few at a time, on purpose.** A node holding
+                // thousands of objects must not put thousands of provider
+                // queries on the DHT every tick to answer a question nothing is
+                // waiting on. This is a slow background census, and the only
+                // thing that ever needs it *quickly* is eviction, which asks
+                // directly about the objects it is considering.
+                let now = crate::chat::now_millis();
+                // Collected before asking, because the ask mutates the census the
+                // filter reads. Bounded first, so this is a handful of ids.
+                let to_ask: Vec<_> = store
+                    .segments()
+                    .into_iter()
+                    .filter(|cid| store.has_duty(cid) && census.should_ask(cid, now))
+                    .take(CENSUS_PER_TICK)
+                    .collect();
+                for cid in to_ask {
+                    // `None` means there was no query to run — a node built
+                    // without discovery (Core §5.1.1), which a conversation
+                    // network is. Not an error and not an answer: recording it as
+                    // "asked" would leave the census waiting on a reply nobody is
+                    // going to send.
+                    if node.find_providers(cid).is_some() {
+                        census.asked(cid, now);
+                    }
+                }
+
+                if let Some(duty) = duty_pass(&store, &node, &identity) {
+                    // Said once per change rather than per tick: this is a
+                    // standing condition, and a loop reporting it every two
+                    // seconds would train somebody to ignore the one time it
+                    // mattered.
+                    if duty.under_replicated != last_under_replicated {
+                        last_under_replicated = duty.under_replicated;
+                        if duty.under_replicated > 0 {
+                            sink(&[Event::Degraded {
+                                reason: format!(
+                                    "{} of {} stored objects are held by fewer nodes than this \
+                                     network asks for. Durability is degraded rather than \
+                                     broken — more members offering storage is what fixes it",
+                                    duty.under_replicated, duty.considered
+                                ),
+                            }]);
+                        }
+                    }
+                    crate::say!(
+                        report,
+                        "holding {} of {} objects for this network",
+                        duty.mine,
+                        duty.considered
+                    );
+                }
+
                 // Re-asked rather than assumed settled. Everything here is
                 // pull-based — the governance log, the ledger and pointers alike
                 // — so a peer that changed anything after the last exchange is
@@ -523,7 +734,23 @@ pub async fn serve(
                 // Said every tick, so the claim outlives this process by at
                 // most its staleness window even when the window manager ends
                 // it without running a destructor.
-                _claim.beat();
+                //
+                // **And checked, not merely said.** If this node was suspended
+                // past the staleness window — a laptop asleep — another process
+                // may legitimately have taken the claim over, and carrying on
+                // would put two nodes on one network's live MLS group with no
+                // symptom until one of them silently decided its key. Stopping
+                // is the correct outcome and the other node is right to be
+                // running, so this is a refusal to continue rather than a fault
+                // to report and recover from.
+                if claim.beat() == Beat::Lost {
+                    return Err(
+                        "another process took over this network's node while this one was \
+                         suspended, so this one is stopping — only one may run, because the \
+                         key group is live state. Reopen to start again"
+                            .to_owned(),
+                    );
+                }
 
                 // Ask for a key if that has not happened yet.
                 //
@@ -603,7 +830,7 @@ pub async fn serve(
                     node.sync_ledger_with(peer);
                     node.sync_pointers_with(peer);
                 }
-                request_foreign_segments(&store, &mut node, &identity, &mut fetched, &backfill)?;
+                request_foreign_segments(&store, &mut node, &identity, &mut fetched, &backfill, history_budget(disk.room_for_history(), asked_for_history(&store)))?;
                 sink(&absorb_segments(
                     &store,
                     &mut node,
@@ -626,6 +853,36 @@ pub async fn serve(
                         designated: designated.len(),
                         failures: Vec::new(),
                     }]);
+                }
+                continue;
+            }
+            // **Whether anybody outside can reach this node**, which is what
+            // decides if volunteering as a bootstrap relay means anything: a
+            // relay's job is being dialable by two peers who cannot dial each
+            // other (Core §5.5), so a node behind NAT offering it advertises
+            // something it cannot do.
+            //
+            // Recorded rather than acted on. The client does not start relaying
+            // because it turned out to be reachable — that is a contribution and
+            // Core §4.3 makes contributions opt-in — it just stops the interface
+            // having to offer a choice it cannot evaluate.
+            //
+            // A circuit address is not reachability. It says a relay will carry
+            // an introduction for this node, which is the opposite of being able
+            // to carry one for somebody else.
+            // Somebody answered "who holds this". Recorded rather than acted on
+            // here: the count is one half of an eviction decision and the whole
+            // of an under-replication report, and neither belongs in an event
+            // arm that has to return promptly (`next_swarm_event`'s own rule
+            // about pushing to `pending`).
+            NodeEvent::ProvidersFound { cid, providers, .. } => {
+                census.heard(cid, &providers, &identity.id(), crate::chat::now_millis());
+                continue;
+            }
+            NodeEvent::ExternalAddressConfirmed { address } => {
+                let address = address.to_string();
+                if !address.contains("p2p-circuit") {
+                    let _ = store.set_reachable(&address);
                 }
                 continue;
             }
@@ -773,12 +1030,12 @@ pub async fn serve(
             // rankable that was not before, so this is where a stalled fetch
             // gets its second chance.
             NodeEvent::LedgerSynced { accepted, .. } if accepted > 0 => {
-                request_foreign_segments(&store, &mut node, &identity, &mut fetched, &backfill)?;
+                request_foreign_segments(&store, &mut node, &identity, &mut fetched, &backfill, history_budget(disk.room_for_history(), asked_for_history(&store)))?;
             }
 
             NodeEvent::PointersReceived { .. } => {
                 keep_pointers(&store, &node, sink);
-                request_foreign_segments(&store, &mut node, &identity, &mut fetched, &backfill)?;
+                request_foreign_segments(&store, &mut node, &identity, &mut fetched, &backfill, history_budget(disk.room_for_history(), asked_for_history(&store)))?;
             }
 
             NodeEvent::FetchComplete { .. } => {
@@ -788,7 +1045,7 @@ pub async fn serve(
                     &identity,
                     &mut backfill,
                 )?);
-                request_foreign_segments(&store, &mut node, &identity, &mut fetched, &backfill)?;
+                request_foreign_segments(&store, &mut node, &identity, &mut fetched, &backfill, history_budget(disk.room_for_history(), asked_for_history(&store)))?;
             }
 
             // Somebody asked to be keyed in. Every gate — the request signature,
@@ -848,7 +1105,7 @@ pub async fn serve(
                     crate::say!(report, 
                         "keyed into this network ({historical_keys} historical key(s) came with it)"
                     );
-                    request_foreign_segments(&store, &mut node, &identity, &mut fetched, &backfill)?;
+                    request_foreign_segments(&store, &mut node, &identity, &mut fetched, &backfill, history_budget(disk.room_for_history(), asked_for_history(&store)))?;
                 }
             }
 
@@ -1013,15 +1270,19 @@ fn ready(
     identity: &intranet_identity::PerNetworkIdentity,
     seal_bytes: usize,
 ) -> Result<usize, String> {
+    // Read every tick rather than captured once, so changing what this machine
+    // offers takes effect on the next advertisement instead of on the next
+    // restart. The read is a small file beside a loop that is already syncing.
+    let offer = store.contribution().unwrap_or(DEFAULT_CONTRIBUTION);
     node.advertise(CapabilityAdvertisement::create(
         identity,
-        OFFERED_STORAGE_BYTES,
+        offer.storage_offered,
         BandwidthCap {
-            up_bytes_per_sec: OFFERED_UPLOAD_BYTES_PER_SEC,
-            down_bytes_per_sec: OFFERED_DOWNLOAD_BYTES_PER_SEC,
+            up_bytes_per_sec: offer.upload_offered,
+            down_bytes_per_sec: offer.download_offered,
             active_window: None,
         },
-        false,
+        offer.relay_willing,
         false,
         ComputeClass::Modest,
         Timestamp::from_millis(crate::chat::now_millis()),
@@ -1291,12 +1552,42 @@ fn persist_governance(store: &Store, node: &MemberNode) -> Result<usize, String>
 }
 
 /// Asks for any author log this node knows a pointer for and has not fetched.
+///
+/// # Heads always; history only while there is room
+///
+/// **This used to be unbounded, and that was where a disk actually filled up.**
+/// Every member's head plus every hop of every chain, for every channel, with
+/// nothing anywhere consulting a ceiling — so a node joining a network with a
+/// long history downloaded all of it, and a contribution setting that refused
+/// duty past an offer bounded nothing a member would notice.
+///
+/// The split is the one `02` §6.4 draws. A **head** is what makes a channel
+/// readable at all, so it is fetched whatever the ceiling says: the application
+/// working is not a contribution and never yields. **History** is discretionary
+/// — it is what a member *might* scroll back to, it is refetchable from anybody
+/// who has it, and it is the part that grows without bound. So it stops at the
+/// ceiling.
+///
+/// What that costs, said plainly because it is the trade — **and it is a larger
+/// cost than it first looks, because there is no on-demand fetch.** `OpenChannel`
+/// renders from stored records and the executor holds no node, so history this
+/// node did not collect is not readable here at all: a member cannot ask for it
+/// by scrolling. It is not lost — other members hold it, and raising the ceiling
+/// lets this node collect it again — but *this* client cannot reach it in the
+/// moment somebody wants it.
+///
+/// That gap is what a scroll-driven fetch would close (`design/05` §4 has always
+/// said the walk is unbounded "because it has no scroll position to bound it"),
+/// and it is worth closing before eviction starts giving history back, since the
+/// two together would otherwise make history disappear with no way to ask for
+/// it.
 fn request_foreign_segments(
     store: &Store,
     node: &mut MemberNode,
     identity: &intranet_identity::PerNetworkIdentity,
     fetched: &mut BTreeSet<intranet_storage::Cid>,
     backfill: &BTreeSet<intranet_storage::Cid>,
+    history_budget: usize,
 ) -> Result<(), String> {
     let Some(state) = replayable(store) else {
         return Ok(());
@@ -1323,7 +1614,17 @@ fn request_foreign_segments(
     // Older segments a chain walk reached and could not read. They go in the
     // same queue as the heads: a sealed segment is an ordinary object, fetched
     // the ordinary way, and nothing about backfill needs a second path.
-    wanted.extend(backfill.iter().copied());
+    //
+    // Except when there is no room. Then the queue is heads alone, and the
+    // chains stop where they are rather than the disk growing past what this
+    // installation was told it may use. Nothing is lost by stopping: these are
+    // objects other members hold, and the walk resumes from the same place when
+    // room appears.
+    // Bounded rather than all-or-nothing: with room this is every hop the walk
+    // reached, and at the ceiling it is a page for whoever asked. Taking the
+    // whole queue when a member asked for one page would let a request that was
+    // meant to bring back a screenful bring back a year.
+    wanted.extend(backfill.iter().copied().take(history_budget));
 
     // Asked for repeatedly on purpose. A fetch is **two rounds** — the manifest,
     // then the chunks it names — because the chunk list lives inside the
@@ -1353,6 +1654,11 @@ fn absorb_segments(
     identity: &intranet_identity::PerNetworkIdentity,
     backfill: &mut BTreeSet<intranet_storage::Cid>,
 ) -> Result<Vec<Event>, String> {
+    // Whether a member went looking for this, which decides if what arrives is
+    // pinned against the next shed. Read here rather than passed down from the
+    // tick, so a want written between passes is honoured by the walk that
+    // follows it.
+    let asked = asked_for_history(store);
     let Some(state) = replayable(store) else {
         return Ok(Vec::new());
     };
@@ -1400,7 +1706,21 @@ fn absorb_segments(
                 continue;
             };
             let one =
-                absorb_chain(store, node, channel, &member, (cid, segment), &mut keys, backfill)?;
+                absorb_chain(
+                    store,
+                    node,
+                    channel,
+                    &member,
+                    (cid, segment),
+                    // Borrowed for the call rather than held across the loop:
+                    // `resolve` above wants the same keys, and one long-lived
+                    // borrow would make the lazy load unreachable.
+                    &mut Walk {
+                        keys: &mut keys,
+                        backfill,
+                        asked,
+                    },
+                )?;
             took.absorb(one);
         }
         events.extend(took.into_events(*channel));
@@ -1831,14 +2151,27 @@ impl Absorbed {
 /// node cannot open is where the walk ends, and that is exactly what reading
 /// past a retention boundary looks like from the outside: indistinguishable from
 /// history that has not arrived, and rightly so.
+/// The state one chain walk carries, gathered so the walk keeps a readable shape.
+///
+/// Three things that all belong to *this pass over this log*: the epoch keys it
+/// has resolved, the hops it could not read, and whether a member asked for any
+/// of this — which decides whether what arrives is pinned against the next shed.
+struct Walk<'a> {
+    /// Epoch keys resolved so far, resolved lazily because most passes need none.
+    keys: &'a mut Option<Vec<(intranet_crypto::Hash, intranet_storage::EpochKey)>>,
+    /// Hops this pass wanted and could not read.
+    backfill: &'a mut BTreeSet<intranet_storage::Cid>,
+    /// Whether a member went looking for this history.
+    asked: bool,
+}
+
 fn absorb_chain(
     store: &Store,
     node: &MemberNode,
     channel: &ChannelId,
     author: &intranet_identity::PerNetworkIdentityId,
     head: (intranet_storage::Cid, Segment),
-    keys: &mut Option<Vec<(intranet_crypto::Hash, intranet_storage::EpochKey)>>,
-    backfill: &mut BTreeSet<intranet_storage::Cid>,
+    walk: &mut Walk<'_>,
 ) -> Result<Absorbed, String> {
     let mut took = Absorbed::default();
     let mut walked = Vec::new();
@@ -1854,9 +2187,19 @@ fn absorb_chain(
         } else {
             took.backfilled.extend(stored);
             took.segments += 1;
+            // **Pinned if somebody asked for it**, so the shed that made room
+            // does not immediately take it back. Age is a guess at what is cold;
+            // a request is evidence that this is not, and without the pin a node
+            // at its ceiling would fetch a page and drop it before anybody read
+            // it, every time.
+            if walk.asked {
+                store
+                    .mark_wanted(&cid, crate::chat::now_millis())
+                    .map_err(|e| e.to_string())?;
+            }
         }
         walked.push(cid);
-        backfill.remove(&cid);
+        walk.backfill.remove(&cid);
         store
             .mark_segment_link(&cid, segment.sequence, segment.previous)
             .map_err(|e| e.to_string())?;
@@ -1883,7 +2226,7 @@ fn absorb_chain(
             continue;
         }
         let previous_id = kols_core::author_segment_pointer(channel, author, earlier);
-        let Some((_, dek)) = resolve(store, node, keys, &previous_id)? else {
+        let Some((_, dek)) = resolve(store, node, walk.keys, &previous_id)? else {
             continue;
         };
         match fetch_segment(node, previous, &dek) {
@@ -1893,7 +2236,7 @@ fn absorb_chain(
             // here: this is the deepest point reached, so nothing below it
             // exists to keep walking towards.
             Err(_) => {
-                backfill.insert(previous);
+                walk.backfill.insert(previous);
             }
         }
     }
@@ -2520,4 +2863,189 @@ mod redial_tests {
     fn something_that_is_not_an_address_is_dropped_rather_than_dialled() {
         assert!(to_redial(&["not an address".to_owned()], &BTreeSet::new()).is_empty());
     }
+}
+
+/// Says what being over the ceiling now means, in the words that fit the case.
+///
+/// Three different situations reach here and only one of them is ordinary. A
+/// member told "storage is full" for all three would learn nothing from the two
+/// that matter — that this network is **about to lose** content only they hold,
+/// and that some of it already has been.
+fn report_pressure(sink: &Sink, evicted: &crate::replica::Evict, over_by: u64) {
+    let mib = |bytes: u64| bytes / (1024 * 1024);
+    if !evicted.lost.is_empty() {
+        sink(&[Event::Degraded {
+            reason: format!(
+                "{} object(s) were given up that no other member was known to hold, after a \
+                 week over the storage ceiling. They may be gone from this network. What was \
+                 dropped is recorded. Raising the ceiling, or another member offering storage, \
+                 is what prevents this.",
+                evicted.lost.len()
+            ),
+        }]);
+    }
+    if !evicted.at_risk.is_empty() {
+        sink(&[Event::Degraded {
+            reason: format!(
+                "This network is about to lose {} object(s) that only this machine is known to \
+                 hold. They are being kept past the storage ceiling for now. Raise the ceiling \
+                 under settings, or ask another member to offer storage, and they are safe.",
+                evicted.at_risk.len()
+            ),
+        }]);
+    }
+    if evicted.still_over > 0 && evicted.lost.is_empty() && evicted.at_risk.is_empty() {
+        sink(&[Event::Degraded {
+            reason: format!(
+                "This installation is {} MiB over its storage ceiling and has given back \
+                 everything it can. What is left is your own history. Raising the ceiling \
+                 under settings is the way out.",
+                mib(over_by)
+            ),
+        }]);
+    }
+}
+
+/// Whether a member has asked for history this node does not hold.
+///
+/// A small directory read, and read where it is needed rather than carried, so
+/// a want written by a one-shot command between ticks is honoured on the next
+/// pass rather than on the one after.
+fn asked_for_history(store: &Store) -> bool {
+    !store.wants().is_empty()
+}
+
+/// How many older segments one pass may go and fetch.
+///
+/// Three states rather than two, and the middle one is the whole of O24. With
+/// room, the walk collects everything it can reach, which is what it has always
+/// done. At the ceiling with nobody asking, it collects nothing. At the ceiling
+/// *because* somebody asked, it collects a page — bounded, so that honouring a
+/// request cannot be the thing that fills a disk.
+const fn history_budget(room: bool, asked: bool) -> usize {
+    if room {
+        usize::MAX
+    } else if asked {
+        HISTORY_PAGE
+    } else {
+        0
+    }
+}
+
+/// How many segments a member's request for older history brings in at once.
+///
+/// A page rather than a chain. Small enough that a request cannot outrun the
+/// shed that made room for it, and large enough that scrolling back is not one
+/// segment per two seconds.
+const HISTORY_PAGE: usize = 8;
+
+/// The workspace above a store, whatever shape somebody launched.
+///
+/// A store opened directly by `kols --home` has no workspace above it, and
+/// `Workspace::at` reads that path as a workspace of one — so callers get the
+/// same number either way rather than special-casing the layout.
+fn workspace_of(store: &Store) -> crate::workspace::Workspace {
+    crate::workspace::Workspace::at(
+        store
+            .root()
+            .parent()
+            .map_or_else(|| store.root().to_path_buf(), std::path::Path::to_path_buf),
+    )
+}
+
+/// How long a measurement of the disk is trusted before it is taken again.
+///
+/// **Measuring is a directory walk over every network's store**, and the tick is
+/// two seconds. Walking tens of thousands of files that often to answer a
+/// question whose answer changes slowly is the kind of cost that is invisible
+/// until somebody has a large store and then is the only thing they notice.
+///
+/// Thirty seconds bounds how far the number can drift, which bounds how far past
+/// a ceiling the store can get before anything reacts — at chat volumes, well
+/// inside one segment.
+const DISK_MEASURE_EVERY: std::time::Duration = std::time::Duration::from_secs(30);
+
+/// What the disk looked like when it was last measured.
+struct DiskWatch {
+    used: u64,
+    ceiling: u64,
+    taken: Instant,
+}
+
+impl DiskWatch {
+    /// Measures now if the last look is stale, and reports where things stand.
+    fn refresh(&mut self, store: &Store) -> &Self {
+        if self.taken.elapsed() >= DISK_MEASURE_EVERY {
+            let workspace = workspace_of(store);
+            self.used = workspace.stored_bytes();
+            self.ceiling = workspace.ceiling();
+            self.taken = Instant::now();
+        }
+        self
+    }
+
+    /// Whether there is room to keep collecting history nobody has asked for.
+    const fn room_for_history(&self) -> bool {
+        self.used < self.ceiling
+    }
+
+    /// How far past the ceiling this installation is, if it is past it.
+    const fn over_by(&self) -> u64 {
+        self.used.saturating_sub(self.ceiling)
+    }
+}
+
+/// One pass of replica-duty evaluation, or `None` while the node cannot answer.
+///
+/// Returns nothing rather than an error in the two ordinary states where the
+/// question has no answer yet: a log that does not replay, and a node that is
+/// not a member. Both are states to sync out of, exactly as `ready` treats them,
+/// and a node that reported them as failures would be calling its own startup
+/// broken.
+fn duty_pass(
+    store: &Store,
+    node: &MemberNode,
+    identity: &intranet_identity::PerNetworkIdentity,
+) -> Option<crate::replica::Duty> {
+    let state = replayable(store)?;
+    if !state.is_member(&identity.id()) {
+        return None;
+    }
+    // The network's own durability target, which this client read nowhere until
+    // now (Storage §3.1: replication factor is network policy, not a per-node
+    // choice, so that a publisher never has to think about it).
+    let factor = usize::from(state.policy.replication_factor);
+
+    // **The installation's total is read from the workspace above this store**,
+    // not from this one. A per-network ceiling bounds what each network gives and
+    // bounds the disk at nothing, which stops being academic at P2 where every
+    // conversation is its own network.
+    //
+    // A store opened directly — `kols --home` at one network — has no workspace
+    // above it, and `Workspace::at` on that path lists the single store it is.
+    // So this reads the same number either way rather than special-casing the
+    // shape somebody launched.
+    let workspace = crate::workspace::Workspace::at(
+        store
+            .root()
+            .parent()
+            .map_or_else(|| store.root().to_path_buf(), std::path::Path::to_path_buf),
+    );
+    let offer = store
+        .contribution()
+        .unwrap_or(DEFAULT_CONTRIBUTION)
+        .storage_offered;
+    let budget = crate::replica::Budget {
+        offered: offer,
+        installation: workspace.ceiling(),
+        installation_used: workspace.stored_bytes(),
+    };
+    crate::replica::evaluate(
+        store,
+        node.capability_ledger(),
+        &identity.id(),
+        factor,
+        budget,
+    )
+    .ok()
 }
