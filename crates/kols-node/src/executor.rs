@@ -1353,12 +1353,22 @@ impl Executor {
     /// being recomputed.
     pub fn names(&self, state: &intranet_governance::GovernanceState) -> Result<Names, ExecuteError> {
         let log = self.store.log()?;
+        // Folded once per log, like the channel and category maps beside it.
+        // This walked the whole canonical chain on **every command**, which is
+        // the cost `design/05` §5 measured and the reason a command grew with
+        // the network's history rather than with what it was doing.
+        let generation = self.store.generation();
+        if let Some(folded) = self.store.cached_names(generation) {
+            return Ok((*folded).clone());
+        }
         let entries: Vec<_> = log
             .canonical_chain()
             .iter()
             .filter_map(|hash| log.get(hash))
             .collect();
-        Ok(kols_core::replay_names(entries, state))
+        let folded = std::sync::Arc::new(kols_core::replay_names(entries, state));
+        self.store.keep_names(generation, std::sync::Arc::clone(&folded));
+        Ok((*folded).clone())
     }
 
     /// Finds a channel by name, or by the leading hex of its id.

@@ -1668,7 +1668,10 @@ fn voided_report(
     me: &intranet_identity::PerNetworkIdentityId,
     reported: &mut BTreeSet<intranet_crypto::Hash>,
 ) -> Option<Event> {
-    let mut log = store.log().ok()?;
+    // Its own copy, deliberately: `reconcile` mutates, and the store's log is
+    // shared with every other reader. A reconciliation that ran against the
+    // cached copy would change what they see without any of them asking.
+    let mut log = (*store.log().ok()?).clone();
     let reconciliation = log.reconcile(Timestamp::from_millis(crate::chat::now_millis()));
 
     report_of(&reconciliation.voided, me, reported)
@@ -2476,7 +2479,7 @@ fn store_segment(
 /// and nothing else. Every periodic task has to tolerate that rather than treat
 /// it as a failure, because syncing — the thing that fixes it — is what the
 /// periodic tasks are running to achieve.
-fn replayable(store: &Store) -> Option<intranet_governance::GovernanceState> {
+fn replayable(store: &Store) -> Option<std::sync::Arc<intranet_governance::GovernanceState>> {
     store.state().ok()
 }
 

@@ -24,6 +24,44 @@ Kept because this project keeps re-learning the same lessons and paying for them
 
 ---
 
+- **2026-09-08** — **"Build the projection" was one entry and two costs, and only one of them
+  wanted a database.**
+
+  O4 has read as a single build since it was written: `kols-store` does not exist, so build it.
+  Measuring first split it cleanly, and the halves want opposite things.
+
+  **The replay half needed no SQLite at all.** A command asked the governance log three questions
+  — replayed state, the channel fold, the name fold — and *each* re-read every entry file,
+  decoded it and verified its signature on insert. Three full passes with cryptography, per
+  command, growing with a log that only ever grows: 152 ms for one ordinary command against three
+  hundred channels. The fix is a cache invalidated by **counting entry files**, which works
+  because entries are only appended and are numbered by the directory's own size — so an
+  unchanged count is an unchanged log, answered without reading anything. A settled send went to
+  1.8 ms at three hundred and fifty channels and the folds measure at zero.
+
+  Two details worth keeping. `GovernanceState::apply` already existed, so a change advances the
+  state along the chain instead of replaying from genesis — the protocol had the incremental path
+  and the client was not using it, which is the third time this project has gone looking for
+  something to build and found the layer already had it. And the cached chain is compared as a
+  *prefix* rather than assumed to extend, because fork choice can move a branch out from under it
+  (§2.7.1) and `apply` walks forward with no way to unapply.
+
+  **The read half is the larger one and is what a database is actually for.** `open_channel`
+  reads every record in the channel, decodes it, merges the whole set and runs the reader-side
+  rate pass — so `before` and `limit` bound what is *returned* and not what is read. 222 ms at
+  six thousand records, about four seconds at a hundred thousand, for a page of fifty. Records
+  accumulate far faster than structure does, so this bites first at scale.
+
+  It cannot be answered by the same trick, and that is the interesting part: a fold can be cached
+  because it is a pure function of the whole log, and a *page* is a query — the records in an HLC
+  range plus whatever edits, withdrawals and redactions target them. Caching the answer to
+  "everything" does not make "a page of it" cheap. That is what `kols-store` is for, and it is
+  what remains of O4.
+
+  **The general shape, since this is the third entry in a row about it:** an owed item names a
+  remedy, and a measurement names a cost. When they disagree the entry is usually the one that is
+  wrong, because it was written when somebody had a fix in mind rather than a number in hand.
+
 - **2026-09-08** — **O15 named the wrong obstacle, and naming it wrongly is what kept it open.**
 
   The entry said the remaining content-routing test needed the Docker NAT matrix. It did not. It

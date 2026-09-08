@@ -130,9 +130,39 @@ fn what_replay_costs_as_structure_grows() {
     let dir = Dir::new("replay");
     let workspace = Workspace::at(dir.0.clone());
     let store = workspace.create("cost", Vec::new()).expect("creates");
-    let executor = Executor::open(store.root().to_path_buf()).expect("opens");
+    let root = store.root().to_path_buf();
+    drop(store);
+    // Keyed, because writing a record requires an epoch key — a member who holds
+    // none cannot key what they are about to write, and the executor refuses
+    // rather than storing something that can never be published.
+    common::brief_run(root.clone());
+    let executor = Executor::open(root).expect("opens");
 
-    println!("\n  channels    state()    channels()    one command");
+    // A channel to post into, so the measurement can tell an ordinary command
+    // from one that writes governance. They are different questions now that the
+    // log is cached: a send invalidates nothing and should not care how much
+    // structure the network has, while a governance write pays for the rebuild
+    // its own entry causes.
+    executor
+        .submit(Command::SetChatSetting {
+            setting: kols_core::ChatSetting::MessageRate,
+            value: 0,
+        })
+        .expect("no rate ceiling");
+    let talk = match executor
+        .submit(Command::CreateChannel {
+            name: "talk".to_owned(),
+            category: None,
+            privacy: kols_core::Privacy::Public,
+            topic: String::new(),
+        })
+        .expect("creates a channel")
+    {
+        kols_api::Outcome::ChannelCreated { channel, .. } => channel,
+        other => panic!("unexpected outcome: {other:?}"),
+    };
+
+    println!("\n  channels    state()    channels()    governance    a send    settled");
     for round in 0..rounds("KOLS_COST_ROUNDS", 5) {
         for n in 0..10 {
             executor
@@ -146,11 +176,11 @@ fn what_replay_costs_as_structure_grows() {
         }
 
         let started = Instant::now();
-        let state = store.state().expect("replays");
+        let state = executor.store().state().expect("replays");
         let replay = started.elapsed();
 
         let started = Instant::now();
-        let _ = kols_node::network::channels(&store, &state).expect("reads channels");
+        let _ = kols_node::network::channels(executor.store(), &state).expect("reads channels");
         let listing = started.elapsed();
 
         // What a member actually waits for: one ordinary command, which replays
@@ -163,12 +193,108 @@ fn what_replay_costs_as_structure_grows() {
             .expect("sets a name");
         let command = started.elapsed();
 
+        // The one a member actually waits for, and the one the cache is for: it
+        // writes a record and no governance entry, so nothing it does should
+        // depend on how much structure the log carries.
+        let started = Instant::now();
+        executor
+            .submit(Command::SendMessage {
+                channel: talk,
+                body: "ordinary".to_owned(),
+                reply_to: None,
+                attachments: Vec::new(),
+            })
+            .expect("posts");
+        let send = started.elapsed();
+
+        // And a second one, which is the shape a member actually produces:
+        // messages follow messages, not governance writes. The first send above
+        // lands straight after ten channel creations and pays for the rebuild
+        // they caused, which is a real cost and a rare one.
+        let started = Instant::now();
+        executor
+            .submit(Command::SendMessage {
+                channel: talk,
+                body: "ordinary".to_owned(),
+                reply_to: None,
+                attachments: Vec::new(),
+            })
+            .expect("posts");
+        let again = started.elapsed();
+
         println!(
-            "  {:>8}    {:>5.0}ms    {:>7.0}ms    {:>8.0}ms",
+            "  {:>8}    {:>5.0}ms    {:>7.0}ms    {:>8.0}ms    {:>6.1}ms    {:>6.1}ms",
             (round + 1) * 10,
             millis(replay),
             millis(listing),
-            millis(command)
+            millis(command),
+            millis(send),
+            millis(again)
+        );
+    }
+}
+
+#[test]
+#[ignore = "a measurement, not an assertion — see the module comment"]
+fn what_opening_a_channel_costs_as_it_fills() {
+    // The read path's twin of the send measurement. `open_channel` reads every
+    // record in the channel from its own file, decodes it, merges the whole set
+    // and runs the reader-side rate pass over it — so rendering a screenful
+    // costs the size of the conversation, and `before`/`limit` bound what is
+    // *returned* rather than what is read.
+    let dir = Dir::new("open");
+    let workspace = Workspace::at(dir.0.clone());
+    let store = workspace.create("cost", Vec::new()).expect("creates");
+    let root = store.root().to_path_buf();
+    drop(store);
+    common::brief_run(root.clone());
+    let executor = Executor::open(root).expect("opens");
+
+    executor
+        .submit(Command::SetChatSetting {
+            setting: kols_core::ChatSetting::MessageRate,
+            value: 0,
+        })
+        .expect("no rate ceiling");
+
+    let channel = match executor
+        .submit(Command::CreateChannel {
+            name: "general".to_owned(),
+            category: None,
+            privacy: kols_core::Privacy::Public,
+            topic: String::new(),
+        })
+        .expect("creates a channel")
+    {
+        kols_api::Outcome::ChannelCreated { channel, .. } => channel,
+        other => panic!("unexpected outcome: {other:?}"),
+    };
+
+    println!("\n  records    open channel");
+    let batch = 500;
+    for round in 0..rounds("KOLS_COST_BATCHES", 8) {
+        for n in 0..batch {
+            executor
+                .submit(Command::SendMessage {
+                    channel,
+                    body: format!("message {}", round * batch + n),
+                    reply_to: None,
+                    attachments: Vec::new(),
+                })
+                .expect("posts");
+        }
+        let started = Instant::now();
+        executor
+            .submit(Command::OpenChannel {
+                channel,
+                before: None,
+                limit: 50,
+            })
+            .expect("opens");
+        println!(
+            "  {:>7}    {:>8.1}ms",
+            (round + 1) * batch,
+            millis(started.elapsed())
         );
     }
 }

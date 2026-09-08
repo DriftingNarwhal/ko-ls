@@ -115,6 +115,12 @@ pub fn genesis(
     )
 }
 
+/// Channels by id, as replay currently understands them.
+pub type ChannelMap = BTreeMap<ChannelId, Channel>;
+
+/// Categories by id, as replay currently understands them.
+pub type CategoryMap = BTreeMap<CategoryId, Category>;
+
 /// A channel as replay currently understands it.
 #[derive(Debug, Clone)]
 pub struct Channel {
@@ -153,8 +159,17 @@ pub struct Channel {
 pub fn channels(
     store: &Store,
     state: &GovernanceState,
-) -> Result<(BTreeMap<ChannelId, Channel>, Vec<String>), StoreError> {
+) -> Result<(ChannelMap, Vec<String>), StoreError> {
     let log = store.log()?;
+    // **Folded once per log rather than once per question.** Every command asks
+    // this, and walking the canonical chain to answer it made a command cost the
+    // size of the network's history (`design/05` §5). The fold is a pure
+    // function of the log, so a cached one is the same answer as long as the log
+    // has not moved — which is what the generation counts.
+    let generation = store.generation();
+    if let Some(folded) = store.cached_channels(generation) {
+        return Ok((folded.0.clone(), folded.1.clone()));
+    }
     let profile = ChatPolicy::of(&state.policy).profile();
     let mut channels: BTreeMap<ChannelId, Channel> = BTreeMap::new();
     let mut refused = Vec::new();
@@ -248,7 +263,9 @@ pub fn channels(
         }
     }
 
-    Ok((channels, refused))
+    let folded = std::sync::Arc::new((channels, refused));
+    store.keep_channels(generation, std::sync::Arc::clone(&folded));
+    Ok((folded.0.clone(), folded.1.clone()))
 }
 
 /// A category as replay currently understands it — spec 07 §1.8.
@@ -276,8 +293,12 @@ pub struct Category {
 pub fn categories(
     store: &Store,
     state: &GovernanceState,
-) -> Result<(BTreeMap<CategoryId, Category>, Vec<String>), StoreError> {
+) -> Result<(CategoryMap, Vec<String>), StoreError> {
     let log = store.log()?;
+    let generation = store.generation();
+    if let Some(folded) = store.cached_categories(generation) {
+        return Ok((folded.0.clone(), folded.1.clone()));
+    }
     let profile = ChatPolicy::of(&state.policy).profile();
     let mut categories: BTreeMap<CategoryId, Category> = BTreeMap::new();
     let mut refused = Vec::new();
@@ -335,7 +356,9 @@ pub fn categories(
         }
     }
 
-    Ok((categories, refused))
+    let folded = std::sync::Arc::new((categories, refused));
+    store.keep_categories(generation, std::sync::Arc::clone(&folded));
+    Ok((folded.0.clone(), folded.1.clone()))
 }
 
 fn channel_of(body: &EntryBody) -> Option<ChannelId> {

@@ -49,7 +49,7 @@ impl Lab {
         Self { root, executor }
     }
 
-    fn state(&self) -> intranet_governance::GovernanceState {
+    fn state(&self) -> std::sync::Arc<intranet_governance::GovernanceState> {
         self.executor.store().state().expect("replays")
     }
 
@@ -555,7 +555,7 @@ fn one_setting_does_not_disturb_another() {
     })
     .expect("sets");
 
-    let policy = lab.state().policy;
+    let policy = lab.state().policy.clone();
     let chat = kols_core::ChatPolicy::of(&policy);
     assert_eq!(chat.message_rate_per_minute(), 11);
     assert_eq!(chat.reaction_rate_per_minute(), 22);
@@ -586,7 +586,7 @@ fn retention_reads_zero_as_forever_and_a_rate_reads_it_as_no_limit() {
     })
     .expect("sets");
 
-    let policy = lab.state().policy;
+    let policy = lab.state().policy.clone();
     let chat = kols_core::ChatPolicy::of(&policy);
     assert_eq!(chat.retain_messages(), kols_core::Retention::Forever);
     assert_eq!(chat.retain_attachments(), kols_core::Retention::Forever);

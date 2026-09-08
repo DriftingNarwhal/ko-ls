@@ -52,12 +52,83 @@ pub struct Store {
     root: PathBuf,
     entropy: [u8; 32],
     network: NetworkId,
+    /// The governance log and the state it replays to, held across calls.
+    ///
+    /// # Why this exists
+    ///
+    /// Reading the log means reading every entry file, decoding it and
+    /// verifying its signature on insert — and one command did that **three
+    /// times**: once for replayed state, once to read channels, once to read
+    /// names. Measured at 152 ms for a single ordinary command against a network
+    /// with three hundred channels, growing with the log, which only ever grows
+    /// (`design/05` §5).
+    ///
+    /// # Why it is safe to hold
+    ///
+    /// The log is append-only on disk and one process holds the node claim, so
+    /// "has it changed" is answered by counting entry files — no read, no
+    /// decode, no verification. When the count is unchanged the cached answer is
+    /// the same answer replay would produce, because replay is a pure function
+    /// of the entries and the entries are the same. When it has changed the
+    /// whole thing is rebuilt, which is what happened on every call before.
+    ///
+    /// It is a cache and the files stay the source of truth: dropping it costs
+    /// one rebuild and changes no answer.
+    log_cache: std::sync::Mutex<Option<CachedLog>>,
+    /// Channel and category state, as of a known log generation.
+    ///
+    /// The other half of what a command was paying for. Caching the log stopped
+    /// it being re-read and re-verified; this stops it being *walked* — the
+    /// channel map is folded out of the canonical chain, and `submit` built it
+    /// again for every command.
+    ///
+    /// A separate lock from the log's, deliberately: these are computed by
+    /// `network`, which reads the log through this same store, and one lock
+    /// covering both would deadlock the moment the derived answer had to be
+    /// rebuilt.
+    derived: std::sync::Mutex<Derived>,
     /// This member's own identity id, derived once.
     ///
     /// Memoised because [`put_record`](Store::put_record) compares every stored
     /// record against it, and deriving a keypair per record on a sync burst
     /// would be paying for the comparison many times over.
     own: std::sync::OnceLock<Option<PerNetworkIdentityId>>,
+}
+
+/// What has been folded out of the log, and which log it was folded from.
+#[derive(Default)]
+struct Derived {
+    generation: usize,
+    channels: Option<std::sync::Arc<(crate::network::ChannelMap, Vec<String>)>>,
+    categories: Option<std::sync::Arc<(crate::network::CategoryMap, Vec<String>)>>,
+    names: Option<std::sync::Arc<kols_core::Names>>,
+}
+
+/// The log and its replayed state, as of a known number of entry files.
+struct CachedLog {
+    /// How many entry files were folded in.
+    ///
+    /// The whole invalidation rule. Entries are only ever appended and are
+    /// numbered by the directory's own size, so a count that has not moved means
+    /// a log that has not moved.
+    count: usize,
+    log: std::sync::Arc<GovernanceLog>,
+    /// The canonical chain as of that count.
+    ///
+    /// Kept so a refresh can tell an ordinary extension from a reorg. Fork
+    /// choice may make a different branch canonical when an entry arrives
+    /// (Core §2.7.1), and a state advanced along a chain that is no longer the
+    /// one would be wrong in the quietest way available — so the prefix is
+    /// compared rather than assumed.
+    chain: Vec<Hash>,
+    /// The state it replays to, when it replays at all.
+    ///
+    /// `None` for a log that cannot be replayed, which is an ordinary state
+    /// rather than a fault: a node that has attached and not yet synced holds
+    /// entries without a genesis in front of them. Reading the *log* must keep
+    /// working there — the sync path is what fills the gap — so the two are
+    /// cached apart rather than as one answer.
+    state: Option<std::sync::Arc<GovernanceState>>,
 }
 
 /// What can go wrong reading or writing the store.
@@ -132,6 +203,8 @@ impl Store {
             root,
             entropy,
             network,
+            log_cache: std::sync::Mutex::new(None),
+            derived: std::sync::Mutex::new(Derived::default()),
             own: std::sync::OnceLock::new(),
         })
     }
@@ -147,6 +220,8 @@ impl Store {
             root,
             entropy,
             network,
+            log_cache: std::sync::Mutex::new(None),
+            derived: std::sync::Mutex::new(Derived::default()),
             own: std::sync::OnceLock::new(),
         })
     }
@@ -311,35 +386,218 @@ impl Store {
     }
 
     /// Reads the governance log back, ancestors first.
-    pub fn log(&self) -> Result<GovernanceLog, StoreError> {
+    pub fn log(&self) -> Result<std::sync::Arc<GovernanceLog>, StoreError> {
+        Ok(self.replayed()?.0)
+    }
+
+    /// Replays the stored log into current state.
+    pub fn state(&self) -> Result<std::sync::Arc<GovernanceState>, StoreError> {
+        let (log, state) = self.replayed()?;
+        match state {
+            Some(state) => Ok(state),
+            // Recomputed only to produce the refusal, which is the one thing the
+            // cache cannot hold: a `StoreError` is not clonable, and a log that
+            // does not replay is a handful of entries rather than a history.
+            None => {
+                let chain: Vec<_> = log
+                    .canonical_chain()
+                    .iter()
+                    .filter_map(|hash| log.get(hash))
+                    .collect();
+                GovernanceState::replay(chain).map(std::sync::Arc::new).map_err(|err| {
+                    StoreError::Corrupt(format!("replay refused the stored log: {err}"))
+                })
+            }
+        }
+    }
+
+    /// The log and the state together, from the cache or rebuilt.
+    fn replayed(
+        &self,
+    ) -> Result<
+        (
+            std::sync::Arc<GovernanceLog>,
+            Option<std::sync::Arc<GovernanceState>>,
+        ),
+        StoreError,
+    > {
         let dir = self.root.join("entries");
-        let mut files: Vec<_> = fs::read_dir(&dir)?
-            .filter_map(Result::ok)
-            .map(|e| e.path())
-            .collect();
+        // Counted rather than read. This is the whole saving: an unchanged log
+        // costs one directory listing instead of a decode and a signature
+        // verification per entry.
+        let mut files: Vec<_> = match fs::read_dir(&dir) {
+            Ok(entries) => entries.filter_map(Result::ok).map(|e| e.path()).collect(),
+            Err(err) if err.kind() == io::ErrorKind::NotFound => Vec::new(),
+            Err(err) => return Err(err.into()),
+        };
         files.sort();
 
-        let mut log = GovernanceLog::new();
-        for path in files {
-            let bytes = fs::read(&path)?;
+        let mut held = self
+            .log_cache
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if let Some(cached) = held.as_ref()
+            && cached.count == files.len()
+        {
+            return Ok((
+                std::sync::Arc::clone(&cached.log),
+                cached.state.clone(),
+            ));
+        }
+
+        // **Only the entries that arrived.** Names are zero-padded indices and
+        // the log is append-only, so the files past the cached count are exactly
+        // what is new — and re-reading, re-decoding and re-verifying the rest to
+        // learn about one new entry is the cost this whole cache exists to stop
+        // paying. A cache built from a shorter log is extended; anything else
+        // (a first read, or a directory that somehow shrank) is built whole.
+        let (mut log, from) = match held.as_ref() {
+            Some(cached) if cached.count < files.len() => {
+                ((*cached.log).clone(), cached.count)
+            }
+            _ => (GovernanceLog::new(), 0),
+        };
+        for path in &files[from..] {
+            let bytes = fs::read(path)?;
             let entry = wire::decode_entry(&bytes)
                 .map_err(|err| StoreError::Corrupt(format!("{}: {err}", path.display())))?;
             log.insert(entry)
                 .map_err(|err| StoreError::Corrupt(format!("{}: {err}", path.display())))?;
         }
-        Ok(log)
+
+        let chain = log.canonical_chain();
+
+        // Advanced along the chain rather than replayed from genesis, when the
+        // chain this state was built on is still a prefix of the one there is
+        // now. Where it is not, fork choice has moved a branch out from under it
+        // and the only honest answer is to replay: `apply` walks forward and has
+        // no way to unapply an entry that is no longer canonical.
+        let extended = held.as_ref().and_then(|cached| {
+            let state = cached.state.as_ref()?;
+            (chain.len() >= cached.chain.len() && chain.starts_with(&cached.chain))
+                .then(|| (std::sync::Arc::clone(state), cached.chain.len()))
+        });
+        let state = match extended {
+            Some((state, done)) => chain[done..]
+                .iter()
+                .filter_map(|hash| log.get(hash))
+                .try_fold((*state).clone(), |state, entry| state.apply(entry))
+                .ok()
+                .map(std::sync::Arc::new),
+            None => GovernanceState::replay(
+                chain.iter().filter_map(|hash| log.get(hash)).collect::<Vec<_>>(),
+            )
+            .ok()
+            .map(std::sync::Arc::new),
+        };
+
+        let log = std::sync::Arc::new(log);
+        *held = Some(CachedLog {
+            count: files.len(),
+            log: std::sync::Arc::clone(&log),
+            chain,
+            state: state.clone(),
+        });
+        Ok((log, state))
     }
 
-    /// Replays the stored log into current state.
-    pub fn state(&self) -> Result<GovernanceState, StoreError> {
-        let log = self.log()?;
-        let chain: Vec<_> = log
-            .canonical_chain()
-            .iter()
-            .filter_map(|hash| log.get(hash))
-            .collect();
-        GovernanceState::replay(chain)
-            .map_err(|err| StoreError::Corrupt(format!("replay refused the stored log: {err}")))
+    /// Which log the derived answers below belong to.
+    ///
+    /// The count of entry files as of the last refresh, which is what makes a
+    /// cached fold safe to reuse: entries are only appended, so an unchanged
+    /// count is an unchanged log.
+    pub fn generation(&self) -> usize {
+        self.log_cache
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .as_ref()
+            .map_or(0, |cached| cached.count)
+    }
+
+    /// The channel fold for `generation`, if it has been computed.
+    pub fn cached_channels(
+        &self,
+        generation: usize,
+    ) -> Option<std::sync::Arc<(crate::network::ChannelMap, Vec<String>)>> {
+        let held = self
+            .derived
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        (held.generation == generation).then(|| held.channels.clone()).flatten()
+    }
+
+    /// Keeps the channel fold, discarding anything from an older log.
+    pub fn keep_channels(
+        &self,
+        generation: usize,
+        folded: std::sync::Arc<(crate::network::ChannelMap, Vec<String>)>,
+    ) {
+        let mut held = self
+            .derived
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if held.generation != generation {
+            *held = Derived {
+                generation,
+                ..Derived::default()
+            };
+        }
+        held.channels = Some(folded);
+    }
+
+    /// The category fold for `generation`, if it has been computed.
+    pub fn cached_categories(
+        &self,
+        generation: usize,
+    ) -> Option<std::sync::Arc<(crate::network::CategoryMap, Vec<String>)>> {
+        let held = self
+            .derived
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        (held.generation == generation).then(|| held.categories.clone()).flatten()
+    }
+
+    /// Keeps the category fold, discarding anything from an older log.
+    pub fn keep_categories(
+        &self,
+        generation: usize,
+        folded: std::sync::Arc<(crate::network::CategoryMap, Vec<String>)>,
+    ) {
+        let mut held = self
+            .derived
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if held.generation != generation {
+            *held = Derived {
+                generation,
+                ..Derived::default()
+            };
+        }
+        held.categories = Some(folded);
+    }
+
+    /// The display-name fold for `generation`, if it has been computed.
+    pub fn cached_names(&self, generation: usize) -> Option<std::sync::Arc<kols_core::Names>> {
+        let held = self
+            .derived
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        (held.generation == generation).then(|| held.names.clone()).flatten()
+    }
+
+    /// Keeps the display-name fold, discarding anything from an older log.
+    pub fn keep_names(&self, generation: usize, folded: std::sync::Arc<kols_core::Names>) {
+        let mut held = self
+            .derived
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if held.generation != generation {
+            *held = Derived {
+                generation,
+                ..Derived::default()
+            };
+        }
+        held.names = Some(folded);
     }
 
     /// The head of the canonical chain, which a new entry parents onto.
