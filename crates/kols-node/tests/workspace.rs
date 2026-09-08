@@ -5,6 +5,8 @@
 //! when missed. These cover the moved path directly, because the interface that
 //! calls it cannot be driven from a test.
 
+mod common;
+
 use kols_node::workspace::Workspace;
 
 struct Dir(std::path::PathBuf);
@@ -1295,5 +1297,216 @@ fn a_node_takes_on_under_replicated_content_it_is_the_next_ranked_for() {
     assert!(
         store.has_duty(&target) && !store.has_repair(&target),
         "ranked for it now, so it is held for the ordinary reason and ends for the ordinary one"
+    );
+}
+
+// ── a relay shared between two of one member's networks — O11, D29 ──────
+//
+// Real peer ids, borrowed from `invite_length.rs`, because the comparison reads
+// the peer id out of the address: a placeholder that failed to parse would make
+// every assertion below pass without exercising anything.
+const RELAY: &str = "12D3KooWAT1R2JjcZbnVUKLX8Xo1Qg5APTWMkpHarHY4Uo1YpGzT";
+const ELSEWHERE: &str = "12D3KooWMHZbUfFYuqe6NxXBFSg3aLzfTSa1B5QKGNKwMrWz5FaD";
+
+#[test]
+fn a_relay_another_network_uses_is_reported_however_it_is_addressed() {
+    // The property the whole check turns on. One relay answers at several
+    // addresses — a DNS name and a bare IPv4, TCP beside QUIC — so comparing the
+    // strings would report *no overlap* in exactly the case D29 is about, and
+    // would do it silently. The two addresses below name one relay and share not
+    // one character outside the peer id.
+    let dir = Dir::new("shared-relay");
+    let workspace = Workspace::at(dir.0.clone());
+
+    workspace
+        .create("the workshop", vec![format!("/dns4/relay.example/tcp/443/p2p/{RELAY}")])
+        .expect("creates");
+    let second = workspace.create("the other one", Vec::new()).expect("creates");
+
+    let shared = workspace.shared_relays(
+        Some(second.network()),
+        &[format!("/ip4/198.51.100.7/udp/4001/quic-v1/p2p/{RELAY}")],
+    );
+    assert_eq!(shared.len(), 1, "one relay, named differently, is still one relay");
+    assert_eq!(shared[0].label, "the workshop", "the warning has to name which network");
+    assert!(
+        shared[0].relay.contains("198.51.100.7"),
+        "echoed back as the member typed it, so they can tell which entry is meant"
+    );
+
+    // And a relay nobody else uses is not reported, or the notice would be
+    // noise that teaches people to click through it.
+    assert!(
+        workspace
+            .shared_relays(
+                Some(second.network()),
+                &[format!("/dns4/relay.example/tcp/443/p2p/{ELSEWHERE}")]
+            )
+            .is_empty()
+    );
+}
+
+#[test]
+fn a_networks_own_relay_is_not_reported_against_itself() {
+    // The obvious way to get this wrong, and it would fire on the commonest act
+    // there is: re-designating the relay a network already had.
+    let dir = Dir::new("own-relay");
+    let workspace = Workspace::at(dir.0.clone());
+    let address = format!("/dns4/relay.example/tcp/443/p2p/{RELAY}");
+
+    let store = workspace.create("the workshop", vec![address.clone()]).expect("creates");
+
+    assert!(
+        workspace
+            .shared_relays(Some(store.network()), std::slice::from_ref(&address))
+            .is_empty(),
+        "a network does not share a relay with itself"
+    );
+}
+
+#[test]
+fn a_network_that_does_not_exist_yet_is_compared_against_every_other() {
+    // Creating a network with a relay is a designation like any other, and it is
+    // the *first* one most people make — so the check has to answer before there
+    // is an id to exclude. `None` is that network, and excluding the open one
+    // instead would hide an overlap with the network the member is looking at.
+    let dir = Dir::new("new-network");
+    let workspace = Workspace::at(dir.0.clone());
+    let address = format!("/dns4/relay.example/tcp/443/p2p/{RELAY}");
+
+    workspace.create("the workshop", vec![address.clone()]).expect("creates");
+
+    let shared = workspace.shared_relays(None, std::slice::from_ref(&address));
+    assert_eq!(shared.len(), 1);
+    assert_eq!(shared[0].label, "the workshop");
+}
+
+// ── conversation-profile networks — O2, spec 07 §1.2, Core §5.1.1 ───────
+
+#[test]
+fn a_conversation_declares_its_profile_and_a_server_deliberately_does_not() {
+    // The asymmetry is the point. Absent means `server`, so a server that wrote
+    // today's default would be frozen at it for nothing — while a conversation
+    // cannot rely on absence for the opposite reason: readers have to *refuse*
+    // channel entries in one, and absent would permit them.
+    let dir = Dir::new("profiles");
+    let workspace = Workspace::at(dir.0.clone());
+
+    let server = workspace.create("the workshop", Vec::new()).expect("creates");
+    let server_state = server.state().expect("replays");
+    assert!(
+        !server_state
+            .policy
+            .app_policy
+            .contains_key(kols_core::keys::PROFILE),
+        "a server writes no profile, so a revised default still reaches it"
+    );
+    assert_eq!(
+        kols_core::ChatPolicy::of(&server_state.policy).profile(),
+        kols_core::NetworkProfile::Server
+    );
+
+    let conversation = workspace.create_conversation("sam").expect("creates");
+    let conversation_state = conversation.state().expect("replays");
+    assert_eq!(
+        kols_core::ChatPolicy::of(&conversation_state.policy).profile(),
+        kols_core::NetworkProfile::Conversation,
+        "a conversation declares itself, because the rule keys off the declaration"
+    );
+    // D29: a conversation designates no relay of its own. It reaches its peer
+    // over the connection the shared network already has (E13), and naming one
+    // here is exactly the sharing D29 refuses.
+    assert!(conversation_state.policy.bootstrap_relays.is_empty());
+}
+
+#[test]
+fn the_behaviour_set_a_node_runs_follows_what_the_network_is() {
+    // Core §5.1.1 fixes this at construction, so it is read from the network's
+    // own policy rather than chosen per run. For a conversation it is a privacy
+    // requirement rather than a saving: a DM node holding a routing table joins
+    // whatever table it meets, and where a hole punch fails that is the shared
+    // network's relay's — D29 reached with nobody designating anything.
+    let dir = Dir::new("discovery");
+    let workspace = Workspace::at(dir.0.clone());
+
+    let server = workspace.create("the workshop", Vec::new()).expect("creates");
+    let conversation = workspace.create_conversation("sam").expect("creates");
+
+    assert_eq!(
+        kols_node::discovery_for(&server.state().expect("replays").policy),
+        intranet_transport::Discovery::Full
+    );
+    assert_eq!(
+        kols_node::discovery_for(&conversation.state().expect("replays").policy),
+        intranet_transport::Discovery::Off
+    );
+}
+
+#[test]
+fn a_conversation_refuses_channel_structure_before_anything_is_signed() {
+    // The gate already refuses this — `kols-api`'s `Refusal::NotAServer`, at all
+    // four channel and category sites — and had all along. What did not exist
+    // was a conversation to refuse it in, so the rule was unreachable rather
+    // than unbuilt, and this is the first thing to exercise it against a network
+    // this client actually created rather than a hand-built policy.
+    //
+    // **Kept because writing it found the executor guard I had just added to be
+    // a second copy of it**, at the wrong layer: the check belongs where
+    // authorization happens, and the probe that was meant to prove my guard
+    // worked passed with it removed.
+    let dir = Dir::new("no-channels");
+    let workspace = Workspace::at(dir.0.clone());
+
+    let make = |store: &kols_node::store::Store| {
+        kols_node::executor::Executor::open(store.root().to_path_buf())
+            .expect("opens")
+            .submit(kols_api::Command::CreateChannel {
+                name: "general".to_owned(),
+                category: None,
+                privacy: kols_core::Privacy::Public,
+                topic: String::new(),
+            })
+            .map(|_| ())
+            .map_err(|err| err.to_string())
+    };
+
+    // The control matters: the founder holds every capability in both networks,
+    // so without it a refusal could be about permission rather than the profile.
+    let server = workspace.create("the workshop", Vec::new()).expect("creates");
+    assert!(make(&server).is_ok(), "a server takes channels");
+
+    let conversation = workspace.create_conversation("sam").expect("creates");
+    let refusal = make(&conversation).expect_err("a conversation has one implied channel");
+    assert!(refusal.contains("conversation"), "{refusal}");
+}
+
+#[test]
+fn a_node_for_a_conversation_is_built_without_discovery_and_says_so() {
+    // The one thing the unit test above cannot reach: that `serve` actually
+    // asks. A conversation running *with* discovery behaves identically in every
+    // visible way — it listens, dials, relays, hole-punches, gossips and serves
+    // exactly the same — and differs only by having joined a routing table it
+    // should not be in. An invisible failure is a test's job.
+    let dir = Dir::new("serve-discovery");
+    let workspace = Workspace::at(dir.0.clone());
+
+    let conversation = workspace.create_conversation("sam").expect("creates");
+    let said = common::brief_run(conversation.root().to_path_buf());
+    assert!(
+        said.iter().any(|line| line.contains("discovery off")),
+        "a conversation has nobody to find: {said:?}"
+    );
+
+    // And the control, because a line that appeared for everything would say
+    // nothing about the choice.
+    let server = workspace.create("the workshop", Vec::new()).expect("creates");
+    let said = common::brief_run(server.root().to_path_buf());
+    assert!(
+        said.iter().any(|line| line.contains("peer id")),
+        "the node started at all: {said:?}"
+    );
+    assert!(
+        !said.iter().any(|line| line.contains("discovery off")),
+        "a server needs discovery: {said:?}"
     );
 }

@@ -28,6 +28,7 @@ use crate::network;
 use crate::store::Store;
 use intranet_crypto::to_hex;
 use intranet_identity::NetworkId;
+use kols_core::NetworkProfile;
 use std::path::{Path, PathBuf};
 
 /// A network this client knows about.
@@ -45,6 +46,25 @@ pub struct Known {
     /// between being admitted and being keyed in, which the interface should
     /// show as waiting rather than as broken.
     pub keyed: bool,
+}
+
+/// A relay one of this member's other networks already designates.
+///
+/// What [`Workspace::shared_relays`] found, carrying enough to name the other
+/// network to the person being warned — an id alone would tell them a relay is
+/// shared with something they cannot identify.
+#[derive(Debug, Clone)]
+pub struct SharedRelay {
+    /// The address as the network being changed names it.
+    ///
+    /// Not as the other network names it: the same relay is reachable at several
+    /// addresses, and echoing back what somebody just typed is what lets them
+    /// see which of their own entries is the one being warned about.
+    pub relay: String,
+    /// The other network's local label, which may be empty.
+    pub label: String,
+    /// The other network's id, as hex.
+    pub id: String,
 }
 
 /// The most disk one installation gives every network together, by default.
@@ -148,6 +168,74 @@ impl Workspace {
         networks
     }
 
+    /// Which of `relays` another of this member's networks already designates.
+    ///
+    /// D29, and the concern is mechanical rather than stylistic: `kad` runs
+    /// under libp2p's default protocol name and `PROTOCOL_VERSION` is one string
+    /// for every network, so two networks meeting at one relay share a routing
+    /// table and their members become mutually discoverable. That is the
+    /// correlation Core §1.2 exists to prevent, arrived at without anybody
+    /// attacking anything.
+    ///
+    /// **This reports; it never refuses** (`design/09` §3). Refusing was the
+    /// earlier draft and was wrong twice over. It is unenforceable anyway —
+    /// nothing stops a founder naming one address in two networks, and the relay
+    /// cannot know it is being reused (Core §5.5: it replays no log and holds no
+    /// capabilities) — so it would stop the honest case and not the determined
+    /// one. And it would block a legitimate configuration: a member relaying on
+    /// their own LAN for two of their own networks, where the private hop is the
+    /// only way in for both.
+    ///
+    /// **The client is the only party in a position to notice at all.** The
+    /// relay cannot see it, and neither network's other members can. Saying
+    /// nothing was the third option and the worst of the three.
+    ///
+    /// `network` is the network being changed, excluded from the comparison
+    /// because its own relays are not somebody else's. `None` is a network that
+    /// does not exist yet, which is what creating one with a relay is.
+    ///
+    /// Compared by **peer id, never by address**. One relay answers at several
+    /// addresses — a DNS name and a bare IPv4, TCP beside QUIC — so comparing
+    /// the strings would report no overlap in exactly the case this exists for.
+    ///
+    /// Read from each store's cached relay list (`Store::relays`) rather than by
+    /// replaying another network's log. The cache is what this installation
+    /// actually knows, and replaying a log this member may not have synced would
+    /// answer a question about a network when the question is about a disk.
+    pub fn shared_relays(&self, network: Option<&NetworkId>, relays: &[String]) -> Vec<SharedRelay> {
+        let mine = network.map(|id| to_hex(id.as_bytes()));
+        let others: Vec<(Known, Vec<String>)> = self
+            .list()
+            .into_iter()
+            .filter(|known| Some(&known.id) != mine.as_ref())
+            .filter_map(|known| {
+                let held = Store::open(known.path.clone()).ok()?.relays();
+                (!held.is_empty()).then_some((known, held))
+            })
+            .collect();
+
+        let mut shared = Vec::new();
+        for address in relays {
+            // An address naming no peer id is not compared rather than compared
+            // as a string: `parse_relay` refuses one at both front ends, so this
+            // is unreachable for anything designated through them, and guessing
+            // would be worse than declining to answer.
+            let Some(host) = relay_host(address) else {
+                continue;
+            };
+            for (known, held) in &others {
+                if held.iter().filter_map(|a| relay_host(a)).any(|it| it == host) {
+                    shared.push(SharedRelay {
+                        relay: address.clone(),
+                        label: known.label.clone(),
+                        id: known.id.clone(),
+                    });
+                }
+            }
+        }
+        shared
+    }
+
     /// Opens one network by the start of its id.
     pub fn open(&self, prefix: &str) -> Result<Store, String> {
         let prefix = prefix.trim().to_ascii_lowercase();
@@ -195,7 +283,37 @@ impl Workspace {
         // make a second store and a second identity, and present as two members
         // who are two strangers.
         let id = NetworkId::from_bytes(crate::random_32()?);
-        self.build(self.path_for(&id), id, label, relays)
+        self.build(self.path_for(&id), id, label, relays, NetworkProfile::Server)
+    }
+
+    /// Creates a `conversation`-profile network — `design/03` §4.1, spec 07 §1.2.
+    ///
+    /// What a direct message is: one implied channel, no roles, no categories,
+    /// and every participant a Founder. Only the first of those is settled at
+    /// genesis; adding the other participant is admission and belongs to the DM
+    /// flow (E10) rather than here.
+    ///
+    /// **It designates no relay, and that is D29 rather than an omission.** A
+    /// relay is never shared between two of a member's networks, and a fresh
+    /// two-person network has no infrastructure of its own — so a conversation
+    /// reaches its peer over the connection the shared network already has
+    /// (E13, `design/09` §3), never by naming a relay here.
+    pub fn create_conversation(&self, label: &str) -> Result<Store, String> {
+        if is_store(&self.root) {
+            return Err(format!(
+                "{} is already a single network's store. Point at a directory that holds \
+                 several",
+                self.root.display()
+            ));
+        }
+        let id = NetworkId::from_bytes(crate::random_32()?);
+        self.build(
+            self.path_for(&id),
+            id,
+            label,
+            Vec::new(),
+            NetworkProfile::Conversation,
+        )
     }
 
     /// Where a network's store belongs in this workspace.
@@ -264,6 +382,10 @@ impl Workspace {
     ///
     /// What `kols init` uses, since `--home` names one store rather than a
     /// directory of them.
+    ///
+    /// `server` only, and deliberately: a conversation is created by the DM flow
+    /// and never by somebody typing a command, so a terminal that could make one
+    /// would be a surface for an act that has no meaning outside that flow.
     pub fn create_at(
         &self,
         path: PathBuf,
@@ -271,7 +393,7 @@ impl Workspace {
         relays: Vec<String>,
     ) -> Result<Store, String> {
         let id = NetworkId::from_bytes(crate::random_32()?);
-        self.build(path, id, label, relays)
+        self.build(path, id, label, relays, NetworkProfile::Server)
     }
 
     fn build(
@@ -280,6 +402,7 @@ impl Workspace {
         id: NetworkId,
         label: &str,
         relays: Vec<String>,
+        profile: NetworkProfile,
     ) -> Result<Store, String> {
         // The entropy is independent of the id: the id names the network, the
         // entropy derives this member's identity in it. Deriving one from the
@@ -288,7 +411,7 @@ impl Workspace {
         let store = Store::create(path, id, entropy).map_err(|e| e.to_string())?;
         let founder = store.identity().map_err(|e| e.to_string())?;
         store
-            .append_entry(&network::genesis(&founder, id, relays.clone(), label))
+            .append_entry(&network::genesis(&founder, id, relays.clone(), label, profile))
             .map_err(|e| e.to_string())?;
         store.set_label(label).map_err(|e| e.to_string())?;
         store.set_relays(&relays).map_err(|e| e.to_string())?;
@@ -310,6 +433,24 @@ impl Workspace {
 /// not synced, which is an ordinary state.
 fn is_store(path: &Path) -> bool {
     path.join("seed").is_file()
+}
+
+/// The peer id of the relay an address names, which is that relay's identity.
+///
+/// The **first** `/p2p/` component rather than the last, because a circuit
+/// address names two peers — `…/p2p/<relay>/p2p-circuit/p2p/<target>` — and the
+/// one being designated is the hop you dial. A plain relay address carries only
+/// the one, so the same rule is the right answer for both shapes rather than a
+/// special case for either.
+fn relay_host(address: &str) -> Option<String> {
+    address
+        .parse::<libp2p::Multiaddr>()
+        .ok()?
+        .iter()
+        .find_map(|part| match part {
+            libp2p::multiaddr::Protocol::P2p(peer) => Some(peer.to_string()),
+            _ => None,
+        })
 }
 
 fn describe(store: &Store) -> Known {

@@ -1,6 +1,6 @@
 # Interface
 
-**Document status:** v0.20 — §4.1's presence is built, and the section is rewritten around what that cost: two marks that may never stand in for each other, an absence case that stays deliberately silent, and invisible as *publishes nothing* rather than *publishes "invisible"*. The control sits in the roster rather than settings, which is an argued exception to §4.2's grouping. Previously v0.19 — §4.2 gains the rule a stale contribution panel cost: copy that describes an unbuilt mechanism rots into a false claim about what the software does, and is guarded by a check that reads the live document rather than by remembering to revisit it. Previously v0.18 — §4.2 gains a third settings group, *this machine, here*, for contribution: local and revocable like *mine*, and broadcast, which the *mine* heading explicitly says its contents are not. Previously v0.17 — §1 gains the third landing a join can have: the request reached the issuer and nothing came back, which is not a refusal and used to be reported as one — costing somebody a use-limited invite on a retry into a network that already held them. Membership now comes from replay rather than from what the handshake said, and the interface tells *not admitted* apart from *admitted and not yet keyed*. Previously v0.16 — §3 revises what the client does about a relay shared between two networks: it warns and never refuses, since a refusal is unenforceable anyway and would block a member legitimately relaying on their own LAN for two of their own networks. Previously v0.15 — §2 records that the picker's *forget* becomes *leave* on the open network, since publishing a departure needs a running node and only the open one has one; and that what it reports afterwards is how many members could have heard rather than how many did. Previously v0.14 — §5.1 records what the first working drag found: a drag needs a target for every destination rather than for every thing, and two of four were unreachable — the end of a list, and the top level once every channel was in a folder. Previously v0.13 — §5.1 gains the rule reordering cost: a capability whose only route is one nobody can verify has no route. Drag-and-drop never worked because Tauri's native drag handler took it first, and channels keep move up and move down beside the fixed drag. Previously v0.12 — the row handle is removed at the tester's request, one way to a menu being enough; §5.1 keeps the two sizing rules it cost, which were never about it. Previously v0.11 — §5.1 gains the rule the sidebar bug actually needed: draw an icon rather than typing one, and take a control beside shrinkable text out of flow, because correct arithmetic is not the same as no arithmetic. Previously v0.10 — §4.3 gains the two ways a mark ends, and that it never marks your own; §5.1 gains the flex sizing rule that turned a sidebar into columns of one letter on Windows and not on macOS. Previously v0.9 — §4.1 says where the roster went and what the one number left on screen is for; §4.2 records settings becoming a screen rather than a layer, and the rule that decides which surface a thing gets; §4.3 is new and separates *where something arrived* from *what you have not seen*, which cannot be derived from it because a message is ordered by its author's clock rather than by its arrival. §7.1 and §7.3 narrowed rather than closed. Previously v0.8 — §4.2's Network section takes admission mode, the abuse limits and the retention windows, and says the three things a number on screen does not carry. Previously v0.7 — §4.2's settings sections are built, and it says what shape they took and which of them is a panel over a feature that does not exist yet; §5 gains the line between asking *whether* and asking *what*, which is what decides whether a dialog may live in the document a theme can reach. Previously v0.6 — §4.1 says plainly that presence is unbuilt, why it is last, and what the window shows instead; that was being carried in a status file. Previously v0.5 — §4.2 fixes what settings is and how it is divided, §6.4 and §6.5 settle reset and the two things that must leave the document before a theme can reach them (D36, D37). Theming remains designed and unbuilt. Previously v0.4 — D29 (a relay is never shared between networks) and what it does and does not mean for §3's direct-message bootstrap;  an interface now exists and is a first pass, not a settled one: it
+**Document status:** v0.22 — §2's behaviour set is built and the section stops claiming the liveness tiers are: a node is constructed `Discovery::Off` for a conversation and `Discovery::Full` for a server, read from replayed policy, and hot/warm/cold remains unwritten policy. It also records the one window E10 has to close — a joiner cannot know the profile before it syncs, so the DM flow must supply it. Previously v0.21 — §3's shared-relay notice is built, and the section records what building it settled: a relay is compared by peer id and never by address, since one relay answers at several and a string comparison reports no overlap in exactly the case D29 is about; there are two designations rather than one, the second being the network-creation form; and joining is deliberately not covered, because a joiner adopts what an invite carried rather than choosing it. Previously v0.20 — §4.1's presence is built, and the section is rewritten around what that cost: two marks that may never stand in for each other, an absence case that stays deliberately silent, and invisible as *publishes nothing* rather than *publishes "invisible"*. The control sits in the roster rather than settings, which is an argued exception to §4.2's grouping. Previously v0.19 — §4.2 gains the rule a stale contribution panel cost: copy that describes an unbuilt mechanism rots into a false claim about what the software does, and is guarded by a check that reads the live document rather than by remembering to revisit it. Previously v0.18 — §4.2 gains a third settings group, *this machine, here*, for contribution: local and revocable like *mine*, and broadcast, which the *mine* heading explicitly says its contents are not. Previously v0.17 — §1 gains the third landing a join can have: the request reached the issuer and nothing came back, which is not a refusal and used to be reported as one — costing somebody a use-limited invite on a retry into a network that already held them. Membership now comes from replay rather than from what the handshake said, and the interface tells *not admitted* apart from *admitted and not yet keyed*. Previously v0.16 — §3 revises what the client does about a relay shared between two networks: it warns and never refuses, since a refusal is unenforceable anyway and would block a member legitimately relaying on their own LAN for two of their own networks. Previously v0.15 — §2 records that the picker's *forget* becomes *leave* on the open network, since publishing a departure needs a running node and only the open one has one; and that what it reports afterwards is how many members could have heard rather than how many did. Previously v0.14 — §5.1 records what the first working drag found: a drag needs a target for every destination rather than for every thing, and two of four were unreachable — the end of a list, and the top level once every channel was in a folder. Previously v0.13 — §5.1 gains the rule reordering cost: a capability whose only route is one nobody can verify has no route. Drag-and-drop never worked because Tauri's native drag handler took it first, and channels keep move up and move down beside the fixed drag. Previously v0.12 — the row handle is removed at the tester's request, one way to a menu being enough; §5.1 keeps the two sizing rules it cost, which were never about it. Previously v0.11 — §5.1 gains the rule the sidebar bug actually needed: draw an icon rather than typing one, and take a control beside shrinkable text out of flow, because correct arithmetic is not the same as no arithmetic. Previously v0.10 — §4.3 gains the two ways a mark ends, and that it never marks your own; §5.1 gains the flex sizing rule that turned a sidebar into columns of one letter on Windows and not on macOS. Previously v0.9 — §4.1 says where the roster went and what the one number left on screen is for; §4.2 records settings becoming a screen rather than a layer, and the rule that decides which surface a thing gets; §4.3 is new and separates *where something arrived* from *what you have not seen*, which cannot be derived from it because a message is ordered by its author's clock rather than by its arrival. §7.1 and §7.3 narrowed rather than closed. Previously v0.8 — §4.2's Network section takes admission mode, the abuse limits and the retention windows, and says the three things a number on screen does not carry. Previously v0.7 — §4.2's settings sections are built, and it says what shape they took and which of them is a panel over a feature that does not exist yet; §5 gains the line between asking *whether* and asking *what*, which is what decides whether a dialog may live in the document a theme can reach. Previously v0.6 — §4.1 says plainly that presence is unbuilt, why it is last, and what the window shows instead; that was being carried in a status file. Previously v0.5 — §4.2 fixes what settings is and how it is divided, §6.4 and §6.5 settle reset and the two things that must leave the document before a theme can reach them (D36, D37). Theming remains designed and unbuilt. Previously v0.4 — D29 (a relay is never shared between networks) and what it does and does not mean for §3's direct-message bootstrap;  an interface now exists and is a first pass, not a settled one: it
 creates and joins networks, runs a node, renders a channel, brings the next member in, and gates
 its chrome on permission. §1's workspace, **both halves of §5**, all three of §4's questions and
 most of §7's second are built; §2's tiering and §6's theming are not, and §7's
@@ -202,9 +202,39 @@ the same route it has the membership.
 a node exists at this moment, and whether it holds a reservation while nothing is happening,
 is a decision made over time by whoever is holding the nodes — a specification has no view on
 it and needs none. What the protocol owes is the primitives, and reservations, dialability and
-now the leaner behaviour set are all of them. So hot, warm and cold are built here: the client
-chooses `Discovery::Off` for every conversation-profile network, and manages reservations over
-the rest.
+now the leaner behaviour set are all of them. So hot, warm and cold belong here — which is
+where this section used to say they were *built*, and only half of that is true.
+
+**The behaviour set is built, 2026-09-08; the liveness tiers are not.** A node reads its
+network's profile from replayed policy and is constructed `Discovery::Off` for a conversation
+and `Discovery::Full` for a server. Whether a node exists at this moment and whether it holds a
+reservation while nothing is happening — the hot/warm/cold table above — is still unwritten
+policy, and the distinction matters because the two are different axes: one is what a node *is*,
+fixed at construction (Core §5.1.1), and the other is what it is *doing*, decided over and over.
+
+**A conversation can now be created, which is the half that had to come first.** `kols init`
+writes no profile and should not — absent means `server` (spec 07 §1.2), so writing today's
+default would freeze a network at it. A conversation is the asymmetric case: readers have to
+*refuse* channel entries in one and absent would permit them, so it declares itself, and
+`Workspace::create_conversation` is the one path that makes one. There is deliberately no
+terminal command for it — a conversation is created by the direct-message flow and by nothing
+else, so a surface for making one by hand would be a surface for an act with no meaning outside
+that flow.
+
+**The node reports what it was built as rather than what was asked for**, which is a smaller
+point than it sounds and was learned twice in one sitting. `MemberNode::discovery()` reads the
+behaviour set that exists; a line derived from the caller's own argument is a claim about the
+caller, and it prints just as happily when construction ignored it.
+
+**One window stays open, and it is E10's to close.** A joiner builds its node before it can know
+the profile: an invite carries only connection bootstrap (Core §5.7), and the profile lives in a
+log it has not synced yet — so a store with no log replays to nothing, reads as `server`, and
+gets discovery. That is the right direction for a server and is the wrong one for a conversation,
+whose first moments would then be spent in a routing table. It costs nothing today, because
+nothing can join a conversation until the DM flow exists; the flow that accepts a DM request
+knows exactly what it accepted, so **E10 must supply the profile to the join path** rather than
+letting it be inferred. Written down here as a requirement of that work rather than left to be
+discovered during it.
 
 ---
 
@@ -281,6 +311,33 @@ members certainly cannot. At the point of designation: *another of your networks
 this relay; members of both may become discoverable to each other.* Then it does as it is told.
 Saying nothing was the third option and is the worst of the three: the one party who can see
 the thing, choosing not to mention it.
+
+**Built 2026-09-08, and three things it settled are worth keeping.**
+
+**A relay is compared by peer id, never by address**, and this is the whole of whether the check
+works. One relay answers at several addresses — a DNS name and a bare IPv4, TCP beside QUIC —
+so comparing the strings reports *no overlap* in exactly the case D29 is about, and reports it
+silently. The peer id is what a relay is: Core §5.4 already asks a relay to publish its own out
+of band precisely so a client can tell which one it is talking to. Where an address names two
+peers, as a circuit address does, the first is the hop being dialled and so the one that counts.
+
+**There are two designations, not one**, and the second is the more common. The relay panel is
+the obvious one; creating a network with a relay is the other, and it is the *first* relay most
+people ever designate. A warning that covered only the panel would have missed the case it is
+most likely to be needed for. Which network is excluded from the comparison differs between the
+two — the open one, or nothing at all, since a network being created has no id yet — and that is
+decided by the shell rather than named by the webview, for §5's reason: a front end that chose
+what to exclude could hide the warning by choosing wrong.
+
+**The comparison reads each network's cached relay list rather than replaying its log.** The
+cache is what this installation actually knows (Core §5.5's third carrier), and replaying
+another network's governance log would answer a question about a network when the question is
+about a disk — one this member may not have synced.
+
+**What it deliberately does not cover: joining.** A joiner adopts whatever relay the invite
+carried, and two invites into two networks may name one relay without the joiner choosing
+anything — so the overlap is real and the moment is not a designation. Warning there is a
+separate question about a different act, and it is not answered here.
 
 **None of that forbids the bootstrap above, and the distinction is the interesting part.** What
 D29 refuses is a relay *designated by two networks*, carrying both as standing infrastructure.

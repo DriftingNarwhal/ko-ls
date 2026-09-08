@@ -818,6 +818,68 @@ fn relays(app: tauri::State<'_, App>) -> Result<dto::Relays, String> {
     })
 }
 
+/// Relays another of this member's networks already designates — D29, O11.
+///
+/// Asked *before* the designation, because the point of it is that the member
+/// decides. The client warns and never refuses (`design/09` §3): a refusal is
+/// unenforceable anyway, since nothing stops a founder naming one address in two
+/// networks and the relay cannot know it is being reused, and it would block a
+/// member legitimately relaying on their own LAN for two of their own networks.
+///
+/// **Two commands rather than one taking the network as an argument.** They
+/// differ only in what is excluded from the comparison, and which to exclude is
+/// a fact about which moment is asking — so the shell decides it and the webview
+/// supplies only the addresses somebody typed. A front end that named the
+/// network to exclude could hide the warning by naming the wrong one, which is
+/// the same reason `authorize` looks a channel's category up rather than
+/// accepting it on the command (`design/05` §3).
+#[tauri::command]
+fn shared_relays(
+    app: tauri::State<'_, App>,
+    relays: String,
+) -> Result<Vec<dto::SharedRelay>, String> {
+    let network = app.with(|executor| Ok(*executor.store().network()))?;
+    Ok(app
+        .workspace
+        .shared_relays(Some(&network), &addresses(&relays))
+        .into_iter()
+        .map(dto::SharedRelay::of)
+        .collect())
+}
+
+/// The same question for a network that does not exist yet.
+///
+/// Creating one with a relay is a designation like any other, and it is the
+/// first one most people make. Nothing is excluded, because there is no network
+/// to exclude — and excluding the *open* one instead would hide an overlap with
+/// the network the member is looking at while they make a second.
+#[tauri::command]
+fn shared_relays_for_new_network(
+    app: tauri::State<'_, App>,
+    relays: String,
+) -> Result<Vec<dto::SharedRelay>, String> {
+    Ok(app
+        .workspace
+        .shared_relays(None, &addresses(&relays))
+        .into_iter()
+        .map(dto::SharedRelay::of)
+        .collect())
+}
+
+/// Splits what somebody typed into addresses, validating nothing.
+///
+/// Both designation paths parse and refuse properly on the way in; this one is
+/// asked *before* that, about text still being edited, so it must answer for
+/// whatever it is given rather than refuse. An address too malformed to carry a
+/// peer id is simply not compared (`Workspace::shared_relays`).
+fn addresses(relays: &str) -> Vec<String> {
+    relays
+        .split_whitespace()
+        .filter(|address| !address.is_empty())
+        .map(str::to_owned)
+        .collect()
+}
+
 /// Designates this network's relays, replacing whatever it named before.
 ///
 /// The gap this closes: the command, its gate and its executor have existed
@@ -834,11 +896,7 @@ fn set_relays(
     app: tauri::State<'_, App>,
     relays: String,
 ) -> Result<(), String> {
-    let relays: Vec<String> = relays
-        .split_whitespace()
-        .filter(|address| !address.is_empty())
-        .map(str::to_owned)
-        .collect();
+    let relays = addresses(&relays);
     if relays.is_empty() {
         return Err("give at least one relay address".to_owned());
     }
@@ -1490,11 +1548,7 @@ fn create_network(
     // A relay is optional here and required before inviting anybody (Core §5.5),
     // which is the honest ordering: you can make a network alone, and you cannot
     // hand somebody a way in until it has an entry point.
-    let relays: Vec<String> = relay
-        .split_whitespace()
-        .filter(|address| !address.is_empty())
-        .map(str::to_owned)
-        .collect();
+    let relays = addresses(&relay);
 
     let store = app.workspace.create(name.trim(), relays)?;
     let path = store.root().to_path_buf();
@@ -1886,6 +1940,8 @@ fn main() {
             relays,
             people,
             set_relays,
+            shared_relays,
+            shared_relays_for_new_network,
             restart_node,
             edit_message,
             delete_message,

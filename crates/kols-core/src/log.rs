@@ -22,7 +22,7 @@
 use crate::{ChannelId, CoreError, Record, Segment, author_log_pointer, author_segment_pointer};
 use intranet_governance::{ContentType, GovernanceState, PointerId};
 use intranet_identity::PerNetworkIdentity;
-use intranet_storage::{Cid, ChunkSpec, Dek, EncodedObject, Manifest, MutablePointer};
+use intranet_storage::{AppendOnlyObject, Cid, ChunkSpec, Dek, EncodedObject, Manifest, MutablePointer};
 
 /// The content type an author log is published under.
 ///
@@ -37,7 +37,14 @@ pub const CHAT_LOG_CONTENT_TYPE: &str = "chat-log";
 #[derive(Debug, Clone)]
 pub struct Published {
     /// The encoded object: manifest plus every chunk's ciphertext.
-    pub object: EncodedObject,
+    ///
+    /// **Shared rather than copied**, because a publish per append would
+    /// otherwise copy the whole segment each time — which is the same cost the
+    /// incremental encoding was built to remove, arriving one layer up. The
+    /// encoder mutates through `Arc::make_mut`, so a caller still holding a
+    /// previous publish gets a copy at that moment and nobody sees an object
+    /// change under them.
+    pub object: std::sync::Arc<EncodedObject>,
     /// The signed pointer naming it.
     pub pointer: MutablePointer,
     /// Chunks this publish introduced that the previous version did not have.
@@ -84,6 +91,29 @@ pub struct AuthorLog {
     segment: Segment,
     pointer: Option<MutablePointer>,
     previous_manifest: Option<Manifest>,
+    /// The segment's encoding, extended rather than redone on each append.
+    ///
+    /// Held behind an `Arc` so that handing it to a caller costs a refcount
+    /// rather than a copy of the segment.
+    ///
+    /// Chunking and sealing the whole segment per append is what made a publish
+    /// cost the size of everything already in it — the hundred-thousandth record
+    /// paying for the ninety-nine thousand before it. Content-defined chunking
+    /// settles every boundary but the last, so an append can only move the tail
+    /// (Storage §1.3), and [`AppendOnlyObject`] is that property made usable.
+    ///
+    /// Reset wherever the bytes ahead of the records change — at a seal, which
+    /// gives the segment a new sequence and predecessor, and at a rebase, which
+    /// replaces the record set outright.
+    encoder: std::sync::Arc<AppendOnlyObject>,
+    /// Records pushed since the last publish.
+    ///
+    /// A pointer version is only reachable through the record before it, so a
+    /// publish that covers several pushes has to walk the version forward once
+    /// per record rather than jumping. Counting them is what lets pushing and
+    /// publishing come apart without the version meaning something different
+    /// than it did when every push published.
+    unpublished: u64,
 }
 
 impl std::fmt::Debug for AuthorLog {
@@ -158,7 +188,7 @@ pub fn publish_head_index(
 
     let new_chunks = object.manifest.chunks.clone();
     Ok(Published {
-        object,
+        object: std::sync::Arc::new(object),
         pointer,
         new_chunks,
     })
@@ -173,14 +203,20 @@ impl AuthorLog {
         spec: ChunkSpec,
     ) -> Self {
         let author_id = author.id();
+        let segment = Segment::new(channel, author_id, 0, None);
+        let mut encoder = AppendOnlyObject::new(spec);
+        encoder.extend(&segment.header_bytes(), &dek);
+        let encoder = std::sync::Arc::new(encoder);
         Self {
             channel,
             pointer_id: author_segment_pointer(&channel, &author_id, 0),
             dek,
             spec,
-            segment: Segment::new(channel, author_id, 0, None),
+            segment,
             pointer: None,
             previous_manifest: None,
+            unpublished: 0,
+            encoder,
         }
     }
 
@@ -206,6 +242,30 @@ impl AuthorLog {
         record: Record,
         state: &GovernanceState,
     ) -> Result<Published, CoreError> {
+        self.push(author, record)?;
+        self.publish_current(author, state)
+    }
+
+    /// Appends a record **without** publishing.
+    ///
+    /// The same checks [`append`](Self::append) makes and none of its work. It
+    /// exists because rebuilding a log means replaying every record the author
+    /// ever wrote in the channel, and publishing per record makes that
+    /// **quadratic**: each publish re-chunks, re-encrypts and re-hashes the
+    /// whole segment so far, so replaying `n` records does `n²/2` records' worth
+    /// of cryptography to reach a state one encode of the final segment produces
+    /// identically — and then discards every intermediate answer.
+    ///
+    /// Measured before this existed: a send in a channel holding a thousand of
+    /// the author's own records cost 298 ms, against 2.5 ms at twenty-five
+    /// (`design/05` §5). Nothing bounded it — not sealing, which this walks
+    /// past, and not retention, which drops what is published rather than what
+    /// is stored.
+    ///
+    /// A caller that pushes must publish before the result is used for anything,
+    /// which is why this returns nothing worth keeping: there is no half-written
+    /// state to be handed around, only a segment that has not been encoded yet.
+    pub fn push(&mut self, author: &PerNetworkIdentity, record: Record) -> Result<(), CoreError> {
         if record.channel != self.channel || record.author != author.id() {
             return Err(CoreError::BadSignature);
         }
@@ -226,8 +286,11 @@ impl AuthorLog {
             });
         }
 
+        let dek = self.dek.clone();
+        std::sync::Arc::make_mut(&mut self.encoder).extend(&crate::framed(&record), &dek);
         self.segment.records.push(record);
-        self.publish(author, state)
+        self.unpublished += 1;
+        Ok(())
     }
 
     /// Seals the open segment and starts the next one under a fresh key.
@@ -266,22 +329,43 @@ impl AuthorLog {
         // against an object encrypted under a key this segment does not use.
         self.pointer = None;
         self.previous_manifest = None;
+        // The new segment has had nothing pushed to it. Zero already, since
+        // sealing follows a publish, and set anyway rather than relying on a
+        // caller's ordering to keep a version count honest.
+        self.unpublished = 0;
+        // A new sequence and a new predecessor mean different header bytes and a
+        // different key, so nothing the previous encoding settled applies here.
+        let dek = self.dek.clone();
+        let mut fresh = AppendOnlyObject::new(self.spec);
+        fresh.extend(&self.segment.header_bytes(), &dek);
+        self.encoder = std::sync::Arc::new(fresh);
     }
 
     /// Encodes and signs the current segment as a new pointer version.
-    fn publish(
+    ///
+    /// **One encode however many records were pushed**, which is the whole point
+    /// of [`push`](Self::push) existing beside [`append`](Self::append). The
+    /// pointer version still advances once per record, because a version is only
+    /// reachable through the one before it — but signing a small record `n`
+    /// times is not the same order of work as encrypting a growing segment `n`
+    /// times, and only the last of those pointers is ever announced.
+    pub fn publish_current(
         &mut self,
         author: &PerNetworkIdentity,
         state: &GovernanceState,
     ) -> Result<Published, CoreError> {
-        let object = intranet_storage::encode(&self.segment.canonical_bytes(), &self.dek, self.spec);
+        let object = self.encoder.shared();
 
         let new_chunks = match &self.previous_manifest {
             Some(previous) => object.new_chunks_since(previous),
             None => object.manifest.chunks.clone(),
         };
 
-        let pointer = match &self.pointer {
+        // At least one, so publishing a segment nothing was pushed to still
+        // advances the version — which is what an unconditional republish on
+        // every tick has always done.
+        let versions = self.unpublished.max(1);
+        let mut pointer = match &self.pointer {
             None => MutablePointer::publish(
                 author,
                 self.pointer_id,
@@ -293,6 +377,12 @@ impl AuthorLog {
             Some(prior) => prior.update(author, object.manifest_cid(), state),
         }
         .map_err(CoreError::Storage)?;
+        for _ in 1..versions {
+            pointer = pointer
+                .update(author, object.manifest_cid(), state)
+                .map_err(CoreError::Storage)?;
+        }
+        self.unpublished = 0;
 
         self.pointer = Some(pointer.clone());
         self.previous_manifest = Some(object.manifest.clone());
@@ -364,6 +454,17 @@ impl AuthorLog {
                 .manifest,
         );
 
-        self.publish(author, state)
+        // **Rebuilt whole rather than extended, because this is not an append.**
+        // A rebase replaces the record set with a union of two, so records may
+        // land ahead of ones already encoded — the one case where nothing before
+        // the tail is settled. Cheap by comparison and rare by construction: it
+        // happens when two devices published the same log concurrently, which is
+        // `design/01` §3.1.1's case and not a per-record one.
+        let dek = self.dek.clone();
+        let mut fresh = AppendOnlyObject::new(self.spec);
+        fresh.extend(&self.segment.canonical_bytes(), &dek);
+        self.encoder = std::sync::Arc::new(fresh);
+
+        self.publish_current(author, state)
     }
 }

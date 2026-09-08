@@ -19,7 +19,14 @@ It is updated in the same change that moves work, never afterwards from memory.
 A Discord-shaped chat client on the Distributed Intranet protocol. A "server" is a network:
 its own governance log, membership, epoch key chain and DHT namespace.
 
-Three repositories, side by side, all on `main` and pushed:
+Three repositories, side by side:
+
+**Two of them have work on a branch that `main` does not have**, which this line used to deny —
+it said all three were on `main` and pushed, and that stopped being true without anything
+noticing. Read the branch before assuming what a clone gets: `ko-ls` is on
+`replica-duty-and-storage-ceilings` and `distributed-intranet` on
+`close-the-moderation-head-question`, both pushed to their own remote branch and neither merged.
+Anything cloning `main` gets neither the storage work nor anything after it.
 
 | Repo | Remote | What it is |
 |---|---|---|
@@ -113,8 +120,8 @@ over the same `kols-api` boundary, owed no feature parity and no end-user docume
   contribute, presence, storage, history, and channel
   create/list/rename/topic/slowmode/archive.
 
-**Gates green as of this date:** 332 tests here, 672 in `../distributed-intranet`, clippy
-clean in both, and `crates/kols-ui/drive.mjs`'s 78 checks green by hand. O20 reproduced once
+**Gates green as of this date:** 345 tests here, 680 in `../distributed-intranet`, clippy
+clean in both, and `crates/kols-ui/drive.mjs`'s 84 checks green by hand. O20 reproduced once
 across four full-width runs on 2026-08-31 and 2026-09-01, which makes it **intermittent rather
 than deterministic** — `CONTRIBUTING.md` said it failed on every full-workspace run, and that
 was a run of bad luck rather than a property. The one failure arrived directly after a
@@ -142,25 +149,24 @@ not, the dependency is named in the owning document.
 | # | Owed | Specified in |
 |---|---|---|
 | O1 | Commands for direct messages, search, voice and stage — each has a line in `design/05` §3's boundary *grammar* and nothing in `kols-api`. **`SetContribution` and `SetPresence` are built** (25 commands now); the rest wait on E10/E13, `03` §6's indexes, and `kols-media` | `design/05` §3, `design/00` §5 |
-| O2 | `Discovery::Off` for conversation-profile networks. **Load-bearing for privacy rather than merely leaner**: with discovery on, a DM node meeting a peer at the shared network's relay lands in its routing table, which is the correlation D29 forbids | `design/06` §12, `design/09` §3 |
 | O4 | `kols-store` does not exist; `kols-node` carries a file-backed store instead of the SQLite projection | `design/05` §2, §5 |
-| O5 | The executor rebuilds an author's whole log to append one record, and replay walks the log once per question | `design/05` §5 |
+| O5 | **Fixed 2026-09-08: a send is now flat in history.** 298 ms at a thousand of an author's records became 1.8 ms, and 2.1 ms at six thousand. Two costs went: every `append` re-encoded the whole segment, so a rebuild did n²/2 records' worth of cryptography; and the executor rebuilt a log at all, which it only ever needed for a byte count nothing consumed. It now answers the three questions a write asks — newest reading, newest message reading, count in the trailing minute — from a small per-channel index, and publishes nothing. `serve`'s per-tick pass skips channels with nothing new. **And the constant went too**: `AppendOnlyObject` upstream re-chunks an append's tail rather than the whole segment — 6.5 ms to 0.12 ms per append at ten thousand records, flat against linear — with Storage §1.3 amended to require the property it rests on | `design/05` §5, Storage §1.3 |
 | O7 | **No credentials and no backup.** Seeds are written to `<home>/seed` in the clear, so anything with read access to that disk is that member. **A release gate, not a feature** | `design/02` §6.3, `design/00` §5 |
-| O11 | A relay may not be shared between two of a member's networks, and **nothing enforces it**. Enforcing it means network-scoping the protocol names, which is a wire change rather than a client fix | `design/00` D29, `design/09` §3 |
 | O15 | **Provider discovery through a peer that is not the holder has never been observed.** Narrower than this entry used to claim: `three_nodes.rs` does prove a node serves an object it did not author, with the fetcher pointed at one peer and the author offline. But the fetcher is *connected* to the holder there, so a one-hop table and a working DHT behave identically — forcing the two apart is the remaining test, and needs the Docker NAT matrix rather than local daemons | `design/05` §8 |
 | O20 | **The daemon suite run starved is unreliable**, and `CONTRIBUTING.md` asks for exactly that run. One or two of eleven time out in `wait_for` under `taskset -c 0,1`; each passes alone. Measured at `main` on 2026-08-29, so it is the suite rather than any change — but it makes the starved run a signal to isolate rather than a gate, which is weaker than what it was added for | `CONTRIBUTING.md`, `tests/common::patience` |
 
-O3, O6, O8, O9, O10, O12, O13, O14, O17, O18, O21, O22, O23 and O24 are closed. What each was, and what closing it turned up,
+O2, O3, O6, O8, O9, O10, O12, O13, O14, O17, O18, O21, O22, O23 and O24 are closed. What each was, and what closing it turned up,
 is in [`docs/log.md`](docs/log.md). The numbers are retired rather than reused, so the log
 stays readable.
 
-**O16, O19 and O25 are accepted rather than closed, which is a different thing and is why they
-are named separately.** None was fixed; all were decided against — O16 and O19 on 2026-09-07,
-O25 on 2026-09-08 — and an accepted limit left in the table above would read as a fix nobody
-had got round to.
+**O11, O16, O19 and O25 are accepted rather than closed, which is a different thing and is why
+they are named separately.** None was fixed; all were decided against — O16 and O19 on
+2026-09-07, O25 and O11 on 2026-09-08 — and an accepted limit left in the table above would read
+as a fix nobody had got round to.
 
 | # | Accepted limit | Decided in |
 |---|---|---|
+| O11 | **A relay shared between two of a member's networks is warned about and never refused.** Enforcing it means network-scoping the protocol names, which is a wire change and not a client fix — and refusing would stop the honest case while the determined one designates the address anyway, as well as blocking a member legitimately relaying on their own LAN for two of their own networks. What the client owed was the notice, since it holds the workspace and is the only party that can see this at all, and **that is built**: both designations warn, comparing by peer id rather than by address because one relay answers at several | `design/00` D29, `design/09` §3 |
 | O16 | **This client does not dial a LAN peer that mDNS finds.** A node that did would make two of a member's networks correlatable by anyone watching that LAN — D29 one layer down, reached with no relay involved. The cost is that two members in one room still need a routable third party to meet, which is narrow and is the price of the property | `design/00` §6 |
 | O19 | **A role cannot be deleted.** `EntryBody` expresses no group removal, so a role can be emptied of capabilities and members and its name stays in replayed history. A role holding nothing grants nothing, and no protocol change is being asked for — the interface explains the limit instead | `design/05` §3 |
 | O25 | **A node holds only what it can read**, so a storage offer funds durability for the channels its owner is keyed for and no others. Kept deliberately: the alternative is nodes hoarding ciphertext against keys they do not have, which gives up the forward secrecy `03` §3.1 chose MLS for — an epoch key compromised later cannot open bytes a node never kept. **It costs nothing today**, because roster keying is unbuilt and every member can decrypt every channel; `channel_dek` derives from the network epoch regardless of a channel's privacy flag. What it will cost when private channels land is written down as a requirement of that work rather than left to be discovered during it | `design/03` §3.5, `design/06` E2 |

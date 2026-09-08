@@ -410,6 +410,32 @@ pub struct Relays {
     pub failures: Vec<String>,
 }
 
+/// A relay one of this member's other networks already designates — D29.
+///
+/// Answered before a designation rather than reported after one, because the
+/// point of it is that the member gets to decide. The client is the only party
+/// that can see this at all: the relay replays no log (Core §5.5) and neither
+/// network's other members can see across the two.
+#[derive(Debug, Serialize)]
+pub struct SharedRelay {
+    /// The address as this member just typed it.
+    pub relay: String,
+    /// The other network's local label, which may be empty.
+    pub label: String,
+    /// The other network's id, as hex.
+    pub id: String,
+}
+
+impl SharedRelay {
+    pub fn of(shared: kols_node::workspace::SharedRelay) -> Self {
+        Self {
+            relay: shared.relay,
+            label: shared.label,
+            id: shared.id,
+        }
+    }
+}
+
 #[derive(Debug, Serialize)]
 pub struct Me {
     /// A short form of this member's identity in this network.

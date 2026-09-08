@@ -83,6 +83,19 @@ pub const SEAL_TARGET_BYTES: usize = 4 * 1024 * 1024;
 /// the segment that needs splitting is the sparse one.
 const SEAL_TARGET_SPAN_MILLIS: i64 = 24 * 60 * 60 * 1000;
 
+/// How often a log is re-announced when nothing has been added to it.
+///
+/// Provider records expire — Search §3.2 settles the TTL at 24 hours and says
+/// why the cadence must sit comfortably inside it: entries that lapse between
+/// refreshes take content out of reach while its holder is online and serving.
+/// An hour is far inside that, and the asymmetry is deliberate. Being early
+/// costs one pass over a log that has not changed; being late costs content that
+/// exists and cannot be found.
+///
+/// **This used to be every tick**, which is to say every two seconds, because
+/// the pass had no way to tell a log that had changed from one that had not.
+const REANNOUNCE_INTERVAL_MILLIS: i64 = 60 * 60 * 1000;
+
 /// How recent a record has to be for the live path to still carry it.
 ///
 /// Publishing fails while nobody is subscribed to a topic, and a failed publish
@@ -209,8 +222,31 @@ pub async fn serve(
     // and two would each advance it without seeing the other.
     let claim = store.hold_node().map_err(|e| e.to_string())?;
     let identity = store.identity().map_err(|e| e.to_string())?;
+    // Provider records name a *swarm*, and this one is new. See
+    // `Store::forget_announcements` — the chunks survived and the announcements
+    // did not, and the difference is invisible until somebody cannot fetch.
+    store
+        .forget_announcements()
+        .map_err(|e| e.to_string())?;
 
-    let mut node = MemberNode::new(&identity).map_err(|err| format!("could not start: {err}"))?;
+    // **Decided from the network's own policy, before the node exists.** Core
+    // §5.1.1 fixes the behaviour set at construction, so this is not a setting
+    // that can be corrected later — which is also why it is read here rather
+    // than passed in: what the node is follows from what the network is, and a
+    // caller supplying it could give a conversation a routing table.
+    //
+    // A store whose log has not arrived yet replays to nothing and reads as
+    // `server`. That is the right direction for a server and is the one window a
+    // conversation has, since a joiner cannot learn the profile before it syncs
+    // and an invite carries only connection bootstrap (Core §5.7). Closing it is
+    // E10's, which knows what it accepted — recorded in `design/09` §2 rather
+    // than left here.
+    let discovery = store
+        .state()
+        .map(|state| crate::discovery_for(&state.policy))
+        .unwrap_or(intranet_transport::Discovery::Full);
+    let mut node = MemberNode::with_discovery(&identity, discovery)
+        .map_err(|err| format!("could not start: {err}"))?;
     // **Dual-stack unless told otherwise, and this is load-bearing.**
     //
     // This bound `/ip4/0.0.0.0/tcp/0` and nothing else: no IPv6, no QUIC. Core
@@ -251,6 +287,19 @@ pub async fn serve(
 
     crate::say!(report, "serving as {}", identity.id().short());
     crate::say!(report, "  peer id   {}", node.peer_id());
+    // Said only where it is not the default, so the ordinary output is unchanged
+    // and the interesting case is the one that shows. This is also the only
+    // outward sign of it: a node without discovery listens, dials, relays,
+    // hole-punches, gossips and serves exactly as one with it, so nothing else
+    // about a running conversation would look any different.
+    //
+    // **Asked of the node rather than read off `discovery`**, which is the same
+    // distinction the test on this had to learn: the variable is what this code
+    // wanted, and only the node knows what was built. A line derived from the
+    // request would still print if the constructor had ignored it.
+    if node.discovery() == intranet_transport::Discovery::Off {
+        crate::say!(report, "  discovery off — a conversation has nobody to find");
+    }
 
     // Both of these are best-effort at startup and repeated after every
     // governance sync, because a node that has just attached to a network is
@@ -1385,6 +1434,37 @@ fn publish_own_logs(
     let spec = ChunkSpec::from_target(64 * 1024);
 
     for channel in store.channels_with_records().map_err(|e| e.to_string())? {
+        // **Nothing to publish is the common case and used to cost the most.**
+        // This pass rebuilt every channel's whole chain from stored records and
+        // republished every segment on **every tick**, whether or not anything
+        // had been written — so an idle node re-read, re-encoded and re-announced
+        // its entire history every two seconds, forever, and the cost of doing
+        // so grew with the history. Asking first is one small file read.
+        //
+        // The comparison is the newest reading this member wrote against the one
+        // this log was last published through, and the index that answers the
+        // first is maintained by `put_record` however a record arrived — so a
+        // record that came over the wire counts as a change exactly as one typed
+        // here does.
+        let latest = store
+            .own_readings(&channel)
+            .map_err(|e| e.to_string())?
+            .last;
+        let Some(latest) = latest else {
+            continue;
+        };
+        // Re-announced on its own cadence regardless, because provider records
+        // expire (Search §3.2's TTL) and a log nobody has added to still has to
+        // stay findable. Far inside that TTL rather than close to it: the cost of
+        // being early is one pass, and the cost of being late is content that
+        // exists and cannot be found.
+        let stale = store
+            .last_announced(&channel)
+            .is_none_or(|at| now.saturating_sub(at) >= REANNOUNCE_INTERVAL_MILLIS);
+        if store.published_through(&channel) == Some(latest) && !stale {
+            continue;
+        }
+
         let own = store
             .own_records(&channel, &identity.id())
             .map_err(|e| e.to_string())?;
@@ -1403,15 +1483,24 @@ fn publish_own_logs(
         // record a segment carries, and that is only known once the segment is
         // complete.
         let mut newest = 0i64;
-        let mut latest: Option<kols_core::Published> = None;
 
         for record in own {
-            // **Checked before the append, not after.** Sealing after the record
+            // **Checked before the push, not after.** Sealing after the record
             // that crosses the threshold leaves the pass ending on an empty new
             // segment — nothing to publish, and a head index naming a segment
             // that does not exist. Sealing lazily, when the next record needs
             // somewhere to go, means the head always has content.
-            if let Some(complete) = latest.take_if(|_| should_seal(&log, seal_bytes)) {
+            //
+            // **The encode happens here and not per record**, which is what
+            // stops this pass being quadratic. It used to publish every record
+            // as it went and keep only the last result — re-chunking and
+            // re-encrypting the whole segment each time, on every sync tick,
+            // forever. A segment is encoded once now: when it is sealed, and
+            // once more for the head at the end.
+            if should_seal(&log, seal_bytes) && !log.segment().records.is_empty() {
+                let complete = log
+                    .publish_current(&identity, &state)
+                    .map_err(|err| format!("a stored segment no longer publishes: {err}"))?;
                 if publish_retained(
                     store, node, &identity, &pointer, &dek, &complete, newest, &retention, now,
                 )? {
@@ -1423,15 +1512,20 @@ fn publish_own_logs(
                 log.seal(complete.object.manifest_cid(), dek.clone());
             }
             newest = record.hlc.wall_millis;
-            latest = Some(
-                log.append(&identity, record, &state)
-                    .map_err(|err| format!("a stored record no longer appends: {err}"))?,
-            );
+            log.push(&identity, record)
+                .map_err(|err| format!("a stored record no longer appends: {err}"))?;
         }
 
-        let Some(head) = latest else {
+        // Asked of the segment rather than tracked in a flag: the open segment
+        // is empty exactly when the last record sealed one and nothing followed,
+        // and a head index naming a segment with no content is the state the
+        // lazy seal above exists to avoid.
+        if log.segment().records.is_empty() {
             continue;
-        };
+        }
+        let head = log
+            .publish_current(&identity, &state)
+            .map_err(|err| format!("a stored segment no longer publishes: {err}"))?;
         if publish_retained(
             store, node, &identity, &pointer, &dek, &head, newest, &retention, now,
         )? {
@@ -1450,6 +1544,17 @@ fn publish_own_logs(
                 .map_err(|err| format!("could not publish a head index: {err}"))?;
         let _ = publish_segment(node, &index);
         wrap_for(store, node, &identity, &index_pointer, &index_dek);
+
+        // Marked only once everything above succeeded, so a pass that failed
+        // halfway is repeated rather than skipped. Both are written: the reading
+        // says whether there is anything new, and the time says whether what is
+        // already published is still findable.
+        store
+            .set_published_through(&channel, latest)
+            .map_err(|e| e.to_string())?;
+        store
+            .set_last_announced(&channel, now)
+            .map_err(|e| e.to_string())?;
     }
     Ok(published)
 }

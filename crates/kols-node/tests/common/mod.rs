@@ -281,3 +281,74 @@ pub fn field(output: &str, prefix: &str) -> String {
         .trim()
         .to_owned()
 }
+
+/// Runs a node in-process just long enough for it to start, and returns the
+/// lifecycle lines it reported.
+///
+/// For the two things that need a live node but not a second *process*: the
+/// founder's epoch group, which only `serve` creates (Core §3.3, and without
+/// which nothing can be posted), and the startup report itself. A `kols serve`
+/// subprocess answers both and costs the whole suite a daemon — `CONTRIBUTING.md`
+/// and O20 on why that is not free. This costs about half a second, binds one
+/// loopback port, and leaks nothing when a test fails.
+///
+/// Stopped by dropping the future, which is how a caller stops a node: there is
+/// no shutdown signal to forget to send. It returns as soon as the node has said
+/// what it is rather than on the deadline, so the deadline only costs anything
+/// on a machine slow enough to need it.
+pub fn brief_run(root: PathBuf) -> Vec<String> {
+    let collected = std::sync::Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
+    let sink: kols_node::serve::Sink = std::sync::Arc::new(|_events| {});
+    let report: kols_node::Report = {
+        let collected = std::sync::Arc::clone(&collected);
+        std::sync::Arc::new(move |line: &str| {
+            collected
+                .lock()
+                .expect("the collector is not poisoned")
+                .push(line.to_owned());
+        })
+    };
+
+    tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+        .expect("a runtime")
+        .block_on(async {
+            let out = kols_node::serve::Output {
+                events: &sink,
+                report: &report,
+            };
+            let serving = kols_node::serve::serve(
+                root,
+                "/ip4/127.0.0.1/tcp/0",
+                &[],
+                kols_node::serve::SEAL_TARGET_BYTES,
+                false,
+                kols_node::serve::LIVE_WINDOW_MILLIS,
+                &out,
+            );
+            tokio::pin!(serving);
+            let deadline = tokio::time::sleep(patience(Duration::from_secs(20)));
+            tokio::pin!(deadline);
+            loop {
+                let started = collected
+                    .lock()
+                    .expect("the collector is not poisoned")
+                    .iter()
+                    .any(|line| line.contains("peer id"));
+                if started {
+                    break;
+                }
+                tokio::select! {
+                    _ = &mut serving => break,
+                    _ = &mut deadline => break,
+                    () = tokio::time::sleep(Duration::from_millis(25)) => {}
+                }
+            }
+        });
+
+    collected
+        .lock()
+        .expect("the collector is not poisoned")
+        .clone()
+}

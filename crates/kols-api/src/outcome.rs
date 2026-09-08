@@ -46,13 +46,6 @@ pub enum Outcome {
     Wrote {
         /// The record's id.
         record: MessageId,
-        /// Bytes the append actually moved.
-        ///
-        /// The number `design/01` §3.1 exists to keep small, surfaced because a
-        /// client that cannot see it cannot notice it regressing.
-        moved: usize,
-        /// The size of the object it moved them within.
-        total: usize,
     },
     /// A channel was defined.
     ChannelCreated {

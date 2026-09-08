@@ -536,3 +536,49 @@ fn a_rebase_is_idempotent_when_there_is_nothing_to_merge() {
     assert_eq!(log.segment().records.len(), 1);
     assert_eq!(rebased.new_bytes(), 0, "an empty rebase moved bytes");
 }
+
+/// What an append to a growing segment costs — the number Part 2 exists to move.
+///
+/// **Ignored: a measurement rather than an assertion**, and meaningless in a
+/// debug build, where almost all of this is cryptography that `rustc -O0` does
+/// not optimise. Run it deliberately:
+///
+///     cargo test --release -p kols-core --test author_log -- --ignored --nocapture
+#[test]
+#[ignore = "a measurement, not an assertion"]
+fn what_an_append_costs_as_a_segment_grows() {
+    use std::time::Instant;
+
+    let author = identity(1);
+    let state = state(&author);
+    let channel = server_channel_id(&network(), &[9u8; 32]);
+    let mut log = AuthorLog::open(
+        &author,
+        channel,
+        Dek::from_bytes([5u8; 32]),
+        ChunkSpec::from_target(16 * 1024),
+    );
+
+    println!("\n  records    per append");
+    let batch = 500;
+    for round in 0..20u32 {
+        let started = Instant::now();
+        for i in 0..batch {
+            let record = Record::create(
+                &author,
+                channel,
+                Hlc::new(1_700_000_000_000, round * batch + i),
+                message(&format!(
+                    "message {i} — realistic chat length, a sentence or so of text."
+                )),
+            );
+            log.append(&author, record, &state).expect("appends");
+        }
+        let took = started.elapsed();
+        println!(
+            "  {:>7}    {:>8.3}ms",
+            (round + 1) * batch,
+            took.as_secs_f64() * 1000.0 / f64::from(batch)
+        );
+    }
+}

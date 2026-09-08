@@ -1,14 +1,14 @@
-//! Building an author's log out of the records this node stored.
+//! The next reading an author may write, and the one clock read in the program.
 //!
-//! What is left here after the executor took the commands: the two facts about
-//! an author log that both the executor and the daemon need, and the one clock
-//! read in the program.
+//! **This used to build author logs**, and `rebuild_log` was what made a send
+//! linear in everything the member had ever written — it replayed every record
+//! into a segment it never sealed, so the executor encoded the whole history as
+//! one object to answer a question about the next reading. The executor stops
+//! there now (`design/05` §5) and the daemon does its own replay, so the
+//! rebuilding this module was named for has no callers and is gone rather than
+//! kept for a future one.
 
-use crate::store::Store;
-use intranet_governance::GovernanceState;
-use intranet_identity::PerNetworkIdentity;
-use intranet_storage::ChunkSpec;
-use kols_core::{AuthorLog, ChannelId, Hlc};
+use kols_core::Hlc;
 
 /// Wall-clock now, in milliseconds.
 ///
@@ -22,44 +22,22 @@ pub fn now_millis() -> i64 {
         .unwrap_or(0)
 }
 
-/// Rebuilds an author log from the records this node wrote.
-///
-/// An author log is single-writer and append-only, so replaying our own records
-/// in order reproduces the same segment, the same chunks and the same CIDs —
-/// chunk encryption is deterministic per (chunk, DEK), which is the same property
-/// that makes a reader's delta-fetch work.
-pub fn rebuild_log(
-    store: &Store,
-    author: &PerNetworkIdentity,
-    channel: ChannelId,
-    state: &GovernanceState,
-) -> Result<AuthorLog, String> {
-    // The DEK is per author log, not per channel: each author's log is its own
-    // content object, and the pointer it publishes under is what the wrapping
-    // binds to (Storage §5.3).
-    let pointer = kols_core::author_log_pointer(&channel, &author.id());
-    let dek = store.channel_dek(&pointer).map_err(|e| e.to_string())?;
-    let mut log = AuthorLog::open(author, channel, dek, ChunkSpec::from_target(64 * 1024));
-    for record in store
-        .own_records(&channel, &author.id())
-        .map_err(|e| e.to_string())?
-    {
-        log.append(author, record, state)
-            .map_err(|err| format!("a stored record no longer appends: {err}"))?;
-    }
-    Ok(log)
-}
-
 /// The next reading for this author, strictly greater than their last.
 ///
 /// Per (author, device) rather than per author — spec 07 §2.6, learned in P0
 /// when a merged segment interleaving two devices declared every concurrent
 /// recovery invalid.
-pub fn next_hlc(log: &AuthorLog, wall: i64) -> Hlc {
-    match log.segment().records.last() {
-        Some(last) if wall <= last.hlc.wall_millis => {
-            Hlc::new(last.hlc.wall_millis, last.hlc.counter + 1)
-        }
+///
+/// **Takes the last reading rather than a log**, which is a fix as well as a
+/// saving. Read off the open segment, this returned `None`'s branch on a segment
+/// that had just been sealed — so the reading before the seal was invisible, and
+/// nothing would have caught the result going backwards across the boundary:
+/// `AuthorLog::push` checks monotonicity only within the segment it is pushing
+/// to. The index that supplies this keeps the newest reading for the life of the
+/// channel, so a seal is not a place where history begins again.
+pub const fn next_hlc(last: Option<Hlc>, wall: i64) -> Hlc {
+    match last {
+        Some(last) if wall <= last.wall_millis => Hlc::new(last.wall_millis, last.counter + 1),
         _ => Hlc::new(wall, 0),
     }
 }

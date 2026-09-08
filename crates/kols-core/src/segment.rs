@@ -77,6 +77,26 @@ impl Segment {
     /// *Found by the P0 spike measuring bytes actually moved, not by reading the
     /// design. `design/08` §6 records it.*
     pub fn canonical_bytes(&self) -> Vec<u8> {
+        let mut bytes = self.header_bytes();
+        for record in &self.records {
+            bytes.extend_from_slice(&framed(record));
+        }
+        bytes
+    }
+
+    /// Everything ahead of the record list — the part an append cannot change.
+    ///
+    /// Split out so a segment can be encoded incrementally: with the header
+    /// fixed and each record framed independently, appending a record appends
+    /// its bytes and disturbs nothing before them. That is the same property
+    /// spec 07 §3.5 relies on when it drops the count prefix — a count at the
+    /// head would change on every append and give the first chunk a new address
+    /// each time — read one level up, where it lets the chunker keep everything
+    /// it has already sealed.
+    ///
+    /// Fixed once the segment exists: `sequence` and `previous` are set at
+    /// creation or at a seal, and neither moves while records are being added.
+    pub fn header_bytes(&self) -> Vec<u8> {
         let mut e = Enc::domain(SEGMENT_DOMAIN);
         self.channel.encode(&mut e);
         self.author.encode(&mut e);
@@ -84,9 +104,6 @@ impl Segment {
         e.option(self.previous.as_ref(), |e, cid| {
             e.fixed(cid.hash().as_bytes());
         });
-        for record in &self.records {
-            e.bytes(&record.canonical_bytes());
-        }
         e.finish()
     }
 
@@ -178,4 +195,17 @@ impl Segment {
 
         ascending && per_device_strict
     }
+}
+
+/// One record as a segment carries it: its canonical bytes, length-prefixed.
+///
+/// The unit an append adds. Exposed beside [`Segment::header_bytes`] so that a
+/// caller encoding incrementally frames a record exactly as
+/// [`Segment::canonical_bytes`] does — the two must agree byte for byte or the
+/// incremental path produces a different object from the whole one, which is
+/// content addressing quietly meaning two things.
+pub fn framed(record: &Record) -> Vec<u8> {
+    let mut e = Enc::new();
+    e.bytes(&record.canonical_bytes());
+    e.finish()
 }

@@ -454,6 +454,41 @@ function short(address) {
   return parts.length === 2 ? `${parts[0]}/…${parts[1].slice(-6)}` : address;
 }
 
+/// Warns when a relay about to be designated is one another of your networks
+/// already uses — D29, and the concern is mechanical rather than stylistic.
+/// `kad` runs under one protocol name for every network, so two networks meeting
+/// at one relay share a routing table and their members become mutually
+/// discoverable: the correlation separate identities exist to prevent, reached
+/// with nobody attacking anything.
+///
+/// **It warns and never refuses** (`design/09` §3). So this asks, and then does
+/// as it is told — a refusal would be unenforceable anyway, and would block a
+/// member relaying on their own LAN for two of their own networks.
+///
+/// Native rather than in the document, per §6.5: anything asking a member to
+/// authorise something lives outside the DOM a theme can reach.
+async function agreedToShareRelay(command, relays) {
+  if (!relays.trim()) return true;
+  let shared;
+  try {
+    shared = await invoke(command, { relays });
+  } catch {
+    // A check that could not run must not stop a designation. This warning is
+    // the one thing the client can see that nobody else can, not a gate — and
+    // failing closed here would make an unrelated fault look like a refusal.
+    return true;
+  }
+  if (shared.length === 0) return true;
+  const named = shared
+    .map((it) => `${short(it.relay)} — also used by ${it.label || it.id.slice(0, 12)}`)
+    .join("\n");
+  return confirm(
+    `Another of your networks already uses this relay.\n\n${named}\n\n` +
+      "Members of both may become able to discover each other, which is the " +
+      "thing separate networks exist to prevent. Use it anyway?",
+  );
+}
+
 /// Keeps the waiting room fresh while a member who can admit is looking at it.
 function watchDoor(may_invite) {
   if (state.doorPoll) {
@@ -1988,6 +2023,10 @@ el("relay-form").addEventListener("submit", async (event) => {
   event.preventDefault();
   const relays = el("relay-input").value.trim();
   if (!relays) return;
+  // Asked before anything is submitted: this becomes a governance entry every
+  // member replays, so the moment to raise it is the one where it can still be
+  // decided rather than reported.
+  if (!(await agreedToShareRelay("shared_relays", relays))) return;
 
   const button = event.target.querySelector("button");
   const error = el("relay-error");
@@ -2074,6 +2113,10 @@ el("maker").addEventListener("submit", async (event) => {
   const name = el("new-name").value.trim();
   const relay = el("new-relay").value.trim();
   if (!name) return;
+  // Creating a network with a relay is a designation like any other, and it is
+  // the first one most people make — so the warning has to reach here too, or it
+  // would cover the rarer half of the act it exists for.
+  if (!(await agreedToShareRelay("shared_relays_for_new_network", relay))) return;
   try {
     await invoke("create_network", { name, relay });
     el("new-name").value = "";

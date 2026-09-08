@@ -1,6 +1,6 @@
 # Required Protocol Extensions
 
-**Document status:** v2.3 — **E16 landed**, as Core §2.5.1, and it came with a second rule the proposal had not seen: an entry needing no capability must carry no fork-choice weight, so a departure is excluded from branch length alongside device certificates. §16 also corrects the capability it named: the entry is gated on `manage-membership`, not `revoke-node`, which is what the epoch rotation needs. What the client owes is unchanged and is O22. Previously v2.2 — **E16 added**: there is no way to leave a network, because every membership change is gated on `revoke-node` and the one member who knows they are leaving is the one who cannot say so; §16 also settles the rejoin question the client was carrying as open, which turns out to be answered already for `forget` and settled since for the leave that would have kept the seed — the client is deliberately not growing one, and §16 says why the protocol should permit it anyway. Previously v2.1 — §13 records that D29 turned E13 from a friction item into the mechanism, and §12 records that `Discovery::Off` is a privacy requirement rather than a saving; both were being carried in a status file. Previously v2.0 — **E14 landed**, as leaf replacement rather than the re-delivery this document asked for;  E1 and E3 withdrawn, **E9, E2, E5, E4, E11 and E12 landed**; E12 narrowed to its protocol half on landing, E13 added from `09`, E14 added from a bug, **E15 added from a divergence this document should have been carrying already**. §2's branch-length and profile-enforcement claims corrected to what landed
+**Document status:** v2.4 — §12 records that E12's first client half is built: a conversation-profile network can be created and its node is constructed without discovery, the accessor that landed upstream beside it, and the obligation this puts on E10 — a joiner cannot know the profile before it syncs, so the DM flow must supply it. Previously v2.3 — **E16 landed**, as Core §2.5.1, and it came with a second rule the proposal had not seen: an entry needing no capability must carry no fork-choice weight, so a departure is excluded from branch length alongside device certificates. §16 also corrects the capability it named: the entry is gated on `manage-membership`, not `revoke-node`, which is what the epoch rotation needs. What the client owes is unchanged and is O22. Previously v2.2 — **E16 added**: there is no way to leave a network, because every membership change is gated on `revoke-node` and the one member who knows they are leaving is the one who cannot say so; §16 also settles the rejoin question the client was carrying as open, which turns out to be answered already for `forget` and settled since for the leave that would have kept the seed — the client is deliberately not growing one, and §16 says why the protocol should permit it anyway. Previously v2.1 — §13 records that D29 turned E13 from a friction item into the mechanism, and §12 records that `Discovery::Off` is a privacy requirement rather than a saving; both were being carried in a status file. Previously v2.0 — **E14 landed**, as leaf replacement rather than the re-delivery this document asked for;  E1 and E3 withdrawn, **E9, E2, E5, E4, E11 and E12 landed**; E12 narrowed to its protocol half on landing, E13 added from `09`, E14 added from a bug, **E15 added from a divergence this document should have been carrying already**. §2's branch-length and profile-enforcement claims corrected to what landed
 **Depends on:** all preceding documents
 **Consumed by:** work in `distributed-intranet`
 
@@ -550,16 +550,38 @@ the reason that call has its own API surface at all.
 governance logs; discovery operations return `None` rather than a query that never resolves;
 storing, serving and announcing content are unaffected. `crates/intranet-transport/tests/discovery_off.rs`.
 
-**What the client still owes** (`09` §2, not this document): choosing `Discovery::Off` for a
+**What the client owed** (`09` §2, not this document): choosing `Discovery::Off` for a
 conversation-profile network, and the hot/warm/cold policy over reservations.
 
-**Neither is built, and the first stopped being an efficiency item.** `kols init` writes no
-`chat:network-profile` key, so every network the client creates is a `server` and there is no
-conversation network to build the leaner node for — `kols_core::policy::conversation_genesis_values`
-exists for one and only a test calls it. What changed the weight of that is D29: with discovery
-on, a DM node meeting a peer at the shared network's relay lands in that relay's routing table,
-which is the shared-routing-table correlation D29 forbids. So `Discovery::Off` for a conversation
-network is a **privacy requirement** rather than a saving, and `09` §3 depends on it being one.
+**The first is built as of 2026-09-08; the second is not.** It stopped being an efficiency item
+before it was built, and the reason is D29: with discovery on, a DM node meeting a peer at the
+shared network's relay lands in that relay's routing table, which is the shared-routing-table
+correlation D29 forbids. So `Discovery::Off` for a conversation network is a **privacy
+requirement** rather than a saving, and `09` §3 depends on it being one.
+
+What made it unbuildable was upstream of the choice rather than the choice itself: no
+conversation network could exist. `kols init` wrote no `chat:network-profile` key — correctly,
+since absent means `server` and writing today's default freezes a network at it — and nothing
+else created networks either, so `kols_core::policy::conversation_genesis_values` existed for a
+profile nothing minted and only a test called it. `Workspace::create_conversation` is that path
+now, and a node reads the profile from replayed policy and is constructed accordingly.
+
+**One small addition landed upstream with it**, recorded here because this document is where
+protocol changes belong even when they are not mechanisms: `MemberNode::discovery()`, a
+read-only accessor reporting the behaviour set a node was **built** with rather than the one its
+caller asked for. No spec text changes and nothing new is owed — it exists because a client that
+decides this per network has to be able to check the node rather than restate its own intent,
+and a report derived from the caller's own argument prints just as happily when construction
+ignored it. Which is not hypothetical: it is the bug the test for this passed over twice before
+the accessor existed.
+
+**And one obligation this creates on E10**, written down before that work rather than during it.
+A joiner builds its node before it can know the profile — an invite carries only connection
+bootstrap (Core §5.7) and the profile lives in a log it has not synced — so a store with no log
+reads as `server` and gets discovery. That is right for a server and wrong for a conversation,
+whose first moments would be spent in a routing table. It costs nothing today, since nothing can
+join a conversation until the DM flow exists, and the flow that accepts a DM request knows what
+it accepted: **E10 must supply the profile to the join path** rather than let it be inferred.
 
 **Note on the wake path, recorded because it was nearly specified as its own mechanism.** No
 wake-up message is needed. Being dialable is what a reservation provides, and the dial *is* the

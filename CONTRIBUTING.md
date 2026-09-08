@@ -160,4 +160,19 @@ Three things about the suite that are not obvious, each learned by getting them 
   as the race the starving was supposed to find.
 
 **Clean up afterwards.** This container's storage is the host's, and a day of cross-compiles
-took `target/` to 11 GB.
+took `target/` to 11 GB. **The budget is about 12 GB across both repositories**, and `cargo`
+never reclaims anything on its own, so it is worth knowing where it actually goes:
+
+- **`target/debug/incremental`** — the largest single thing and pure rebuild speed. It reached
+  4.9 GB across the two repos and costs nothing but a slower next build to delete.
+- **Stale test binaries in `target/debug/deps`** — every test target leaves a hash-named
+  executable per build and the old ones are never swept.
+  `find target/debug/deps -maxdepth 1 -type f -executable -mtime +1 -delete` takes the ones
+  nothing is using.
+- **`target/release`** — only ever built here to measure (`tests/cost.rs`), where a debug build
+  is about forty times slower and answers the wrong question. Delete it when the measuring is
+  done; it is 800 MB.
+
+Both repos build the same dependency tree, so the two `target/` directories are largely a
+duplicate of each other and neither can be shared away — this is why the number is the sum
+rather than one of them.

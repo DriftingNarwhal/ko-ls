@@ -22,6 +22,7 @@ use intranet_crypto::{Hash, to_hex};
 use intranet_governance::{GovernanceLog, GovernanceState, LogEntry, PointerId, wire};
 use intranet_identity::{MasterSeed, NetworkId, PerNetworkIdentity, PerNetworkIdentityId};
 use intranet_storage::{Cid, Dek, EpochKey};
+use crate::readings::OwnReadings;
 use crate::secret;
 use kols_core::{ChannelId, Hlc, Record};
 use std::fs;
@@ -51,6 +52,12 @@ pub struct Store {
     root: PathBuf,
     entropy: [u8; 32],
     network: NetworkId,
+    /// This member's own identity id, derived once.
+    ///
+    /// Memoised because [`put_record`](Store::put_record) compares every stored
+    /// record against it, and deriving a keypair per record on a sync burst
+    /// would be paying for the comparison many times over.
+    own: std::sync::OnceLock<Option<PerNetworkIdentityId>>,
 }
 
 /// What can go wrong reading or writing the store.
@@ -125,6 +132,7 @@ impl Store {
             root,
             entropy,
             network,
+            own: std::sync::OnceLock::new(),
         })
     }
 
@@ -139,6 +147,7 @@ impl Store {
             root,
             entropy,
             network,
+            own: std::sync::OnceLock::new(),
         })
     }
 
@@ -395,7 +404,139 @@ impl Store {
             return Ok(false);
         }
         write_atomically(&self.root, path, &record.canonical_bytes())?;
+
+        // **Here rather than at the one caller that writes this member's own
+        // records**, because it is not the only one that can. A record this
+        // member wrote also arrives from the network — refetched out of a
+        // segment this node published and later lost, or, once `05` §6 lands,
+        // written by another of their devices. An index maintained only where
+        // the executor writes would be silently behind in exactly those cases,
+        // and being behind makes `next_hlc` hand back a reading that is not
+        // greater than one already published, which readers refuse.
+        if self.is_own(&record.author) {
+            self.note_own_reading(channel, record)?;
+        }
         Ok(true)
+    }
+
+    /// Whether an identity is the one this store holds the seed for.
+    ///
+    /// A seed that does not derive answers `false` rather than failing: this
+    /// decides whether to update a cache, and a store whose identity is gone has
+    /// a larger problem that every other path reports properly. Refusing to keep
+    /// somebody else's record because our own seed is broken would be the wrong
+    /// place to notice.
+    fn is_own(&self, author: &PerNetworkIdentityId) -> bool {
+        self.own
+            .get_or_init(|| self.identity().map(|id| id.id()).ok())
+            .as_ref()
+            .is_some_and(|own| own == author)
+    }
+
+    /// What this member has written in a channel, as far as a writer needs.
+    ///
+    /// The three questions a send asks — the newest reading, the newest
+    /// `Message` reading, and how many of a class fall in the trailing minute —
+    /// answered without replaying anything. `readings::OwnReadings` carries why
+    /// that matters; in short, each of them used to be a full scan of the
+    /// channel's record directory, so a send was linear in everything this
+    /// member had ever written and three times over.
+    ///
+    /// **A cache, with the records still the source of truth.** Missing or
+    /// unreadable, it is rebuilt from them and written back — which is also what
+    /// happens once for every channel a store already holds, since nothing wrote
+    /// this file before it existed.
+    pub fn own_readings(&self, channel: &ChannelId) -> Result<OwnReadings, StoreError> {
+        let path = self.channel_dir(channel).join("own-readings");
+        if let Ok(text) = fs::read_to_string(&path)
+            && let Some(readings) = OwnReadings::decode(&text)
+        {
+            return Ok(readings);
+        }
+
+        let author = self.identity()?.id();
+        let rebuilt = OwnReadings::of(&self.own_records(channel, &author)?);
+        self.write_readings(channel, &rebuilt)?;
+        Ok(rebuilt)
+    }
+
+    /// Folds one of this member's records into the index.
+    fn note_own_reading(&self, channel: &ChannelId, record: &Record) -> Result<(), StoreError> {
+        let mut readings = self.own_readings(channel)?;
+        readings.note(record.hlc, record.body.class());
+        self.write_readings(channel, &readings)
+    }
+
+    /// The newest reading this node has published a log through, per channel.
+    ///
+    /// What lets a tick tell "nothing has changed here" from "I have not looked",
+    /// which is the difference between skipping a channel and skipping a publish
+    /// that was owed. Absent means the second.
+    pub fn published_through(&self, channel: &ChannelId) -> Option<Hlc> {
+        let text = fs::read_to_string(self.channel_dir(channel).join("published-through")).ok()?;
+        let mut parts = text.split_whitespace();
+        let wall = parts.next()?.parse().ok()?;
+        let counter = parts.next()?.parse().ok()?;
+        Some(Hlc::new(wall, counter))
+    }
+
+    /// Records that this channel's log is published through `reading`.
+    pub fn set_published_through(
+        &self,
+        channel: &ChannelId,
+        reading: Hlc,
+    ) -> Result<(), StoreError> {
+        let dir = self.channel_dir(channel);
+        fs::create_dir_all(&dir)?;
+        write_atomically(
+            &self.root,
+            dir.join("published-through"),
+            format!("{} {}", reading.wall_millis, reading.counter).as_bytes(),
+        )
+    }
+
+    /// Forgets when logs were last announced, so the next pass announces them.
+    ///
+    /// **Called once when a node starts, because an announcement is live state
+    /// and the record of it is not.** Chunks survive a restart — they are on this
+    /// disk — but the provider records naming this node as a holder live in the
+    /// DHT and in a swarm that has just been replaced. A node that trusted a
+    /// persisted "announced an hour ago" would come back holding content nobody
+    /// could find, and would look entirely healthy doing it.
+    pub fn forget_announcements(&self) -> Result<(), StoreError> {
+        let channels = self.root.join("channels");
+        if !channels.exists() {
+            return Ok(());
+        }
+        for entry in fs::read_dir(&channels)? {
+            let path = entry?.path().join("announced");
+            if path.exists() {
+                fs::remove_file(path)?;
+            }
+        }
+        Ok(())
+    }
+
+    /// When this node last announced a channel's log, in wall milliseconds.
+    pub fn last_announced(&self, channel: &ChannelId) -> Option<i64> {
+        fs::read_to_string(self.channel_dir(channel).join("announced"))
+            .ok()?
+            .trim()
+            .parse()
+            .ok()
+    }
+
+    /// Records that a channel's log was announced at `now`.
+    pub fn set_last_announced(&self, channel: &ChannelId, now: i64) -> Result<(), StoreError> {
+        let dir = self.channel_dir(channel);
+        fs::create_dir_all(&dir)?;
+        write_atomically(&self.root, dir.join("announced"), now.to_string().as_bytes())
+    }
+
+    fn write_readings(&self, channel: &ChannelId, readings: &OwnReadings) -> Result<(), StoreError> {
+        let dir = self.channel_dir(channel);
+        fs::create_dir_all(&dir)?;
+        write_atomically(&self.root, dir.join("own-readings"), readings.encode().as_bytes())
     }
 
     /// Keeps a chunk this node fetched, so it survives being closed.

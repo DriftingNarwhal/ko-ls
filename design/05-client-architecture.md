@@ -1,6 +1,6 @@
 # Client Architecture
 
-**Document status:** v1.14 — §8 gains the ephemeral-broadcast row, whose point is how to test a negative: an absence is only evidence when something known-good is crossing the same path at the same time. Previously v1.13 — §5.1's last owed item is settled rather than built: a node holds only what it can read, kept for the forward secrecy it buys, and what that will cost private channels is recorded in `03` §3.5 as a requirement of the work that makes it true. Previously v1.12 — §3 gains `SetPresence` and `MemberPresence`. The event is deliberately one-directional: a member goes quiet because nothing arrived, which is not an event and can never be one, so a consumer decides that by a beat going stale against its own clock. Previously v1.11 — §5.1 is new and carries the storage work built on 2026-09-07 and 08: tiers as reasons rather than places, replica duty over sealed segments, the two ceilings, the order things are given up in under pressure, and the one rule the whole thing turns on — that a provider count is safe in one direction only, so *nobody answered* and *nobody holds it* must never collapse into one answer. Previously v1.10 — §3's event list matches the enum, which it had stopped doing in three places at once: `Backfill` was named as an event when it is a variant of `Arrival` inside `Records`, the count said six when nine existed, and §8 said there was nothing for events "which do not exist" beside a row testing five cases over them. All three are the same gap — the command half of the boundary has a compile-time drift guard and the event half has none — and §8 now carries that guard as owed rather than the count as a fact. Previously v1.9 — §1 records the second Tauri default to remove a feature silently: the native drag handler takes the drag before the page sees it, so channel reordering never worked. Twice is a pattern, and §8's row is now about shell configuration rather than the ACL alone. Previously v1.8 — §1.1 is new: closing the window *is* the shutdown path, so no durable write may happen in place, and what is held rather than written wants stopping. Previously v1.7 — §1 records the shell's second boundary: Tauri's ACL refuses every `plugin:` command an application declares no capability for, silently, and this client shipped with none — so no node event ever reached the window and three polls were written as fixes for what was one denial. §8 gains the row that keeps it fixed. Previously v1.6 — §4 takes the single-node-per-network claim and its six-second expiry, §5 takes what the missing projection costs, and §8 gains the content-routing row; all three moved here from a status file that was carrying them. Previously v1.5 — §3 lists `CreateCategory` and `UpdateCategory`, which landed in the code before they reached this page. Previously v1.4 — §1 and §2 describe the layout that was built: `kols-node` holds the executor, the daemon and the event loop, and `kols-net` is publish and fetch over it. §3 separates what crosses the boundary from what is designed and unbuilt, and `GovernanceReorg` has moved into the first list. The store and media crates still do not exist
+**Document status:** v1.19 — §5's second half is built too: an append re-chunks its tail rather than the whole segment, 6.5 ms to 0.12 ms at ten thousand records and flat against linear, with Storage §1.3 now requiring the property it rests on. The measurement caught a second bottleneck the first had been hiding — a publish that cloned the object it returned. Previously v1.18 — §5's plan is built: a send is flat in history, 298 ms to 1.8 ms at a thousand of an author's records and 2.1 ms at six thousand, and the background pass no longer rebuilds a whole chain per tick. Two things it turned up: the removed rebuild was carrying the fail-closed check that an unkeyed member cannot write, and *published* and *announced* are different kinds of fact — one survives a restart and one is about a swarm the restart replaced. Previously v1.17 — §5 carried the plan for making a send cost the same at a hundred thousand records as at a thousand: the executor stops building and publishing an author log it never usefully published, three full record scans per send become a small index of this member's own readings, and `serve`'s per-tick rebuild becomes a checkpoint of the open segment. The mechanism was already in `01` §3.1 — sealing exists to bound re-chunking on append — and `rebuild_log` never sealed. Previously v1.16 — §5's superlinear half is fixed: the cost was re-publishing rather than re-reading, since every `append` re-encoded the whole segment, so a rebuild did n²/2 records' worth of cryptography and kept one answer. `push` and `publish_current` separate the two; a send at a thousand records goes from 298 ms to 71 ms and the curve becomes linear, and `serve`'s per-tick pass stops being quadratic too. Previously v1.15 — §5 records what the repeated work actually costs, measured rather than argued. The two halves are not the same size — a send is superlinear in the author's own record count and unbounded by sealing or retention, at about 300 ms once a thousand records are behind it, while replay grows with structure and costs an order of magnitude less at the design target. Previously v1.14 — §8 gains the ephemeral-broadcast row, whose point is how to test a negative: an absence is only evidence when something known-good is crossing the same path at the same time. Previously v1.13 — §5.1's last owed item is settled rather than built: a node holds only what it can read, kept for the forward secrecy it buys, and what that will cost private channels is recorded in `03` §3.5 as a requirement of the work that makes it true. Previously v1.12 — §3 gains `SetPresence` and `MemberPresence`. The event is deliberately one-directional: a member goes quiet because nothing arrived, which is not an event and can never be one, so a consumer decides that by a beat going stale against its own clock. Previously v1.11 — §5.1 is new and carries the storage work built on 2026-09-07 and 08: tiers as reasons rather than places, replica duty over sealed segments, the two ceilings, the order things are given up in under pressure, and the one rule the whole thing turns on — that a provider count is safe in one direction only, so *nobody answered* and *nobody holds it* must never collapse into one answer. Previously v1.10 — §3's event list matches the enum, which it had stopped doing in three places at once: `Backfill` was named as an event when it is a variant of `Arrival` inside `Records`, the count said six when nine existed, and §8 said there was nothing for events "which do not exist" beside a row testing five cases over them. All three are the same gap — the command half of the boundary has a compile-time drift guard and the event half has none — and §8 now carries that guard as owed rather than the count as a fact. Previously v1.9 — §1 records the second Tauri default to remove a feature silently: the native drag handler takes the drag before the page sees it, so channel reordering never worked. Twice is a pattern, and §8's row is now about shell configuration rather than the ACL alone. Previously v1.8 — §1.1 is new: closing the window *is* the shutdown path, so no durable write may happen in place, and what is held rather than written wants stopping. Previously v1.7 — §1 records the shell's second boundary: Tauri's ACL refuses every `plugin:` command an application declares no capability for, silently, and this client shipped with none — so no node event ever reached the window and three polls were written as fixes for what was one denial. §8 gains the row that keeps it fixed. Previously v1.6 — §4 takes the single-node-per-network claim and its six-second expiry, §5 takes what the missing projection costs, and §8 gains the content-routing row; all three moved here from a status file that was carrying them. Previously v1.5 — §3 lists `CreateCategory` and `UpdateCategory`, which landed in the code before they reached this page. Previously v1.4 — §1 and §2 describe the layout that was built: `kols-node` holds the executor, the daemon and the event loop, and `kols-net` is publish and fetch over it. §3 separates what crosses the boundary from what is designed and unbuilt, and `GovernanceReorg` has moved into the first list. The store and media crates still do not exist
 **Depends on:** all preceding documents; App Hosting Spec §1–§3 for the sandbox path
 **Consumed by:** implementation; `09` for the interface built on §3's boundary
 
@@ -496,8 +496,229 @@ defect. Replay walks the log once per question, so reading channels and reading 
 two walks over the same entries. And **the executor rebuilds an author's whole log to append
 one record** — `rebuild_log` replays every record this member has written in a channel on every
 write, which is correct, because a segment is a pure function of its record sequence (`01`
-§3.1), and is linear in a log that only grows. Both want measuring before they are optimised
-rather than after; the projection is where they stop being recomputed.
+§3.1), and is linear in a log that only grows.
+
+### What that repetition costs, measured
+
+**Measured 2026-09-08 rather than argued, which the paragraph above had been asking for since it
+was written.** `crates/kols-node/tests/cost.rs` is the harness and stays, because it is also the
+thing that will show whether the projection delivered. Release build; a debug one runs this path
+about forty times slower and would have answered a question about `rustc -O0`.
+
+**The two halves are not the same size, and that is the finding.**
+
+| Own records in the channel | One send |
+|---|---|
+| 25 | 2.5 ms |
+| 200 | 21.6 ms |
+| 500 | 89 ms |
+| 1,000 | 298 ms |
+
+| Channels in the log | `state()` | `channels()` | One ordinary command |
+|---|---|---|---|
+| 10 | 1 ms | 1 ms | 5 ms |
+| 50 | 5 ms | 3 ms | 24 ms |
+
+**The send path is the real cost and it is worse than linear** — forty times the records costs
+about a hundred and twenty times the work, because each of the author's records is re-read from
+its own file, decoded, sorted and then replayed into a segment that is re-chunked and
+re-encrypted as it grows. At a thousand of your own messages in one channel, sending one costs a
+third of a second; the curve keeps going, and nothing bounds it. **Sealing does not**, because
+the rebuild is over `own_records` — everything this member ever wrote in the channel — rather
+than over the open segment. Neither does retention, which drops what is *published* and not what
+this store holds.
+
+**The replay path is real and an order of magnitude less pressing.** It grows with structure
+rather than traffic — no message ever enters the governance log (`00` §4) — so at `00` §6's
+design target of hundreds of channels, one command costs something like 150 ms rather than
+something like a second. Worth fixing, and not the thing that breaks first.
+
+So the two are separable, which is a correction: they were carried as one item on the reasoning
+that the projection fixes both. It does, but only one of them is urgent, and a fix for the send
+path does not have to wait for a SQLite schema.
+
+**And the superlinear part was not the re-reading. It was re-publishing, and it is fixed.**
+Replaying `n` records called `append` `n` times, and **every `append` re-chunked, re-encrypted
+and re-hashed the whole segment so far** — so a rebuild did `n²/2` records' worth of
+cryptography to reach a state that one encode of the final segment produces identically, and
+then discarded all but the last answer. `AuthorLog::push` appends without publishing;
+`publish_current` encodes once however many were pushed. The pointer version still advances once
+per record, because a version is only reachable through the one before it — but signing a small
+record `n` times is a different order of work from encrypting a growing segment `n` times, and
+only the last of those pointers is ever announced.
+
+| Own records | Before | After |
+|---|---|---|
+| 25 | 2.5 ms | 2.4 ms |
+| 200 | 21.6 ms | 15.1 ms |
+| 1,000 | 298 ms | 71 ms |
+
+**The shape matters more than the ratio.** Before, 1.74× the records cost 2.56× the work; now it
+costs 1.74×. What is left is genuinely linear — re-reading and decoding every record in the
+channel to find this member's, the per-record pointer-version signatures, and two encodes — and
+linear is what a cache or the projection removes. Superlinear is what nothing removes except
+this.
+
+**The same pass runs in `serve`, unconditionally on every sync tick**, and had the same shape:
+it published every record as it rebuilt the chain and kept only the last result. That was
+quadratic CPU burned in the background forever, which no amount of nobody-is-waiting makes
+acceptable. It encodes once per segment now — at the seal, and once more for the head.
+
+### Constant rather than merely bounded — in progress, 2026-09-08
+
+Linear is not good enough and the reason is a date rather than a constant: a prolific member in
+a long-lived network reaches a hundred thousand of their own records in one channel, and every
+term below is multiplied by that. **The target is that sending the hundred-thousandth message
+costs what the thousandth does.**
+
+**The mechanism to do it with is already in this design and the write path is not using it.**
+`01` §3.1 gives the segment size threshold a purpose in as many words — it "bounds the cost of
+re-chunking on append" — and `rebuild_log` **never seals**. It opens a segment at sequence zero
+and pushes every record the author has ever written in the channel into it, so the object the
+executor encodes is the whole history as one segment, growing without limit, while `serve` seals
+properly as it replays. The two build different chains. The executor's is fiction: it is used to
+derive the next reading and to report `moved` and `total`, and those numbers are therefore
+measured against a segment that does not exist.
+
+**Where the time actually goes, per send.** Three full scans of the channel's record directory —
+every record, every author, read from its own file, decoded and sorted — one for the rebuild and
+one each for slowmode and the rate window. Then the pointer version is signed once per record,
+and the segment is encoded.
+
+#### What the executor actually needs, which is much less
+
+It needs exactly three answers, and none of them requires an encoded segment:
+
+1. **The author's newest reading in this channel**, for the next HLC.
+2. **The author's newest `Message`-class reading**, for slowmode.
+3. **How many of this class the author wrote in the trailing minute**, for the rate ceiling.
+
+So the executor stops building an author log at all. **It does not publish**, which it never
+usefully did: the durable write is `put_record`, `serve` does every publish that reaches the
+network, and nothing consumes the bytes the executor reported — the window never reads `Wrote`,
+no test asserts it, and `kols post` prints a number computed against the fictional segment above.
+The property those numbers existed to make visible is asserted directly by
+`kols-core/tests/author_log.rs` and measured by `tests/cost.rs`, which is where a regression
+signal belongs.
+
+The three answers come from a **small per-channel index of this member's own readings** — the
+newest reading and the newest `Message` reading, both exact and kept forever, beside the
+readings inside a few minutes, pruned on write. It is a **cache**: absent or unreadable, it is
+recomputed from the records exactly as today, so nothing about it is a second source of truth.
+
+#### And the same for the background pass, which is the larger half
+
+`serve`'s `publish_own_logs` rebuilds every channel's whole chain from stored records and
+publishes every segment, **unconditionally, on every sync tick**. Re-announcing is deliberate —
+Kademlia provider records expire — but re-announcing needs chunk ids, not a re-encode, and the
+chunks are already in this node's store. So the open segment gets a **checkpoint**: its records,
+its sequence, its previous-segment CID, its pointer version and the last reading it carried. A
+tick then republishes the head and re-announces what it already holds, rather than rebuilding
+history it cannot change.
+
+The last reading has to be in the checkpoint rather than read off the segment, and that is a
+latent defect being fixed rather than a new requirement: `next_hlc` reads
+`segment.records.last()`, which is `None` on a freshly sealed segment, and `append`'s
+monotonicity check only looks within the current segment — so nothing today would catch a
+reading that went backwards across a seal boundary.
+
+#### Why none of this costs byte-identical history
+
+- **A checkpoint is a cache and the records stay the source of truth.** Delete it and the
+  identical chain is recomputed. This is the property `01` §3.1 already states — a segment is a
+  pure function of its record sequence — being *used* rather than *re-executed*, and it is the
+  same move Core §2.7 permits for the governance log under checkpointed replay.
+- **Sealing is already deterministic.** `01` §3.1 measures age across the segment's own records,
+  newest minus oldest, never against the clock, precisely so that a replay a month later lands
+  the seals in the same places.
+- **Nothing here changes what a record or a segment encodes to.** The indexes and checkpoints
+  hold readings and identifiers, and the bytes that go on a wire are produced by the same code
+  from the same inputs.
+
+#### What it took, and what it turned out to be
+
+**Built 2026-09-08.** The executor no longer builds an author log at all, and the numbers are
+what the section asked for:
+
+| Own records | Before | After |
+|---|---|---|
+| 25 | 2.5 ms | 1.6 ms |
+| 1,000 | 298 ms | 1.8 ms |
+| 6,000 | — | 2.1 ms |
+
+Flat, which is the whole point: the hundred-thousandth message costs what the first did.
+
+**One line of the removed rebuild was load-bearing and is kept explicitly.** It derived the
+log's DEK, which requires an epoch key — so a member who held none could not write. That is
+fail-closed and worth keeping (`00` §2): a node that minted a key instead would write content no
+other member can read and read nothing it wrote before, which is divergence that looks like
+working software. It is O(1) and was being paid per record only because it sat inside a rebuild.
+
+**The index is maintained in `put_record` rather than at the executor**, because the executor is
+not the only writer. A record this member wrote also arrives over the wire — refetched from a
+segment this node published and later lost, or written by another of their devices once §6
+lands. An index that only saw the executor's writes would be behind in exactly those cases, and
+behind means the next reading is not greater than one already published.
+
+**And `next_hlc` takes a reading rather than a log, which fixed a latent defect.** Read off the
+open segment it answered from nothing on a freshly sealed one, so the reading before the seal
+was invisible — and `push` checks monotonicity only within the segment it pushes to, so nothing
+would have caught a reading going backwards across the boundary.
+
+#### The background pass, and the marker that must not be persisted
+
+`publish_own_logs` now asks whether a channel has anything new before doing anything, comparing
+the newest reading this member wrote against the one the log was last published through. An idle
+node costs one small file read per channel per tick instead of re-reading, re-encoding and
+re-announcing its entire history every two seconds.
+
+Re-announcement keeps its own hourly cadence, because provider records expire (Search §3.2's
+24-hour TTL) and a log nobody has added to still has to stay findable.
+
+**The two markers are not the same kind of fact, and treating them alike was a real bug.**
+*Published through* is about this disk and survives a restart; *last announced* is about a swarm
+that a restart replaces. Persisting both left a restarted node holding content nobody could find
+for an hour, looking entirely healthy — caught by `three_nodes`, which watched a restarted
+keeper skip the publish it existed to make. Announcements are forgotten when a node starts.
+
+#### What this reaches, and what it does not
+
+Cost per send becomes **flat in history**, bounded by the open segment rather than by everything
+behind it. What it does not reach is cost proportional to the *message*: appending still
+republishes the open segment, so the seal threshold becomes the ceiling on per-send work and the
+knob that trades it against the number of objects.
+
+**Making it constant rather than bounded needed one more change, in the storage layer, and it is
+done.** Content-defined chunking derives boundaries from a rolling window that restarts at every
+cut, so an append can only disturb the last chunk — but `intranet_storage::encode` re-chunked and
+re-sealed the whole plaintext to discover that. `AppendOnlyObject` keeps the last chunk's
+plaintext and re-chunks only that plus what arrived, and Storage §1.3 now **requires** what it
+rests on: boundaries depend only on the bytes since the previous boundary, and an incremental
+encoding must be byte-identical to a whole one.
+
+| Records in the segment | Whole encode per append | Incremental |
+|---|---|---|
+| 500 | 0.275 ms | 0.110 ms |
+| 4,000 | 2.562 ms | 0.143 ms |
+| 10,000 | 6.524 ms | 0.116 ms |
+
+Flat against linear, so the ratio is 56× at ten thousand records and grows without bound.
+
+`AuthorLog` holds the encoder and extends it per push, which is why `Segment` gained
+`header_bytes` and `framed`: the bytes ahead of the record list are fixed once a segment exists,
+and each record is framed independently, so appending a record appends its bytes and disturbs
+nothing before them. That is spec 07 §3.5's count-free record list read one level up — the reason
+it exists is that a count at the head would change on every append, and here that same property
+is what lets the chunker keep everything it has already sealed. The encoder is rebuilt at a seal,
+where the header changes, and at a rebase, which replaces the record set rather than appending to
+it.
+
+**And one thing the measurement caught that reasoning had not.** With the encoding incremental,
+the cost was still climbing — because `publish_current` handed back a *clone* of the object, and
+copying a segment per append is the same cost arriving one layer up. The object is shared behind
+an `Arc` now, mutated through `make_mut`, so a caller still holding a previous publish gets a copy
+at that moment and nobody sees an object change under them. It is worth recording that the second
+bottleneck was invisible until the first was gone.
 
 **Blob cache** holds fetched chunks, which is simultaneously how this node participates in
 swarm serving (Storage §4.2): anything fetched makes this node a source. That should be

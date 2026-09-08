@@ -66,7 +66,7 @@ pub use policy::{
     ChatPolicy, ChatSetting, MAX_NETWORK_NAME_BYTES, NetworkProfile, Retention, Unit, ZeroMeaning,
     conversation_genesis_values, defaults, keys,
 };
-pub use segment::{MAX_RECORDS_PER_SEGMENT, Segment};
+pub use segment::{MAX_RECORDS_PER_SEGMENT, Segment, framed};
 pub use limits::{RATE_WINDOW_MILLIS, ReaderLimits, Withheld, withheld};
 pub use view::{ChannelView, Rejection, RenderedMessage};
 

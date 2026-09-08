@@ -24,6 +24,220 @@ Kept because this project keeps re-learning the same lessons and paying for them
 
 ---
 
+- **2026-09-08** — **The second bottleneck was invisible until the first was gone, which is an
+  argument for measuring after every step rather than after the last one.**
+
+  Appending a record re-chunked and re-sealed the whole segment, so an append cost the size of
+  everything already in it. `AppendOnlyObject` keeps the last chunk's plaintext and re-chunks
+  only that plus what arrived — 6.5 ms per append at ten thousand records became 0.12 ms, flat
+  against linear.
+
+  Except it did not, at first. With the chunking incremental the cost was **still climbing**,
+  because the publish handed back a *clone* of the encoded object: copying a segment per append
+  is exactly the cost that had just been removed, arriving one layer up. Nothing about the first
+  fix was wrong and nothing about it was sufficient, and the only reason it was noticed is that
+  the measurement was re-run rather than assumed. Shared behind an `Arc` now, mutated through
+  `make_mut` so a caller holding a previous publish gets a copy at that moment.
+
+  **The spec gained a requirement it had only implied.** Storage §1.3 says chunking is
+  content-defined and deterministic, and the incremental encoder needs something narrower:
+  boundaries depend only on the bytes *since the previous boundary*. A chunker carrying a rolling
+  hash across boundaries would satisfy everything §1.3 said and break this — and the failure
+  would be two conformant implementations addressing identical content differently, which is
+  content addressing quietly meaning two things. So it is stated, along with the consequence
+  (an append cannot move any boundary but the last) and the obligation (an incremental encoding
+  must be byte-identical to a whole one).
+
+  **A probe found a hole in the tests rather than in the code, which is the more useful kind.**
+  The mistake the code guards against is asking the small-content exemption about the *region*
+  being re-chunked rather than about the *object* — and breaking it deliberately passed the
+  entire suite. FastCDC normalises with a stricter mask below the target, so sub-target cuts are
+  uncommon and thousands of appends over varied data never hit one. A bounded deterministic
+  search found a 360-byte region that cuts; the test constructs the case now, and **fails if the
+  search finds nothing**, because a test that quietly found no case would be worse than none.
+
+- **2026-09-08** — **Flat, and the two things it turned up are worth more than the number.**
+
+  A send at a thousand of the author's own records went from 298 ms to 1.8 ms, and stays at
+  2.1 ms at six thousand. What made it flat was not a cleverer rebuild but noticing the executor
+  had no reason to build anything: it needs three answers — the newest reading, the newest
+  `Message` reading, and how many of a class fall in the trailing minute — and was rebuilding and
+  encoding an entire author log to get them, then reporting a byte count that nothing consumed
+  and that was measured against a segment which did not exist, because `rebuild_log` never
+  sealed. Three questions, a small per-channel index, no publish.
+
+  **The first thing it turned up: one line of the removed rebuild was carrying a guarantee.**
+  Deriving the log's DEK requires an epoch key, so a member holding none could not write — and a
+  test said so in as many words: *posting without an epoch key must fail*, because a node that
+  minted a fresh key instead would write content no other member can read and read nothing it
+  wrote before. That check had been an accident of where it sat. It is explicit now and costs
+  O(1); it was being paid per record only because it lived inside a rebuild.
+
+  **The second: two markers that look alike and are not.** The background pass now skips a
+  channel with nothing new, which needs a record of what was published and a record of when it
+  was announced. Persisting both is the obvious thing and it is wrong: chunks survive a restart
+  because they are on this disk, and provider records do not, because they live in a DHT and in a
+  swarm the restart replaced. A node trusting a persisted "announced an hour ago" comes back
+  holding content nobody can find, and looks entirely healthy doing it.
+
+  `three_nodes` caught it within a minute of the change — a restarted keeper waited twenty
+  seconds for a publish it had decided to skip. Worth recording as a shape rather than an
+  incident: **durable and live state can be the same shape and the same size and still not be
+  the same kind of thing**, and the question to ask of any marker is not "is this expensive to
+  recompute" but "is what it describes still true after the process ends".
+
+  Also fixed on the way past, because it stopped being reachable: `next_hlc` read the last record
+  of the *open* segment, so on a freshly sealed one it answered from nothing — and `push` checks
+  monotonicity only within the segment it pushes to, so a reading going backwards across a seal
+  boundary would have been caught by nothing. It takes the index's newest reading now, which
+  spans the channel.
+
+- **2026-09-08** — **The expensive thing was not the one the entry named, and asking "is that
+  really necessary" was what found it.**
+
+  O5 has said for weeks that "the executor rebuilds an author's whole log to append one record",
+  and the obvious reading — re-reading every record is wasteful — is true and is not where the
+  time went. **Every `append` republished.** Appending a record re-chunked, re-encrypted and
+  re-hashed the entire segment so far, so replaying `n` records to rebuild a log did `n²/2`
+  records' worth of cryptography, and `rebuild_log` **discarded every intermediate result** —
+  the loop ignores the return value. A thousand encodes to reach a state one encode produces.
+
+  That is why it was superlinear, and why the entry's framing pointed slightly wide of it: the
+  re-reading is linear and ordinary, and the re-publishing was quadratic and invisible, because
+  from the outside both look like "it replays the log".
+
+  **The same shape was in `serve`, and worse.** `publish_own_logs` rebuilds every channel's chain
+  from stored records and publishes as it goes, unconditionally, on every sync tick. Its comment
+  explains that republishing is cheap because unchanged chunks re-derive to the same CID and it
+  costs a re-announcement rather than a re-upload — which is true about *bytes on the wire* and
+  says nothing about the CPU that derives them. Quadratic work in the background is still
+  quadratic work; nobody waiting on it only means nobody notices until the fan does.
+
+  **The fix is a split rather than a cache**, which matters because a cache would have needed an
+  invalidation rule and this needed none. `push` appends without publishing; `publish_current`
+  encodes once however many records were pushed. The pointer version still advances once per
+  record — a version is only reachable through the one before it, and that rule is load-bearing —
+  but signing a small record `n` times is a different order of work from encrypting a growing
+  segment `n` times, and only the last of those pointers was ever announced anyway.
+
+  298 ms to 71 ms at a thousand records, and the curve straightens: before, 1.74× the records
+  cost 2.56× the work; now it costs 1.74×. Every existing test passed unchanged, which is the
+  claim that mattered — the frozen encoding vectors, the delta-fetch assertion that append moves
+  a tail rather than a segment, and the two- and three-node wire tests that converge history
+  across processes.
+
+  **What is left is linear and still real:** every record in the channel is read and decoded to
+  find this member's, and the pointer version is signed once per record. Those are what a cache
+  or the projection removes. Worth being exact about the difference, because it is the whole
+  reason this was worth doing first: linear is a constant to argue about, and superlinear is a
+  date at which the thing stops working.
+
+- **2026-09-08** — **The first measurement was forty times wrong, and the direction it was
+  wrong in is the one that gets things rebuilt for no reason.**
+
+  O5 has been carried since it was written with an instruction attached: measure before
+  optimising. The first run was an ordinary `cargo test`, so a debug build, and it said a send
+  in a channel with 200 of your own records takes **876 ms** and one command with 50 channels
+  takes **4.3 seconds**. Those are numbers you act on immediately.
+
+  In release the same code is 21.6 ms and 24 ms. Almost the whole path is signing, hashing and
+  encrypting, and `rustc -O0` does not optimise any of it — so the debug run answered a question
+  about the compiler. **A measurement taken on the wrong build is not a rough measurement, it is
+  a different one**, and it pointed at an emergency that is not there.
+
+  **What the honest numbers say is still worth acting on, but differently.** A send is
+  superlinear in the author's own record count — forty times the records for about a hundred and
+  twenty times the work — reaching a third of a second at a thousand records and not stopping.
+  Each send re-reads every record this member ever wrote in that channel from its own file,
+  decodes it, sorts the lot, and replays it into a segment that re-chunks as it grows. **Sealing
+  does not bound this**, which was the thing worth finding: the rebuild walks `own_records`
+  rather than the open segment, so a sealed history is walked again on every message forever.
+  Retention does not bound it either — that drops what is published, not what this store keeps.
+
+  **And it split an item that had been carried as one.** `WORKING.md` said the projection fixes
+  both halves of O5 "which is why they are one piece of work". True, and only one half is urgent:
+  replay grows with *structure* rather than traffic, so at the design target of hundreds of
+  channels it costs a fraction of what the send path costs at a thousand messages. Two items
+  bundled by a shared remedy rather than by a shared size, which is how a small fix ends up
+  waiting behind a large one.
+
+  The harness stays as `tests/cost.rs`, `#[ignore]`d. `design/05` §5 asked for a number that
+  would show whether the projection delivered; a measurement that exists only in the session that
+  produced it cannot do that.
+
+- **2026-09-08** — **Two green tests that proved nothing, in one sitting, and they were the
+  same mistake wearing different clothes: a check written against my own intent rather than
+  against the thing.**
+
+  O2 wanted a conversation-profile network whose node runs without discovery. Both halves went
+  in, and then both probes passed when they should have failed.
+
+  **The first.** I added a guard in the executor refusing channel structure in a conversation.
+  Probed it by deleting the guard: still green. The refusal was coming from `kols-api`'s gate —
+  `Refusal::NotAServer`, at all four channel and category sites, with a doc comment giving the
+  exact reasoning I had just written a second copy of one layer down. The rule had been there
+  the whole time and was simply *unreachable*, because nothing could create a conversation to
+  refuse it in. The guard was deleted. This is the third time this project has gone looking for
+  something to build and found the layer already had it.
+
+  **The second, which is subtler and worth more.** `serve` reported *discovery off* by testing
+  its own local variable. So swapping `MemberNode::with_discovery` back to `MemberNode::new`
+  left the node built wrong and the report still saying it was right — the test agreeing with
+  the code's *intention* while the code did the opposite. A stored field would have lied the
+  same way. The fix is to make the observable a fact about the object: `MemberNode::discovery()`
+  upstream, read off the behaviour set that actually exists, so the client asks the node instead
+  of restating what it asked for. With that, the probe fails as it should.
+
+  **The general form, since it caught me twice in an hour.** A test on a *decision* is worth
+  little; a test on the decision's *effect* is worth what you wanted. The distance between them
+  is exactly where a passing suite stops meaning anything — and it does not announce itself,
+  because in both cases the assertion I wrote was a true statement about something.
+
+  **What it cost to find: two probes and about ten minutes.** What it would have cost otherwise
+  is a conversation network quietly sitting in a shared relay's routing table, which is D29
+  reached with nobody designating anything, and which produces no symptom at all — a node
+  without discovery listens, dials, relays, hole-punches, gossips and serves exactly like one
+  with it.
+
+  **Also worth recording: the blocker was not what the entry said.** O2 read as two client gaps,
+  "no profile written" and "`Discovery::` nowhere". The first is not a gap — `kols init` writing
+  no profile is correct, since absent means `server` and writing today's default would freeze a
+  network at it. What was missing was that nothing could create a conversation at all, so there
+  was no network for the second half to apply to. The item's own framing pointed one layer above
+  the thing.
+
+- **2026-09-08** — **A decision recorded and not built reads exactly like a decision nobody
+  took.**
+
+  O11 — a relay shared between two of a member's networks — was settled on 2026-09-07 as Q2:
+  warn at designation, never refuse. Wave 1 was docs-only, so the reasoning went into
+  `design/09` §3 and the notice was never written. The entry then sat in the owed table for a
+  day saying "nothing enforces it", which is true and is not what was owed: enforcement was
+  ruled out deliberately, and what was owed was the sentence a member reads.
+
+  **Worth naming as a shape rather than as one item.** A wave that records decisions and a wave
+  that implements them is a good split, and it leaves a window where the register describes work
+  as pending that has actually been *designed and not made* — indistinguishable, from the table,
+  from work nobody has thought about. The other Wave 1 items closed cleanly because they were
+  accepted limits with nothing to build. This one had a client half and looked the same.
+
+  **The check is by peer id, and a string comparison is the bug it is written against.** One
+  relay answers at several addresses — a DNS name and a bare IPv4, TCP beside QUIC — so comparing
+  the strings reports *no overlap* in precisely the case D29 exists for, silently. Proved rather
+  than argued: degrading `relay_host` to return the whole address leaves two of the three new
+  tests passing and fails only `a_relay_another_network_uses_is_reported_however_it_is_addressed`.
+  That is the version somebody writes in five minutes and it passes a naive test suite.
+
+  **The second designation was nearly missed.** The relay panel is where the decision was written
+  down, and creating a network with a relay is the other half — the *first* relay most people
+  designate, and the one a warning scoped to the panel would never have covered.
+
+  **And one thing deliberately not built: no warning on join.** A joiner adopts whatever relay
+  the invite carried, so the overlap is just as real and the member chose nothing. Warning there
+  is a question about a different act, and answering it here would have been scope nobody asked
+  for. Written into `design/09` §3 as a stated non-goal rather than left as a gap somebody
+  rediscovers.
+
 - **2026-09-08** — **O25 was a requirement for unbuilt work, not a defect in built work.**
 
   Filed the day before as "a node never holds content it cannot decrypt", with a trade-off to

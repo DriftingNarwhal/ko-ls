@@ -85,6 +85,13 @@ const answers = {
     saved.push(args);
     return null;
   },
+  // What another of this member's networks already designates — D29. The
+  // workspace answers this for real; here it is whatever the check under test
+  // needs it to be.
+  shared_relays: () => sharedRelays,
+  shared_relays_for_new_network: () => sharedRelays,
+  set_relays: () => null,
+  create_network: () => ({ id: "cd".repeat(32), label: "second", open: false }),
 };
 
 // What `contribution` currently answers, and what `set_contribution` was asked
@@ -102,6 +109,8 @@ let offer = {
 };
 const saved = [];
 const asked = [];
+// Empty unless a check is exercising the shared-relay warning.
+let sharedRelays = [];
 let ceiling = { ceiling: 2 * 1024 * 1024 * 1024, used: 1_288_490_188, networks: 3 };
 
 const dom = new JSDOM(html, { runScripts: "outside-only", pretendToBeVisual: true, url: "http://localhost/" });
@@ -127,6 +136,17 @@ window.__TAURI__ = {
   },
 };
 window.localStorage.clear();
+
+// jsdom implements no `confirm`, so until now every confirmation in this
+// interface resolved falsy and its guarded action was skipped. That is preserved
+// deliberately: `answering` defaults to false, so no check below changes meaning
+// because this stub arrived. A check that is *about* a confirmation sets it.
+let answering = false;
+const confirmed = [];
+window.confirm = (message) => {
+  confirmed.push(message);
+  return answering;
+};
 
 const problems = [];
 window.addEventListener("error", (e) => problems.push(`error: ${e.error?.stack ?? e.message}`));
@@ -512,6 +532,56 @@ say("the contribution panel does not tell members the cap is unenforced",
       .test(contribution));
 say("and it says what offering more actually buys",
     /short of/i.test(contribution) && /whichever is smaller/i.test(contribution));
+
+// ── a relay two of one member's networks would share — D29, O11 ────────
+// The client is the only party that can see this: the relay replays no log and
+// neither network's members can see across the two. So the check here is that
+// the question is *asked before* the designation rather than reported after it,
+// and that answering no means nothing was written.
+const RELAY = "/dns4/relay.example/tcp/443/p2p/12D3KooWAT1R2JjcZbnVUKLX8Xo1Qg5APTWMkpHarHY4Uo1YpGzT";
+
+sharedRelays = [];
+confirmed.length = 0;
+calls.length = 0;
+el("relay-input").value = RELAY;
+el("relay-form").dispatchEvent(new window.Event("submit", { bubbles: true, cancelable: true }));
+await settled();
+say("a relay nobody else uses is designated without a word",
+    confirmed.length === 0 && calls.includes("set_relays"));
+
+sharedRelays = [{ relay: RELAY, label: "the workshop", id: "ab".repeat(32) }];
+answering = false;
+confirmed.length = 0;
+calls.length = 0;
+el("relay-input").value = RELAY;
+el("relay-form").dispatchEvent(new window.Event("submit", { bubbles: true, cancelable: true }));
+await settled();
+say("a shared relay is raised before anything is written", confirmed.length === 1);
+say("and the warning names the other network and what it costs",
+    /the workshop/.test(confirmed[0] ?? "") && /discover each other/i.test(confirmed[0] ?? ""),
+    confirmed[0]);
+// The half that makes it a decision rather than a notification.
+say("declining designates nothing", !calls.includes("set_relays"));
+
+answering = true;
+calls.length = 0;
+el("relay-input").value = RELAY;
+el("relay-form").dispatchEvent(new window.Event("submit", { bubbles: true, cancelable: true }));
+await settled();
+say("and it warns rather than refuses — agreeing goes through",
+    calls.includes("set_relays"));
+
+// Creating a network with a relay is a designation too, and it is the first one
+// most people make. A warning that covered only the panel would miss it.
+answering = false;
+confirmed.length = 0;
+calls.length = 0;
+el("new-name").value = "the other one";
+el("new-relay").value = RELAY;
+el("maker").dispatchEvent(new window.Event("submit", { bubbles: true, cancelable: true }));
+await settled();
+say("creating a network with a shared relay warns as well",
+    confirmed.length === 1 && !calls.includes("create_network"));
 
 console.log(problems.length ? "\nPROBLEMS:\n" + problems.join("\n") : "\nno uncaught errors");
 process.exit(0);

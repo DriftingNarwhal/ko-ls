@@ -65,6 +65,35 @@ pub fn quiet() -> Report {
     std::sync::Arc::new(|_line: &str| {})
 }
 
+/// The behaviour set a node for this network should run — Core §5.1.1.
+///
+/// Read from the network's own replayed policy rather than chosen per run,
+/// because this is what the node **is** rather than how live it is: the
+/// hot/warm/cold question (`design/09` §2) is a decision made over time, and
+/// this one is fixed when the node is built and cannot be changed afterwards.
+///
+/// A conversation has two members and nobody to discover — the peer that matters
+/// is known by construction, and its addresses arrive by the same route its
+/// membership does. So Kademlia and mDNS have no question to answer in one, and
+/// a member with thirty conversations would otherwise run thirty routing tables
+/// and thirty mDNS multicasters to serve networks that need neither.
+///
+/// **For a conversation this is a privacy requirement and not a saving**, which
+/// is the half `design/06` §12 filed it under and `design/09` §3 depends on.
+/// `kad` runs under libp2p's default protocol name and `PROTOCOL_VERSION` is one
+/// string for every network, so a DM node holding a routing table joins whatever
+/// table it meets — and where a hole punch fails and the shared network's
+/// bootstrap relay carries the negotiation, that is the shared network's. Two of
+/// one member's identities become mutually discoverable, which is D29 reached
+/// with nobody designating anything. `Off` is what makes it structurally
+/// impossible rather than unlikely.
+pub fn discovery_for(policy: &intranet_governance::NetworkPolicy) -> intranet_transport::Discovery {
+    match kols_core::ChatPolicy::of(policy).profile() {
+        kols_core::NetworkProfile::Conversation => intranet_transport::Discovery::Off,
+        kols_core::NetworkProfile::Server => intranet_transport::Discovery::Full,
+    }
+}
+
 /// Sends one line to a [`Report`], with `format!`'s syntax.
 ///
 /// A macro rather than a call so a multi-line message stays a multi-line
@@ -83,6 +112,7 @@ pub mod executor;
 pub mod invite;
 pub mod join;
 pub mod network;
+pub mod readings;
 mod secret;
 pub mod serve;
 pub mod replica;

@@ -8,11 +8,11 @@ use intranet_governance::{
 use intranet_identity::{NetworkId, PerNetworkIdentity};
 use kols_core::{
     CHAT_LOG_CONTENT_TYPE, CategoryId, ChannelEntry, ChannelEntryBody, ChannelId, ChannelKind,
-    ChatPolicy, Privacy,
+    ChatPolicy, NetworkProfile, Privacy,
 };
 use std::collections::BTreeMap;
 
-/// The genesis entry for a new `server`-profile network.
+/// The genesis entry for a new network.
 ///
 /// Three things have to be right here or the network is quietly unusable, and
 /// each was learned by getting it wrong:
@@ -25,16 +25,24 @@ use std::collections::BTreeMap;
 ///    extension name is refused outright rather than assumed ordinary, so a
 ///    network that skips this cannot grant a chat permission at all.
 ///
-/// The profile is deliberately *not* written: absent means `server` (spec 07
-/// §1.2), and writing today's default into a network freezes it there. A network
-/// name is likewise not a policy value — spec 07 defines no key for one, and
-/// inventing vocabulary the normative document does not have is how two clients
-/// end up disagreeing about what a network is called. The CLI keeps it locally.
+/// **A `server` writes no profile and a `conversation` declares itself, which is
+/// asymmetric on purpose** (spec 07 §1.2). Absent means `server`, so writing
+/// today's default into a server would freeze it there for no gain. A
+/// conversation cannot rely on absence for the opposite reason: every reader has
+/// to *refuse* a channel entry in one, and absent would permit them — so the
+/// declaration is what the rule keys off, and it is the one policy value a
+/// conversation must carry at genesis.
+///
+/// A network name is not a policy value here — spec 07 defines no key for one,
+/// and inventing vocabulary the normative document does not have is how two
+/// clients end up disagreeing about what a network is called. The CLI keeps it
+/// locally.
 pub fn genesis(
     founder: &PerNetworkIdentity,
     network: NetworkId,
     relays: Vec<String>,
     name: &str,
+    profile: NetworkProfile,
 ) -> LogEntry {
     let mut policy = NetworkPolicy::conservative_default();
     // Core §5.5: a network with no designated relay is reachable only by members
@@ -60,6 +68,14 @@ pub fn genesis(
             kols_core::keys::NETWORK_NAME.to_owned(),
             intranet_governance::PolicyValue::Text(named.to_owned()),
         );
+    }
+    // Only the profile, and only for a conversation: every other setting has a
+    // default, and writing defaults explicitly freezes today's values into a
+    // network that would otherwise pick up a revised one.
+    if profile == NetworkProfile::Conversation {
+        policy
+            .app_policy
+            .extend(kols_core::conversation_genesis_values());
     }
     policy
         .content_type_allowlist

@@ -644,13 +644,8 @@ fn render(outcome: &Outcome, names: &kols_core::Names) {
                 messages.len()
             );
         }
-        Outcome::Wrote {
-            record,
-            moved,
-            total,
-        } => {
+        Outcome::Wrote { record } => {
             println!("wrote {}", &to_hex(record.as_bytes())[..8]);
-            println!("  moved {moved} of {total} bytes");
         }
         Outcome::ChannelCreated {
             channel,

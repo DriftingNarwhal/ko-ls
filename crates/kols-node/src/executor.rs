@@ -27,7 +27,7 @@
 //! Tauri shell will want the same surface, and that is when the shape is known
 //! rather than guessed.
 
-use crate::chat::{next_hlc, now_millis, rebuild_log};
+use crate::chat::{next_hlc, now_millis};
 use crate::network;
 
 /// Replayed channel state, as `network::channels` returns it.
@@ -849,24 +849,35 @@ impl Executor {
         state: &intranet_governance::GovernanceState,
         channels: &ChannelMap,
     ) -> Result<Outcome, ExecuteError> {
-        let mut log = rebuild_log(&self.store, identity, channel, state)
-            .map_err(ExecuteError::Rejected)?;
-        let hlc = next_hlc(&log, now_millis());
-        self.require_within_rate(&channel, &body, hlc, identity, state, channels)?;
+        // **No author log is built here, and nothing is published.** Writing a
+        // record is signing it and storing it; every publish that reaches the
+        // network is `serve`'s, from the records this leaves behind. The
+        // executor used to rebuild the whole log and encode it twice to report
+        // how many bytes an append moved — a number nothing consumed, measured
+        // against a segment that did not exist, since `rebuild_log` never sealed
+        // and so encoded the member's entire history as one object. What that
+        // number was for is asserted properly by `kols-core`'s author-log test
+        // and measured by `tests/cost.rs` (`design/05` §5).
+        // **The one thing the removed rebuild did that mattered, kept explicitly.**
+        // A member holding no epoch key cannot key what they are about to write,
+        // so the record would be stored and never publishable — and a node that
+        // minted a fresh key instead would write content no other member can
+        // read and read nothing it wrote before, which is divergence that looks
+        // like working software. Fail closed (`design/00` §2). Deriving the
+        // log's DEK is that check, creates the wrapping the publish path needs,
+        // and is O(1) — it was previously reached as a side effect of rebuilding
+        // the whole log, which is how it came to be paid for per record.
+        self.store
+            .channel_dek(&kols_core::author_log_pointer(&channel, &identity.id()))?;
+
+        let readings = self.store.own_readings(&channel)?;
+        let hlc = next_hlc(readings.last, now_millis());
+        self.require_within_rate(&channel, &body, hlc, &readings, state, channels)?;
         let record = Record::create(identity, channel, hlc, body);
         let id = record.id();
-        let stored = record.clone();
+        self.store.put_record(&channel, &record)?;
 
-        let published = log
-            .append(identity, record, state)
-            .map_err(|err| ExecuteError::Rejected(format!("the record was refused: {err}")))?;
-        self.store.put_record(&channel, &stored)?;
-
-        Ok(Outcome::Wrote {
-            record: id,
-            moved: published.new_bytes(),
-            total: published.total_bytes(),
-        })
+        Ok(Outcome::Wrote { record: id })
     }
 
     fn create_channel(
@@ -1287,7 +1298,7 @@ impl Executor {
         channel: &ChannelId,
         body: &RecordBody,
         hlc: kols_core::Hlc,
-        identity: &intranet_identity::PerNetworkIdentity,
+        readings: &crate::readings::OwnReadings,
         state: &intranet_governance::GovernanceState,
         channels: &ChannelMap,
     ) -> Result<(), ExecuteError> {
@@ -1300,13 +1311,7 @@ impl Executor {
         let slowmode = channels.get(channel).map_or(0, |c| c.slowmode);
         if class == kols_core::RecordClass::Message && slowmode > 0 {
             let interval = i64::from(slowmode).saturating_mul(1_000);
-            let last = self
-                .store
-                .own_records(channel, &identity.id())?
-                .iter()
-                .filter(|record| record.body.class() == kols_core::RecordClass::Message)
-                .map(|record| record.hlc.wall_millis)
-                .max();
+            let last = readings.last_message.map(|reading| reading.wall_millis);
             if let Some(previous) = last
                 && hlc.wall_millis.saturating_sub(previous) < interval
             {
@@ -1328,13 +1333,7 @@ impl Executor {
         }
 
         const WINDOW_MILLIS: i64 = 60_000;
-        let since = hlc.wall_millis.saturating_sub(WINDOW_MILLIS);
-        let recent = self
-            .store
-            .own_records(channel, &identity.id())?
-            .iter()
-            .filter(|record| record.body.class() == class && record.hlc.wall_millis > since)
-            .count();
+        let recent = readings.count_within(class, hlc, WINDOW_MILLIS);
 
         if recent as i64 >= ceiling {
             return Err(ExecuteError::Rejected(format!(
