@@ -103,8 +103,14 @@ over the same `kols-api` boundary, owed no feature parity and no end-user docume
   network's name (D32), a **role-first permissions surface** — roles, what each holds and at
   which scope, and who is in them — and the network's own policy: admission mode, the abuse
   limits of spec 07 §4.3 and the two retention windows of §2.8.
-- **`kols`** — init, relay list/set, invite, join, waiting, attach, admit, revoke, leave, name,
-  serve, post, read, edit, delete, react, pin, contribute, presence, storage, history, and channel
+- **`kols`** — **the multi-process test harness, and not a product surface** (D30). Six test
+  files drive `CARGO_BIN_EXE_kols`, and separate processes are the whole point: separate stores
+  and swarms, a node that can be killed and restarted, and the single-node claim exercised for
+  real. **Nothing in the shipped application invokes it** — the window runs
+  `kols_node::serve::serve` in-process. Its output is therefore a test contract rather than an
+  interface, and carries no end-user prose. It covers init, relay list/set, invite, join,
+  waiting, attach, admit, revoke, leave, name, serve, post, read, edit, delete, react, pin,
+  contribute, presence, storage, history, and channel
   create/list/rename/topic/slowmode/archive.
 
 **Gates green as of this date:** 332 tests here, 672 in `../distributed-intranet`, clippy
