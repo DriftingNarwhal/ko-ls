@@ -453,5 +453,20 @@ await settled();
 say("a ceiling is floored at one gigabyte, never zero",
     ceiling.ceiling === 1024 * 1024 * 1024, String(ceiling.ceiling));
 
+// ── what the contribution panel promises ───────────────────────────────
+// **A shipped sentence that contradicts the code is worse than no sentence.**
+// This panel told members storage was "an offer rather than a ceiling" and that
+// the node "takes on no storage duty" for a day after both had stopped being
+// true — the number was a hard cap and the node was holding replicas under it.
+// Read off the live document, so the guard breaks when the copy drifts back.
+const contribution = window.document
+  .querySelector('[data-panel="contribution"]')
+  .textContent.replace(/\s+/g, " ");
+say("the contribution panel does not tell members the cap is unenforced",
+    !/(offer|rather than) a ceiling|nothing enforces|no storage duty|being built/i
+      .test(contribution));
+say("and it says what offering more actually buys",
+    /short of/i.test(contribution) && /whichever is smaller/i.test(contribution));
+
 console.log(problems.length ? "\nPROBLEMS:\n" + problems.join("\n") : "\nno uncaught errors");
 process.exit(0);

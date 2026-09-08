@@ -672,13 +672,28 @@ pub async fn serve(
                 // thing that ever needs it *quickly* is eviction, which asks
                 // directly about the objects it is considering.
                 let now = crate::chat::now_millis();
+                // **Duty first, then everything else sealed that is held.** The
+                // census used to ask only about duty, which answered "is what I
+                // promised still safe to give back" and nothing else. Repair
+                // needs the opposite question — *is something I merely happen to
+                // have short of copies* — and that can only be asked about
+                // objects this node has no duty for, so those are asked about
+                // too, after the ones a decision may be pending on.
+                //
+                // Head segments are excluded: a head is republished on every
+                // append, so its id changes as people talk and the census would
+                // fill with counts for objects nobody will ask about again.
+                //
                 // Collected before asking, because the ask mutates the census the
                 // filter reads. Bounded first, so this is a handful of ids.
-                let to_ask: Vec<_> = store
-                    .segments()
-                    .into_iter()
-                    .filter(|cid| store.has_duty(cid) && census.should_ask(cid, now))
+                let askable = crate::replica::sealed(&store);
+                let to_ask: Vec<_> = askable
+                    .iter()
+                    .filter(|cid| store.has_duty(cid))
+                    .chain(askable.iter().filter(|cid| !store.has_duty(cid)))
+                    .filter(|cid| census.should_ask(cid, now))
                     .take(CENSUS_PER_TICK)
+                    .copied()
                     .collect();
                 for cid in to_ask {
                     // `None` means there was no query to run — a node built
@@ -691,7 +706,7 @@ pub async fn serve(
                     }
                 }
 
-                if let Some(duty) = duty_pass(&store, &node, &identity) {
+                if let Some(duty) = duty_pass(&store, &node, &identity, &census, now) {
                     // Said once per change rather than per tick: this is a
                     // standing condition, and a loop reporting it every two
                     // seconds would train somebody to ignore the one time it
@@ -715,6 +730,28 @@ pub async fn serve(
                         duty.mine,
                         duty.considered
                     );
+                    // **Repair is worth saying out loud even though it worked.**
+                    // A node picking up copies the network dropped is the system
+                    // behaving correctly, but it is also the only visible sign
+                    // that members are leaving faster than their content is being
+                    // re-placed — and it spends the disk this member offered. A
+                    // silent backstop is one nobody can tell is load-bearing.
+                    if duty.adopted > 0 {
+                        crate::say!(
+                            report,
+                            "took on {} under-replicated object(s), {} bytes, to bring copies \
+                             back to what this network asks for",
+                            duty.adopted,
+                            duty.adopted_bytes
+                        );
+                    }
+                    if duty.returned > 0 {
+                        crate::say!(
+                            report,
+                            "handed back {} repaired object(s) that other members now hold",
+                            duty.returned
+                        );
+                    }
                 }
 
                 // Re-asked rather than assumed settled. Everything here is
@@ -3006,6 +3043,8 @@ fn duty_pass(
     store: &Store,
     node: &MemberNode,
     identity: &intranet_identity::PerNetworkIdentity,
+    census: &crate::replica::Census,
+    now: i64,
 ) -> Option<crate::replica::Duty> {
     let state = replayable(store)?;
     if !state.is_member(&identity.id()) {
@@ -3046,6 +3085,8 @@ fn duty_pass(
         &identity.id(),
         factor,
         budget,
+        census,
+        now,
     )
     .ok()
 }

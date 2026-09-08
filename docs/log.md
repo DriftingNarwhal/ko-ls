@@ -24,6 +24,76 @@ Kept because this project keeps re-learning the same lessons and paying for them
 
 ---
 
+- **2026-09-08** — **An offer buys ranking, not a crawl (D38) — and checking that closed the
+  question rather than answering it.**
+
+  The open half of the entry below was whether a node should *fetch* to repair. The user's read
+  was that it should not: a node offering fifty gigabytes "should just be ranked accordingly, and
+  then it is used as a fallback if no other nodes can store something". Recorded as D38, and it is
+  the right way round — the alternative turns a setting a member chose into a download budget they
+  did not.
+
+  **What made it a clean close rather than a deferral is that the code already behaves that way,
+  and reading it showed the gap I had described does not exist.** A node under its ceiling walks
+  every chain it can read to the start, because `history_budget` is unbounded while there is room.
+  So it already holds every sealed segment it could be ranked for or be the standby for, and duty
+  and repair are complete over the network's readable content. A node *at* its ceiling holds less
+  and has no room to repair with either — so the case where knowing more would have helped is the
+  case where it could not have acted. No fetch path is owed. I had written the residual up as a
+  design decision waiting to be made; it was a decision waiting to be *checked*.
+
+  **The check found a real one instead, and a different one: O25.** `resolve` returns nothing when
+  no epoch key unwraps a segment's DEK, and the walk then skips the hop entirely — so a private
+  channel a member is not keyed for is never fetched, linked or held. A storage offer therefore
+  funds durability only for channels its owner can read, which is not what the offer means: Core
+  §4.2 defines `storage_offered` over *replicated* content, and the user had said plainly they were
+  fine with a node holding bytes it cannot read. The pointer is public and carries the object's
+  CID, so the ciphertext is fetchable without the key. Nothing does it.
+
+  Filed rather than built, because it is a fetch path and a duty tier over objects with no records,
+  and this session's lesson is that the layer matters more than the speed.
+
+- **2026-09-08** — **Repair is placement read further down, and that is the whole design.**
+
+  The storage arc's last piece: a node now takes on content the network is short of, not only
+  content the ranking assigned it. The gap it closes was worth stating plainly — a member
+  offering fifty gigabytes as a backstop caught falling content **only where placement had
+  already ranked them**, so generosity bought a proportionally larger share of the ordinary load
+  and nothing at all of the failure case. Durability by coincidence, one layer up from the
+  coincidence duty was built to remove.
+
+  The temptation was a second mechanism: notice a shortfall, volunteer. Storage §3.4 rules that
+  out in a sentence that is easy to read past — repair re-places onto *the next nodes in the same
+  deterministic HRW ranking*. So there is no new policy here at all, only the same ranked list
+  read past the replication factor, which is what keeps repair as independently recomputable as
+  placement. A node at `factor + k` steps in when the object is `k + 1` or more copies short.
+  **Depth follows the size of the hole**, so one missing copy wakes one standby rather than every
+  node that happened to notice.
+
+  **The bug that rule prevents was already written before it was reasoned about.** The first
+  version released repair duty on the next tick, every time, because a standby is by definition
+  outside the replica set and the ordinary release rule is *the ledger stopped naming me, so
+  somebody else has it* — which is exactly the premise repair exists to deny. Repair duty is
+  marked as such and ends only on a **fresh** count saying the hole closed; a stale count and no
+  count both keep it, which is the same one-directional-evidence rule the eviction path already
+  turns on.
+
+  **Two smaller things fell out.** The census only ever asked about duty, which answers *is what
+  I promised safe to give back*; repair asks the opposite question about objects this node has no
+  duty for, so it had to widen. And `shed_cache`'s justification — "the nodes placement ranked
+  for it still hold it" — is precisely the assumption repair exists because it can be false. The
+  doc now says so, and the resolution is ordering rather than a new rule: repair runs after
+  shedding and takes only what fits, so a node with room keeps the copy under all the protection
+  duty gets, and a node at its ceiling gives it up like everything else. The cap does not bend
+  for this any more than for anything else.
+
+  **What was deliberately not built**, and why it is in `STATUS.md` as a decision rather than a
+  gap: fetching to repair. A node that never held a segment cannot learn it is short, since this
+  client has no catalogue of the network beyond its own chain links — but one that *shed*
+  something still has the link and could go and get it back. That would turn "I offer 50 GB" into
+  "download until 50 GB is full", which is a different promise from the one the settings screen
+  makes. Worth doing on purpose or not at all.
+
 - **2026-09-08** — **A storage offer became a cap, and the thing it was capping did not exist.**
 
   Two days of clearing the owed register turned into the storage work, by way of a finding that

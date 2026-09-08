@@ -571,6 +571,11 @@ fn a_node_takes_duty_for_what_placement_ranks_it_for() {
         )
     };
     let mut ledger = CapabilityLedger::new(network);
+    // **A census nobody has answered**, which is what every assertion below is
+    // about: placement alone. Repair reads the same store and acts only on a
+    // fresh count, so an empty one leaves this measuring the ranking and nothing
+    // else — and if that ever stops being true, these numbers move.
+    let quiet = kols_node::replica::Census::default();
     // Room enough that nothing here is refused; the ceiling has its own test.
     let roomy = kols_node::replica::Budget {
         offered: u64::MAX,
@@ -584,7 +589,7 @@ fn a_node_takes_duty_for_what_placement_ranks_it_for() {
     ledger
         .insert(advertise(&founder, 0, 1), &state)
         .expect("advertises");
-    let duty = kols_node::replica::evaluate(&store, &ledger, &me, 3, roomy).expect("evaluates");
+    let duty = kols_node::replica::evaluate(&store, &ledger, &me, 3, roomy, &quiet, 0).expect("evaluates");
     assert_eq!(duty.considered, 2, "only the sealed pair is considered");
     assert_eq!(duty.mine, 0, "a node offering nothing is never conscripted");
     assert!(!store.has_duty(&sealed_first));
@@ -595,7 +600,7 @@ fn a_node_takes_duty_for_what_placement_ranks_it_for() {
     ledger
         .insert(advertise(&founder, 8 << 30, 2), &state)
         .expect("advertises");
-    let duty = kols_node::replica::evaluate(&store, &ledger, &me, 3, roomy).expect("evaluates");
+    let duty = kols_node::replica::evaluate(&store, &ledger, &me, 3, roomy, &quiet, 0).expect("evaluates");
     assert_eq!(duty.mine, 2, "the only contributor holds everything");
     assert_eq!(
         duty.under_replicated, 2,
@@ -629,7 +634,7 @@ fn a_node_takes_duty_for_what_placement_ranks_it_for() {
             .insert(advertise(member, 64 << 30, 3), &state)
             .expect("advertises");
     }
-    let duty = kols_node::replica::evaluate(&store, &ledger, &me, 1, roomy).expect("evaluates");
+    let duty = kols_node::replica::evaluate(&store, &ledger, &me, 1, roomy, &quiet, 0).expect("evaluates");
     assert_eq!(duty.under_replicated, 0, "five contributors meet a factor of one");
     let candidates: Vec<_> = ledger.entries().cloned().collect();
     let mut released = 0;
@@ -757,6 +762,7 @@ fn duty_stops_at_the_offer_and_says_it_refused() {
         )
         .expect("advertises");
 
+    let quiet = kols_node::replica::Census::default();
     // Room for one of the two sealed objects and not the other.
     let one = store.object_bytes(&first).expect("held");
     let budget = Budget {
@@ -764,7 +770,7 @@ fn duty_stops_at_the_offer_and_says_it_refused() {
         installation: u64::MAX,
         installation_used: 0,
     };
-    let duty = kols_node::replica::evaluate(&store, &ledger, &me, 3, budget).expect("evaluates");
+    let duty = kols_node::replica::evaluate(&store, &ledger, &me, 3, budget, &quiet, 0).expect("evaluates");
     assert_eq!(duty.mine, 1, "one object fits");
     assert_eq!(duty.refused, 1, "and declining the other is reported, not silent");
     assert!(
@@ -782,7 +788,7 @@ fn duty_stops_at_the_offer_and_says_it_refused() {
     };
     let store2 = workspace.create("another", Vec::new()).expect("creates");
     drop(store2);
-    let duty = kols_node::replica::evaluate(&store, &ledger, &me, 3, full).expect("evaluates");
+    let duty = kols_node::replica::evaluate(&store, &ledger, &me, 3, full, &quiet, 0).expect("evaluates");
     assert_eq!(duty.refused, 1, "no room on the disk means no new duty");
 }
 
@@ -1072,4 +1078,222 @@ fn duty_is_given_up_only_with_evidence_and_never_silently() {
     let dropped = store.dropped();
     assert_eq!(dropped.len(), 1, "what was given up is recorded, not merely done");
     assert_eq!(dropped[0].0, later);
+}
+
+/// Repair — Storage §3.4's other half, and what makes a generous node a backstop.
+///
+/// # What was missing, and why it is not the same as placement
+///
+/// Placement decides what a node holds when everything is well. It says nothing
+/// about content whose holders have gone, so a member offering a great deal of
+/// disk used to catch falling content only where the ranking had already put
+/// them — durability by coincidence, one layer up from the coincidence duty was
+/// built to remove.
+///
+/// §3.4 asks for the shortfall to be re-placed onto *the next nodes in the same
+/// deterministic ranking*, so this is the same HRW list read further down rather
+/// than a second policy. That is the property under test here: which nodes step
+/// in is determined by the ranking and the size of the hole, not by who noticed.
+///
+/// # The three things that have to hold
+///
+/// - A standby the shortfall reaches **takes** the object on.
+/// - A standby further down than the shortfall reaches **does not**, or every
+///   node in the network piles onto one missing copy.
+/// - An answer that the hole has closed **gives it back**, and no answer at all
+///   does not — because *nobody told me* and *nobody holds it* are opposite
+///   states, and only one of them is a reason to act.
+#[test]
+fn a_node_takes_on_under_replicated_content_it_is_the_next_ranked_for() {
+    use intranet_governance::{EntryBody, GroupId, LogEntry, MembershipAction};
+    use intranet_ledger::{
+        BandwidthCap, CapabilityAdvertisement, CapabilityLedger, ComputeClass, WeightField,
+        placement,
+    };
+    use kols_node::replica::{Budget, Census};
+
+    let dir = Dir::new("repair");
+    let workspace = Workspace::at(dir.0.clone());
+    let store = workspace.create("the workshop", Vec::new()).expect("creates");
+    let founder = store.identity().expect("identity");
+    let me = founder.id();
+    let network = *store.network();
+
+    // Nine other members, so that this node is somewhere in the middle of the
+    // ranking for most objects rather than at the top of it.
+    let others: Vec<_> = (2u8..=10)
+        .map(|seed| {
+            intranet_identity::MasterSeed::from_entropy([seed; 32])
+                .identity_for(&network)
+                .expect("identity")
+        })
+        .collect();
+    for member in &others {
+        let log = store.log().expect("log");
+        let parent = log.canonical_chain().last().copied();
+        store
+            .append_entry(&LogEntry::create(
+                &founder,
+                parent,
+                intranet_crypto::Timestamp::from_millis(100),
+                EntryBody::MembershipChange {
+                    group: GroupId::everyone(),
+                    identity: member.id(),
+                    action: MembershipAction::Add { via_invite: None },
+                },
+            ))
+            .expect("admits");
+    }
+    let state = store.state().expect("replays");
+
+    let dek = intranet_storage::Dek::generate().expect("a data key");
+    let store_object = |plaintext: &[u8]| {
+        let encoded = intranet_storage::encode(
+            plaintext,
+            &dek,
+            intranet_storage::ChunkSpec::from_target(64 * 1024),
+        );
+        let cid = encoded.manifest_cid();
+        store
+            .put_chunk(&cid, &encoded.manifest.canonical_bytes())
+            .expect("manifest");
+        for (chunk, bytes) in &encoded.chunks {
+            store.put_chunk(chunk, bytes).expect("chunk");
+        }
+        cid
+    };
+    // Six sealed segments and a head, chained, so there is a spread of rankings
+    // to choose a case from.
+    let mut chain = Vec::new();
+    let mut previous = None;
+    for index in 0..7u64 {
+        let cid = store_object(format!("segment number {index}").as_bytes());
+        store
+            .mark_segment_link(&cid, index, previous)
+            .expect("link");
+        previous = Some(cid);
+        chain.push(cid);
+    }
+    let sealed: Vec<_> = chain[..6].to_vec();
+
+    let mut ledger = CapabilityLedger::new(network);
+    let mut advertise = |identity: &intranet_identity::PerNetworkIdentity| {
+        ledger
+            .insert(
+                CapabilityAdvertisement::create(
+                    identity,
+                    8 << 30,
+                    BandwidthCap {
+                        up_bytes_per_sec: 1_000_000,
+                        down_bytes_per_sec: 8_000_000,
+                        active_window: None,
+                    },
+                    false,
+                    false,
+                    ComputeClass::Modest,
+                    intranet_crypto::Timestamp::from_millis(1),
+                ),
+                &state,
+            )
+            .expect("advertises");
+    };
+    advertise(&founder);
+    for member in &others {
+        advertise(member);
+    }
+
+    // **The case is derived from the ranking rather than assumed.** Everybody
+    // here offers the same, so where this node lands for a given object is the
+    // hash's business; the test picks an object where it lands deep enough to be
+    // a standby with room to test the depth rule below it.
+    let candidates: Vec<_> = ledger.entries().cloned().collect();
+    let position = |cid: &intranet_storage::Cid| {
+        placement::rank(cid.hash().as_bytes(), &candidates, WeightField::StorageOffered)
+            .iter()
+            .position(|scored| scored.node == me)
+            .expect("every member offers storage, so every member is ranked")
+    };
+    let (target, index) = sealed
+        .iter()
+        .map(|cid| (*cid, position(cid)))
+        // Deep enough that the factor below leaves room for a two-copy hole:
+        // standby number one exists only where at least three nodes rank ahead.
+        .filter(|(_, index)| *index >= 3)
+        .min_by_key(|(_, index)| *index)
+        .expect("with ten members and six objects, one of them ranks this node fourth or worse");
+
+    let roomy = Budget {
+        offered: u64::MAX,
+        installation: u64::MAX,
+        installation_used: 0,
+    };
+    let now = 1_000_000;
+    // A factor one short of this node's position makes it standby number one:
+    // the *second* node repair would reach, which is what the depth rule is for.
+    let factor = index - 1;
+
+    // **A hole one copy deep does not reach the second standby.** Without this
+    // rule every node that noticed would adopt, and a network would answer one
+    // missing copy with as many new copies as it has members.
+    let mut census = Census::default();
+    let holders: Vec<_> = others.iter().take(factor - 1).map(|m| m.id()).collect();
+    census.heard(target, &holders, &me, now);
+    let duty =
+        kols_node::replica::evaluate(&store, &ledger, &me, factor, roomy, &census, now).expect("evaluates");
+    assert_eq!(duty.adopted, 0, "one missing copy wakes one standby, not every standby");
+    assert!(!store.has_duty(&target));
+
+    // Two copies short, and the second standby is exactly who §3.4 re-places on.
+    let holders: Vec<_> = others.iter().take(factor - 2).map(|m| m.id()).collect();
+    census.heard(target, &holders, &me, now);
+    let duty =
+        kols_node::replica::evaluate(&store, &ledger, &me, factor, roomy, &census, now).expect("evaluates");
+    assert_eq!(duty.adopted, 1, "the shortfall reached this node's place in the ranking");
+    assert_eq!(
+        duty.adopted_bytes,
+        store.object_bytes(&target).expect("held"),
+        "what was taken on is weighed, because it is spent out of the member's offer"
+    );
+    assert!(store.has_duty(&target) && store.has_repair(&target));
+
+    // **No answer is not an answer**, and a repair survives one. This is the
+    // state a real node is in most of the time: the count went stale, nothing
+    // came back yet, and giving the object up here would undo the repair on
+    // exactly the evidence that is missing.
+    let much_later = now + 10 * kols_node::replica::ANSWER_FRESH_MILLIS;
+    let duty = kols_node::replica::evaluate(&store, &ledger, &me, factor, roomy, &census, much_later)
+        .expect("evaluates");
+    assert_eq!(duty.returned, 0, "a stale count is not evidence the hole closed");
+    assert!(store.has_duty(&target), "and the object stays held");
+
+    // Told the network has its target without this node, the repair ends. The
+    // bytes stay — releasing duty has never removed anything — so what changes
+    // is only whether this node is promising them.
+    let holders: Vec<_> = others.iter().take(factor).map(|m| m.id()).collect();
+    census.heard(target, &holders, &me, much_later);
+    let duty = kols_node::replica::evaluate(&store, &ledger, &me, factor, roomy, &census, much_later)
+        .expect("evaluates");
+    assert_eq!(duty.returned, 1, "evidence the hole closed is the one way a repair ends");
+    assert!(!store.has_duty(&target) && !store.has_repair(&target));
+    assert!(
+        store.object_bytes(&target).is_some(),
+        "giving back a promise must not destroy the copy"
+    );
+
+    // **A repair becomes ordinary duty when placement catches up.** Read at the
+    // factor that ranks this node inside the replica set, the same object is
+    // held under the ranking rather than under the shortfall — and the mark that
+    // exempts it from the ordinary release rule has to go with it, or it would
+    // be held under a reason that no longer applies.
+    let holders: Vec<_> = others.iter().take(factor - 2).map(|m| m.id()).collect();
+    census.heard(target, &holders, &me, much_later);
+    kols_node::replica::evaluate(&store, &ledger, &me, factor, roomy, &census, much_later)
+        .expect("evaluates");
+    assert!(store.has_repair(&target), "adopted again");
+    kols_node::replica::evaluate(&store, &ledger, &me, index + 1, roomy, &census, much_later)
+        .expect("evaluates");
+    assert!(
+        store.has_duty(&target) && !store.has_repair(&target),
+        "ranked for it now, so it is held for the ordinary reason and ends for the ordinary one"
+    );
 }

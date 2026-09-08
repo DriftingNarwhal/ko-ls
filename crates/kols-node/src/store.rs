@@ -1357,6 +1357,7 @@ impl Store {
             gone.push(*manifest);
         }
         let _ = fs::remove_file(self.segment_path(manifest, "duty"));
+        let _ = fs::remove_file(self.segment_path(manifest, "repair"));
         Ok(gone)
     }
 
@@ -1371,7 +1372,50 @@ impl Store {
     /// point of the split, and the reason lowering a contribution can never take
     /// away somebody's own history.
     pub fn release_duty(&self, cid: &Cid) -> Result<(), StoreError> {
+        // The reason a duty was taken goes with the duty. A repair mark left
+        // behind would make a later re-adoption look like it had never been
+        // given back, and the two marks only ever mean anything together.
+        self.clear_repair(cid)?;
         match fs::remove_file(self.segment_path(cid, "duty")) {
+            Ok(()) => Ok(()),
+            Err(err) if err.kind() == io::ErrorKind::NotFound => Ok(()),
+            Err(err) => Err(StoreError::Io(err)),
+        }
+    }
+
+    /// Whether this node holds `cid` because **repair** asked it to, rather than
+    /// because placement ranked it inside the replication factor.
+    ///
+    /// Both are duty and both count against the offer; the mark exists because
+    /// they are given back under different rules. Placement duty ends the moment
+    /// the ledger stops naming this node — somebody else is ranked for it now,
+    /// and that somebody is by construction holding it. Repair duty ends only on
+    /// evidence that the shortfall it was taken for has actually closed, because
+    /// nothing else is ranked for it: this node volunteered precisely because the
+    /// nodes that were ranked are not there.
+    ///
+    /// Without the distinction the next evaluation would release every repaired
+    /// object on sight, since a standby is by definition outside the primary set.
+    pub fn has_repair(&self, cid: &Cid) -> bool {
+        self.segment_path(cid, "repair").exists()
+    }
+
+    /// Records that duty for `cid` was taken as repair.
+    ///
+    /// Written beside the duty mark rather than instead of it, so every existing
+    /// reader — the tier total, eviction, shedding — treats a repaired object as
+    /// exactly what it is, duty, with no second code path to keep in step.
+    pub fn take_repair(&self, cid: &Cid) -> Result<(), StoreError> {
+        self.write_segment_mark(cid, "repair", &[])
+    }
+
+    /// Forgets that duty for `cid` was repair, leaving the duty itself alone.
+    ///
+    /// Called when placement catches up and ranks this node for something it had
+    /// volunteered for: the object stops being a repair and becomes ordinary
+    /// duty, which is a promotion rather than a change of what is held.
+    pub fn clear_repair(&self, cid: &Cid) -> Result<(), StoreError> {
+        match fs::remove_file(self.segment_path(cid, "repair")) {
             Ok(()) => Ok(()),
             Err(err) if err.kind() == io::ErrorKind::NotFound => Ok(()),
             Err(err) => Err(StoreError::Io(err)),

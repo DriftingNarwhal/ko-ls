@@ -615,12 +615,67 @@ holds no node, so a want is recorded and the daemon honours it on its next pass.
 pinned for an hour, because shedding takes the oldest history first and that is precisely what
 somebody scrolling back has just asked for.
 
+### Repair
+
+Built 2026-09-08, and it is what makes a generous member a backstop rather than a coincidence.
+Placement alone decides what a node holds *when everything is well*; it says nothing about
+content whose holders have gone, so before this a member offering a great deal of disk caught
+falling content only where the ranking had already put them.
+
+**Repair is the same ranking read further down, not a second policy.** Storage §3.4 asks for the
+shortfall to be re-placed onto *the next nodes in the same deterministic HRW order*, which is
+what keeps repair as independently recomputable as placement — every node computes the same list
+from the same ledger, so which nodes step in is determined rather than raced.
+
+**Depth follows the size of the hole.** A node ranked at `replication_factor + k` steps in when
+the census says the object is at least `k + 1` copies short, and otherwise does not. One missing
+copy wakes one standby; three wake three. Without that rule every node that noticed would adopt,
+and a network would answer one missing copy with as many new copies as it has members.
+
+**A repair ends only on evidence.** A standby is by definition outside the replica set, so the
+ordinary release rule — *the ledger stopped naming me, so somebody else has it* — would give a
+repair back the instant it was taken. So repair duty is marked as such, and is released only when
+a **fresh** count says the network has its target without this node. No answer and a stale answer
+both keep it, for the same reason the eviction rule above gives: not having been told is not the
+same as having been told nobody needs it. Placement catching up is the other ending, and is a
+promotion rather than a change — the object stops being repair and becomes ordinary duty.
+
+**The census had to widen for this.** It used to ask only about duty, which answers *is what I
+promised still safe to give back*. Repair asks the opposite question about objects this node has
+no duty for, so those are asked about too — after the ones a decision may be pending on, and
+still a few per tick, because this is background work nothing is waiting on.
+
+**The ceiling still wins.** Repair is offered the room pass one left and takes on only what fits;
+a node at its ceiling contributes no repair and sheds the copy like any other. That ordering is
+what resolves the one place the tier model strains: a cached copy of under-replicated content is
+not really a spare, but adopting it would mean promising bytes this node does not have.
+
+### Not going looking is the design (D38)
+
+Repair works over content this node **can name** — the objects it holds and the links it walked —
+and deliberately does not crawl. Content arrives because placement ranked this node for it, and
+the offer's job is to weight that ranking, not to be a quota the node fills.
+
+**That is not the limitation it first looks like**, and checking rather than assuming is what
+settled it. A node under its ceiling walks every chain it can read to the start, because
+`history_budget` is unbounded while there is room. So it already holds every sealed segment it
+could be ranked for or be the standby for, and duty and repair are complete over the network's
+readable content. A node *at* its ceiling holds less — and has no room to repair with either, so
+there is nothing it could have done with the knowledge. The two cases meet, which is why no fetch
+path is owed here.
+
+The reading that falls out and belongs on the settings screen: an offer is a **ceiling on
+willingness rather than a target**. A 50 GB offer on a network holding 2 GB holds 2 GB.
+
 ### What is still owed
 
-Nothing here **takes on** duty for content it discovers is under-replicated. Placement decides
-what a node holds, so a member offering a great deal catches what is falling only where they
-were already ranked. That is the other half of Storage §3.4's repair loop, and it is what would
-make a backstop node reliable rather than statistical.
+**A node never holds content it cannot decrypt** (`STATUS.md` O25). The walk stops at a segment
+whose DEK it cannot unwrap, so a private channel a member is not keyed for is never fetched,
+linked or held — and a storage offer therefore funds durability only for the channels that member
+can already read. The pointer is public and carries the object's CID, so the ciphertext is
+fetchable without the key; nothing does it. Holding bytes it cannot read is what a contributing
+node is *for* (Core §4.2 defines `storage_offered` over replicated content, not readable content),
+so this is a gap rather than a definition.
 
 ---
 

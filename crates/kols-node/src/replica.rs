@@ -82,12 +82,27 @@ pub struct Duty {
     pub mine_bytes: u64,
     /// Objects this node is ranked for and **refused**, being out of room.
     ///
+    /// Covers both kinds of refusal — duty this node was ranked for, and repair
+    /// it was the standby for — because a member out of room is out of room, and
+    /// a second counter would imply repair has an allowance of its own.
+    ///
     /// Not a failure: declining is how a ceiling works, and the repair loop
     /// places what this node did not take (Storage §3.4). It is counted because
     /// a member who offered less than the network wants to give them should be
     /// able to see that, and because a node silently ranked-for-and-not-holding
     /// is indistinguishable from one nobody ranked at all.
     pub refused: usize,
+    /// Objects taken on as **repair**: under-replicated, and this node was the
+    /// standby the shortfall reached (Storage §3.4).
+    ///
+    /// Counted apart from `mine` — which includes them — because they are the
+    /// only duty here that placement did not ask for, and a member whose node is
+    /// carrying a network's losses should be able to see that it is.
+    pub adopted: usize,
+    /// What this pass newly adopted, in bytes.
+    pub adopted_bytes: u64,
+    /// Repairs handed back, the shortfall they were taken for having closed.
+    pub returned: usize,
     /// Objects whose replica set came back **smaller than the network asked
     /// for**, so fewer nodes hold them than its own policy requires.
     ///
@@ -124,9 +139,22 @@ pub struct Duty {
 /// This also matches how retention is judged (`design/01` §8, per segment rather
 /// than per log).
 ///
-/// Sealed is decided by the chain rather than by a flag: a head is nobody's
-/// predecessor, so the set named as some held segment's `previous` is exactly
-/// the set that can never be republished.
+/// Sealed is decided by the chain rather than by a flag ([`sealed`]).
+///
+/// # Repair, and why it is the same function
+///
+/// Storage §3.4 asks for under-replicated content to be re-placed onto *the next
+/// nodes in the same deterministic ranking* — not onto whoever noticed. So
+/// repair is not a second policy layered over placement, it is the same ranking
+/// read further down: a node ranked at `replication_factor + k` steps in when
+/// the census says the object is `k + 1` or more copies short, and otherwise
+/// does not. Every node computes the same ranking and reads the same count, so
+/// the set that steps in is determined rather than raced.
+///
+/// This is what makes a generous member a real backstop instead of a statistical
+/// one. Without it a node holds only what placement happened to rank it for, so
+/// offering a great deal of disk catches content falling out of the network
+/// exactly where it was already going to be caught.
 ///
 /// # Ledgers converge; they do not agree
 ///
@@ -142,74 +170,174 @@ pub fn evaluate(
     me: &PerNetworkIdentityId,
     replication_factor: usize,
     budget: Budget,
+    census: &Census,
+    now: i64,
 ) -> Result<Duty, String> {
     let mut duty = Duty::default();
     let mut room = budget.remaining(store.duty_bytes());
     let candidates: Vec<_> = ledger.entries().cloned().collect();
-    let held = store.segments();
+    let sealed = sealed(store);
 
-    // **Which of these are sealed, decided exactly rather than guessed.** A head
-    // segment is nobody's predecessor — the chain runs backwards, so anything
-    // named as a `previous` has something after it and can never be republished.
-    // One pass over the links this node already holds gives the whole set.
-    //
-    // A sealed segment whose successor this node does not hold is excluded too,
-    // since nothing here names it. That is conservative in the safe direction:
-    // the cost is not taking duty for something, never taking it wrongly.
-    let sealed: std::collections::BTreeSet<Cid> = held
-        .iter()
-        .filter_map(|cid| store.segment_link(cid)?.1)
-        .collect();
+    // **Repair is decided after placement, not beside it**, because the two
+    // compete for one allowance and the order matters: an object this node is
+    // actually ranked for must never lose its room to one this node merely
+    // volunteered for. So pass one settles duty and collects the standby
+    // positions it found, and pass two spends whatever is left.
+    let mut standby: Vec<(Cid, usize)> = Vec::new();
 
-    for cid in held {
-        if !sealed.contains(&cid) {
-            continue;
-        }
-
+    for cid in sealed.iter().copied() {
         duty.considered += 1;
-        let holders = placement::select(
+
+        // One ranking rather than two calls, because repair needs to know *how
+        // far past* the replica set this node sits and `select` throws that
+        // away. The first `replication_factor` entries are exactly what `select`
+        // would have returned.
+        let ranked = placement::rank(
             cid.hash().as_bytes(),
             &candidates,
             WeightField::StorageOffered,
-            replication_factor,
         );
-        if holders.len() < replication_factor {
+        if ranked.len() < replication_factor {
             duty.under_replicated += 1;
         }
+        let position = ranked.iter().position(|scored| scored.node == *me);
 
-        if holders.contains(me) {
-            if store.has_duty(&cid) {
-                // Already held. A ceiling refuses *new* duty; what is already
-                // promised is given up only with evidence somebody else holds
-                // it, which is a separate act and a separate round trip.
-                duty.mine += 1;
-            } else if let Some(bytes) = store.object_bytes(&cid) {
-                // **Declining is ordinary, and the ceiling is why this exists.**
-                // A node past either ceiling stops taking work rather than
-                // quietly exceeding what it promised, and Storage §3.4's repair
-                // places elsewhere what this node did not take.
-                if bytes > room {
-                    duty.refused += 1;
+        match position {
+            Some(index) if index < replication_factor => {
+                if store.has_duty(&cid) {
+                    // Already held. A ceiling refuses *new* duty; what is already
+                    // promised is given up only with evidence somebody else holds
+                    // it, which is a separate act and a separate round trip.
+                    //
+                    // If this was repair, it stops being repair: the ledger now
+                    // ranks this node for it, so it is held under placement like
+                    // anything else and ends under placement's rule.
+                    if store.has_repair(&cid) {
+                        store.clear_repair(&cid).map_err(|e| e.to_string())?;
+                    }
+                    duty.mine += 1;
+                } else if let Some(bytes) = store.object_bytes(&cid) {
+                    // **Declining is ordinary, and the ceiling is why this
+                    // exists.** A node past either ceiling stops taking work
+                    // rather than quietly exceeding what it promised, and
+                    // Storage §3.4's repair places elsewhere what this node did
+                    // not take.
+                    if bytes > room {
+                        duty.refused += 1;
+                    } else {
+                        room -= bytes;
+                        store.take_duty(&cid, bytes).map_err(|e| e.to_string())?;
+                        duty.mine += 1;
+                    }
+                }
+                // An object whose weight cannot be read is counted as neither,
+                // and marked as neither. Duty is a promise about disk, and one
+                // nobody can size would escape the ceiling built on it — so this
+                // waits for the next tick rather than recording a zero that
+                // reads as free.
+            }
+            Some(index) => {
+                let over = index - replication_factor;
+                if !store.has_duty(&cid) {
+                    standby.push((cid, over));
+                } else if !store.has_repair(&cid) {
+                    // Ranked out — by a member joining, or by somebody raising
+                    // their offer. The mark goes and the bytes stay: this node
+                    // may still be reading it, and duty is only ever one of the
+                    // reasons to hold something.
+                    store.release_duty(&cid).map_err(|e| e.to_string())?;
+                } else if shortfall(census, &cid, replication_factor, now) == Some(0) {
+                    // **The one way a repair ends: evidence the hole closed.** A
+                    // standby is by definition outside the replica set, so the
+                    // ordinary release rule above would give this back the
+                    // instant it was taken. It goes when a *fresh* answer says
+                    // the network has its target without this node — and an
+                    // absent or stale answer keeps it, because not having been
+                    // told is not the same as having been told nobody needs it.
+                    store.release_duty(&cid).map_err(|e| e.to_string())?;
+                    duty.returned += 1;
                 } else {
-                    room -= bytes;
-                    store.take_duty(&cid, bytes).map_err(|e| e.to_string())?;
                     duty.mine += 1;
                 }
             }
-            // An object whose weight cannot be read is counted as neither, and
-            // marked as neither. Duty is a promise about disk, and one nobody
-            // can size would escape the ceiling built on it — so this waits for
-            // the next tick rather than recording a zero that reads as free.
-        } else if store.has_duty(&cid) {
-            // Ranked out — by a member joining, or by somebody raising their
-            // offer. The mark goes and the bytes stay: this node may still be
-            // reading it, and duty is only ever one of the reasons to hold
-            // something.
-            store.release_duty(&cid).map_err(|e| e.to_string())?;
+            None => {
+                // Not ranked at all, which for a node that offers storage means
+                // it is not in the ledger this pass sees, and for one offering
+                // nothing means exactly what it asked for. Either way there is
+                // no standing to hold anything for the network.
+                if store.has_duty(&cid) {
+                    store.release_duty(&cid).map_err(|e| e.to_string())?;
+                }
+            }
         }
     }
+
+    // Pass two: Storage §3.4's repair, over the room pass one left.
+    for (cid, over) in standby {
+        let Some(short) = shortfall(census, &cid, replication_factor, now) else {
+            continue;
+        };
+        // **Depth follows the size of the hole**, which is what keeps this from
+        // being a stampede. One missing copy wakes one standby; three missing
+        // copies wake three. Every node computes the same ranking and the same
+        // count, so the nodes that step in are the next ones down the list and
+        // no more — the deterministic re-placement §3.4 asks for, rather than
+        // whoever noticed first.
+        if over >= short {
+            continue;
+        }
+        let Some(bytes) = store.object_bytes(&cid) else {
+            continue;
+        };
+        if bytes > room {
+            // Counted with the other refusals: a member out of room is out of
+            // room, and splitting the number would suggest repair has an
+            // allowance of its own. It does not — that is the point.
+            duty.refused += 1;
+            continue;
+        }
+        room -= bytes;
+        store.take_duty(&cid, bytes).map_err(|e| e.to_string())?;
+        store.take_repair(&cid).map_err(|e| e.to_string())?;
+        duty.mine += 1;
+        duty.adopted += 1;
+        duty.adopted_bytes += bytes;
+    }
+
     duty.mine_bytes = store.duty_bytes();
     Ok(duty)
+}
+
+/// How many copies short of the network's target an object is, ignoring this node.
+///
+/// `None` when nobody has answered, which is the state this must never confuse
+/// with zero: never having asked and having asked and learned that nobody holds
+/// something are opposite answers, and only one of them is a reason to act.
+///
+/// This node's own copy is excluded deliberately — [`Census::heard`] counts
+/// others — because the question being asked is *would the network still be
+/// short if I promised nothing*. Counting a copy this node has not promised, and
+/// may shed on the next tick, would answer a more comfortable question.
+fn shortfall(census: &Census, cid: &Cid, replication_factor: usize, now: i64) -> Option<usize> {
+    census
+        .others_holding(cid, now)
+        .map(|others| replication_factor.saturating_sub(others))
+}
+
+/// The segments this node holds that can never be republished.
+///
+/// Sealed is decided by the chain rather than by a flag: a head is nobody's
+/// predecessor, so the set named as some held segment's `previous` is exactly the
+/// set that is finished. A sealed segment whose successor this node does not hold
+/// is excluded too, since nothing here names it — conservative in the safe
+/// direction, since the cost is not acting on something rather than acting on it
+/// wrongly.
+pub fn sealed(store: &Store) -> std::collections::BTreeSet<Cid> {
+    store
+        .segments()
+        .iter()
+        .filter_map(|cid| store.segment_link(cid)?.1)
+        .collect()
 }
 
 /// What this node has learned about who else holds its duty objects.
@@ -346,12 +474,24 @@ pub struct Shed {
 ///
 /// # Why this needs no evidence and duty eviction does
 ///
-/// A cached copy is not a replica. The nodes placement ranked for an object
-/// still hold it, which is the entire point of placement — so dropping this
-/// node's copy cannot take the last one, and none of the census, the
+/// A cached copy is not a replica. The nodes placement ranked for an object are
+/// the ones responsible for it, so dropping this node's copy is giving up a
+/// spare rather than a copy anybody was counting on, and none of the census, the
 /// two-holders rule or the grace window applies. That machinery exists for
 /// **duty**, where dropping could lose the object, and confusing the two would
 /// either make this pass impossibly expensive or make that one unsafe.
+///
+/// # Where that stops being true, and why this still does not change
+///
+/// The ranked holders can be *gone* — that is the whole reason repair exists —
+/// so a cached copy of under-replicated content is not always a spare. This pass
+/// still drops it, and the reason is the cap rather than an oversight: adopting
+/// it would mean promising bytes this node has no room for, and the ceiling is
+/// absolute (`02` §6.4). What resolves the tension is order. Repair runs after
+/// shedding and takes on only what fits, so a node with room keeps the copy as
+/// duty — where the census, the two-holders rule and the grace window all
+/// protect it — and a node at its ceiling gives it up, which is the same answer
+/// it gives to every other demand on a disk that is full.
 ///
 /// # What is shed, and what is never
 ///
@@ -381,15 +521,11 @@ pub fn shed_cache(store: &Store, over_by: u64, now: i64) -> Result<Shed, String>
         return Ok(shed);
     }
 
-    let held = store.segments();
-    let sealed: std::collections::BTreeSet<Cid> = held
-        .iter()
-        .filter_map(|cid| store.segment_link(cid)?.1)
-        .collect();
+    let sealed = sealed(store);
 
-    let mut candidates: Vec<(u64, Cid)> = held
+    let mut candidates: Vec<(u64, Cid)> = sealed
         .iter()
-        .filter(|cid| sealed.contains(cid) && !store.has_duty(cid))
+        .filter(|cid| !store.has_duty(cid))
         // **Not what somebody just asked for.** Shedding takes the oldest
         // history first, which is exactly what a member scrolling back has gone
         // looking for — so without this a node at its ceiling would fetch a page

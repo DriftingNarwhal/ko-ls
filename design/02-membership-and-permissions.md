@@ -380,6 +380,12 @@ they are about what a member is promised:
   anything is given up; a member may ask for a page of what stopped; and what is given up
   permanently is content another member is known to hold — or, past a week of warnings, is
   recorded so the question "what happened to that" has an answer.
+- **What the offer buys is durability rather than a share of the load.** Since 2026-09-08 the
+  offer also funds *repair* (`05` §5.1): a node ranked just past the replica set takes on
+  content the network is short of, so a member who offers generously catches what is falling
+  rather than only carrying a proportionally larger share of what is fine. It is spent out of
+  the same number and bounded by the same ceiling — repair never pushes a node past what it
+  offered, and a node with no room contributes none.
 
 **A number the declaring node advertises and does not enforce is what Real-Time §2.2.2 had to
 correct for media relays**, and this is the same shape. The difference is that it is named in
