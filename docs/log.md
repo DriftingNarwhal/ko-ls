@@ -24,6 +24,35 @@ Kept because this project keeps re-learning the same lessons and paying for them
 
 ---
 
+- **2026-09-09** — **The release build failed on the first tag after O7, and the local gate could
+  not have caught it.**
+
+  `v0.12.0` was tagged, both platform legs failed inside a minute of each other, `publish` was
+  skipped, and the tag shipped nothing. Two tests in `kols-node --lib` panicked with
+  `Locked("this installation has no account yet")`.
+
+  **It is not a platform bug, which is the first thing worth recording, because the job it failed
+  in is called *Platform tests* and both failures were on Windows and macOS.** It reproduces on
+  Linux in four seconds. The failing thing is the *environment*: O7 made every store read go
+  through an account, deliberately leaving **no unwrapped path even for tests**, and this step
+  runs `cargo test -p kols-node --lib` with no `KOLS_PASSWORD` set.
+
+  **Nothing this repository runs could have found it, and that is the part to fix rather than the
+  two tests.** `CONTRIBUTING.md` instructs a developer to set `KOLS_PASSWORD`, so every local gate
+  passes and always did — 389 green on `main` an hour before this. The release workflow runs only
+  on a `v*` tag. So the one step that tested differently from how the project documents testing
+  was also the one step nobody ran between releases, and the two facts hid each other for the
+  eight days and nineteen commits between `v0.11.1` and this.
+
+  The fix is one `env:` block. The general shape is worth more: **a CI step that does not run the
+  documented command will disagree with the documentation exactly once, at a tag.** Anywhere a
+  workflow re-states an invocation rather than calling the same entry point, it has quietly
+  become a second definition of the gate.
+
+  **And it is an argument for the release workflow's `workflow_dispatch` trigger being used**,
+  which exists and had not been since 09-01. A tag is a bad first time to discover that the build
+  is broken, because the tag is already public by then.
+
 - **2026-09-09** — **Both branches merged to `main`, and `v0.12.0` cut from it.**
 
   The register was the condition and the register is clear, so the two branches this project had

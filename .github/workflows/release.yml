@@ -110,8 +110,25 @@ jobs:
       # merge, gossip and backfill — none of it platform-specific, all of it
       # timing-sensitive, and all of it already proven in the container on a
       # deliberately starved machine.
+      # `KOLS_PASSWORD` is not optional and is not a convenience here either.
+      # Seeds are wrapped under an account key (`design/02` §6.3) and there is
+      # deliberately no unwrapped path, including for tests — so the suite
+      # unlocks exactly as the window does and differs only in where the
+      # password comes from. Any value works: the harness provisions an account
+      # at deliberately cheap Argon2 parameters, since a test account protects
+      # nothing.
+      #
+      # This was missing for the whole of `v0.11.1`..`v0.12.0` and took the
+      # first tagged build after O7 landed, on both platforms at once. It could
+      # not have been caught earlier by anything this repository runs:
+      # `CONTRIBUTING.md` tells a developer to set this variable, so every local
+      # gate passes, and this workflow runs only on a `v*` tag. A step that
+      # tests differently from how the project documents testing will disagree
+      # with it exactly once, at the least convenient moment.
       - name: Platform tests
         working-directory: ko-ls
+        env:
+          KOLS_PASSWORD: ci
         run: cargo test -p kols-node --lib
 
       - name: Build
