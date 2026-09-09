@@ -39,7 +39,7 @@ impl From<rusqlite::Error> for ProjectionError {
 /// migration is a second description of the schema that has to stay in step with
 /// the first. `design/05` §5 lists migrations among what this crate owns; this
 /// is what they turn out to be when nothing here is a source of truth.
-const SCHEMA: i64 = 1;
+const SCHEMA: i64 = 2;
 
 /// An index over the records of one network's channels.
 pub struct Projection {
@@ -108,7 +108,15 @@ impl Projection {
                  channel       BLOB    NOT NULL PRIMARY KEY,
                  message_rate  INTEGER NOT NULL,
                  reaction_rate INTEGER NOT NULL,
-                 slowmode      INTEGER NOT NULL
+                 slowmode      INTEGER NOT NULL,
+                 -- How far into the channel's arrival log this fold has read,
+                 -- and the two whole-channel numbers a read needs. All three are
+                 -- here so that a settled read is one row fetch: a COUNT(*) and
+                 -- a COUNT(DISTINCT author) are both scans of everything the
+                 -- channel holds, which is the cost this table exists to avoid.
+                 consumed      INTEGER NOT NULL DEFAULT 0,
+                 records       INTEGER NOT NULL DEFAULT 0,
+                 authors       INTEGER NOT NULL DEFAULT 0
              );",
         )?;
         conn.pragma_update(None, "user_version", SCHEMA)?;
@@ -496,6 +504,22 @@ pub struct FoldedUnder {
     pub slowmode: u32,
 }
 
+/// What a channel's fold has taken in, and the totals it reached.
+///
+/// Held beside the verdicts so that a settled read asks one indexed question and
+/// no scans: `design/09` §4.4 requires the window's tick to be bounded, and a
+/// `COUNT(*)` over a channel is exactly the kind of work that is cheap until it
+/// is not.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct Folded {
+    /// How many arrivals have been folded in.
+    pub consumed: u64,
+    /// How many records the channel holds.
+    pub records: u64,
+    /// How many distinct authors have written in it.
+    pub authors: u64,
+}
+
 impl Projection {
     /// What a channel's verdicts were folded under, if anything has been.
     pub fn folded_under(
@@ -519,18 +543,82 @@ impl Projection {
         }
     }
 
-    /// Records what a channel's verdicts are now folded under.
-    pub fn folded(&self, channel: &ChannelId, under: FoldedUnder) -> Result<(), ProjectionError> {
+    /// Records what a channel's verdicts are now folded under, and its totals.
+    pub fn folded(
+        &self,
+        channel: &ChannelId,
+        under: FoldedUnder,
+        folded: Folded,
+    ) -> Result<(), ProjectionError> {
         self.conn.execute(
-            "INSERT OR REPLACE INTO folds (channel, message_rate, reaction_rate, slowmode)
-             VALUES (?1, ?2, ?3, ?4)",
+            "INSERT OR REPLACE INTO folds
+                 (channel, message_rate, reaction_rate, slowmode, consumed, records, authors)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
             rusqlite::params![
                 channel.as_bytes().to_vec(),
                 under.message_rate,
                 under.reaction_rate,
                 i64::from(under.slowmode),
+                folded.consumed as i64,
+                folded.records as i64,
+                folded.authors as i64,
             ],
         )?;
         Ok(())
+    }
+
+    /// What a channel's fold has taken in, if it has been folded at all.
+    pub fn folded_state(&self, channel: &ChannelId) -> Result<Option<Folded>, ProjectionError> {
+        let mut statement = self
+            .conn
+            .prepare_cached("SELECT consumed, records, authors FROM folds WHERE channel = ?1")?;
+        let found = statement.query_row(rusqlite::params![channel.as_bytes().to_vec()], |row| {
+            Ok(Folded {
+                consumed: row.get::<_, i64>(0)?.max(0) as u64,
+                records: row.get::<_, i64>(1)?.max(0) as u64,
+                authors: row.get::<_, i64>(2)?.max(0) as u64,
+            })
+        });
+        match found {
+            Ok(state) => Ok(Some(state)),
+            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+            Err(err) => Err(err.into()),
+        }
+    }
+
+    /// Whether a channel already holds a record by this author.
+    ///
+    /// A seek on `records_by_author`, so its cost is bounded by the roster
+    /// rather than by the channel — which is what makes the whole-channel author
+    /// count something that can be maintained on arrival instead of counted on
+    /// every read.
+    pub fn has_author(
+        &self,
+        channel: &ChannelId,
+        author: &PerNetworkIdentityId,
+    ) -> Result<bool, ProjectionError> {
+        let found: i64 = self.conn.query_row(
+            "SELECT EXISTS (SELECT 1 FROM records WHERE channel = ?1 AND author = ?2)",
+            rusqlite::params![
+                channel.as_bytes().to_vec(),
+                author.verifying_key().as_bytes().to_vec()
+            ],
+            |row| row.get(0),
+        )?;
+        Ok(found > 0)
+    }
+
+    /// Whether a record is already folded in.
+    ///
+    /// Asked before deciding a verdict, because deciding one twice is not
+    /// harmless: the second pass would see the first already stored, count it
+    /// toward its author's ceiling, and refuse the record for its own presence.
+    pub fn holds(&self, id: &MessageId) -> Result<bool, ProjectionError> {
+        let found: i64 = self.conn.query_row(
+            "SELECT COUNT(*) FROM records WHERE id = ?1 LIMIT 1",
+            rusqlite::params![id.as_bytes().to_vec()],
+            |row| row.get(0),
+        )?;
+        Ok(found > 0)
     }
 }

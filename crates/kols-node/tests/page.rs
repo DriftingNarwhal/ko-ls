@@ -257,3 +257,112 @@ fn changing_the_limits_re_folds_rather_than_leaving_a_stale_refusal() {
         "raising the ceiling has to un-refuse what it refused"
     );
 }
+
+/// Sends `n` more messages into a channel.
+fn fill(executor: &Executor, channel: kols_core::ChannelId, n: usize) {
+    for i in 0..n {
+        executor
+            .submit(Command::SendMessage {
+                channel,
+                body: format!("filler {i}"),
+                reply_to: None,
+                attachments: Vec::new(),
+            })
+            .expect("posts");
+    }
+}
+
+/// What one settled read of a channel costs, in work that grows.
+fn settled_cost(executor: &Executor, channel: kols_core::ChannelId) -> kols_node::store::Work {
+    // Once to bring the index up to date, so what is measured is the tick and
+    // not the fold of whatever was just written.
+    open(executor, channel);
+    executor.store().reset_work();
+    open(executor, channel);
+    executor.store().work()
+}
+
+fn open(executor: &Executor, channel: kols_core::ChannelId) {
+    executor
+        .submit(Command::OpenChannel {
+            channel,
+            window: kols_core::Window::opening(50),
+        })
+        .expect("opens");
+}
+
+#[test]
+fn a_settled_read_costs_the_same_at_any_size() {
+    // **The guarantee, stated as a count rather than a duration.**
+    //
+    // This runs every two seconds for as long as somebody has a channel open,
+    // so it may not grow with the channel *at all* — the same argument as the
+    // storage ceiling, about the other resource. A timing test cannot say this:
+    // linear work with a small constant reads as flat right up to the scale
+    // nobody tests at, which is to say in somebody's client after two years.
+    //
+    // If these numbers are equal at two hundred records and at three thousand,
+    // they are equal at a hundred thousand, and nothing is being trusted to
+    // notice a curve.
+    let (_dir, executor, channel) = channel_with("bounded", 0);
+
+    fill(&executor, channel, 200);
+    let small = settled_cost(&executor, channel);
+
+    // **Everything that grows, grows.** Records are the obvious one and were the
+    // first fixed; the other two are the governance log, which gains an entry
+    // for every act anybody takes, and the held segments, which accumulate for
+    // as long as a channel has history. All three are read on this path, so all
+    // three belong in a test about whether this path grows.
+    fill(&executor, channel, 2_800);
+    for n in 0..40 {
+        executor
+            .submit(Command::CreateChannel {
+                name: format!("filler-{n}"),
+                category: None,
+                privacy: kols_core::Privacy::Public,
+                topic: String::new(),
+            })
+            .expect("creates");
+    }
+    let store = executor.store();
+    for n in 0u32..40 {
+        let mut raw = [0u8; 32];
+        raw[..4].copy_from_slice(&n.to_be_bytes());
+        let cid = intranet_storage::Cid::from_hash(intranet_crypto::Hash::from_bytes(raw));
+        store.mark_segment_link(&cid, u64::from(n), None).expect("marks");
+        store.mark_segment_channel(&cid, &channel).expect("marks");
+    }
+
+    let large = settled_cost(&executor, channel);
+
+    println!("  before: {small:?}\n   after: {large:?}");
+    assert_eq!(
+        small, large,
+        "a settled read grew with history: {small:?} before, {large:?} after"
+    );
+
+    // **Constant is not the whole claim; it has to be constant at the size of a
+    // page.** A read that examined nothing and rendered nothing would also be
+    // constant, and so would one that read a fixed thousand files. What this
+    // pins is that the work follows the page: ask for a fifth as much and it
+    // costs a fifth as much.
+    assert_eq!(large.listed, 0, "a settled read lists no directories at all");
+
+    executor.store().reset_work();
+    executor
+        .submit(Command::OpenChannel {
+            channel,
+            window: kols_core::Window::opening(10),
+        })
+        .expect("opens");
+    let small_page = executor.store().work();
+    assert!(
+        small_page.decoded < large.decoded,
+        "a smaller page must cost less: {small_page:?} against {large:?}"
+    );
+    assert!(
+        small_page.decoded <= 20,
+        "a page of ten should decode about ten records, saw {small_page:?}"
+    );
+}

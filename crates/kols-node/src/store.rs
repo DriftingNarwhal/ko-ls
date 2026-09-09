@@ -48,8 +48,44 @@ pub struct Contribution {
 }
 
 /// Everything one network's membership needs on disk.
+/// What a read of the store actually cost, in work that grows with history.
+///
+/// # Why this is counted rather than timed
+///
+/// `design/09` §4.4 requires the window's two-second tick to be bounded, and a
+/// timing measurement cannot express that. Forty milliseconds at eight thousand
+/// records reads as "flat enough" and is still linear; the curve only shows up
+/// at a scale nobody tests at, which is to say in somebody's client after two
+/// years. A count of the work done is the guarantee: if it is the same number at
+/// two hundred records and at five thousand, it is the same number at a hundred
+/// thousand, and no measurement is being trusted to notice.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct Work {
+    /// Directory entries enumerated.
+    pub listed: u64,
+    /// Files opened and read whole.
+    pub read: u64,
+    /// Records decoded and signature-checked.
+    pub decoded: u64,
+}
+
+/// The counters behind [`Work`].
+#[derive(Debug, Default)]
+struct Counters {
+    listed: std::sync::atomic::AtomicU64,
+    read: std::sync::atomic::AtomicU64,
+    decoded: std::sync::atomic::AtomicU64,
+}
+
+/// Everything one network's node keeps on this disk.
 pub struct Store {
     root: PathBuf,
+    /// What the reads through this handle have cost so far.
+    ///
+    /// Instrumentation, not state: nothing reads it to decide anything, and a
+    /// wrong count changes no answer. It exists so a test can assert the shape
+    /// of the cost rather than its magnitude.
+    work: Counters,
     entropy: [u8; 32],
     network: NetworkId,
     /// The governance log and the state it replays to, held across calls.
@@ -99,6 +135,14 @@ pub struct Store {
     /// record against it, and deriving a keypair per record on a sync burst
     /// would be paying for the comparison many times over.
     own: std::sync::OnceLock<Option<PerNetworkIdentityId>>,
+    /// The last answer about held segments, and the tally it was true of.
+    ///
+    /// `history_incomplete` reads a `.link` mark per held segment, so asking it
+    /// on every tick grows with history. Its answer changes only when a link is
+    /// written — shedding deliberately leaves links alone, so that a member's
+    /// history does not appear to shrink — which makes one tally enough to know
+    /// the cached answer still stands.
+    segments_seen: std::sync::Mutex<Option<(u64, std::collections::BTreeMap<ChannelId, bool>)>>,
 }
 
 /// What has been folded out of the log, and which log it was folded from.
@@ -112,11 +156,19 @@ struct Derived {
 
 /// The log and its replayed state, as of a known number of entry files.
 struct CachedLog {
+    /// The tally this was built at.
+    ///
+    /// **The whole invalidation rule, and it costs one `stat`.** The tally is
+    /// appended to before an entry is written, by whichever handle writes it, so
+    /// a tally that has not moved means a log that has not moved. It is compared
+    /// for equality and never used as a count — nothing derives a filename from
+    /// it, so two handles appending at once cost a rebuild rather than an entry.
+    tally: u64,
     /// How many entry files were folded in.
     ///
-    /// The whole invalidation rule. Entries are only ever appended and are
-    /// numbered by the directory's own size, so a count that has not moved means
-    /// a log that has not moved.
+    /// Where a refresh starts reading from. Entries are only ever appended and
+    /// are numbered by the directory's own size, so the files past this are
+    /// exactly what is new.
     count: usize,
     log: std::sync::Arc<GovernanceLog>,
     /// The canonical chain as of that count.
@@ -240,13 +292,41 @@ impl Store {
         fs::write(root.join("network"), network.as_bytes())?;
         Ok(Self {
             root,
+            work: Counters::default(),
             entropy,
             network,
             log_cache: std::sync::Mutex::new(None),
             derived: std::sync::Mutex::new(Derived::default()),
             projection: std::sync::OnceLock::new(),
             own: std::sync::OnceLock::new(),
+            segments_seen: std::sync::Mutex::new(None),
         })
+    }
+
+    /// What reads through this handle have cost since [`Self::reset_work`].
+    pub fn work(&self) -> Work {
+        use std::sync::atomic::Ordering::Relaxed;
+        Work {
+            listed: self.work.listed.load(Relaxed),
+            read: self.work.read.load(Relaxed),
+            decoded: self.work.decoded.load(Relaxed),
+        }
+    }
+
+    /// Starts the count again.
+    pub fn reset_work(&self) {
+        use std::sync::atomic::Ordering::Relaxed;
+        self.work.listed.store(0, Relaxed);
+        self.work.read.store(0, Relaxed);
+        self.work.decoded.store(0, Relaxed);
+    }
+
+    /// Records work done.
+    fn did(&self, listed: u64, read: u64, decoded: u64) {
+        use std::sync::atomic::Ordering::Relaxed;
+        self.work.listed.fetch_add(listed, Relaxed);
+        self.work.read.fetch_add(read, Relaxed);
+        self.work.decoded.fetch_add(decoded, Relaxed);
     }
 
     /// Opens an existing store.
@@ -256,15 +336,18 @@ impl Store {
         }
         let entropy = fixed(&fs::read(root.join("seed"))?, "seed")?;
         let network = NetworkId::from_bytes(fixed(&fs::read(root.join("network"))?, "network id")?);
-        Ok(Self {
+        let store = Self {
             root,
+            work: Counters::default(),
             entropy,
             network,
             log_cache: std::sync::Mutex::new(None),
             derived: std::sync::Mutex::new(Derived::default()),
             projection: std::sync::OnceLock::new(),
             own: std::sync::OnceLock::new(),
-        })
+            segments_seen: std::sync::Mutex::new(None),
+        };
+        Ok(store)
     }
 
     /// The network this store belongs to.
@@ -417,13 +500,41 @@ impl Store {
     /// requires, since it refuses an entry whose parent it has not seen.
     pub fn append_entry(&self, entry: &LogEntry) -> Result<(), StoreError> {
         let dir = self.root.join("entries");
-        let next = fs::read_dir(&dir)?.count();
+        // **The tally is a change signal and never a count**, which is what
+        // keeps two handles appending at once from colliding: nothing derives a
+        // filename from it, so a lost or doubled mark costs a rebuild rather
+        // than an entry.
+        //
+        // Marked before the entry is written, and the order is the safe one. A
+        // tally ahead of the directory makes a reader rebuild for nothing; a
+        // tally behind it makes a reader believe a governance act never
+        // happened, which is a permission change that silently does not apply.
+        //
+        // Numbering still costs a listing, and that is the right place for it to
+        // cost one: this runs when somebody governs, and the read path it feeds
+        // runs every two seconds.
+        append_to(self.entry_tally_path(), &[0])?;
+        let next = fs::read_dir(&dir)?.inspect(|_| self.did(1, 0, 0)).count();
         write_atomically(
             &self.root,
             dir.join(format!("{next:08}")),
             &wire::encode_entry(entry),
         )?;
         Ok(())
+    }
+
+    /// Where the governance log's tally lives.
+    fn entry_tally_path(&self) -> PathBuf {
+        self.root.join("entries.tally")
+    }
+
+    /// How many marks the governance log has taken, in one `stat`.
+    ///
+    /// Compared for *equality* against what a cache was built at, never used as
+    /// a count. A store written before this existed answers zero, which differs
+    /// from nothing and therefore costs one rebuild rather than an error.
+    fn entry_tally(&self) -> u64 {
+        length_of(self.entry_tally_path())
     }
 
     /// Reads the governance log back, ancestors first.
@@ -463,28 +574,38 @@ impl Store {
         StoreError,
     > {
         let dir = self.root.join("entries");
-        // Counted rather than read. This is the whole saving: an unchanged log
-        // costs one directory listing instead of a decode and a signature
-        // verification per entry.
-        let mut files: Vec<_> = match fs::read_dir(&dir) {
-            Ok(entries) => entries.filter_map(Result::ok).map(|e| e.path()).collect(),
-            Err(err) if err.kind() == io::ErrorKind::NotFound => Vec::new(),
-            Err(err) => return Err(err.into()),
-        };
-        files.sort();
+        // **One `stat`, and in the settled case that is the whole of it.**
+        //
+        // This used to list the entries directory and sort it, which is a scan
+        // of everything the network has ever done, run on the read path — the
+        // saving it was written for (not *reading* every entry) left the
+        // *listing* behind, and a listing still grows. The tally is appended to
+        // by whichever handle wrote the entry, so its length is how many entries
+        // exist, answered without opening a directory.
+        let tally = self.entry_tally();
 
         let mut held = self
             .log_cache
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         if let Some(cached) = held.as_ref()
-            && cached.count == files.len()
+            && cached.tally == tally
         {
             return Ok((
                 std::sync::Arc::clone(&cached.log),
                 cached.state.clone(),
             ));
         }
+
+        // Something moved, so the directory is read — off the settled path, and
+        // exactly as often as the log actually changes.
+        let mut files: Vec<_> = match fs::read_dir(&dir) {
+            Ok(entries) => entries.filter_map(Result::ok).map(|e| e.path()).collect(),
+            Err(err) if err.kind() == io::ErrorKind::NotFound => Vec::new(),
+            Err(err) => return Err(err.into()),
+        };
+        files.sort();
+        self.did(files.len() as u64, 0, 0);
 
         // **Only the entries that arrived.** Names are zero-padded indices and
         // the log is append-only, so the files past the cached count are exactly
@@ -534,6 +655,7 @@ impl Store {
 
         let log = std::sync::Arc::new(log);
         *held = Some(CachedLog {
+            tally,
             count: files.len(),
             log: std::sync::Arc::clone(&log),
             chain,
@@ -665,6 +787,7 @@ impl Store {
         for entry in fs::read_dir(&dir)? {
             let path = entry?.path();
             let bytes = fs::read(&path)?;
+            self.did(1, 1, 1);
             records.push(
                 Record::decode(&bytes)
                     .map_err(|err| StoreError::Corrupt(format!("{}: {err}", path.display())))?,
@@ -702,6 +825,17 @@ impl Store {
         if path.exists() {
             return Ok(false);
         }
+        // **The arrival log, appended before the record is written.**
+        //
+        // This is what lets a reader learn that something is new for the cost of
+        // one `stat` — see [`append_to`]. The order matters and is the safe one:
+        // an id here whose file never appeared is a write that did not complete,
+        // and the fold skips it. The other order would let a record exist that
+        // nothing names, which is a message no reader would ever see again.
+        //
+        // The duplicate check above runs first, so a record delivered twice is
+        // named once.
+        append_to(self.arrivals_path(channel), record.id().as_bytes())?;
         write_atomically(&self.root, path, &record.canonical_bytes())?;
 
         // **Here rather than at the one caller that writes this member's own
@@ -716,6 +850,66 @@ impl Store {
             self.note_own_reading(channel, record)?;
         }
         Ok(true)
+    }
+
+    /// Where a channel's arrival log lives.
+    fn arrivals_path(&self, channel: &ChannelId) -> PathBuf {
+        self.channel_dir(channel).join("arrivals")
+    }
+
+    /// How many records have ever been announced for a channel.
+    ///
+    /// One `stat`, whatever the channel holds. This is the number the fold
+    /// compares against to decide whether there is anything to do at all, and it
+    /// is why a settled read does not grow.
+    fn arrivals(&self, channel: &ChannelId) -> u64 {
+        length_of(self.arrivals_path(channel)) / 32
+    }
+
+    /// The ids announced from `from` onwards.
+    ///
+    /// Reads the tail of the arrival log and nothing else, so the cost is the
+    /// number of records that are actually new — one, in the live case.
+    fn arrived_since(
+        &self,
+        channel: &ChannelId,
+        from: u64,
+    ) -> Result<Vec<kols_core::MessageId>, StoreError> {
+        use std::io::{Read, Seek, SeekFrom};
+        let path = self.arrivals_path(channel);
+        let Ok(mut file) = fs::File::open(&path) else {
+            return Ok(Vec::new());
+        };
+        file.seek(SeekFrom::Start(from * 32))?;
+        let mut raw = Vec::new();
+        file.read_to_end(&mut raw)?;
+        self.did(0, 1, 0);
+        Ok(raw
+            .chunks_exact(32)
+            .map(|chunk| {
+                let mut bytes = [0u8; 32];
+                bytes.copy_from_slice(chunk);
+                kols_core::MessageId::from_bytes(bytes)
+            })
+            .collect())
+    }
+
+    /// Rebuilds the arrival log from the record files.
+    ///
+    /// **The reconciliation, and it runs off the tick.** A store written before
+    /// the log existed has none, and a crash between the append and the write
+    /// can leave one naming a record that is not there. Both are answered by
+    /// listing the directory once — which is what every read used to do every
+    /// time — and neither is reachable from the path that runs every two
+    /// seconds.
+    fn rebuild_arrivals(&self, channel: &ChannelId) -> Result<(), StoreError> {
+        let mut ids = self.record_ids(channel)?;
+        ids.sort_by_key(|id| *id.as_bytes());
+        let mut raw = Vec::with_capacity(ids.len() * 32);
+        for id in &ids {
+            raw.extend_from_slice(id.as_bytes());
+        }
+        write_atomically(&self.root, self.arrivals_path(channel), &raw)
     }
 
     /// Which records a channel holds, from the names of their files.
@@ -734,7 +928,9 @@ impl Store {
             return Ok(Vec::new());
         }
         let mut ids = Vec::new();
+        let mut listed = 0u64;
         for entry in fs::read_dir(&dir)? {
+            listed += 1;
             let name = entry?.file_name();
             let Some(name) = name.to_str() else {
                 continue;
@@ -749,6 +945,7 @@ impl Store {
                 ids.push(kols_core::MessageId::from_bytes(bytes));
             }
         }
+        self.did(listed, 0, 0);
         Ok(ids)
     }
 
@@ -758,6 +955,7 @@ impl Store {
             .channel_dir(channel)
             .join("records")
             .join(to_hex(id.as_bytes()));
+        self.did(0, 1, 1);
         Record::decode(&fs::read(path).ok()?).ok()
     }
 
@@ -872,7 +1070,15 @@ impl Store {
             newest: newer.then_some(newest).flatten(),
             older,
             newer,
-            authors: projection.authors(channel).ok()?,
+            // From the fold's own row rather than a `COUNT(DISTINCT author)`
+            // over the channel, which was the last whole-channel scan on this
+            // path (`design/09` §4.4).
+            authors: projection
+                .folded_state(channel)
+                .ok()
+                .flatten()
+                .map(|state| state.authors as usize)
+                .unwrap_or(0),
         })
     }
 
@@ -919,31 +1125,37 @@ impl Store {
             .flatten()
             .is_some_and(|held| held != under);
 
-        // **Names, not contents.** A record file is named by its id, so the
-        // directory answers *which records exist* without decoding one of them —
-        // and the ordinary case is that the answer has not changed. Reading the
-        // channel here was the whole point of the index being paid for and then
-        // not used: opening a page cost the channel, in the one function that
-        // runs before every page.
-        let on_disk = self.record_ids(channel)?;
-        // A count rather than the ids. The early return is the case that runs on
-        // every tick of every open channel, and materialising a hundred thousand
-        // identifiers to discover that none of them are new is the same mistake
-        // as decoding the records was, one layer smaller.
-        if !stale && on_disk.len() == projection.count(channel).unwrap_or(0) {
+        // **One `stat` and one row, and in the settled case that is the whole
+        // of it.**
+        //
+        // The arrival log grows by 32 bytes a record and is appended to by
+        // whichever handle stored it, so its length is how many records this
+        // channel has ever held — answered without opening it. `consumed` is how
+        // many of them this fold has taken in. Equal means there is nothing to
+        // do, and nothing here has looked at the channel.
+        //
+        // Every earlier version of this check was a scan wearing a different
+        // hat: reading and decoding every record file, then listing the
+        // directory, then a `COUNT(*)`. All three answer "has anything changed"
+        // by examining everything, which is the shape `design/09` §4.4 says the
+        // two-second tick may not have.
+        let state = projection.folded_state(channel).ok().flatten().unwrap_or_default();
+        let announced = self.arrivals(channel);
+        if !stale && announced == state.consumed {
             return Ok(());
         }
 
-        let held = projection.ids(channel).unwrap_or_default();
-        let newest = projection.newest(channel).ok().flatten();
-        // Only the ones the index has never seen are decoded. In the live case
-        // that is one record.
-        let mut missing: Vec<Record> = on_disk
-            .iter()
-            .filter(|id| !held.contains(id))
-            .filter_map(|id| self.record(channel, id))
+        // Something is new, so the tail of the log names exactly what — no
+        // directory listing, and no diff against the ids already held.
+        let mut missing: Vec<Record> = self
+            .arrived_since(channel, state.consumed)?
+            .into_iter()
+            .filter(|id| !projection.holds(id).unwrap_or(false))
+            .filter_map(|id| self.record(channel, &id))
             .collect();
         missing.sort_by_key(kols_core::Record::cursor);
+
+        let newest = projection.newest(channel).ok().flatten();
         // Compared on the whole position rather than the reading, for the same
         // reason a page boundary is: two records can share a reading, and a
         // comparison that could not separate them would call an arrival
@@ -958,21 +1170,57 @@ impl Store {
         // what it is: every verdict after the arrival may move, so every record
         // has to go through the pass again. Rare by construction — it takes
         // backfill reaching into the fold, or a governance act changing the
-        // limits.
+        // limits. **Off the tick**, which is the property that matters.
         let fold: Vec<Record> = if stale {
             let _ = projection.forget(channel);
+            // The log is what the fold is measured against, so a rebuild rebuilds
+            // it too — that is the one path allowed to list the directory, and
+            // it is also where a log left short by a crash is repaired.
+            self.rebuild_arrivals(channel)?;
             self.records(channel)?
         } else {
             missing
         };
+        // **Whether an arriving author is new is asked before the insert**, on
+        // the author key the index already carries. That is a seek rather than a
+        // scan, and it is bounded by the roster rather than by history — which
+        // is what lets the whole-channel author count be *maintained* instead of
+        // recomputed as a `COUNT(DISTINCT)` on every read.
+        let mut added = 0u64;
+        let mut folded_in = 0u64;
         for record in &fold {
+            if projection.holds(&record.id()).unwrap_or(false) {
+                continue;
+            }
+            let first_from_them = !projection
+                .has_author(channel, &record.author)
+                .unwrap_or(true);
             let verdict = kols_store::decide(projection, record, limits)
                 .map_err(|err| StoreError::Corrupt(err.to_string()))?;
             projection
                 .insert(record, verdict)
                 .map_err(|err| StoreError::Corrupt(err.to_string()))?;
+            folded_in += 1;
+            if first_from_them {
+                added += 1;
+            }
         }
-        let _ = projection.folded(channel, under);
+
+        // A re-fold forgot everything first, so its counts start from nothing;
+        // an ordinary arrival adds to what was there.
+        let base = if stale {
+            kols_store::Folded::default()
+        } else {
+            state
+        };
+        let folded = kols_store::Folded {
+            // Taken from the log again after a rebuild, since rebuilding it may
+            // have changed its length.
+            consumed: if stale { self.arrivals(channel) } else { announced },
+            records: base.records + folded_in,
+            authors: base.authors + added,
+        };
+        let _ = projection.folded(channel, under, folded);
         Ok(())
     }
 
@@ -1066,6 +1314,7 @@ impl Store {
             return Ok(());
         }
         for entry in fs::read_dir(&channels)? {
+            self.did(1, 0, 0);
             let path = entry?.path().join("announced");
             if path.exists() {
                 fs::remove_file(path)?;
@@ -1141,6 +1390,7 @@ impl Store {
         }
         let mut chunks = Vec::new();
         for entry in fs::read_dir(&dir)? {
+            self.did(1, 0, 0);
             chunks.push(fs::read(entry?.path())?);
         }
         Ok(chunks)
@@ -1201,6 +1451,7 @@ impl Store {
         }
         let mut records = Vec::new();
         for entry in fs::read_dir(&dir)? {
+            self.did(1, 0, 0);
             let Ok(bytes) = fs::read(entry?.path()) else {
                 continue;
             };
@@ -1221,6 +1472,7 @@ impl Store {
         }
         let mut out = Vec::new();
         for entry in fs::read_dir(&dir)? {
+            self.did(1, 0, 0);
             let name = entry?.file_name();
             let Some(hex) = name.to_str() else { continue };
             let Some(bytes) = intranet_crypto::from_hex(hex) else {
@@ -1644,6 +1896,7 @@ impl Store {
         }
         let mut out = Vec::new();
         for entry in fs::read_dir(&dir)? {
+            self.did(1, 0, 0);
             let path = entry?.path();
             let Some(rotation) = path
                 .file_name()
@@ -1831,7 +2084,10 @@ impl Store {
         if let Some(previous) = previous {
             raw.extend_from_slice(previous.hash().as_bytes());
         }
-        self.write_segment_mark(cid, "link", &raw)
+        self.write_segment_mark(cid, "link", &raw)?;
+        // What makes the cached answer above safe to hold: the one place a link
+        // appears is the one place the tally moves.
+        append_to(self.segment_tally_path(), &[0])
     }
 
     /// Every segment this node holds, as the CIDs its links were written under.
@@ -1846,6 +2102,7 @@ impl Store {
         };
         entries
             .filter_map(Result::ok)
+            .inspect(|_| self.did(1, 0, 0))
             .filter_map(|entry| {
                 let name = entry.file_name().into_string().ok()?;
                 let hex = name.strip_suffix(".link")?;
@@ -1886,6 +2143,7 @@ impl Store {
         };
         entries
             .filter_map(Result::ok)
+            .inspect(|_| self.did(1, 0, 0))
             .filter_map(|entry| {
                 let name = entry.file_name().into_string().ok()?;
                 let bytes: [u8; 32] = intranet_crypto::from_hex(&name)?.try_into().ok()?;
@@ -1994,14 +2252,61 @@ impl Store {
     /// fewer messages than another member of the same network, and without this
     /// they would have no reason to think anything but that the network is quiet.
     pub fn history_incomplete(&self, channel: &ChannelId) -> bool {
+        // **One `stat` when nothing has been absorbed**, which is the case on
+        // every tick of every open channel. The answer costs a `.link` and a
+        // `.channel` read per held segment, and segments accumulate for as long
+        // as a channel has history — so asking it afresh each time is the same
+        // unbounded shape as listing the records was.
+        //
+        // It is sound to cache against this one number because the answer
+        // depends only on which `.link` marks exist, and those are written in
+        // exactly one place. Shedding does not remove them, deliberately: a
+        // member who gave up a servable copy has not lost history, and the links
+        // still describe a whole chain.
+        let tally = self.segment_tally();
+        let mut seen = self
+            .segments_seen
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if let Some((at, answers)) = seen.as_ref()
+            && *at == tally
+            && let Some(answer) = answers.get(channel)
+        {
+            return *answer;
+        }
+
         let held: std::collections::BTreeSet<Cid> = self.segments().into_iter().collect();
-        held.iter()
+        // The listing itself is charged by `segments`; this is the two mark
+        // reads per segment that answering the question costs.
+        self.did(0, 2 * held.len() as u64, 0);
+        let answer = held
+            .iter()
             .filter(|cid| self.segment_channel(cid).is_none_or(|held| held == *channel))
             .any(|cid| {
                 self.segment_link(cid)
                     .and_then(|(_, previous)| previous)
                     .is_some_and(|previous| !held.contains(&previous))
-            })
+            });
+
+        match seen.as_mut() {
+            Some((at, answers)) if *at == tally => {
+                answers.insert(*channel, answer);
+            }
+            _ => {
+                *seen = Some((tally, [(*channel, answer)].into_iter().collect()));
+            }
+        }
+        answer
+    }
+
+    /// Where the segment tally lives.
+    fn segment_tally_path(&self) -> PathBuf {
+        self.root.join("segments.tally")
+    }
+
+    /// How many links have ever been written, in one `stat`.
+    fn segment_tally(&self) -> u64 {
+        length_of(self.segment_tally_path())
     }
 
     /// Which channel a segment was absorbed for, when that was recorded.
@@ -2066,6 +2371,7 @@ impl Store {
         };
         entries
             .filter_map(Result::ok)
+            .inspect(|_| self.did(1, 0, 0))
             .filter(|entry| {
                 entry
                     .file_name()
@@ -2336,6 +2642,46 @@ fn fixed<const N: usize>(bytes: &[u8], what: &str) -> Result<[u8; N], StoreError
 /// `fsync` per record, which is a real cost and a decision to make deliberately
 /// — and losing the last message to a power cut is a different order of problem
 /// from losing the network to a window closing.
+/// Appends to a file that only ever grows, creating it if absent.
+///
+/// # The primitive three things here are built on
+///
+/// A reader has to answer *has anything changed* without looking at everything,
+/// and it cannot hold the answer in memory: `serve` opens its **own** `Store` on
+/// the same directory, so a counter in one handle never sees the other's writes.
+/// The signal has to go through the filesystem and cost one `stat`.
+///
+/// An append-only file's **length** is that signal. It is monotonic, it is read
+/// without opening the file, and — unlike a counter written by
+/// read-modify-write — two writers cannot lose one another's update, which is
+/// the failure that would matter: a marker that returned to a value a reader had
+/// already seen would make that reader skip a record for good.
+///
+/// The weaker guarantee, stated: this relies on `O_APPEND` making a small write
+/// atomic against other appenders. That holds on the local filesystems this runs
+/// on and is not promised by POSIX for arbitrary sizes. It is a strictly smaller
+/// assumption than the atomic `rename` below, which the whole store already
+/// rests on.
+fn append_to(path: impl AsRef<Path>, bytes: &[u8]) -> Result<(), StoreError> {
+    use std::io::Write;
+    if let Some(parent) = path.as_ref().parent() {
+        fs::create_dir_all(parent)?;
+    }
+    let mut file = fs::OpenOptions::new().create(true).append(true).open(path)?;
+    file.write_all(bytes)?;
+    Ok(())
+}
+
+/// How long that file is, or zero when it is not there yet.
+///
+/// One `stat`, whatever the file holds. Absent reads as zero rather than
+/// failing: a store written before this existed has nothing appended yet, and
+/// the honest answer for it is *nothing has been marked*, which sends every
+/// caller down the rebuild path they would have taken anyway.
+fn length_of(path: impl AsRef<Path>) -> u64 {
+    fs::metadata(path).map(|meta| meta.len()).unwrap_or(0)
+}
+
 fn write_atomically(root: &Path, path: impl AsRef<Path>, bytes: &[u8]) -> Result<(), StoreError> {
     use std::sync::atomic::{AtomicU64, Ordering};
     static NEXT: AtomicU64 = AtomicU64::new(0);

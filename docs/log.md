@@ -24,6 +24,58 @@ Kept because this project keeps re-learning the same lessons and paying for them
 
 ---
 
+- **2026-09-09** — **Measured flat is not bounded, and the difference is the whole point.**
+
+  Paging made a page cost a page and left the *tick* linear. Those are different properties: one
+  is about what is drawn, the other about what is examined to decide nothing needs drawing. The
+  second is what runs every two seconds for as long as somebody has a channel open.
+
+  The reading that looked fine — 3.6 ms at five hundred records, 6.1 ms at eight thousand — is
+  linear, and reads as flat because the constant is small. That curve only shows up at a scale
+  nobody tests at, which is to say in somebody's client after two years. **A timing measurement
+  cannot express *bounded*; it can only fail to notice.** So the guarantee is now a count of
+  work — directory entries enumerated, files read, records decoded — asserted *equal* at two
+  hundred records and at three thousand, with forty governance entries and forty held segments
+  added on top. Equal at those sizes is equal at a hundred thousand.
+
+  **Five things on that path grew, and every one had the same shape**: answering *has anything
+  changed* by examining everything that might have. Reading and decoding every record file; then
+  listing the record directory; then a `COUNT(*)`; a `COUNT(DISTINCT author)`; a listing and sort
+  of the whole governance log; and a mark read per held segment. Each was a real saving over the
+  one before and each left the growth one layer down. Worth naming as a habit rather than five
+  bugs: the fix that gets you from *read everything* to *list everything* feels like the fix.
+
+  **One primitive answers all five: a file that only ever grows, whose length is the signal.**
+  Read with a `stat`, monotonic, and — unlike a counter written by read-modify-write — immune to
+  two writers losing one another's update, which is the failure that would matter, since a marker
+  returning to a value a reader had already seen would make that reader skip a record for good.
+  It has to live in the filesystem rather than in memory because `serve` opens its **own** handle
+  on the same store, so a counter in one would never see the other's writes.
+
+  Records append their id, so the length is the count and the tail is exactly what is new.
+  Governance entries append a byte, and there the tally is a change signal and **never** a count
+  — nothing derives a filename from it, so two handles appending at once cost a rebuild rather
+  than an entry. I had it deriving the entry number from the tally first, which reintroduced a
+  numbering race in the name of removing a listing. Segments append a byte when a link is
+  written, which is sound because shedding deliberately leaves links alone.
+
+  Then the instrumentation itself was the thing to distrust: `listed: 0` meant *the five sites I
+  remembered to instrument*. Charging every `read_dir` in the store — fourteen of them — is what
+  makes the number a claim about the store rather than about my memory. It stayed zero.
+
+  Three probes, each reverting one fix, each failing the test in its own way: 200→3000 listed for
+  the records early-out, 12→172 for the log cache, 0→40 for the segment cache. And the test
+  asserts a smaller page costs less, because constant is not the whole claim — a read that
+  examined nothing would be constant too.
+
+  **What it costs, stated rather than buried.** 32 bytes a record for the arrival log, about 3 MB
+  at a hundred thousand messages beside records of hundreds of bytes each. A reliance on
+  `O_APPEND` making small writes atomic against other appenders — a smaller assumption than the
+  atomic `rename` the store already rests on, and not promised by POSIX at arbitrary sizes. And
+  one more derived thing that can be wrong: a crash between the append and the record write
+  leaves an id naming nothing, which the fold skips and a rebuild repairs. Every repair path
+  lists a directory, and every one of them runs off the tick.
+
 - **2026-09-09** — **Paging, and the boundary that could not be expressed.**
 
   O4's other half. `open_channel` now renders a *range* rather than a channel: a settled page is

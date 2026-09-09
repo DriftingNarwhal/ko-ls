@@ -29,5 +29,5 @@
 mod schema;
 mod verdict;
 
-pub use schema::{FoldedUnder, Projection, ProjectionError};
+pub use schema::{Folded, FoldedUnder, Projection, ProjectionError};
 pub use verdict::{Verdict, decide};
