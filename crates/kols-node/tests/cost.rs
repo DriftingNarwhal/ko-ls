@@ -1,9 +1,12 @@
 //! What the same work done repeatedly actually costs — O5.
 //!
-//! `design/05` §5 asks for this explicitly and `WORKING.md` makes it the step
-//! before O4: a number on how long a send takes in a channel with a long author
-//! log is what says whether this is a real cost or a tidy one, and it is also
-//! the thing that will show whether the projection delivered.
+//! `design/05` §5 asks for this explicitly, and measuring before optimising is
+//! what split O5 from O4 rather than carrying them as one item: a number on how
+//! long a send takes in a channel with a long author log is what says whether
+//! this is a real cost or a tidy one, and it is also the thing that showed
+//! whether the projection delivered. Both are closed; this stays because a
+//! measurement that only runs while somebody is worried about a number is one
+//! nobody can compare against.
 //!
 //! **Ignored by default.** It is a measurement rather than an assertion — it
 //! takes minutes and its output is numbers to read, not a pass to trust. Run it

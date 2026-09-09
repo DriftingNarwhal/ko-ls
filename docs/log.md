@@ -24,6 +24,39 @@ Kept because this project keeps re-learning the same lessons and paying for them
 
 ---
 
+- **2026-09-09** — **`WORKING.md` retired, and what checking its exit condition turned up.**
+
+  It was written on 2026-09-07 to clear the owed register before P2, and it said from its first
+  paragraph what would let it go: *every decision recorded below belongs in `design/` or
+  `STATUS.md` by the time this file goes*. So retiring it is an audit rather than a deletion —
+  the question is not whether the work is done but whether each decision reached a permanent
+  home, and the answer was no in one place.
+
+  **O16's second half had never landed.** The entry asked for three things: `design/00` §6's open
+  question closed, O16 out of `STATUS.md` §2, and *`design/09` §3 gains the statement*. The first
+  two were done on 09-07 and the Done log recorded them; the third was silently dropped, and the
+  Done entry did not claim otherwise — it named `00` §6 alone. So the decision that this client
+  does not dial what mDNS finds lived in the overview and not in the document an interface
+  implementer reads, where §3 is exactly where D29's correlation argument is carried. Written
+  there now as a cross-reference rather than a second copy, since `00` §6 owns it.
+
+  **Three drifts in `design/05` §3, which is the list that has now drifted five times.**
+  `FetchHistory` landed with O24 and never reached the page. `MemberPresence` was added to the
+  built list on 09-08 and left standing in the *not built* list beside it, so the same event was
+  described as both. And the prose still counted nine events where the list below it had ten.
+  §8's row was stale in the same direction, recording the event half's drift guard as owed when
+  it was built on 09-07.
+
+  **The guard did its job and could not have caught any of these**, which is the part worth
+  keeping. `tests/events.rs` fails to compile when a *variant* arrives unsampled, and that is
+  what it was built for. A count written in prose is not a variant, and neither is an entry left
+  behind in the wrong list — so the answer is not a better guard but fewer places to disagree,
+  and the count is now stated once beside the list rather than twice.
+
+  Nothing else was owed. The Done log's substance had already moved to this file, the storage
+  design to `05` §5.1 and `02` §6.4, and the questions Q1–Q6 to the documents that own their
+  mechanisms.
+
 - **2026-09-09** — **O7 closed: the copy that survives the machine.**
 
   The lock and the export. `design/02` §6.3 has the decisions; what building them turned up:

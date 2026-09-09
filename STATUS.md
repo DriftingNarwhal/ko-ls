@@ -1,8 +1,10 @@
 # ko-ls — Status
 
-**Updated:** 2026-09-08
+**Updated:** 2026-09-09
 **Phase:** P1 — two nodes talk live and durably, a joiner reads back through sealed history,
-and the boundary carries commands in and events out.
+the boundary carries commands in and events out, and the seeds behind all of it are no longer
+on disk in the clear. **The owed register has nothing actionable left in it**, which is the
+condition the branches below were waiting on.
 
 **This file is a map, and holds nothing that lives anywhere else.** It says where the work
 stands and which document owns each part of it. Anything long-lived — how a mechanism works,
@@ -21,12 +23,17 @@ its own governance log, membership, epoch key chain and DHT namespace.
 
 Three repositories, side by side:
 
-**Two of them are working on a branch, deliberately, until the owed register is clear.** `ko-ls`
-is on `replica-duty-and-storage-ceilings` and `distributed-intranet` on
-`close-the-moderation-head-question`; both are pushed, and `main` gets them once §2 is empty.
+**Two of them are still on a branch, and the reason they were has now expired.** `ko-ls` is on
+`replica-duty-and-storage-ceilings` and `distributed-intranet` on
+`close-the-moderation-head-question`; both are pushed. The condition this file set for merging
+was that §2 be empty of actionable work, and as of 2026-09-09 it is — so **the merge is an
+outstanding act rather than a blocked one**, and it is §1's next decision.
+
 Recorded because this line used to say all three were on `main` and pushed, which read as a
-description and had become a claim about somewhere the work is not — anything cloning `main`
-today gets neither the storage work nor anything after it.
+description and had become a claim about somewhere the work is not. That is now worse rather
+than better: `main` is sixteen commits behind, and what it is missing is no longer only the
+storage work but the whole credentials release gate — anything cloning `main` today gets a
+client that writes its seeds to disk in the clear.
 
 | Repo | Remote | What it is |
 |---|---|---|
@@ -70,7 +77,16 @@ sequencing.
 |---|---|
 | **Milestone** | A client that can be handed to somebody else, so two people **on entirely separate networks** can talk, using a bootstrap relay and no VPS. The first test is two of the user's own laptops, one on a mobile hotspot |
 | **Blocked on** | Nothing |
-| **Next decision needed** | Nothing blocking |
+| **Next decision needed** | **Two, neither blocking.** Merge both branches to `main` — the register is clear, which is what they were waiting for. And whether to cut a release: `v0.11.1` is nineteen commits behind and predates the lock, so the published distributable is the one version of this client that still keeps seeds in the clear |
+
+**What P2 starts with, in dependency order** — `design/06` §17 owns the sequencing and §13 owns
+why the middle item is not optional: **E10** (`/chat/dm-invite/1.0.0`, small) → **E13**
+(cross-network bootstrap, medium, and the disclosure gate is the hard half) → O1's direct-message
+commands → **E7** (channel-scoped MLS, large) → O1's `Search`. E7 is where `design/03` §3.5's
+obligation comes due: placement must rank over a private channel's **roster** rather than over the
+capability ledger, or its effective replica set becomes *roster ∩ top-k* and can be empty. That is
+written down as a requirement of the work rather than left to be found during it, which is the
+mistake this project has paid for before.
 
 Where that milestone stands:
 
@@ -98,18 +114,24 @@ Where that milestone stands:
 | A member who offers a lot actually catching what falls | **done** — repair, the other half of Storage §3.4. A node ranked past the replica set takes on content the network is short of, and how deep that reaches follows the size of the hole rather than who noticed: one missing copy wakes one standby, three wake three. Before this, offering a great deal of disk caught falling content only where placement had already ranked you — a backstop by coincidence. The offer buys **ranking rather than a crawl** (D38), so it is a ceiling on willingness and not a target: a 50 GB offer on a network holding 2 GB holds 2 GB |
 | Knowing who is around | **done** — presence, `design/01` §9's ephemeral gossip: a signed beat every thirty seconds under the network's epoch key, and a roster carrying two marks that may never stand in for each other — a ring for *this node has a connection to them*, a word for *what they said*. **No word is silence rather than "offline"**, because a stale beat, a member who chose to be invisible and one never heard from are three different things and nothing here tells them apart. Invisible publishes nothing at all, not the word "invisible" |
 | An interface that survives being used | **done** — the first field test's list, worked through: first-sight marks on messages that land mid-timeline, the roster as a counted dropdown at the top right, the door as a sheet behind a counted button, and settings as a screen rather than a sheet over a dimmed channel (`design/09` §4.1–§4.3) |
+| A stolen laptop that is not an identity | **done** — the release gate `design/00` §5 has carried since before there was code. An account password derives an Argon2id key that *wraps* each per-network seed and never derives one, because a derived identity is checkable offline against ids the network publishes. There is no unwrapped path, including for tests. The window gates on login and starts no node until somebody has logged in, which is the half that decides what the password protects; locking hides the window and leaves the node answering. The export is **portability rather than recovery** — the seed is the member and lives on one disk (`design/02` §6.3) |
+| Scrolling back without reading the whole channel | **done** — and bounded rather than merely fast, which is the stronger claim. A settled page costs one file read per record drawn and **no directory listings at all**: 52 reads for a page of fifty, identical at five hundred records and at eight thousand. The guarantee is a count of work asserted equal across a fifteen-fold growth, not a duration that looked flat — `design/09` §4.4 forbids the two-second tick growing at all, which is the storage ceiling's argument about the other resource |
 
 **Runnable.** `kols-desktop` is the product (`design/00` D30); `kols` is a development tool
 over the same `kols-api` boundary, owed no feature parity and no end-user documentation.
 
-- **`kols-desktop`** — creates or joins a network, runs a node for it, generates a relay
+- **`kols-desktop`** — opens on a lock, and makes an account on first launch rather than
+  offering one. Behind it: creates or joins a network, runs a node for it, generates a relay
   identity and designates relays, lists and renders channels in the order the network agrees
-  on, posts, reacts, revises, withdraws and pins, manages channels and folders, mints an
-  invite and admits from the waiting room, and says so when a healed fork undid something.
+  on, posts, reacts, revises, withdraws and pins, pages back through history and asks the
+  network for what this disk stopped holding, manages channels and folders, mints an
+  invite and admits from the waiting room, says who is around without claiming to know who is
+  not, and says so when a healed fork undid something.
   Settings is a screen of five sections split by what a click costs (`design/09` §4.2), and carries the
   network's name (D32), a **role-first permissions surface** — roles, what each holds and at
-  which scope, and who is in them — and the network's own policy: admission mode, the abuse
-  limits of spec 07 §4.3 and the two retention windows of §2.8.
+  which scope, and who is in them — the network's own policy: admission mode, the abuse
+  limits of spec 07 §4.3 and the two retention windows of §2.8 — and what this machine gives
+  other members, with a ceiling on it and an export of the identities behind it.
 - **`kols`** — **the multi-process test harness, and not a product surface** (D30). Six test
   files drive `CARGO_BIN_EXE_kols`, and separate processes are the whole point: separate stores
   and swarms, a node that can be killed and restarted, and the single-node claim exercised for
@@ -120,21 +142,28 @@ over the same `kols-api` boundary, owed no feature parity and no end-user docume
   contribute, presence, storage, history, and channel
   create/list/rename/topic/slowmode/archive.
 
-**Gates green as of this date:** 389 tests here, 681 in `../distributed-intranet`, clippy
-clean in both, and `crates/kols-ui/drive.mjs`'s 121 checks green by hand. O20 reproduced once
+**Gates green, re-run 2026-09-09 rather than carried forward:** 389 passed and 0 failed here
+(4 ignored, all measurements), 681 passed and 0 failed in `../distributed-intranet`, clippy
+clean in both, and `crates/kols-ui/drive.mjs`'s 121 checks green by hand with no uncaught
+errors. The daemon suites were clean on this run, full width. O20 reproduced once
 across four full-width runs on 2026-08-31 and 2026-09-01, which makes it **intermittent rather
 than deterministic** — `CONTRIBUTING.md` said it failed on every full-workspace run, and that
 was a run of bad luck rather than a property. The one failure arrived directly after a
 governance change and was attributed by measurement rather than by reading; how, and why the
 comparison is worth running even when you are sure, is in `CONTRIBUTING.md`.
 
-**`v0.11.1` is the release the rows above describe**, cut 2026-09-01. It carries everything
-from 2026-08-30 — the event path, drag, shutdown, re-dial after sleep, the network's name —
-none of which was in a published release until now: `v0.11.0` was eight days and forty
-commits behind, while `README.md` and `docs/two-machine-test.md` both send a new user to
-Releases. That gap is the thing to watch rather than the version number; a distributable that
-trails `main` by a week of fixes is indistinguishable, from the far end, from fixes that were
-never made.
+**`v0.11.1` no longer describes the rows above, and the gap it was written to warn about has
+widened.** Cut 2026-09-01, it carried everything from 08-30 — the event path, drag, shutdown,
+re-dial after sleep, the network's name — after `v0.11.0` had sat eight days and forty commits
+behind. The warning then was that a distributable trailing the branch by a week of fixes is
+indistinguishable, from the far end, from fixes that were never made.
+
+It now trails by nineteen commits, and **what it is missing has changed in kind rather than
+in amount**: the storage ceilings, the paged read, and the whole of O7. `README.md` and
+`docs/two-machine-test.md` both send a new user to Releases, so the client somebody downloads
+today is the last one that writes its seeds to disk in the clear — while `design/00` §5 calls
+fixing exactly that a release gate. That is the argument for cutting one, and it is §1's
+second open decision rather than a thing this file can decide.
 
 ---
 
@@ -148,15 +177,21 @@ not, the dependency is named in the owning document.
 
 | # | Owed | Specified in |
 |---|---|---|
-| O1 | Commands for direct messages, search, voice and stage — each has a line in `design/05` §3's boundary *grammar* and nothing in `kols-api`. **`SetContribution` and `SetPresence` are built** (25 commands now); the rest wait on E10/E13, `03` §6's indexes, and `kols-media` | `design/05` §3, `design/00` §5 |
-| O4 | **Closed 2026-09-09.** The *replay* half took one ordinary command from 152 ms to 1.5 ms against three hundred channels. The *read* half is built, switched on, and **bounded rather than merely fast**: a settled read does no directory listings at all and costs one file read per record in the page — 52 for a page of fifty, identical at five hundred records and at eight thousand, against 22.8 ms and 413 ms for the whole channel. Paging alone left the two-second tick linear, which `design/09` §4.4 now forbids outright as the storage ceiling's argument about the other resource; five things on that path answered *has anything changed* by examining everything, and one primitive — a file whose length is the signal, read in a `stat` — replaces all five. The guarantee is a **count of work asserted equal**, not a duration that looked flat. The interface half is a loaded range that only grows, local pages on scroll with the network fetch keeping its button, and three top-of-list states told apart. **The cursor was the load-bearing correctness fix** — `before: Option<Hlc>` cannot express a page boundary, since two records can share a reading and a boundary between such a pair excluded both, including the one never drawn | `design/05` §5, `design/09` §4.4 |
-| O5 | **Fixed 2026-09-08: a send is now flat in history.** 298 ms at a thousand of an author's records became 1.8 ms, and 2.1 ms at six thousand. Two costs went: every `append` re-encoded the whole segment, so a rebuild did n²/2 records' worth of cryptography; and the executor rebuilt a log at all, which it only ever needed for a byte count nothing consumed. It now answers the three questions a write asks — newest reading, newest message reading, count in the trailing minute — from a small per-channel index, and publishes nothing. `serve`'s per-tick pass skips channels with nothing new. **And the constant went too**: `AppendOnlyObject` upstream re-chunks an append's tail rather than the whole segment — 6.5 ms to 0.12 ms per append at ten thousand records, flat against linear — with Storage §1.3 amended to require the property it rests on | `design/05` §5, Storage §1.3 |
-| O7 | **Closed 2026-09-09.** Seeds are no longer on disk in the clear: an account password derives an Argon2id key that *wraps* each per-network seed, and a migration wraps in place on the next unlock — idempotent, decided by the seed's length rather than a marker. The password never **derives** a seed, which is the one thing this must not do: network ids are public and member ids are in the log, so a derived identity could be checked offline against what the network publishes. **No unwrapped path exists**, including for tests. The window gates on login and **starts no node until somebody has logged in**, which is the half that decides what the password protects; locking hides the window while the node keeps answering. The export is *portability rather than recovery* — the seed is the member and lives on one disk — carries seed, network id and relay per network under its **own** passphrase, and never overwrites an identity already here | `design/02` §6.3, `design/00` §5 |
+| O1 | Commands for direct messages, search, voice and stage — each has a line in `design/05` §3's boundary *grammar* and nothing in `kols-api`. **Not work that can start**: the DM commands wait on E10 and E13, `Search` on `03` §6's two indexes, and the voice and stage set on `kols-media`, which does not exist because nothing has written code for it yet. This is P2's surface rather than a debt before it | `design/05` §3, `design/00` §5 |
 | O20 | **The daemon suite run starved is unreliable**, and `CONTRIBUTING.md` asks for exactly that run. One or two of eleven time out in `wait_for` under `taskset -c 0,1`; each passes alone. Measured at `main` on 2026-08-29, so it is the suite rather than any change — but it makes the starved run a signal to isolate rather than a gate, which is weaker than what it was added for | `CONTRIBUTING.md`, `tests/common::patience` |
 
-O2, O3, O6, O8, O9, O10, O12, O13, O14, O15, O17, O18, O21, O22, O23 and O24 are closed. What each was, and what closing it turned up,
-is in [`docs/log.md`](docs/log.md). The numbers are retired rather than reused, so the log
-stays readable.
+O2, O3, O4, O5, O6, O7, O8, O9, O10, O12, O13, O14, O15, O17, O18, O21, O22, O23 and O24 are
+closed. What each was, and what closing it turned up, is in [`docs/log.md`](docs/log.md). The
+numbers are retired rather than reused, so the log stays readable.
+
+**O4, O5 and O7 left this table on 2026-09-09 rather than being deleted from it**, and the
+distinction is the same one the accepted limits below are separated for: a row reading
+*closed* in a table headed *what is owed* is a debt to anybody skimming it. The three that
+mattered most are worth one line each here, because they are what the phase line above rests
+on — **O7** put an account password in front of the seeds and a lock in front of the window,
+which is `design/00` §5's release gate; **O4** made reading a channel cost a page rather than
+a history, and made the tick that re-reads it bounded rather than merely fast; **O5** made a
+send cost the same at six thousand of an author's records as at twenty-five.
 
 **O11, O16, O19 and O25 are accepted rather than closed, which is a different thing and is why
 they are named separately.** None was fixed; all were decided against — O16 and O19 on
@@ -166,7 +201,7 @@ as a fix nobody had got round to.
 | # | Accepted limit | Decided in |
 |---|---|---|
 | O11 | **A relay shared between two of a member's networks is warned about and never refused.** Enforcing it means network-scoping the protocol names, which is a wire change and not a client fix — and refusing would stop the honest case while the determined one designates the address anyway, as well as blocking a member legitimately relaying on their own LAN for two of their own networks. What the client owed was the notice, since it holds the workspace and is the only party that can see this at all, and **that is built**: both designations warn, comparing by peer id rather than by address because one relay answers at several | `design/00` D29, `design/09` §3 |
-| O16 | **This client does not dial a LAN peer that mDNS finds.** A node that did would make two of a member's networks correlatable by anyone watching that LAN — D29 one layer down, reached with no relay involved. The cost is that two members in one room still need a routable third party to meet, which is narrow and is the price of the property | `design/00` §6 |
+| O16 | **This client does not dial a LAN peer that mDNS finds.** A node that did would make two of a member's networks correlatable by anyone watching that LAN — D29 one layer down, reached with no relay involved. The cost is that two members in one room still need a routable third party to meet, which is narrow and is the price of the property | `design/00` §6, `design/09` §3 |
 | O19 | **A role cannot be deleted.** `EntryBody` expresses no group removal, so a role can be emptied of capabilities and members and its name stays in replayed history. A role holding nothing grants nothing, and no protocol change is being asked for — the interface explains the limit instead | `design/05` §3 |
 | O25 | **A node holds only what it can read**, so a storage offer funds durability for the channels its owner is keyed for and no others. Kept deliberately: the alternative is nodes hoarding ciphertext against keys they do not have, which gives up the forward secrecy `03` §3.1 chose MLS for — an epoch key compromised later cannot open bytes a node never kept. **It costs nothing today**, because roster keying is unbuilt and every member can decrypt every channel; `channel_dek` derives from the network epoch regardless of a channel's privacy flag. What it will cost when private channels land is written down as a requirement of that work rather than left to be discovered during it | `design/03` §3.5, `design/06` E2 |
 
@@ -178,13 +213,13 @@ as a fix nobody had got round to.
 
 | Crate | State |
 |---|---|
-| `kols-core` | Encoding, author logs, merge, collision recovery, chat policy, channel structure, `sidebar_order`, reader-side limits, and `Scope` — the one construction of a capability's name, used by the writer and the resolver alike. 126 tests |
+| `kols-core` | Encoding, author logs, merge, collision recovery, chat policy, channel structure, `sidebar_order`, reader-side limits, and `Scope` — the one construction of a capability's name, used by the writer and the resolver alike. 140 tests |
 | `kols-net` | Publish and fetch over a running node. Two live two-node tests |
-| `kols-api` | The whole boundary — all three of `design/05` §3's properties held. 24 commands, 50 tests, and the consent drift test is guarded at both ends: a new command stops the suite compiling until it is sampled, which is how `LeaveNetwork` was caught unsampled the moment it existed |
-| `kols-node` | `kols`, its node daemon, the executor, the store and the workspace — the window's entire backend, and the largest crate here at 121 tests. Fifteen of them run over a live wire between separate processes (`two_nodes`, `three_nodes`, `relay`); thirteen are in-process over roles and grants; the rest cover the workspace, the store, invites, names and records |
+| `kols-api` | The whole boundary — all three of `design/05` §3's properties held. 25 commands, 10 events, 50 tests, and the consent drift test is guarded at both ends: a new command stops the suite compiling until it is sampled, which is how `LeaveNetwork` was caught unsampled the moment it existed |
+| `kols-node` | `kols`, its node daemon, the executor, the store and the workspace — the window's entire backend, and the largest crate here at 175 tests. Sixteen of them run over a live wire between separate processes (`two_nodes`, `three_nodes`, `relay`); the rest cover the workspace, the store, roles and grants, invites, names, records and the paged read |
 | `kols-app` | The Tauri shell, holding a workspace and an executor for whichever network is open. Builds `kols-desktop`. 8 tests, one of which resolves the webview's ACL against the real configuration — the boundary whose failure produces no output |
 | `kols-ui` | The interface: HTML, CSS and one script, holding no keys, no sockets and no files |
-| `kols-store` | The read-side projection: the schema, the range and target queries, the stored rate verdict and its fingerprint. 19 tests — six compare its verdicts against `kols_core::withheld` itself, and eight walk a channel whose records share a reading, which is the boundary a bare clock reading cannot cut |
+| `kols-store` | The read-side projection, **built and switched on**: the schema, the range and target queries, the stored rate verdict and its fingerprint. 14 tests — six compare its verdicts against `kols_core::withheld` itself rather than a second implementation of the fold, and eight walk a channel whose records share a reading, which is the boundary a bare clock reading cannot cut. This row said 19 until 2026-09-09, while its own breakdown summed to 14 |
 | `kols-media` | Not created. A crate is made when there is code for it — an empty one is a claim that something exists |
 
 **Protocol extensions.** [`design/06`](design/06-protocol-extensions.md) §0 carries the table
@@ -202,9 +237,16 @@ produced, which the whole segment model rests on, are in `design/08` §4.
 
 ## 4. Log
 
-Moved to [`docs/log.md`](docs/log.md) — 121 entries, newest first.
+Moved to [`docs/log.md`](docs/log.md) — 135 entries, newest first.
 
 What happened *lately* is §1. The log is why things are the way they are: the reasoning behind
 a change, the thing tried and abandoned, the bug that turned out to be a different bug. It
-lives outside this file because it is history rather than state, and 187 KB of history at the
+lives outside this file because it is history rather than state, and 292 KB of history at the
 bottom of a status file stops anybody reading the status.
+
+**`WORKING.md` was retired on 2026-09-09 and is not coming back.** It was a temporary tracking
+file for clearing the owed register before P2, untracked on purpose, and it said from its first
+paragraph what would let it go: every decision in it had to reach `design/` or this file first.
+Retiring it was therefore an audit rather than a deletion, and the audit found one decision that
+had never landed — O16's statement was owed to `design/09` §3 and only ever reached `design/00`
+§6. That, and three drifts in `design/05` §3 found the same way, are the newest entry in the log.
