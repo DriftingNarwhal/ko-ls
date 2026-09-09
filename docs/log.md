@@ -44,14 +44,27 @@ Kept because this project keeps re-learning the same lessons and paying for them
   was also the one step nobody ran between releases, and the two facts hid each other for the
   eight days and nineteen commits between `v0.11.1` and this.
 
-  The fix is one `env:` block. The general shape is worth more: **a CI step that does not run the
-  documented command will disagree with the documentation exactly once, at a tag.** Anywhere a
-  workflow re-states an invocation rather than calling the same entry point, it has quietly
-  become a second definition of the gate.
+  **The first fix was one `env:` block and it was the wrong size**, which is the more useful half
+  of this entry. Adding it to the failing step made that step pass and the build fail one step
+  later, in the seed-permissions smoke check — which drives the *built binary* rather than the
+  test harness, hits the same missing account, and had been sitting behind the first failure the
+  whole time. Three steps needed it, not one: the test step and both platforms' smoke checks.
 
-  **And it is an argument for the release workflow's `workflow_dispatch` trigger being used**,
-  which exists and had not been since 09-01. A tag is a bad first time to discover that the build
-  is broken, because the tag is already public by then.
+  **The mistake was fixing the reported failure instead of the class**, with the class in plain
+  sight — O7 removed every unwrapped path, so *anything that writes a seed* needs an account, and
+  the right move was to sweep the workflow for steps that run `kols` or `cargo test` rather than
+  to patch the line in the error message. A one-line fix that makes the symptom go away is
+  indistinguishable from a correct one until the next step runs.
+
+  **What caught it was `workflow_dispatch` rather than another tag**, and that is the practice
+  worth keeping: the trigger exists, had not been used since 09-01, and a tag is a bad first time
+  to discover a build is broken because the tag is public by then. Two dispatch runs found two
+  failures for the cost of no extra tags.
+
+  The general shape is still the one to carry: **a CI step that does not run the documented
+  command will disagree with the documentation exactly once, at a tag.** Anywhere a workflow
+  re-states an invocation rather than calling the same entry point, it has quietly become a
+  second definition of the gate.
 
 - **2026-09-09** — **Both branches merged to `main`, and `v0.12.0` cut from it.**
 

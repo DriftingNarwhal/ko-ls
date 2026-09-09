@@ -110,6 +110,7 @@ jobs:
       # merge, gossip and backfill — none of it platform-specific, all of it
       # timing-sensitive, and all of it already proven in the container on a
       # deliberately starved machine.
+      #
       # `KOLS_PASSWORD` is not optional and is not a convenience here either.
       # Seeds are wrapped under an account key (`design/02` §6.3) and there is
       # deliberately no unwrapped path, including for tests — so the suite
@@ -144,9 +145,17 @@ jobs:
       # prove nothing about the one function written specifically for Windows.
       # It was written blind against an API contract and confirmed once, by hand,
       # by a person looking at a Properties dialog. This is that check, kept.
+      #
+      # Both smoke checks below drive the **built binary**, so they need an
+      # account for the same reason the test step above does: `kols init` writes
+      # a seed, and since O7 there is no path that writes one without an account
+      # to wrap it under. The binary says so itself — *set KOLS_PASSWORD for the
+      # terminal* — which is the message these steps hit.
       - name: A seed is readable by nobody else (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
+        env:
+          KOLS_PASSWORD: ci
         run: |
           $home_dir = Join-Path $env:RUNNER_TEMP "kols-smoke"
           $env:KOLS_HOME = $home_dir
@@ -169,6 +178,8 @@ jobs:
       - name: A seed is readable by nobody else (macOS)
         if: runner.os == 'macOS'
         shell: bash
+        env:
+          KOLS_PASSWORD: ci
         run: |
           export KOLS_HOME="$RUNNER_TEMP/kols-smoke"
           ko-ls/target/release/kols init smoke
