@@ -189,9 +189,11 @@ as a fix nobody had got round to.
 
 **Protocol extensions.** [`design/06`](design/06-protocol-extensions.md) §0 carries the table
 and is the one place their state is kept. In summary: E1 and E3 withdrawn as unnecessary;
-**E2, E4, E5, E9, E11, E12, E14 and E16 landed**; E7, E10 and E13 are P2, E6 is P3, E8 is P4,
-and E15 is spec text that blocks nothing, deliberately sequenced to land beside the credentials
-work it describes rather than on its own.
+**E2, E4, E5, E9, E11, E12, E14, E15 and E16 landed**; E7, E10 and E13 are P2, E6 is P3 and E8
+is P4. E15 landed on 2026-09-09 beside the credentials work it describes, as it was sequenced
+to — and took one amendment its proposal had not asked for: the harness spec tested the derived
+*mechanism* rather than the properties Core §1.2 requires, so the conformance suite would have
+failed a client the amended §1.1 calls conformant.
 
 **P0 is closed** — all five criteria met, recorded in `design/07` §3. The measurements it
 produced, which the whole segment model rests on, are in `design/08` §4.
