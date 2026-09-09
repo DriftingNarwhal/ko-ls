@@ -24,6 +24,32 @@ Kept because this project keeps re-learning the same lessons and paying for them
 
 ---
 
+- **2026-09-09** — **Both branches merged to `main`, and `v0.12.0` cut from it.**
+
+  The register was the condition and the register is clear, so the two branches this project had
+  been holding — `replica-duty-and-storage-ceilings` here and `close-the-moderation-head-question`
+  in the protocol repo — went to `main`. **Fast-forward in both**, because `main` held no commit
+  either branch lacked; there was nothing to reconcile and no merge commit worth making.
+
+  **The protocol repo went first, and that ordering is not arbitrary.** The client depends on it
+  by path, so a client `main` that built only against a branch would be a `main` nobody else could
+  build. Its gate was re-run on `main` after the merge rather than trusted from the branch — 681
+  passed, clippy clean — for the same reason a merge is not a build: the thing that was tested and
+  the thing that is published are different commits until something says otherwise.
+
+  **What `v0.11.1` was missing had changed in kind, which is the argument for cutting now rather
+  than at a tidier moment.** Nineteen commits, and among them the whole of O7 — `design/00` §5 has
+  called an account in front of the seeds a *release gate* since before there was code. Until
+  today the client somebody downloaded from Releases was the last one that writes its seeds to
+  disk in the clear, while `README.md` and `docs/two-machine-test.md` both send new users straight
+  there. A release gate that holds only on a branch is not holding.
+
+  **The version lives in two files and both had to move**: the workspace `Cargo.toml` and
+  `crates/kols-app/tauri.conf.json`. They are independent, nothing checks them against each other,
+  and the one that would have been missed is the Tauri one — it decides what the installer and the
+  window's own metadata say, so a mismatch ships a binary that disagrees with its own tag and says
+  so nowhere a build would fail.
+
 - **2026-09-09** — **`WORKING.md` retired, and what checking its exit condition turned up.**
 
   It was written on 2026-09-07 to clear the owed register before P2, and it said from its first

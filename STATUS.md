@@ -3,8 +3,9 @@
 **Updated:** 2026-09-09
 **Phase:** P1 — two nodes talk live and durably, a joiner reads back through sealed history,
 the boundary carries commands in and events out, and the seeds behind all of it are no longer
-on disk in the clear. **The owed register has nothing actionable left in it**, which is the
-condition the branches below were waiting on.
+on disk in the clear. **The owed register has nothing actionable left in it**, which was the
+condition the two working branches were held for; both merged on 2026-09-09 and `v0.12.0` was
+cut from `main`. What remains is P2, and §1 says where it starts.
 
 **This file is a map, and holds nothing that lives anywhere else.** It says where the work
 stands and which document owns each part of it. Anything long-lived — how a mechanism works,
@@ -23,17 +24,17 @@ its own governance log, membership, epoch key chain and DHT namespace.
 
 Three repositories, side by side:
 
-**Two of them are still on a branch, and the reason they were has now expired.** `ko-ls` is on
-`replica-duty-and-storage-ceilings` and `distributed-intranet` on
-`close-the-moderation-head-question`; both are pushed. The condition this file set for merging
-was that §2 be empty of actionable work, and as of 2026-09-09 it is — so **the merge is an
-outstanding act rather than a blocked one**, and it is §1's next decision.
+**All three are on `main`, and this line is a description again rather than a claim about
+somewhere the work is not.** `ko-ls` and `distributed-intranet` were on
+`replica-duty-and-storage-ceilings` and `close-the-moderation-head-question` respectively until
+2026-09-09, deliberately, until the owed register was clear. It is, so both merged — fast-forward
+in each repo, since `main` had no commit either branch lacked — and both are pushed.
 
-Recorded because this line used to say all three were on `main` and pushed, which read as a
-description and had become a claim about somewhere the work is not. That is now worse rather
-than better: `main` is sixteen commits behind, and what it is missing is no longer only the
-storage work but the whole credentials release gate — anything cloning `main` today gets a
-client that writes its seeds to disk in the clear.
+Kept as a caution rather than deleted, because the state it describes was reached twice. A branch
+held until a register clears is fine; a `main` that quietly falls sixteen commits behind while
+this file says otherwise is how somebody clones a client whose seeds are written to disk in the
+clear. What the branches were carrying at the end was the whole credentials gate, which is
+exactly the kind of thing that should not sit off `main`.
 
 | Repo | Remote | What it is |
 |---|---|---|
@@ -77,7 +78,7 @@ sequencing.
 |---|---|
 | **Milestone** | A client that can be handed to somebody else, so two people **on entirely separate networks** can talk, using a bootstrap relay and no VPS. The first test is two of the user's own laptops, one on a mobile hotspot |
 | **Blocked on** | Nothing |
-| **Next decision needed** | **Two, neither blocking.** Merge both branches to `main` — the register is clear, which is what they were waiting for. And whether to cut a release: `v0.11.1` is nineteen commits behind and predates the lock, so the published distributable is the one version of this client that still keeps seeds in the clear |
+| **Next decision needed** | Nothing blocking. Both branches merged to `main` and `v0.12.0` was cut on 2026-09-09, which were the two open acts. What comes next is P2's first item below, and it is work rather than a decision |
 
 **What P2 starts with, in dependency order** — `design/06` §17 owns the sequencing and §13 owns
 why the middle item is not optional: **E10** (`/chat/dm-invite/1.0.0`, small) → **E13**
@@ -152,18 +153,20 @@ was a run of bad luck rather than a property. The one failure arrived directly a
 governance change and was attributed by measurement rather than by reading; how, and why the
 comparison is worth running even when you are sure, is in `CONTRIBUTING.md`.
 
-**`v0.11.1` no longer describes the rows above, and the gap it was written to warn about has
-widened.** Cut 2026-09-01, it carried everything from 08-30 — the event path, drag, shutdown,
-re-dial after sleep, the network's name — after `v0.11.0` had sat eight days and forty commits
-behind. The warning then was that a distributable trailing the branch by a week of fixes is
-indistinguishable, from the far end, from fixes that were never made.
+**`v0.12.0` is the release the rows above describe**, cut 2026-09-09 from `main` after both
+branches merged. It carries the nineteen commits `v0.11.1` was missing, and **what it adds
+differs in kind from an ordinary release**: the storage ceilings and repair, the paged read and
+the bounded tick, and the whole of O7 — an account password wrapping every seed, a lock in front
+of the window, and an export. `design/00` §5 has carried that last one as a *release gate* since
+before there was code, so `v0.11.1` was the last published client that writes its seeds to disk
+in the clear, and it stopped being the one Releases serves.
 
-It now trails by nineteen commits, and **what it is missing has changed in kind rather than
-in amount**: the storage ceilings, the paged read, and the whole of O7. `README.md` and
-`docs/two-machine-test.md` both send a new user to Releases, so the client somebody downloads
-today is the last one that writes its seeds to disk in the clear — while `design/00` §5 calls
-fixing exactly that a release gate. That is the argument for cutting one, and it is §1's
-second open decision rather than a thing this file can decide.
+**The gap is the thing to watch rather than the version number**, which is why this paragraph
+keeps its history. `v0.11.0` sat eight days and forty commits behind before `v0.11.1`; `v0.11.1`
+then sat eight days and nineteen commits behind before this. `README.md` and
+`docs/two-machine-test.md` both send a new user to Releases, so a distributable trailing `main`
+by a week of fixes is indistinguishable, from the far end, from fixes that were never made — and
+twice now it has been trailing something more serious than fixes.
 
 ---
 
@@ -237,7 +240,7 @@ produced, which the whole segment model rests on, are in `design/08` §4.
 
 ## 4. Log
 
-Moved to [`docs/log.md`](docs/log.md) — 135 entries, newest first.
+Moved to [`docs/log.md`](docs/log.md) — 136 entries, newest first.
 
 What happened *lately* is §1. The log is why things are the way they are: the reasoning behind
 a change, the thing tried and abandoned, the bug that turned out to be a different bug. It
