@@ -66,6 +66,14 @@ Kept because this project keeps re-learning the same lessons and paying for them
   re-states an invocation rather than calling the same entry point, it has quietly become a
   second definition of the gate.
 
+  **The tag was moved rather than superseded**, which was the user's call between two defensible
+  options. `v0.12.0` had been pushed and had published nothing — both legs failed and `publish`
+  is gated on `refs/tags/`, so no release object and no assets ever existed under it. A tag that
+  shipped nothing is not a released version, so re-pointing it costs nobody a download and keeps
+  the version line honest; the alternative was cutting `v0.12.1` and leaving a permanent gap that
+  every later reader would have to explain to themselves. The rewrite is a public ref either way,
+  which is why it was asked rather than assumed.
+
 - **2026-09-09** — **Both branches merged to `main`, and `v0.12.0` cut from it.**
 
   The register was the condition and the register is clear, so the two branches this project had
