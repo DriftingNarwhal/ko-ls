@@ -87,6 +87,12 @@ pub struct Store {
     /// covering both would deadlock the moment the derived answer had to be
     /// rebuilt.
     derived: std::sync::Mutex<Derived>,
+    /// The read-side index, opened on first use.
+    ///
+    /// Lazily, because most of what a store does never touches it — a daemon
+    /// syncing and publishing has no page to render — and opening a database to
+    /// find that out would be a cost paid by everything to serve one path.
+    projection: std::sync::OnceLock<Option<kols_store::Projection>>,
     /// This member's own identity id, derived once.
     ///
     /// Memoised because [`put_record`](Store::put_record) compares every stored
@@ -205,6 +211,7 @@ impl Store {
             network,
             log_cache: std::sync::Mutex::new(None),
             derived: std::sync::Mutex::new(Derived::default()),
+            projection: std::sync::OnceLock::new(),
             own: std::sync::OnceLock::new(),
         })
     }
@@ -222,6 +229,7 @@ impl Store {
             network,
             log_cache: std::sync::Mutex::new(None),
             derived: std::sync::Mutex::new(Derived::default()),
+            projection: std::sync::OnceLock::new(),
             own: std::sync::OnceLock::new(),
         })
     }
@@ -675,6 +683,143 @@ impl Store {
             self.note_own_reading(channel, record)?;
         }
         Ok(true)
+    }
+
+    /// One stored record, by id.
+    fn record(&self, channel: &ChannelId, id: &kols_core::MessageId) -> Option<Record> {
+        let path = self
+            .channel_dir(channel)
+            .join("records")
+            .join(to_hex(id.as_bytes()));
+        Record::decode(&fs::read(path).ok()?).ok()
+    }
+
+    /// The read-side index, opened on first use — `design/05` §5.
+    ///
+    /// `None` where it could not be opened at all, which is survivable rather
+    /// than fatal: the records are the source of truth and the slow path over
+    /// them still works, so a projection that will not open costs speed and
+    /// never an answer.
+    fn projection(&self) -> Option<&kols_store::Projection> {
+        self.projection
+            .get_or_init(|| {
+                kols_store::Projection::open(&self.root.join("projection.sqlite"))
+                    .ok()
+                    .map(|(projection, _)| projection)
+            })
+            .as_ref()
+    }
+
+    /// A page of a channel's records, with what the rate pass refused.
+    ///
+    /// # What this replaces
+    ///
+    /// Reading every record in the channel, decoding each one and folding the
+    /// reader-side limits over the whole set — for a page. This asks the index
+    /// which records the page holds, reads those files and the ones acting on
+    /// them, and takes the refusals from rows already decided.
+    ///
+    /// Returns `None` when there is no index to ask, so a caller falls back to
+    /// the slow path rather than showing an empty channel.
+    pub fn page(
+        &self,
+        channel: &ChannelId,
+        limits: &kols_core::ReaderLimits,
+        before: Option<Hlc>,
+        limit: usize,
+    ) -> Option<(Vec<Record>, std::collections::BTreeSet<kols_core::MessageId>)> {
+        let projection = self.projection()?;
+        self.fold_into(projection, channel, limits).ok()?;
+
+        let page = projection.page(channel, before, limit).ok()?;
+        let acting = projection.acting_on(channel, &page).ok()?;
+
+        let mut wanted: std::collections::BTreeSet<_> = page.iter().copied().collect();
+        wanted.extend(acting);
+
+        let mut records = Vec::with_capacity(wanted.len());
+        let mut refused = std::collections::BTreeSet::new();
+        for id in &wanted {
+            let Some(record) = self.record(channel, id) else {
+                // A row naming a file that is gone. The index is derived, so the
+                // honest answer is to rebuild rather than to render a hole.
+                let _ = projection.forget(channel);
+                return None;
+            };
+            if projection
+                .verdict(id)
+                .ok()
+                .flatten()
+                .is_some_and(|verdict| !verdict.renders())
+            {
+                refused.insert(*id);
+            }
+            records.push(record);
+        }
+        records.sort_by(|a, b| a.hlc.cmp(&b.hlc).then_with(|| a.id().as_bytes().cmp(b.id().as_bytes())));
+        Some((records, refused))
+    }
+
+    /// Brings a channel's rows up to date with its record files.
+    ///
+    /// Three cases, and the middle one is why this is not simply a rebuild.
+    /// Nothing new: no work. Records that all sort **after** everything folded:
+    /// they change no verdict already decided, so they are folded on the end.
+    /// Anything reaching back into the fold — which is what backfill does — and
+    /// every verdict after it may move, so the channel is folded again.
+    ///
+    /// A change to the limits themselves also re-folds, because a verdict is
+    /// only true of the rules that produced it and a stale refusal is a message
+    /// left hidden after the rule that hid it was relaxed.
+    fn fold_into(
+        &self,
+        projection: &kols_store::Projection,
+        channel: &ChannelId,
+        limits: &kols_core::ReaderLimits,
+    ) -> Result<(), StoreError> {
+        let under = kols_store::FoldedUnder {
+            message_rate: limits.message_rate_per_minute,
+            reaction_rate: limits.reaction_rate_per_minute,
+            slowmode: limits.slowmode_seconds,
+        };
+        let mut stale = projection
+            .folded_under(channel)
+            .ok()
+            .flatten()
+            .is_some_and(|held| held != under);
+
+        let held = projection.ids(channel).unwrap_or_default();
+        let records = self.records(channel)?;
+        if !stale && records.len() == held.len() {
+            return Ok(());
+        }
+
+        let newest = projection.newest(channel).ok().flatten();
+        let missing: Vec<_> = records
+            .iter()
+            .filter(|record| !held.contains(&record.id()))
+            .collect();
+        if let (Some(newest), Some(first)) = (newest, missing.first())
+            && first.hlc <= newest
+        {
+            stale = true;
+        }
+
+        let fold: Vec<&Record> = if stale {
+            let _ = projection.forget(channel);
+            records.iter().collect()
+        } else {
+            missing
+        };
+        for record in fold {
+            let verdict = kols_store::decide(projection, record, limits)
+                .map_err(|err| StoreError::Corrupt(err.to_string()))?;
+            projection
+                .insert(record, verdict)
+                .map_err(|err| StoreError::Corrupt(err.to_string()))?;
+        }
+        let _ = projection.folded(channel, under);
+        Ok(())
     }
 
     /// Whether an identity is the one this store holds the seed for.

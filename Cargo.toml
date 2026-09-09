@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["crates/kols-core", "crates/kols-net", "crates/kols-api", "crates/kols-node", "crates/kols-app"]
+members = ["crates/kols-core", "crates/kols-store", "crates/kols-net", "crates/kols-api", "crates/kols-node", "crates/kols-app"]
 
 [workspace.package]
 version = "0.11.1"
@@ -19,6 +19,7 @@ intranet-epoch = { path = "../distributed-intranet/crates/intranet-epoch" }
 intranet-invite = { path = "../distributed-intranet/crates/intranet-invite" }
 libp2p = "0.56"
 kols-core = { path = "crates/kols-core" }
+kols-store = { path = "crates/kols-store" }
 kols-net = { path = "crates/kols-net" }
 kols-api = { path = "crates/kols-api" }
 kols-node = { path = "crates/kols-node" }

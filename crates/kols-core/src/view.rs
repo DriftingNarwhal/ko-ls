@@ -237,6 +237,48 @@ impl ChannelView {
     /// same set thereafter, which is exactly what "held, not dropped" buys.
     pub fn render(&self, limits: &ReaderLimits, now_millis: i64) -> Vec<RenderedMessage> {
         let withheld = self.withheld(limits, now_millis);
+        self.render_excluding(limits, now_millis, &withheld.refused.keys().copied().collect())
+    }
+
+    /// Renders with refusals decided elsewhere.
+    ///
+    /// # Why this exists
+    ///
+    /// [`render`](Self::render) folds the rate pass over the records it holds,
+    /// which is right when it holds the channel and wrong when it holds a page:
+    /// the fold is greedy in merge order (`design/01` §10.4), so running it over
+    /// a page would admit records the whole-channel fold refuses — and the same
+    /// message would appear when somebody scrolled to it and vanish when they
+    /// loaded the channel whole. A page therefore arrives with its refusals
+    /// already decided, from an index that folded them in order once
+    /// (`design/05` §5).
+    ///
+    /// **Held is still decided here**, from `now_millis`, because it is a
+    /// per-record comparison against the clock with an answer that expires —
+    /// the one part of the pass that must not be stored. Taking it as an
+    /// argument alongside the refusals would let a caller hand over a verdict
+    /// that was true a minute ago, which is the one mistake this split makes
+    /// easy and this signature makes unsayable.
+    pub fn render_excluding(
+        &self,
+        limits: &ReaderLimits,
+        now_millis: i64,
+        refused: &std::collections::BTreeSet<MessageId>,
+    ) -> Vec<RenderedMessage> {
+        let held: BTreeSet<MessageId> = self
+            .records
+            .values()
+            .filter(|record| {
+                now_millis
+                    .checked_add(limits.max_future_skew_millis)
+                    .is_some_and(|horizon| record.hlc.wall_millis > horizon)
+            })
+            .map(Record::id)
+            .collect();
+        let withheld = &Withheld {
+            refused: refused.iter().map(|id| (*id, Rejection::TooFast)).collect(),
+            held,
+        };
         let mut messages: BTreeMap<MessageId, RenderedMessage> = BTreeMap::new();
         let mut order: Vec<MessageId> = Vec::new();
 

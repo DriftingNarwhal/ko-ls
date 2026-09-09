@@ -24,6 +24,44 @@ Kept because this project keeps re-learning the same lessons and paying for them
 
 ---
 
+- **2026-09-09** — **The projection is built and switched off, and the reason it is switched off
+  is not a technical one.**
+
+  `kols-store` exists: the schema, the three indexes a page needs, the stored rate verdict, and
+  the fingerprint that re-folds a channel when its limits change. `Store::page` reads a page and
+  the records acting on it rather than the whole channel. All of it is tested and none of it is
+  reachable from the interface, because **the window has no paging**. `open_channel` takes a
+  channel and nothing else; `before` and `limit` have been on the command since it was written
+  and have never once been passed. Rendering a page into an interface that cannot ask for the
+  next one would hide history with no way to reach it, which is a worse failure than the four
+  seconds it fixes.
+
+  Worth recording as a shape: **the mechanism was the easy half.** The measurement said opening a
+  channel costs the conversation, and the fix looked like an index — but the index only pays off
+  if something can ask for a page, and nothing can. `01` §5 has said since it was written that a
+  UI bounds this by pages; there is now something for it to bound, and that is `09`'s question
+  rather than this crate's.
+
+  **Two design rules came out of building it, and both are the kind that bite later.**
+
+  The rate verdict has to be *stored* rather than recomputed per page. The pass is a greedy fold
+  in merge order, so folding over a page alone admits records the whole-channel fold refuses —
+  and the symptom is a message that appears when you scroll to it and vanishes when you load the
+  channel whole. That is the divergence §10.1 makes these limits network policy to avoid,
+  arriving from inside one client rather than between two.
+
+  And a stored verdict is only true of the limits that produced it. Ceilings are network policy
+  and slowmode belongs to the channel, so a `define-policy` change or a moderator calming a
+  channel makes every verdict in scope stale — and a stale refusal is a message left hidden by a
+  rule that no longer exists, which nothing else in the system would ever correct. The limits are
+  stored beside the rows and a change re-folds.
+
+  **The test that matters compares against the real pass, not a second implementation of it.**
+  `verdicts.rs` folds records one at a time through the index and checks every verdict against
+  `kols_core::withheld` over the same set. Probed twice: an off-by-one on the ceiling fails three
+  of six, and ignoring slowmode fails the one that is about slowmode. Writing a second copy of
+  the fold to compare against would have proved only that I can write the same bug twice.
+
 - **2026-09-08** — **"Build the projection" was one entry and two costs, and only one of them
   wanted a database.**
 
