@@ -1,6 +1,6 @@
 # Membership and Permissions
 
-**Document status:** v1.6 — §6.4's storage offer is a cap rather than a promise: the replica duty, tiering and eviction it was waiting on are built, and `05` §5.1 owns the mechanism. Previously v1.5 — §6.4 records `SetContribution`: disk is settable per network and needs no capability, the other three contributions keep their defaults, and the two things the number is *not* — zero does not stop this node serving, and an offer is not yet a ceiling — are said where a member reads it. Previously v1.4 — §6.3 gains the session: logging out locks the interface and leaves the node running, a node starts only after a login, and the three things the lock does and does not protect are stated at the strength they hold — notably that a running node holds key material in memory by necessity, so a lock is not a defence against somebody reading the process. Previously v1.3 — **§6.5 is built.** `Command::LeaveNetwork` writes one membership removal per group, the executor's blanket refusal of self-removal becomes a last-`revoke-node`-holder check, and `forget` announces before it deletes — which inverted a rule that had been exactly backwards, since it used to refuse the one case (an open network) that had a node able to publish anything. One limit follows and is recorded there: the sole founder of a network cannot leave it. Previously v1.2 — §6.5 settles the shape: `forget` stays all-or-nothing by decision rather than by default, what it owes is the announcement, and the executor guard that would defeat `06` §16 on its own is named. Previously v1.1 — §6.5 records that leaving a network is a gap rather than a design, and what the client owes once `06` §16 lands. Previously v1.0 — permission resolution implemented and reached through `kols-api`'s gate; E11 landed, so §2.2's per-scope registration problem is gone
+**Document status:** v1.7 — §6.3 records what O7 was decided to be, before any of it was built: the account is forced on the next launch rather than offered, because a gate somebody can click past is a preference; the export is **portability rather than recovery**, since the seed is the member and lives on one disk, and a member without it on a new machine is not locked out but is a different person; it carries its own passphrase, because wrapping it under the account password would make one forgotten secret lose both the keyring and the thing kept in case the keyring is lost; the harness unlocks from the environment rather than skipping the keyring, so no code path reads a seed without a secret; and the OS keychain is offered and defaulted off. The mechanism is not new — everything else here is already sealed under a seed-derived key, and this is the same construction one level up. Previously v1.6 — §6.4's storage offer is a cap rather than a promise: the replica duty, tiering and eviction it was waiting on are built, and `05` §5.1 owns the mechanism. Previously v1.5 — §6.4 records `SetContribution`: disk is settable per network and needs no capability, the other three contributions keep their defaults, and the two things the number is *not* — zero does not stop this node serving, and an offer is not yet a ceiling — are said where a member reads it. Previously v1.4 — §6.3 gains the session: logging out locks the interface and leaves the node running, a node starts only after a login, and the three things the lock does and does not protect are stated at the strength they hold — notably that a running node holds key material in memory by necessity, so a lock is not a defence against somebody reading the process. Previously v1.3 — **§6.5 is built.** `Command::LeaveNetwork` writes one membership removal per group, the executor's blanket refusal of self-removal becomes a last-`revoke-node`-holder check, and `forget` announces before it deletes — which inverted a rule that had been exactly backwards, since it used to refuse the one case (an open network) that had a node able to publish anything. One limit follows and is recorded there: the sole founder of a network cannot leave it. Previously v1.2 — §6.5 settles the shape: `forget` stays all-or-nothing by decision rather than by default, what it owes is the announcement, and the executor guard that would defeat `06` §16 on its own is named. Previously v1.1 — §6.5 records that leaving a network is a gap rather than a design, and what the client owes once `06` §16 lands. Previously v1.0 — permission resolution implemented and reached through `kols-api`'s gate; E11 landed, so §2.2's per-scope registration problem is gone
 **Depends on:** Core Protocol Spec §1 (identity), §2 (governance), §5.6 (invites)
 **Consumed by:** `01-messaging-model`, `03-confidentiality`, `04-realtime`
 
@@ -327,6 +327,74 @@ third are the ones a reader will otherwise assume the wrong way round:
   independent halves of this section. The keyring is what makes a stolen laptop survivable; the
   lock is what makes an unattended one survivable. Shipping either alone leaves a real gap, and
   shipping the lock alone would be the worse of the two, because it *looks* like protection.
+
+#### What was decided 2026-09-09, before any of it was built
+
+**The mechanism is not new, and saying so is the point.** Everything else this store keeps at
+rest — the MLS group state, the epoch keys, every DEK wrapping — is already sealed under a
+seed-derived key. The seed is the one file left in the clear, so this is the same construction
+one level up: a key derived from a secret, wrapping the thing that would otherwise be readable.
+What is new is only where the secret comes from, since there is no seed above the seed.
+
+**The account is forced, not offered.** The first launch after this lands asks for a username and
+password, wraps every seed already on the disk, and deletes the plaintext. An opt-in account
+would not be a release gate — a gate somebody can click past is a preference — and the whole
+claim of `00` §5 is that shipping seeds in the clear stops being tolerable the moment somebody
+else's identity depends on it. The cost is a hard stop for everyone currently testing, and it is
+the intended cost.
+
+**The export is *portability*, and calling it recovery was a mistake worth recording.** There is
+no organisation, no reset and nobody responsible but the person at the keyboard, so an account
+that could be recovered would contradict the architecture. That is not what the bundle is for.
+
+The seed is the member, and it lives on exactly one disk. A password protects it from somebody
+who takes the laptop; nothing protects it from the laptop *dying*. On a new machine a member
+without their seed is not locked out — **they are a different person**: their capabilities do not
+follow, their display name stays bound to the old identity, their own messages remain authored by
+somebody they can no longer act as, and getting back in needs a holder of `approve-node` to admit
+them afresh. A sole Founder may find there is nobody who can.
+
+So the bundle is a file a member owns and is responsible for, which is exactly where the
+responsibility already sits. Two things follow from what it has to carry:
+
+- **A phrase alone restores nothing**, as this section already said: coming back needs the
+  phrase, the network id, and a relay to reach the network at. A network id cannot be derived
+  from a seed, and *the list of networks a member belongs to lives in the workspace and in no
+  seed at all*. What has to survive is a set, not a secret.
+- **P5's multi-device needs the same act.** Getting a seed onto a second machine and onto a
+  replacement one are one mechanism, which is why this is not a feature bought only for
+  disasters.
+
+**The bundle carries its own passphrase, and it must not be the account password.** It leaves the
+machine, so the machine's protection does not travel with it — a plaintext copy on a USB stick or
+in a cloud drive is every identity in the clear, which is the problem this section exists to fix,
+relocated. And wrapping it under the account password would make one forgotten secret lose both
+the keyring and the thing kept in case the keyring is lost. A passphrase chosen at export is used
+once and can be written on paper.
+
+**Export is offered immediately after the account is made, and does not block it.** The decision
+was the forced account rather than a forced export: a first-run flow that will not proceed until
+a file has been saved somewhere is a flow people learn to defeat, and the bundle protects against
+losing the *machine* rather than against the next five minutes.
+
+**There is no unwrapped path in the code, including for tests.** The terminal and the test suite
+read the password from the environment and unlock exactly as the window does. A test-only mode
+that skipped the keyring would mean a code path in which seeds are readable without a secret, and
+D30 already holds that the terminal is a test harness rather than a second interface — it must
+not become a second security posture either. The cost is a credential in an environment
+variable, which is deliberate and is confined to the harness.
+
+**The OS keychain is offered and defaulted off.** Storing the account password there lets the
+application unlock without a prompt, and §6.3's own argument says what that gives up: a key
+usable without a secret is not protected by it, so an auto-unlocking keychain makes the password
+a formality against precisely the attacker the lock is for — somebody at an unattended machine
+that is already logged in. It is offered because some people are on single-user machines they
+trust and that is their call to make; it is off by default because the honest default is the one
+that holds.
+
+**The session question this section was carrying as open is closed** and has been since
+2026-09-07: logging out locks the interface and does not stop the node, and a node runs only once
+somebody has logged in. `00` §5 still asked for that to be designed; it was already decided here.
 
 ### 6.4 Resource contribution is a per-network choice
 

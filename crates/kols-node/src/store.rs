@@ -200,6 +200,12 @@ pub enum StoreError {
     AlreadyInitialised(PathBuf),
     /// A stored file was not the shape this build expects.
     Corrupt(String),
+    /// Nobody has unlocked this installation, so the seed cannot be opened.
+    ///
+    /// Its own variant rather than a `Corrupt`, because the two need opposite
+    /// responses: this one is answered by somebody logging in, and reporting it
+    /// as corruption would send a member looking for a disk fault instead.
+    Locked(String),
 }
 
 impl std::fmt::Display for StoreError {
@@ -218,6 +224,12 @@ impl std::fmt::Display for StoreError {
                 path.display()
             ),
             Self::Corrupt(what) => write!(f, "stored state is unreadable: {what}"),
+            Self::Locked(why) => write!(
+                f,
+                "this installation is locked: {why}. Log in to open it, or set \
+                 {} for the terminal",
+                crate::account::PASSWORD_VAR
+            ),
         }
     }
 }
@@ -288,7 +300,13 @@ impl Store {
             return Err(StoreError::AlreadyInitialised(root));
         }
         fs::create_dir_all(root.join("entries"))?;
-        secret::write_private(&root.join("seed"), &entropy)?;
+        // **Wrapped, never written as itself** (`design/02` §6.3). The seed is
+        // the member; everything else this store keeps at rest is already sealed
+        // under a key derived from it, and this is that same construction one
+        // level up.
+        let account = crate::account::for_workspace(&workspace_of(&root))
+            .map_err(|err| StoreError::Locked(err.to_string()))?;
+        secret::write_private(&root.join("seed"), &account.wrap_seed(&network, &entropy))?;
         fs::write(root.join("network"), network.as_bytes())?;
         Ok(Self {
             root,
@@ -334,8 +352,8 @@ impl Store {
         if !root.join("network").exists() {
             return Err(StoreError::NotInitialised(root));
         }
-        let entropy = fixed(&fs::read(root.join("seed"))?, "seed")?;
         let network = NetworkId::from_bytes(fixed(&fs::read(root.join("network"))?, "network id")?);
+        let entropy = read_seed(&root, &network)?;
         let store = Self {
             root,
             work: Counters::default(),
@@ -348,6 +366,29 @@ impl Store {
             segments_seen: std::sync::Mutex::new(None),
         };
         Ok(store)
+    }
+
+    /// Wraps a seed this installation still holds in the clear.
+    ///
+    /// **Idempotent, and that is what makes it safe to run on every launch.** A
+    /// seed already wrapped is 72 bytes rather than 32, so this does nothing to
+    /// it; there is no marker to keep in step and no flag that could say the
+    /// wrong thing.
+    ///
+    /// The plaintext is replaced rather than deleted alongside — `write_private`
+    /// truncates and rewrites the same path, so there is never a moment with two
+    /// copies and no moment with none.
+    pub fn adopt(&self, account: &crate::account::Account) -> Result<bool, StoreError> {
+        let raw = fs::read(self.root.join("seed"))?;
+        if raw.len() != 32 {
+            return Ok(false);
+        }
+        let seed = fixed(&raw, "seed")?;
+        secret::write_private(
+            &self.root.join("seed"),
+            &account.wrap_seed(&self.network, &seed),
+        )?;
+        Ok(true)
     }
 
     /// The network this store belongs to.
@@ -2642,6 +2683,56 @@ fn fixed<const N: usize>(bytes: &[u8], what: &str) -> Result<[u8; N], StoreError
 /// `fsync` per record, which is a real cost and a decision to make deliberately
 /// — and losing the last message to a power cut is a different order of problem
 /// from losing the network to a window closing.
+/// The workspace a store sits in.
+///
+/// Network directories are children of the workspace, so this is its parent —
+/// except in the single-network layout the workspace itself can take, where a
+/// store *is* the workspace root. Deciding by where the account file actually is
+/// rather than by the shape of the path, because both layouts are real and only
+/// one of them can be inferred from a directory name.
+fn workspace_of(root: &Path) -> PathBuf {
+    if crate::account::Account::exists(root) {
+        return root.to_path_buf();
+    }
+    if let Some(parent) = root.parent()
+        && crate::account::Account::exists(parent)
+    {
+        return parent.to_path_buf();
+    }
+    // **Falls back to the store itself, never to its parent.** A store opened on
+    // its own — which is what the terminal and much of the test suite do — is its
+    // own workspace, and defaulting upwards would put an account in whatever
+    // directory happened to contain it, shared with every unrelated store beside
+    // it. A `Workspace` provisions at its own root before it makes any store, so
+    // the multi-network case is answered by the branch above rather than here.
+    root.to_path_buf()
+}
+
+/// Reads a seed, whether it is wrapped or is one this build has yet to wrap.
+///
+/// # Telling the two apart
+///
+/// A seed is 32 bytes and a wrapped one is 72 — nonce, ciphertext and tag — so
+/// the length says which this is, with no marker to add and no guess to make.
+/// That is what makes the migration in `design/02` §6.3 detectable rather than
+/// assumed: an installation predating the account has plaintext on disk, and
+/// this is the one place that can see it.
+///
+/// **Plaintext is read and not silently accepted forever.** It opens here so
+/// that an existing installation is not bricked by an upgrade; wrapping it is
+/// [`Store::adopt`], which the first launch after this lands performs once.
+fn read_seed(root: &Path, network: &NetworkId) -> Result<[u8; 32], StoreError> {
+    let raw = fs::read(root.join("seed"))?;
+    if raw.len() == 32 {
+        return fixed(&raw, "seed");
+    }
+    let account = crate::account::for_workspace(&workspace_of(root))
+        .map_err(|err| StoreError::Locked(err.to_string()))?;
+    account
+        .open_seed(network, &raw)
+        .map_err(|err| StoreError::Locked(err.to_string()))
+}
+
 /// Appends to a file that only ever grows, creating it if absent.
 ///
 /// # The primitive three things here are built on

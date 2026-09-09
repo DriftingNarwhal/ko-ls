@@ -263,6 +263,11 @@ impl Workspace {
     /// when missed — the network looks fine until the first post is refused by
     /// its own author's node.
     pub fn create(&self, label: &str, relays: Vec<String>) -> Result<Store, String> {
+        // **Anchored at the workspace, before any store exists.** The account
+        // belongs to the installation rather than to a network, so whoever
+        // touches it first must do so from here — a store reaching for one would
+        // otherwise put it beside itself (`design/02` §6.3).
+        self.ensure_unlocked()?;
         if is_store(&self.root) {
             return Err(format!(
                 "{} is already a single network's store. Point at a directory that holds \
@@ -299,6 +304,11 @@ impl Workspace {
     /// reaches its peer over the connection the shared network already has
     /// (E13, `design/09` §3), never by naming a relay here.
     pub fn create_conversation(&self, label: &str) -> Result<Store, String> {
+        // **Anchored at the workspace, before any store exists.** The account
+        // belongs to the installation rather than to a network, so whoever
+        // touches it first must do so from here — a store reaching for one would
+        // otherwise put it beside itself (`design/02` §6.3).
+        self.ensure_unlocked()?;
         if is_store(&self.root) {
             return Err(format!(
                 "{} is already a single network's store. Point at a directory that holds \
@@ -316,7 +326,54 @@ impl Workspace {
         )
     }
 
-    /// Where a network's store belongs in this workspace.
+    /// Makes sure this process is unlocked for this workspace.
+    ///
+    /// The window unlocks by somebody logging in; this is the other path, which
+    /// the terminal and the test suite take, and it reads the password from the
+    /// environment. There is no third — a code path that opened a seed without a
+    /// secret would be a second security posture, and D30 keeps the terminal a
+    /// test harness rather than a second interface.
+    pub fn ensure_unlocked(&self) -> Result<(), String> {
+        let account = crate::account::for_workspace(&self.root).map_err(|err| err.to_string())?;
+        self.adopt_all(&account);
+        Ok(())
+    }
+
+    /// Wraps any seed on this disk that is still in the clear.
+    ///
+    /// **Runs on every unlock, and is safe to** — a seed already wrapped is left
+    /// alone, decided by its length rather than by a marker that could fall out
+    /// of step. So the migration `design/02` §6.3 requires is not a one-shot
+    /// step somebody has to remember to run, and an installation that skipped a
+    /// release still gets it on the next launch.
+    ///
+    /// Best effort per network. One store that will not open — a disk fault, a
+    /// half-written directory — must not stop the others being protected, and
+    /// the one that failed is no worse off than before.
+    pub fn adopt_all(&self, account: &crate::account::Account) -> usize {
+        let mut wrapped = 0;
+        let roots: Vec<PathBuf> = if is_store(&self.root) {
+            vec![self.root.clone()]
+        } else {
+            std::fs::read_dir(&self.root)
+                .into_iter()
+                .flatten()
+                .filter_map(Result::ok)
+                .map(|entry| entry.path())
+                .filter(|path| is_store(path))
+                .collect()
+        };
+        for root in roots {
+            if let Ok(store) = Store::open(root)
+                && store.adopt(account).unwrap_or(false)
+            {
+                wrapped += 1;
+            }
+        }
+        wrapped
+    }
+
+    /// Where a network's store lives.
     ///
     /// Derived from the id so joining the same network twice lands in the same
     /// place rather than making a second identity in it — which would look like

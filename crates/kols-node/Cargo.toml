@@ -28,6 +28,7 @@ intranet-epoch.workspace = true
 intranet-invite.workspace = true
 intranet-transport.workspace = true
 
+argon2.workspace = true
 clap.workspace = true
 libp2p.workspace = true
 tokio = { workspace = true, features = ["rt-multi-thread", "macros", "time"] }

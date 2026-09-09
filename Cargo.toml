@@ -24,6 +24,13 @@ kols-net = { path = "crates/kols-net" }
 kols-api = { path = "crates/kols-api" }
 kols-node = { path = "crates/kols-node" }
 clap = { version = "4", features = ["derive"] }
+# Argon2id, for the one secret that has nothing above it to be derived from.
+# `design/02` §6.3: the account password *wraps* the per-network seeds and never
+# derives them, so this turns a human-chosen password into a wrapping key and
+# nothing else. Default features off — the crate's `password-hash` string format
+# is a second encoding of parameters this stores itself, and `std` is all that is
+# wanted from it.
+argon2 = { version = "0.5", default-features = false, features = ["alloc"] }
 tokio = { version = "1", default-features = false }
 
 # Debug builds here are dominated by debug information, not code: a test binary

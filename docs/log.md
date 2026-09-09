@@ -24,6 +24,59 @@ Kept because this project keeps re-learning the same lessons and paying for them
 
 ---
 
+- **2026-09-09** — **O7's keyring: the same construction one level up.**
+
+  Seeds were the last thing on this disk in the clear. Everything else at rest — MLS group
+  state, epoch keys, every DEK wrapping — was already sealed under a *seed*-derived key, so this
+  is not a new mechanism; the only genuinely new part is where the secret comes from, because
+  there is no seed above the seed.
+
+  **The password wraps and never derives**, and the reason is worth keeping: deriving a seed from
+  the password and the network id needs no storage and is badly wrong, because the network id
+  travels in every invite and member ids are in the governance log — an attacker could derive a
+  candidate identity from a guessed password and check it offline against a value the network
+  publishes. A brainwallet with a verification oracle. A random seed wrapped under a
+  password-derived key has nothing public to check a guess against.
+
+  Four decisions taken with the user first. The account is **forced** on next launch, because a
+  gate somebody can click past is a preference. The harness unlocks from the environment rather
+  than getting an unwrapped mode — D30 keeps the terminal a test harness rather than a second
+  interface, and it must not become a second security posture either. The OS keychain is offered
+  and defaulted off, since §6.3's own argument is that a key usable without a secret is not
+  protected by it. And the export is **portability, not recovery** — I had called it recovery,
+  the user pushed back that there is no organisation and no one to be responsible but the user,
+  and they were right about the name. What it is for is that the seed *is* the member and lives
+  on exactly one disk: the password protects it from a thief and nothing protects it from the
+  disk dying, and on a new machine a member without it is not locked out, they are a different
+  person.
+
+  **Two bugs, and the first is the kind that only appears at two.** The unlocked account started
+  as one process-wide slot. Each installation has its own salt, so one workspace's key does not
+  open another's — and the slot handed the first workspace's key to the second, which presented
+  as *that password does not unlock this installation* against a password that was right. One
+  installation per machine hides this completely; a test process that touches two does not. It is
+  keyed by workspace now, which is also the truer statement: an account key is a property of a
+  workspace, not of a process.
+
+  The second was mine to cause: a standalone store looked for its account in its *parent*
+  directory, so every bare store made under `/tmp` would have shared one account with every
+  unrelated store beside it. A store opened on its own is its own workspace, and a `Workspace`
+  provisions at its own root before making any store, so the multi-network case never reaches
+  that fallback.
+
+  **The KDF cost is deliberate and was also a hazard.** 64 MiB and three passes is what makes a
+  guessing rig expensive; it is also 64 MiB per process, paid by a daemon suite that starts a
+  great many of them, and O20 is already fragile under contention. Parameters live in the account
+  file and a reader uses what the file says — already asserted — so the harness provisions
+  cheaply and the shipped path keeps full cost. Same code path, honestly different numbers.
+
+  Also worth recording as a habit: `cargo test` stops at the first failing *binary*, so two runs
+  reported 199 and 248 passing and looked like a small break when five targets were red.
+  `--no-fail-fast` is now in `CONTRIBUTING.md` beside the password.
+
+  Three probes: writing the seed as itself fails both secrecy tests, and dropping `adopt`'s
+  length guard fails the idempotence assertion. What remains of O7 is the surface and the export.
+
 - **2026-09-09** — **Measured flat is not bounded, and the difference is the whole point.**
 
   Paging made a page cost a page and left the *tick* linear. Those are different properties: one

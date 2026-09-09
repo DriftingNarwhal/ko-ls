@@ -595,3 +595,90 @@ fn asking_for_older_history_records_a_want_without_claiming_to_have_it() {
         "the boundary is the oldest reading held, not a sentinel: {before:?}"
     );
 }
+
+#[test]
+fn the_seed_is_not_on_disk_in_the_clear() {
+    // **O7's whole claim, asserted rather than described.** File permissions are
+    // what stood between another account on this machine and every network its
+    // holder belongs to; they are nothing at all against a stolen disk, and
+    // `design/02` §6.3 is the fix. This is the test that would have failed for
+    // the entire life of the project until now.
+    let home = Home::new("wrapped");
+    ok(&home, &["init", "private"]);
+
+    let stored = std::fs::read(home.path().join("seed")).expect("a seed was written");
+    assert_ne!(
+        stored.len(),
+        32,
+        "a bare 32 bytes is an unwrapped seed — the whole file is the identity"
+    );
+
+    // The identity still derives from it, so this is wrapping rather than
+    // damage: the store opens and reports the same network it created.
+    let shown = ok(&home, &["whoami"]);
+    assert!(!shown.trim().is_empty(), "a wrapped seed still opens");
+}
+
+#[test]
+fn a_locked_installation_refuses_rather_than_reading_the_seed() {
+    // The other half. Without the password there is no path to the seed at all —
+    // not a degraded one, not a read-only one. A client that fell back to
+    // *something* here would make the wrapping decorative.
+    let home = Home::new("locked");
+    ok(&home, &["init", "private"]);
+
+    let locked = Command::new(env!("CARGO_BIN_EXE_kols"))
+        .arg("--home")
+        .arg(home.path())
+        .arg("whoami")
+        .env_remove("KOLS_PASSWORD")
+        .output()
+        .expect("runs");
+
+    assert!(!locked.status.success(), "a locked installation must refuse");
+    let said = String::from_utf8_lossy(&locked.stderr);
+    assert!(
+        said.contains("locked"),
+        "and must say so in a way somebody can act on: {said}"
+    );
+}
+
+#[test]
+fn an_installation_that_predates_the_account_is_wrapped_in_place() {
+    // The migration `design/02` §6.3 requires, and the property that makes it
+    // safe to run on every launch: a seed already wrapped is left alone, so this
+    // is idempotent with no marker to keep in step.
+    use kols_node::account::Account;
+    use kols_node::store::Store;
+
+    let home = Home::new("adopt");
+    ok(&home, &["init", "legacy"]);
+
+    // Put the store back the way every installation looked before this landed.
+    let network = intranet_identity::NetworkId::from_bytes(
+        <[u8; 32]>::try_from(std::fs::read(home.path().join("network")).unwrap().as_slice())
+            .unwrap(),
+    );
+    let plain = [9u8; 32];
+    std::fs::write(home.path().join("seed"), plain).unwrap();
+    assert_eq!(std::fs::read(home.path().join("seed")).unwrap().len(), 32);
+
+    let account = Account::unlock(home.path(), "harness")
+        .or_else(|_| Account::unlock(home.path(), &std::env::var("KOLS_PASSWORD").unwrap()))
+        .expect("the account made by the run above");
+    let store = Store::open(home.path().to_path_buf()).expect("a plaintext seed still opens");
+
+    assert!(store.adopt(&account).expect("adopts"), "it had work to do");
+    let wrapped = std::fs::read(home.path().join("seed")).unwrap();
+    assert_ne!(wrapped.len(), 32, "the plaintext is gone");
+    assert_eq!(
+        account.open_seed(&network, &wrapped).expect("opens"),
+        plain,
+        "and what comes back is the seed that was there"
+    );
+
+    assert!(
+        !store.adopt(&account).expect("adopts again"),
+        "running it a second time must do nothing"
+    );
+}

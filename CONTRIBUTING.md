@@ -35,9 +35,22 @@ reserved. A licence on `main` does not reach a tag.
 
 ## The gate
 
-`cargo test --workspace` and `cargo clippy --workspace --all-targets` must both be clean
-before a change lands. A run that skipped clippy because the toolchain lacked it has
-checked half the gate and should say so.
+`KOLS_PASSWORD=<anything> cargo test --workspace` and `cargo clippy --workspace
+--all-targets` must both be clean before a change lands. A run that skipped clippy because
+the toolchain lacked it has checked half the gate and should say so.
+
+**The password is not optional and is not a convenience.** Seeds are wrapped under an
+account key (`design/02` §6.3), and there is deliberately **no unwrapped path** — not even
+for tests, because a code path that read a seed without a secret would be a second security
+posture, and D30 keeps the terminal a test harness rather than a second interface. So the
+suite unlocks exactly as the window does and differs only in where the password comes from.
+Any value works; the harness provisions an account at deliberately cheap Argon2 parameters,
+since a test account protects nothing and paying 64 MiB per process to protect it would make
+the daemon suite (O20) fragile for a second reason.
+
+**Use `--no-fail-fast` when a run goes red.** `cargo test` stops at the first failing test
+*binary*, so a single early failure hides every target after it — which reads as though the
+change broke far less than it did.
 
 **Run the tests here, not in CI.** CI builds for Windows and macOS, which this container
 cannot do; it does not gate. A failure reproduced locally arrives with complete output in

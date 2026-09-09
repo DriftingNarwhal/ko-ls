@@ -107,6 +107,7 @@ macro_rules! say {
     };
 }
 
+pub mod account;
 pub mod chat;
 pub mod executor;
 pub mod invite;

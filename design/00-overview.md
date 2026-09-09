@@ -1,7 +1,7 @@
 # ko-ls — Design Overview
 
 **Project:** ko-ls (working name, may be replaced; nothing in the design depends on it)
-**Document status:** v1.7 — D30 is amended with why the terminal cannot simply be deleted (it is the multi-process test harness, and nothing in the shipped application invokes it) and the line that keeps it from growing: its output is a test contract, not an interface, so it carries no end-user prose. Previously v1.6 — §3 gains D38: a storage offer buys ranking rather than a crawl, so the number is a ceiling on willingness and not a target to fill. Previously v1.5 — §6 loses two of its four open questions to decisions rather than to answers arriving: a locally-discovered LAN peer is deliberately never dialled, and logging out locks the interface while the node keeps running — with nodes starting only once somebody has logged in, which is the half that decides what the password protects. Previously v1.4 — §5's interface set is struck through as built: settings sections, the network's name, and permissions. Previously v1.3 — §3 carries D31–D37; §5 is sequenced against the interface and account work, with the channel, folder and voided-report items struck through as built; §6 carries four open questions, one having been withdrawn as answered by `09` §6.2 all along.
+**Document status:** v1.8 — §5's release-gate bullet stops asking for a design that already exists: the session was decided on 2026-09-07 and this went on calling it open. It now points at `02` §6.3 for what was settled on 2026-09-09 — a forced account, an export that is portability rather than recovery and carries its own passphrase, a harness that unlocks from the environment rather than skipping the keyring, and an OS keychain offered but defaulted off. Previously v1.7 — D30 is amended with why the terminal cannot simply be deleted (it is the multi-process test harness, and nothing in the shipped application invokes it) and the line that keeps it from growing: its output is a test contract, not an interface, so it carries no end-user prose. Previously v1.6 — §3 gains D38: a storage offer buys ranking rather than a crawl, so the number is a ceiling on willingness and not a target to fill. Previously v1.5 — §6 loses two of its four open questions to decisions rather than to answers arriving: a locally-discovered LAN peer is deliberately never dialled, and logging out locks the interface while the node keeps running — with nodes starting only once somebody has logged in, which is the half that decides what the password protects. Previously v1.4 — §5's interface set is struck through as built: settings sections, the network's name, and permissions. Previously v1.3 — §3 carries D31–D37; §5 is sequenced against the interface and account work, with the channel, folder and voided-report items struck through as built; §6 carries four open questions, one having been withdrawn as answered by `09` §6.2 all along.
 **Precedence:** `distributed-intranet/specs/07` is normative where it and this set overlap; this set owns client design, rationale and sequencing.
 **Depends on:** Distributed Intranet Protocol v1.0 (specs `01`–`06`) and the Chat Application Spec (`07`)
 **Consumed by:** every other document in this set
@@ -262,10 +262,16 @@ next. Estimates are deliberately absent — sequence is the useful part.
   and an export bundle carrying phrase, network id and relay per network. Listed here rather
   than in a phase because it is a release gate, not a feature that competes with others —
   though it is now **next after P1's interface set**, since the window has no lock at all and
-  launches straight into every network on the disk. What `02` §6.3 does not settle, and what
-  has to be designed before this is built, is the **session**: what logging out means for a
-  node that is running, holding a reservation and answering for its member (§6). Per-network
-  credentials are deferred by D33.
+  launches straight into every network on the disk. Per-network credentials are deferred by D33.
+
+  **The session question this used to carry as unsettled was decided on 2026-09-07** and is in
+  §6 and `02` §6.3: logging out locks the interface and does not stop the node, and a node runs
+  only once somebody has logged in. This bullet went on asking for a design that already
+  existed, which is the kind of drift that gets a decision made twice and differently the second
+  time. What `02` §6.3 settled on 2026-09-09 is the rest of it: the account is forced rather than
+  offered, the export is *portability* rather than recovery and carries its own passphrase, the
+  harness unlocks from the environment rather than skipping the keyring, and the OS keychain is
+  offered and defaulted off.
 
 - **P5 — Multi-device and sandbox packaging.** Device enrollment UX, cross-device read
   state, and the app-bundle build of the same UI against a consent-decorated API.
