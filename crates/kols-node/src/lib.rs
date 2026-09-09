@@ -108,13 +108,14 @@ macro_rules! say {
 }
 
 pub mod account;
+pub mod bundle;
 pub mod chat;
 pub mod executor;
 pub mod invite;
 pub mod join;
 pub mod network;
 pub mod readings;
-mod secret;
+pub mod secret;
 pub mod serve;
 pub mod replica;
 pub mod store;

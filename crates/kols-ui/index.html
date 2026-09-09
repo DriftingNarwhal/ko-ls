@@ -378,12 +378,66 @@
             <!-- Here rather than beside a network's settings, because the account
                  is one for the whole installation: `design/00` D33 defers
                  per-network credentials rather than rejecting them. -->
+            <!-- Shown once, right after the account is made. Offered rather than
+                 forced: a first run that will not proceed until a file has been
+                 saved somewhere is a flow people learn to defeat, and this
+                 protects against losing the machine rather than the next five
+                 minutes. -->
+            <p class="lock-warning" id="export-nudge" data-kols="export-nudge" hidden>
+              Your identities are protected on this machine now. Make a copy you
+              can move as well — it is the only thing that survives this disk.
+            </p>
             <h4 id="account-who" data-kols="account-who"></h4>
             <p class="dim">
               Every identity on this disk is wrapped under this password. It is
               local to this machine and no network ever sees it.
             </p>
             <button type="button" id="lock-now" data-kols="lock-now">lock this window</button>
+
+            <!-- Portability rather than recovery. The seed is the member and
+                 lives on one disk: the password protects it from somebody who
+                 takes the laptop, and nothing protects it from the laptop
+                 dying. -->
+            <h4>a copy you can move</h4>
+            <p class="dim">
+              Every identity here, in one file you keep. It is what lets you carry
+              this account to another machine — or come back to it after this one
+              is gone. Without it, a dead disk means starting again as somebody
+              else: your networks would not know you, and nothing here or anywhere
+              could tell them otherwise.
+            </p>
+            <form id="export-form" class="settings-form">
+              <label for="export-path">where to write it</label>
+              <input id="export-path" data-kols="export-path" placeholder="/path/to/ko-ls-backup" />
+              <label for="export-pass">a passphrase for the file</label>
+              <input id="export-pass" data-kols="export-pass" type="password"
+                     autocomplete="new-password" />
+              <button type="submit" data-kols="export-go">write it</button>
+            </form>
+            <p class="dim">
+              <strong>Not your login password, deliberately.</strong> This file
+              leaves the machine, so the machine's protection does not travel with
+              it — and one secret that lost both your login and the copy kept in
+              case you lose your login would be no copy at all.
+            </p>
+            <p class="settings-error" id="export-error" data-kols="export-error" hidden></p>
+            <p class="dim" id="export-done" data-kols="export-done" hidden></p>
+
+            <h4>restore from a copy</h4>
+            <form id="import-form" class="settings-form">
+              <label for="import-path">the file</label>
+              <input id="import-path" data-kols="import-path" placeholder="/path/to/ko-ls-backup" />
+              <label for="import-pass">its passphrase</label>
+              <input id="import-pass" data-kols="import-pass" type="password"
+                     autocomplete="current-password" />
+              <button type="submit" data-kols="import-go">restore</button>
+            </form>
+            <p class="dim">
+              A network already on this machine is left exactly as it is — this
+              never replaces an identity you already hold.
+            </p>
+            <p class="settings-error" id="import-error" data-kols="import-error" hidden></p>
+            <p class="dim" id="import-done" data-kols="import-done" hidden></p>
             <p class="dim">
               <strong>Locking does not stop your node.</strong> It keeps serving
               what it holds, keeps its relay reservation and keeps answering for

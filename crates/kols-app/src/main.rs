@@ -450,6 +450,53 @@ fn resume(handle: tauri::AppHandle, app: tauri::State<'_, App>) -> Result<bool, 
     Ok(true)
 }
 
+/// Exports every identity on this disk, sealed under its own passphrase.
+///
+/// **Portability rather than recovery** (`design/02` §6.3). The seed is the
+/// member and lives on one disk: the account password protects it from somebody
+/// who takes the laptop, and nothing protects it from the laptop dying.
+///
+/// Its passphrase is deliberately **not** the account password. This file leaves
+/// the machine, so the machine's protection does not travel with it — and one
+/// secret losing both the keyring and the thing kept in case the keyring is lost
+/// would defeat the point.
+#[tauri::command]
+fn export_bundle(
+    app: tauri::State<'_, App>,
+    passphrase: String,
+    path: String,
+) -> Result<usize, String> {
+    if passphrase.is_empty() {
+        return Err("a passphrase is required — this file is every identity here".to_owned());
+    }
+    let entries = app.workspace.to_bundle()?;
+    let sealed = kols_node::bundle::seal(&entries, &passphrase).map_err(|err| err.to_string())?;
+    // Written `0600` like every other secret this program puts on disk. It is
+    // sealed as well, and the two are independent: the permissions are what
+    // stand between another account on this machine and the file, and the
+    // passphrase is what stands between anybody at all and its contents.
+    kols_node::secret::write_private(std::path::Path::new(&path), &sealed)
+        .map_err(|err| err.to_string())?;
+    Ok(entries.len())
+}
+
+/// Restores networks from a bundle.
+#[tauri::command]
+fn import_bundle(
+    app: tauri::State<'_, App>,
+    passphrase: String,
+    path: String,
+) -> Result<dto::Restored, String> {
+    let raw = std::fs::read(&path).map_err(|err| format!("could not read that file: {err}"))?;
+    let entries = kols_node::bundle::open(&raw, &passphrase).map_err(|err| err.to_string())?;
+    let outcome = app.workspace.from_bundle(&entries)?;
+    Ok(dto::Restored {
+        added: outcome.added,
+        skipped: outcome.skipped,
+        refused: outcome.refused,
+    })
+}
+
 /// Whether this installation has an account, and whether it is open.
 ///
 /// The first thing the window asks, before it asks anything else, because every
@@ -2011,6 +2058,8 @@ fn main() {
             move_channel,
             account_state,
             resume,
+            export_bundle,
+            import_bundle,
             create_account,
             unlock,
             lock,

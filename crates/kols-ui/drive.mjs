@@ -65,6 +65,8 @@ const answers = {
   account_state: () => ({ exists: true, unlocked: true, username: "corey", unprotected: 0 }),
   resume: () => true,
   create_account: () => 0,
+  export_bundle: () => 1,
+  import_bundle: () => ({ added: [], skipped: [], refused: [] }),
   unlock: () => 0,
   lock: () => null,
   me: () => me,
@@ -887,6 +889,76 @@ say("locking returns to the lock screen", JSON.stringify(shown()) === '["lock"]'
 say("and it locks rather than stopping the node",
     calls.includes("lock") && !calls.includes("stop_node"),
     JSON.stringify(calls));
+
+// ── the copy you can move ──────────────────────────────────────────────
+//
+// Portability, not recovery. The seed is the member and lives on one disk, so
+// this is the only thing that survives the disk.
+
+console.log("\n── the export ──");
+
+// Offered right after the account is made, and not in the way — a first run that
+// refused to proceed without a file saved somewhere is a flow people defeat.
+answers.account_state = () => ({ exists: false, unlocked: false, username: null, unprotected: 1 });
+await w("gate()");
+await settled();
+answers.account_state = () => ({ exists: true, unlocked: true, username: "corey", unprotected: 0 });
+el("first-run-name").value = "corey";
+el("first-run-password").value = "same";
+el("first-run-again").value = "same";
+el("first-run").dispatchEvent(new window.Event("submit", { bubbles: true, cancelable: true }));
+await settled();
+say("making an account offers the copy straight after",
+    !el("settings").hidden && !el("export-nudge").hidden,
+    `settings ${el("settings").hidden ? "hidden" : "shown"}, nudge ${el("export-nudge").hidden ? "hidden" : "shown"}`);
+say("and it did not block on it — the account was made",
+    calls.includes("create_account"));
+
+// The passphrase must not be the login password, and the window says so where
+// somebody is choosing one.
+const apart = el("settings").textContent;
+say("the file's passphrase is said not to be the login password",
+    apart.includes("Not your login password"),
+    apart.includes("Not your login password") ? "said" : "(absent)");
+
+// An empty passphrase never reaches the shell: this file is every identity.
+calls.length = 0;
+answers.export_bundle = (args) => {
+  if (!args.passphrase) throw new Error("a passphrase is required — this file is every identity here");
+  return 2;
+};
+el("export-path").value = "/tmp/backup";
+el("export-pass").value = "";
+el("export-form").dispatchEvent(new window.Event("submit", { bubbles: true, cancelable: true }));
+await settled();
+say("an empty passphrase is refused and said so",
+    !el("export-error").hidden, el("export-error").textContent.slice(0, 40));
+
+el("export-pass").value = "paper passphrase";
+el("export-form").dispatchEvent(new window.Event("submit", { bubbles: true, cancelable: true }));
+await settled();
+say("a written copy reports how many networks are in it",
+    !el("export-done").hidden && el("export-done").textContent.includes("2 networks"),
+    el("export-done").textContent.slice(0, 50));
+// It is the only thing between whoever picks the file up and every identity in it.
+say("and the passphrase is not left in the field", el("export-pass").value === "");
+
+// A restore says all three things. One that reported only what it added would be
+// silent about the network it deliberately left alone.
+answers.import_bundle = () => ({
+  added: ["the workshop"],
+  skipped: ["already here"],
+  refused: [],
+});
+el("import-path").value = "/tmp/backup";
+el("import-pass").value = "paper passphrase";
+el("import-form").dispatchEvent(new window.Event("submit", { bubbles: true, cancelable: true }));
+await settled();
+const restored = el("import-done").textContent;
+say("a restore says what it took and what it left alone",
+    restored.includes("the workshop") && restored.includes("already here"),
+    restored);
+say("and its passphrase is not left either", el("import-pass").value === "");
 
 console.log(problems.length ? "\nPROBLEMS:\n" + problems.join("\n") : "\nno uncaught errors");
 process.exit(0);

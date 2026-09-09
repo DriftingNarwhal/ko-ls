@@ -250,6 +250,21 @@ impl WindowArg {
     }
 }
 
+/// What restoring a bundle did.
+///
+/// Three lists rather than a count, because they need different things said
+/// about them: what came back, what was already here and was left exactly as it
+/// was, and what would not restore.
+#[derive(Debug, Serialize)]
+pub struct Restored {
+    /// Networks this machine did not have and now does.
+    pub added: Vec<String>,
+    /// Networks already here, untouched.
+    pub skipped: Vec<String>,
+    /// Networks that would not restore, and why.
+    pub refused: Vec<String>,
+}
+
 /// Whether this installation has an account, and whether it is open.
 ///
 /// Two questions rather than one, because they need different screens: no

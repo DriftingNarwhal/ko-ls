@@ -326,6 +326,65 @@ impl Workspace {
         )
     }
 
+    /// Everything a bundle has to carry, for every network on this disk.
+    ///
+    /// Requires the installation to be unlocked, because it reads seeds — which
+    /// is the whole of what it is for.
+    pub fn to_bundle(&self) -> Result<Vec<crate::bundle::Entry>, String> {
+        self.ensure_unlocked()?;
+        Ok(self
+            .list()
+            .into_iter()
+            .filter_map(|known| {
+                let store = Store::open(known.path).ok()?;
+                Some(crate::bundle::Entry {
+                    network: *store.network(),
+                    seed: store.entropy(),
+                    label: store.label().unwrap_or_default(),
+                    // **Without one of these there is nobody to sync from.** A
+                    // restored store holds an identity and an empty log; the
+                    // history comes back off the network, and a relay is how it
+                    // is reached.
+                    relays: store.relays(),
+                })
+            })
+            .collect())
+    }
+
+    /// Restores networks from a bundle, and reports what it did.
+    ///
+    /// **A network already here is skipped, never overwritten**, for the reason
+    /// a second `init` refuses: the seed at that path cannot be recovered if it
+    /// is lost, and importing over it would replace one identity with another
+    /// silently. Skipping can leave somebody as the wrong member in that
+    /// network, which is visible and fixable; overwriting is neither.
+    ///
+    /// What is restored is an identity and somewhere to reach the network. The
+    /// history is not in the bundle and does not need to be: a returning member
+    /// is already named in the governance log, so their own messages come back
+    /// off the network like any other history.
+    pub fn from_bundle(&self, entries: &[crate::bundle::Entry]) -> Result<Restored, String> {
+        self.ensure_unlocked()?;
+        let mut restored = Restored::default();
+        for entry in entries {
+            let path = self.path_for(&entry.network);
+            if is_store(&path) {
+                restored.skipped.push(entry.label.clone());
+                continue;
+            }
+            match Store::create(path, entry.network, entry.seed) {
+                Ok(store) => {
+                    let _ = store.set_label(&entry.label);
+                    let _ = store.set_relays(&entry.relays);
+                    restored.added.push(entry.label.clone());
+                }
+                // One network that will not restore must not stop the others.
+                Err(err) => restored.refused.push(format!("{}: {err}", entry.label)),
+            }
+        }
+        Ok(restored)
+    }
+
     /// How many stores here still hold their seed in the clear.
     ///
     /// What the first run needs in order to say what it is about to protect. It
@@ -506,6 +565,17 @@ impl Workspace {
         }
         Ok(store)
     }
+}
+
+/// What restoring a bundle did.
+#[derive(Debug, Default)]
+pub struct Restored {
+    /// Networks this machine did not have and now does.
+    pub added: Vec<String>,
+    /// Networks already here, left exactly as they were.
+    pub skipped: Vec<String>,
+    /// Networks that would not restore, and why.
+    pub refused: Vec<String>,
 }
 
 /// Whether a directory is a network's store.

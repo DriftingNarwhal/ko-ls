@@ -76,6 +76,9 @@ const state = {
   // local view state that reaches nobody: `design/09` §4.2's line runs between
   // what a *change* costs, and looking at a panel costs nothing.
   settingsTab: "network",
+  // Set once, right after an account is made, so the export is offered where it
+  // lives rather than as a screen of its own.
+  justProtected: false,
   role: null,
 };
 
@@ -3458,6 +3461,7 @@ async function drawAccount() {
   el("account-who").textContent = account.username
     ? `signed in as ${account.username}`
     : "this installation";
+  el("export-nudge").hidden = !state.justProtected;
 }
 
 /// The screen before every other one — `design/02` §6.3.
@@ -3526,7 +3530,14 @@ el("first-run").addEventListener("submit", async (event) => {
     });
     el("first-run-password").value = "";
     el("first-run-again").value = "";
+    // Offered next, and not in the way: the copy protects against losing the
+    // machine rather than against the next five minutes, and a first run that
+    // refused to proceed without one is a flow people learn to defeat.
+    state.justProtected = true;
     await start();
+    show("settings");
+    state.settingsTab = "device";
+    await drawSettings();
   } catch (err) {
     lockError("first-run-error", err);
   }
@@ -3557,6 +3568,63 @@ async function lockNow() {
   el("messages").replaceChildren();
   await gate();
 }
+
+/// Says something on one of the settings panels' outcome lines.
+function settingsSays(id, text, bad = false) {
+  const line = el(id);
+  line.hidden = false;
+  line.textContent = text;
+  return bad;
+}
+
+el("export-form").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  el("export-error").hidden = true;
+  el("export-done").hidden = true;
+  try {
+    const count = await invoke("export_bundle", {
+      passphrase: el("export-pass").value,
+      path: el("export-path").value.trim(),
+    });
+    // The passphrase does not stay in the field. It is the only thing standing
+    // between anybody who picks the file up and every identity in it.
+    el("export-pass").value = "";
+    settingsSays(
+      "export-done",
+      `Written. ${count === 1 ? "One network" : `${count} networks`} are in that file — ` +
+        "keep it somewhere that is not this machine, and keep the passphrase somewhere " +
+        "that is not the file.",
+    );
+  } catch (err) {
+    settingsSays("export-error", String(err && err.message ? err.message : err));
+  }
+});
+
+el("import-form").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  el("import-error").hidden = true;
+  el("import-done").hidden = true;
+  try {
+    const done = await invoke("import_bundle", {
+      passphrase: el("import-pass").value,
+      path: el("import-path").value.trim(),
+    });
+    el("import-pass").value = "";
+    // All three are said. A restore that only reported what it added would be
+    // silent about the network it deliberately left alone, which is the one
+    // somebody is most likely to be asking about.
+    const said = [];
+    if (done.added.length) said.push(`restored ${done.added.join(", ")}`);
+    if (done.skipped.length) {
+      said.push(`already here, left alone: ${done.skipped.join(", ")}`);
+    }
+    if (done.refused.length) said.push(`could not restore: ${done.refused.join("; ")}`);
+    settingsSays("import-done", said.length ? said.join(" · ") : "that file held no networks");
+    if (done.added.length) await refreshReplayed();
+  } catch (err) {
+    settingsSays("import-error", String(err && err.message ? err.message : err));
+  }
+});
 
 el("lock-now").addEventListener("click", () => void lockNow());
 

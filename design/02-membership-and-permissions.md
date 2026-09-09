@@ -1,6 +1,6 @@
 # Membership and Permissions
 
-**Document status:** v1.7 — §6.3 records what O7 was decided to be, before any of it was built: the account is forced on the next launch rather than offered, because a gate somebody can click past is a preference; the export is **portability rather than recovery**, since the seed is the member and lives on one disk, and a member without it on a new machine is not locked out but is a different person; it carries its own passphrase, because wrapping it under the account password would make one forgotten secret lose both the keyring and the thing kept in case the keyring is lost; the harness unlocks from the environment rather than skipping the keyring, so no code path reads a seed without a secret; and the OS keychain is offered and defaulted off. The mechanism is not new — everything else here is already sealed under a seed-derived key, and this is the same construction one level up. Previously v1.6 — §6.4's storage offer is a cap rather than a promise: the replica duty, tiering and eviction it was waiting on are built, and `05` §5.1 owns the mechanism. Previously v1.5 — §6.4 records `SetContribution`: disk is settable per network and needs no capability, the other three contributions keep their defaults, and the two things the number is *not* — zero does not stop this node serving, and an offer is not yet a ceiling — are said where a member reads it. Previously v1.4 — §6.3 gains the session: logging out locks the interface and leaves the node running, a node starts only after a login, and the three things the lock does and does not protect are stated at the strength they hold — notably that a running node holds key material in memory by necessity, so a lock is not a defence against somebody reading the process. Previously v1.3 — **§6.5 is built.** `Command::LeaveNetwork` writes one membership removal per group, the executor's blanket refusal of self-removal becomes a last-`revoke-node`-holder check, and `forget` announces before it deletes — which inverted a rule that had been exactly backwards, since it used to refuse the one case (an open network) that had a node able to publish anything. One limit follows and is recorded there: the sole founder of a network cannot leave it. Previously v1.2 — §6.5 settles the shape: `forget` stays all-or-nothing by decision rather than by default, what it owes is the announcement, and the executor guard that would defeat `06` §16 on its own is named. Previously v1.1 — §6.5 records that leaving a network is a gap rather than a design, and what the client owes once `06` §16 lands. Previously v1.0 — permission resolution implemented and reached through `kols-api`'s gate; E11 landed, so §2.2's per-scope registration problem is gone
+**Document status:** v1.8 — §6.3's O7 is **built**: keyring, forced first run, lock, and the export. Building it turned up that the unlocked account has to be keyed by *workspace* rather than by process — each installation has its own salt, so a single slot handed one workspace's key to another and called a right password wrong — and that the two Argon2 costs should differ, since the bundle leaves the machine and its cost is paid twice in a lifetime rather than at every login. Previously v1.7 — §6.3 records what O7 was decided to be, before any of it was built: the account is forced on the next launch rather than offered, because a gate somebody can click past is a preference; the export is **portability rather than recovery**, since the seed is the member and lives on one disk, and a member without it on a new machine is not locked out but is a different person; it carries its own passphrase, because wrapping it under the account password would make one forgotten secret lose both the keyring and the thing kept in case the keyring is lost; the harness unlocks from the environment rather than skipping the keyring, so no code path reads a seed without a secret; and the OS keychain is offered and defaulted off. The mechanism is not new — everything else here is already sealed under a seed-derived key, and this is the same construction one level up. Previously v1.6 — §6.4's storage offer is a cap rather than a promise: the replica duty, tiering and eviction it was waiting on are built, and `05` §5.1 owns the mechanism. Previously v1.5 — §6.4 records `SetContribution`: disk is settable per network and needs no capability, the other three contributions keep their defaults, and the two things the number is *not* — zero does not stop this node serving, and an offer is not yet a ceiling — are said where a member reads it. Previously v1.4 — §6.3 gains the session: logging out locks the interface and leaves the node running, a node starts only after a login, and the three things the lock does and does not protect are stated at the strength they hold — notably that a running node holds key material in memory by necessity, so a lock is not a defence against somebody reading the process. Previously v1.3 — **§6.5 is built.** `Command::LeaveNetwork` writes one membership removal per group, the executor's blanket refusal of self-removal becomes a last-`revoke-node`-holder check, and `forget` announces before it deletes — which inverted a rule that had been exactly backwards, since it used to refuse the one case (an open network) that had a node able to publish anything. One limit follows and is recorded there: the sole founder of a network cannot leave it. Previously v1.2 — §6.5 settles the shape: `forget` stays all-or-nothing by decision rather than by default, what it owes is the announcement, and the executor guard that would defeat `06` §16 on its own is named. Previously v1.1 — §6.5 records that leaving a network is a gap rather than a design, and what the client owes once `06` §16 lands. Previously v1.0 — permission resolution implemented and reached through `kols-api`'s gate; E11 landed, so §2.2's per-scope registration problem is gone
 **Depends on:** Core Protocol Spec §1 (identity), §2 (governance), §5.6 (invites)
 **Consumed by:** `01-messaging-model`, `03-confidentiality`, `04-realtime`
 
@@ -395,6 +395,34 @@ that holds.
 **The session question this section was carrying as open is closed** and has been since
 2026-09-07: logging out locks the interface and does not stop the node, and a node runs only once
 somebody has logged in. `00` §5 still asked for that to be designed; it was already decided here.
+
+#### Built 2026-09-09, and what building it turned up
+
+All of the above. The keyring, the forced first run, the lock, and the export.
+
+**The mechanism was the same one, one level up**, as predicted — everything else at rest was
+already sealed under a seed-derived key. What was not predicted is that the *slot* holding the
+unlocked account had to be keyed by workspace rather than by process. Each installation has its
+own salt, so one workspace's key does not open another's; a single slot handed the first
+workspace's key to the second and reported a **right** password as wrong. One installation per
+machine hides that completely. It is also the truer statement: an account key is a property of a
+workspace, not of a process.
+
+**Two costs are deliberately asymmetric.** The account uses Argon2id at 64 MiB and three passes;
+the bundle uses 256 MiB and four. The bundle is the file that leaves the machine and may sit in
+a cloud drive for years, so the guessing budget an attacker can bring to it is unbounded in a
+way it is not for a local file — and its cost is paid twice in a lifetime rather than at every
+login. Both store their parameters, so raising either later strands nothing.
+
+**Restoring never overwrites a seed**, for the reason a second `init` refuses: the seed at that
+path cannot be recovered if it is lost. A network already present is skipped and said so.
+Skipping can leave somebody as the wrong member in that network, which is visible and fixable;
+overwriting is neither.
+
+**What a restore actually restores is an identity and somewhere to reach the network** — not
+history. That is the point rather than a shortfall: a returning member is already named in the
+governance log, so their own messages come back off the network like any other history. What the
+bundle has to carry is only what cannot be fetched, which is the seed, the id, and a relay.
 
 ### 6.4 Resource contribution is a per-network choice
 

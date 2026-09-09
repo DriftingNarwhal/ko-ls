@@ -391,6 +391,16 @@ impl Store {
         Ok(true)
     }
 
+    /// The entropy this member's identity in this network derives from.
+    ///
+    /// **The one accessor that hands out the secret**, and it exists for exactly
+    /// one caller: the export that makes an identity survive its machine
+    /// (`design/02` §6.3). Reaching it at all requires the installation to be
+    /// unlocked, since that is what opened the store.
+    pub const fn entropy(&self) -> [u8; 32] {
+        self.entropy
+    }
+
     /// The network this store belongs to.
     pub const fn network(&self) -> &NetworkId {
         &self.network

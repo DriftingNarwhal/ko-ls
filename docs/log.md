@@ -24,6 +24,42 @@ Kept because this project keeps re-learning the same lessons and paying for them
 
 ---
 
+- **2026-09-09** — **O7 closed: the copy that survives the machine.**
+
+  The lock and the export. `design/02` §6.3 has the decisions; what building them turned up:
+
+  **A restore restores an identity and a way to reach the network — not history**, and that is
+  the point rather than a shortfall. A returning member is already named in the governance log,
+  so their own messages come back off the network like any other history. What the bundle has to
+  carry is only what cannot be fetched: the seed, the network id, and a relay. Which is also why
+  a phrase alone is not enough — a network id cannot be derived from a seed, and the list of
+  networks a member belongs to lives in the workspace and in no seed at all.
+
+  **Restoring never overwrites a seed.** Same reasoning as a second `init` refusing: the seed at
+  that path cannot be recovered if it is lost. A network already present is skipped and said so.
+  Skipping can leave somebody as the wrong member in that network, which is visible and fixable;
+  overwriting is neither. The window says all three outcomes — taken, left alone, refused —
+  because a restore reporting only what it added would be silent about the network somebody is
+  most likely to be asking about.
+
+  **The two Argon2 costs are deliberately different**, and it took writing the second to see it:
+  the account is 64 MiB and three passes, the bundle 256 MiB and four. The bundle leaves the
+  machine and may sit in a cloud drive for years, so an attacker's guessing budget against it is
+  unbounded in a way it is not for a local file — and its cost is paid twice in a lifetime rather
+  than at every login.
+
+  **The export is offered right after the account is made and does not block it.** A first run
+  that will not proceed until a file has been saved somewhere is a flow people learn to defeat,
+  and this protects against losing the machine rather than against the next five minutes.
+
+  Two probes on the load-bearing claim: restoring with fresh entropy instead of the bundle's seed
+  fails *a restored member has to be the same member*, and dropping the collision guard fails
+  *the seed already there must be untouched*.
+
+  With this, **the owed register has nothing actionable left in it**: O1 is Wave 3's surface and
+  waits on E10, E13, `03` §6's indexes and `kols-media`, none of which exist; O20 is a decision
+  rather than an outstanding item.
+
 - **2026-09-09** — **O7's keyring: the same construction one level up.**
 
   Seeds were the last thing on this disk in the clear. Everything else at rest — MLS group
