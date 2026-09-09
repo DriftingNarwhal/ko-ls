@@ -24,7 +24,7 @@ use intranet_identity::{MasterSeed, NetworkId, PerNetworkIdentity, PerNetworkIde
 use intranet_storage::{Cid, Dek, EpochKey};
 use crate::readings::OwnReadings;
 use crate::secret;
-use kols_core::{ChannelId, Hlc, Record};
+use kols_core::{ChannelId, Cursor, Hlc, Record, Window};
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
@@ -174,6 +174,39 @@ impl From<io::Error> for StoreError {
     fn from(err: io::Error) -> Self {
         Self::Io(err)
     }
+}
+
+/// The most one request from an interface may reach beyond what is loaded.
+///
+/// **Applied where untrusted input arrives and nowhere else.** It lived here
+/// briefly and was wrong: the store silently truncated `Window::opening(MAX)` to
+/// this, so `kols read` would have shown the last five hundred messages of a
+/// channel and said nothing about the rest. A ceiling that quietly rewrites what
+/// a caller asked for is the same class of failure as a page boundary that drops
+/// a message — the answer is wrong and nothing reveals it.
+///
+/// So the store does what it is told, and the boundary clamps: `kols-app`'s
+/// `WindowArg` applies this to what the window sends, and callers inside the
+/// process ask for what they mean.
+pub const MAX_REACH: usize = 500;
+
+/// A channel's records as far as a reader has loaded them.
+#[derive(Debug)]
+pub struct Loaded {
+    /// The range's records and everything acting on them, in merge order.
+    pub records: Vec<Record>,
+    /// Which of them the rate pass refused, and why.
+    pub refused: std::collections::BTreeMap<kols_core::MessageId, kols_core::Rejection>,
+    /// Where the range now starts.
+    pub oldest: Option<Cursor>,
+    /// Where it now ends, or absent when it runs to the tail.
+    pub newest: Option<Cursor>,
+    /// Whether this channel holds records before the range.
+    pub older: bool,
+    /// Whether it holds records after it.
+    pub newer: bool,
+    /// How many authors have written in the channel, whole-channel.
+    pub authors: usize,
 }
 
 impl Store {
@@ -685,6 +718,40 @@ impl Store {
         Ok(true)
     }
 
+    /// Which records a channel holds, from the names of their files.
+    ///
+    /// A record's file is named by its id, so this is the same set
+    /// [`Self::records`] would produce without reading or decoding a byte of
+    /// content. What that buys is the ordinary case: a channel whose records the
+    /// index has already folded is recognised as unchanged for the cost of one
+    /// directory listing.
+    fn record_ids(
+        &self,
+        channel: &ChannelId,
+    ) -> Result<Vec<kols_core::MessageId>, StoreError> {
+        let dir = self.channel_dir(channel).join("records");
+        if !dir.exists() {
+            return Ok(Vec::new());
+        }
+        let mut ids = Vec::new();
+        for entry in fs::read_dir(&dir)? {
+            let name = entry?.file_name();
+            let Some(name) = name.to_str() else {
+                continue;
+            };
+            // Anything that is not a record id is not a record. A stray file
+            // here is skipped rather than failing the read: the records are the
+            // source of truth and one unreadable name must not make a channel
+            // unopenable.
+            if let Some(raw) = intranet_crypto::from_hex(name)
+                && let Ok(bytes) = <[u8; 32]>::try_from(raw)
+            {
+                ids.push(kols_core::MessageId::from_bytes(bytes));
+            }
+        }
+        Ok(ids)
+    }
+
     /// One stored record, by id.
     fn record(&self, channel: &ChannelId, id: &kols_core::MessageId) -> Option<Record> {
         let path = self
@@ -710,35 +777,75 @@ impl Store {
             .as_ref()
     }
 
-    /// A page of a channel's records, with what the rate pass refused.
+    /// A channel's loaded range, with what the rate pass refused.
     ///
     /// # What this replaces
     ///
     /// Reading every record in the channel, decoding each one and folding the
-    /// reader-side limits over the whole set — for a page. This asks the index
-    /// which records the page holds, reads those files and the ones acting on
-    /// them, and takes the refusals from rows already decided.
+    /// reader-side limits over the whole set — for a screenful. This asks the
+    /// index which records the range holds, reads those files and the ones
+    /// acting on them, and takes the refusals from rows already decided.
+    ///
+    /// # The range grows and never slides
+    ///
+    /// `design/09` §4.4: what the interface holds is the range it has drawn,
+    /// extended by `back` before its older end and `forward` after its newer
+    /// one. A range whose newer end is absent is *live* — it runs to the tail,
+    /// which is what makes arrivals appear without anything asking, and what
+    /// makes backfill landing inside it appear at all.
     ///
     /// Returns `None` when there is no index to ask, so a caller falls back to
     /// the slow path rather than showing an empty channel.
-    pub fn page(
+    pub fn load(
         &self,
         channel: &ChannelId,
         limits: &kols_core::ReaderLimits,
-        before: Option<Hlc>,
-        limit: usize,
-    ) -> Option<(Vec<Record>, std::collections::BTreeSet<kols_core::MessageId>)> {
+        window: &Window,
+    ) -> Option<Loaded> {
         let projection = self.projection()?;
         self.fold_into(projection, channel, limits).ok()?;
 
-        let page = projection.page(channel, before, limit).ok()?;
-        let acting = projection.acting_on(channel, &page).ok()?;
+        let (back, forward) = (window.back, window.forward);
 
-        let mut wanted: std::collections::BTreeSet<_> = page.iter().copied().collect();
-        wanted.extend(acting);
+        // Two cases, and a jump is not a third: opening *at* a message is a
+        // range whose ends are both that message, reached from both directions.
+        let mut ids = match window.oldest {
+            None => projection.before(channel, None, back.max(1)).ok()?,
+            Some(oldest) => {
+                let mut earlier = projection.before(channel, Some(oldest), back).ok()?;
+                earlier.extend(projection.between(channel, oldest, window.newest, usize::MAX).ok()?);
+                if window.newest.is_some() {
+                    earlier.extend(projection.after(channel, window.newest, forward).ok()?);
+                }
+                earlier
+            }
+        };
+        ids.dedup();
+
+        let oldest = self.cursor_of(channel, ids.first())?;
+        let newest = self.cursor_of(channel, ids.last())?;
+
+        // **Whether anything is left in each direction**, asked of the index
+        // rather than guessed from whether a page came back full. A page can be
+        // exactly the size of what remains, and "full" would then claim there is
+        // more forever.
+        let older = oldest
+            .map(|c| projection.before(channel, Some(c), 1).map(|r| !r.is_empty()))
+            .transpose()
+            .ok()?
+            .unwrap_or(false);
+        let newer = match (window.newest, newest) {
+            // Already live: it runs to the tail by construction.
+            (None, _) => false,
+            (Some(_), Some(end)) => !projection.after(channel, Some(end), 1).ok()?.is_empty(),
+            (Some(_), None) => false,
+        };
+
+        let mut wanted: std::collections::BTreeSet<_> = ids.iter().copied().collect();
+        wanted.extend(projection.acting_on(channel, &ids).ok()?);
 
         let mut records = Vec::with_capacity(wanted.len());
-        let mut refused = std::collections::BTreeSet::new();
+        let mut refused = std::collections::BTreeMap::new();
         for id in &wanted {
             let Some(record) = self.record(channel, id) else {
                 // A row naming a file that is gone. The index is derived, so the
@@ -746,18 +853,42 @@ impl Store {
                 let _ = projection.forget(channel);
                 return None;
             };
-            if projection
-                .verdict(id)
-                .ok()
-                .flatten()
-                .is_some_and(|verdict| !verdict.renders())
+            if let Some(why) = projection.verdict(id).ok().flatten().and_then(kols_store::Verdict::rejection)
             {
-                refused.insert(*id);
+                refused.insert(*id, why);
             }
             records.push(record);
         }
-        records.sort_by(|a, b| a.hlc.cmp(&b.hlc).then_with(|| a.id().as_bytes().cmp(b.id().as_bytes())));
-        Some((records, refused))
+        records.sort_by_key(kols_core::Record::cursor);
+
+        Some(Loaded {
+            records,
+            refused,
+            oldest,
+            // **Reattaching is what running out of newer records means.** A
+            // reader who scrolled down to the tail is looking at the present,
+            // and holding the range detached would then freeze it there — the
+            // same failure as reattaching them on a timer, from the other side.
+            newest: newer.then_some(newest).flatten(),
+            older,
+            newer,
+            authors: projection.authors(channel).ok()?,
+        })
+    }
+
+    /// The position of a record named by the index.
+    ///
+    /// `Some(None)` for "there was no record", which is an empty channel and not
+    /// a failure; `None` only when the file behind a row could not be read.
+    fn cursor_of(
+        &self,
+        channel: &ChannelId,
+        id: Option<&kols_core::MessageId>,
+    ) -> Option<Option<kols_core::Cursor>> {
+        match id {
+            None => Some(None),
+            Some(id) => self.record(channel, id).map(|r| Some(r.cursor())),
+        }
     }
 
     /// Brings a channel's rows up to date with its record files.
@@ -788,30 +919,53 @@ impl Store {
             .flatten()
             .is_some_and(|held| held != under);
 
-        let held = projection.ids(channel).unwrap_or_default();
-        let records = self.records(channel)?;
-        if !stale && records.len() == held.len() {
+        // **Names, not contents.** A record file is named by its id, so the
+        // directory answers *which records exist* without decoding one of them —
+        // and the ordinary case is that the answer has not changed. Reading the
+        // channel here was the whole point of the index being paid for and then
+        // not used: opening a page cost the channel, in the one function that
+        // runs before every page.
+        let on_disk = self.record_ids(channel)?;
+        // A count rather than the ids. The early return is the case that runs on
+        // every tick of every open channel, and materialising a hundred thousand
+        // identifiers to discover that none of them are new is the same mistake
+        // as decoding the records was, one layer smaller.
+        if !stale && on_disk.len() == projection.count(channel).unwrap_or(0) {
             return Ok(());
         }
 
+        let held = projection.ids(channel).unwrap_or_default();
         let newest = projection.newest(channel).ok().flatten();
-        let missing: Vec<_> = records
+        // Only the ones the index has never seen are decoded. In the live case
+        // that is one record.
+        let mut missing: Vec<Record> = on_disk
             .iter()
-            .filter(|record| !held.contains(&record.id()))
+            .filter(|id| !held.contains(id))
+            .filter_map(|id| self.record(channel, id))
             .collect();
+        missing.sort_by_key(kols_core::Record::cursor);
+        // Compared on the whole position rather than the reading, for the same
+        // reason a page boundary is: two records can share a reading, and a
+        // comparison that could not separate them would call an arrival
+        // *forward* when it lands beside the newest row rather than after it.
         if let (Some(newest), Some(first)) = (newest, missing.first())
-            && first.hlc <= newest
+            && first.cursor() <= newest
         {
             stale = true;
         }
 
-        let fold: Vec<&Record> = if stale {
+        // A re-fold is the only path that still reads the whole channel, which is
+        // what it is: every verdict after the arrival may move, so every record
+        // has to go through the pass again. Rare by construction — it takes
+        // backfill reaching into the fold, or a governance act changing the
+        // limits.
+        let fold: Vec<Record> = if stale {
             let _ = projection.forget(channel);
-            records.iter().collect()
+            self.records(channel)?
         } else {
             missing
         };
-        for record in fold {
+        for record in &fold {
             let verdict = kols_store::decide(projection, record, limits)
                 .map_err(|err| StoreError::Corrupt(err.to_string()))?;
             projection
@@ -1839,13 +1993,42 @@ impl Store {
     /// nothing else on screen distinguishes them. A member at their ceiling sees
     /// fewer messages than another member of the same network, and without this
     /// they would have no reason to think anything but that the network is quiet.
-    pub fn history_incomplete(&self) -> bool {
+    pub fn history_incomplete(&self, channel: &ChannelId) -> bool {
         let held: std::collections::BTreeSet<Cid> = self.segments().into_iter().collect();
-        held.iter().any(|cid| {
-            self.segment_link(cid)
-                .and_then(|(_, previous)| previous)
-                .is_some_and(|previous| !held.contains(&previous))
-        })
+        held.iter()
+            .filter(|cid| self.segment_channel(cid).is_none_or(|held| held == *channel))
+            .any(|cid| {
+                self.segment_link(cid)
+                    .and_then(|(_, previous)| previous)
+                    .is_some_and(|previous| !held.contains(&previous))
+            })
+    }
+
+    /// Which channel a segment was absorbed for, when that was recorded.
+    ///
+    /// **Absent means it counts toward every channel**, which is the answer this
+    /// question gave before it was asked per channel at all. The degradation is
+    /// one-directional on purpose (`design/09` §4.4): it can call a whole
+    /// channel incomplete, which is merely vague and is what already happened,
+    /// and it can never call a truncated one whole — which would be the
+    /// interface concealing the very thing the notice exists to disclose.
+    ///
+    /// Its own mark rather than a field on the link, because extending the
+    /// link's layout would make a 40-byte mark ambiguous between an old one
+    /// carrying a predecessor and a new one carrying a channel. A separate file
+    /// is unambiguous by construction and needs no version to read.
+    pub fn segment_channel(&self, cid: &Cid) -> Option<ChannelId> {
+        let raw = fs::read(self.segment_path(cid, "channel")).ok()?;
+        Some(ChannelId::from_bytes(raw.try_into().ok()?))
+    }
+
+    /// Records which channel a segment belongs to.
+    pub fn mark_segment_channel(
+        &self,
+        cid: &Cid,
+        channel: &ChannelId,
+    ) -> Result<(), StoreError> {
+        self.write_segment_mark(cid, "channel", channel.as_bytes())
     }
 
     /// Whether this node holds `cid` on the network's behalf rather than its own.

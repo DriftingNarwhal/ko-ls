@@ -82,9 +82,10 @@ fn a_page_is_the_newest_records_and_not_the_channel() {
     let (_dir, executor, channel) = channel_with("newest", 40);
     let store = executor.store();
 
-    let (page, refused) = store
-        .page(&channel, &limits(), None, 10)
+    let loaded = store
+        .load(&channel, &limits(), &kols_core::Window::opening(10))
         .expect("the index answers");
+    let (page, refused) = (loaded.records, loaded.refused);
 
     assert_eq!(page.len(), 10, "a page of ten is ten records, not forty");
     assert!(refused.is_empty(), "nothing was over any ceiling");
@@ -112,9 +113,9 @@ fn a_page_carries_what_acts_on_it_however_far_away_that_is() {
     let store = executor.store();
 
     let first = store
-        .page(&channel, &limits(), None, 5)
+        .load(&channel, &limits(), &kols_core::Window::opening(5))
         .expect("the index answers")
-        .0
+        .records
         .first()
         .map(kols_core::Record::id)
         .expect("a record");
@@ -141,9 +142,10 @@ fn a_page_carries_what_acts_on_it_however_far_away_that_is() {
 
     // A page holding the oldest message must carry the reaction, which by now is
     // thirty records away from it.
-    let (page, _) = store
-        .page(&channel, &limits(), None, usize::MAX)
-        .expect("the index answers");
+    let page = store
+        .load(&channel, &limits(), &kols_core::Window::opening(usize::MAX))
+        .expect("the index answers")
+        .records;
     assert!(
         page.iter().any(|record| matches!(
             &record.body,
@@ -162,7 +164,10 @@ fn a_record_that_arrives_late_is_folded_in_rather_than_missed() {
     let (_dir, executor, channel) = channel_with("late", 4);
     let store = executor.store();
 
-    let (before, _) = store.page(&channel, &limits(), None, usize::MAX).expect("answers");
+    let before = store
+        .load(&channel, &limits(), &kols_core::Window::opening(usize::MAX))
+        .expect("answers")
+        .records;
     executor
         .submit(Command::SendMessage {
             channel,
@@ -171,7 +176,10 @@ fn a_record_that_arrives_late_is_folded_in_rather_than_missed() {
             attachments: Vec::new(),
         })
         .expect("posts");
-    let (after, _) = store.page(&channel, &limits(), None, usize::MAX).expect("answers");
+    let after = store
+        .load(&channel, &limits(), &kols_core::Window::opening(usize::MAX))
+        .expect("answers")
+        .records;
 
     assert_eq!(after.len(), before.len() + 1, "the new record was folded in");
     assert!(after.iter().any(|record| matches!(
@@ -202,9 +210,10 @@ fn a_refusal_survives_being_read_back() {
         message_rate_per_minute: 2,
         ..limits()
     };
-    let (page, refused) = store
-        .page(&channel, &strict, None, usize::MAX)
+    let loaded = store
+        .load(&channel, &strict, &kols_core::Window::opening(usize::MAX))
         .expect("answers");
+    let (page, refused) = (loaded.records, loaded.refused);
 
     assert_eq!(page.len(), 4, "every record is still in the set");
     assert_eq!(refused.len(), 2, "and the two past the ceiling are refused");
@@ -232,11 +241,17 @@ fn changing_the_limits_re_folds_rather_than_leaving_a_stale_refusal() {
         message_rate_per_minute: 2,
         ..limits()
     };
-    let (_, refused) = store.page(&channel, &strict, None, usize::MAX).expect("answers");
+    let refused = store
+        .load(&channel, &strict, &kols_core::Window::opening(usize::MAX))
+        .expect("answers")
+        .refused;
     assert_eq!(refused.len(), 2);
 
     // Raised. Nothing about the records changed, and every refusal must go.
-    let (_, refused) = store.page(&channel, &limits(), None, usize::MAX).expect("answers");
+    let refused = store
+        .load(&channel, &limits(), &kols_core::Window::opening(usize::MAX))
+        .expect("answers")
+        .refused;
     assert!(
         refused.is_empty(),
         "raising the ceiling has to un-refuse what it refused"

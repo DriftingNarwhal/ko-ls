@@ -1,6 +1,6 @@
 # Messaging Model
 
-**Document status:** v1.4 — §9's presence is built, and the section records what building it settled: the states are `here | idle | busy | invisible` rather than the `online`/`dnd` this once said, `invisible` has no wire form at all, a beat is signed as well as sealed, and freshness is judged by when a beat was heard rather than by the time it carries. Typing is still unbuilt. Previously v1.3 — §6's redaction rule is enforced as of the cited governance head, which it had not been: `may_moderate_at` took the head and answered from current state, so a demotion reached backwards and un-hid every message that moderator had ever redacted. Both halves are asserted together — a demotion stops new redactions and leaves past ones standing. Previously v1.2 — §2.3 makes categories nameable and ordered, §2.4 fixes the sidebar's two-level order. Both are implemented in `kols-core`; spec 07 is normative where they overlap
+**Document status:** v1.5 — §5's "a UI would bound this by pages" now points at `09` §4.4, which is that UI, and the two kinds of *older* are named apart: this walk is history the machine does not hold, and the one a reader meets first is history it holds and has not drawn. Previously v1.4 — §9's presence is built, and the section records what building it settled: the states are `here | idle | busy | invisible` rather than the `online`/`dnd` this once said, `invisible` has no wire form at all, a beat is signed as well as sealed, and freshness is judged by when a beat was heard rather than by the time it carries. Typing is still unbuilt. Previously v1.3 — §6's redaction rule is enforced as of the cited governance head, which it had not been: `may_moderate_at` took the head and answered from current state, so a demotion reached backwards and un-hid every message that moderator had ever redacted. Both halves are asserted together — a demotion stops new redactions and leaves past ones standing. Previously v1.2 — §2.3 makes categories nameable and ordered, §2.4 fixes the sidebar's two-level order. Both are implemented in `kols-core`; spec 07 is normative where they overlap
 **Depends on:** Core Protocol Spec §2 (governance log), Storage Spec §1–§5, Search Spec §3
 **Consumed by:** `02-membership-and-permissions`, `03-confidentiality`, `05-client-architecture`
 
@@ -429,7 +429,9 @@ The client walks the chain as far as its local chunk store can carry it and stop
 first hop it does not hold, queueing that one for the ordinary fetch path rather than
 blocking on it. So a node absorbs a chain it already has in a single pass, and pays a
 round per hop only for what it still has to fetch. It has no scroll position to drive
-"on demand" from yet, so it walks to the start; a UI would bound this by pages.
+"on demand" from yet, so it walks to the start; `09` §4.4 is the UI that bounds this by
+pages, and it keeps the two kinds of *older* apart: history this machine holds and has not
+drawn is a disk read, and this walk is the other one.
 
 **A segment is marked absorbed only once the chain behind it is whole.** A mark meaning
 "this segment is stored" reads correctly and behaves wrongly: the walk stops at the first

@@ -257,6 +257,15 @@ impl Record {
         e.finish()
     }
 
+    /// Where this record sits in its channel's merged order.
+    ///
+    /// The pair a page boundary is cut on, and the key
+    /// [`crate::ChannelView`] merges on — one definition rather than two that
+    /// agree today (`design/09` §4.4).
+    pub fn cursor(&self) -> crate::Cursor {
+        crate::Cursor::new(self.hlc, self.id())
+    }
+
     /// The record's identifier.
     ///
     /// Hashed over payload *and* signature, matching `AppendSetEntry::entry_id`

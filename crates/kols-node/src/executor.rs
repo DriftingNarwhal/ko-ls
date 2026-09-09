@@ -168,8 +168,8 @@ impl Executor {
         channels: &ChannelMap,
     ) -> Result<Outcome, ExecuteError> {
         match authorized.into_command() {
-            Command::OpenChannel { channel, .. } => {
-                self.open_channel(channel, state, index, channels)
+            Command::OpenChannel { channel, window } => {
+                self.open_channel(channel, window, state, index, channels)
             }
 
             Command::SendMessage {
@@ -785,6 +785,7 @@ impl Executor {
     fn open_channel(
         &self,
         channel: ChannelId,
+        window: kols_core::Window,
         state: &intranet_governance::GovernanceState,
         index: &PlacementMap,
         channels: &ChannelMap,
@@ -793,7 +794,6 @@ impl Executor {
             .get(&channel)
             .copied()
             .unwrap_or(Placement { channel, category: None });
-        let mut view = ChannelView::new(placement);
         // **The log, not just the state — this is the rendering path.** A
         // redaction is judged as of the governance head its author cited
         // (`design/01` §6), which is a question about a point in the chain and
@@ -803,37 +803,80 @@ impl Executor {
         let log = self.store.log()?;
         let authority = LogAuthority::new(state, &log);
         let limits = reader_limits(state, channels, &channel);
-
-        let records = self.store.records(&channel)?;
-        let authors: std::collections::BTreeSet<_> =
-            records.iter().map(|record| record.author).collect();
-        view.admit(records, &authority, &limits);
+        let at = now_millis();
 
         // Both halves of the refusal set, and they arrive from different places
         // on purpose. `rejected` holds what failed a check about *one* record —
-        // a bad signature, a non-member, an oversized body. `withheld.refused`
-        // holds what failed a rule about the whole set, which cannot be decided
-        // as records land without making the verdict depend on arrival order.
+        // a bad signature, a non-member, an oversized body. The rate half failed
+        // a rule about the whole set, which cannot be decided as records land
+        // without making the verdict depend on arrival order.
         //
         // Held records are deliberately **not** in here. They are dated ahead of
         // this node's clock and will render on their own within a few minutes
         // (§2.6), and reporting them as refusals would be the interface saying
         // something it knows to be untrue.
-        let at = now_millis();
-        let withheld = view.withheld(&limits, at);
+        let (view, refused, oldest, newest, older, newer, authors) =
+            match self.store.load(&channel, &limits, &window) {
+                Some(loaded) => {
+                    let mut view = ChannelView::new(placement);
+                    view.admit(loaded.records, &authority, &limits);
+                    (
+                        view,
+                        loaded.refused,
+                        loaded.oldest,
+                        loaded.newest,
+                        loaded.older,
+                        loaded.newer,
+                        loaded.authors,
+                    )
+                }
+                // **No index to ask, so everything is drawn** — the slow path
+                // this exists to replace, kept because a projection that will
+                // not open must cost speed and never an answer. It reports
+                // nothing older or newer, which is true of it: it drew all of
+                // it, and a range that is the whole channel has no ends to reach
+                // past.
+                None => {
+                    let mut view = ChannelView::new(placement);
+                    let records = self.store.records(&channel)?;
+                    let authors: std::collections::BTreeSet<_> =
+                        records.iter().map(|record| record.author).collect();
+                    let oldest = records.first().map(kols_core::Record::cursor);
+                    view.admit(records, &authority, &limits);
+                    let refused = view
+                        .withheld(&limits, at)
+                        .refused
+                        .iter()
+                        .map(|(id, why)| (*id, *why))
+                        .collect();
+                    (view, refused, oldest, None, false, false, authors.len())
+                }
+            };
+
         let mut rejected: Vec<_> = view
             .rejected()
             .iter()
             .map(|(id, rejection)| (*id, *rejection))
             .collect();
-        rejected.extend(withheld.refused.iter().map(|(id, why)| (*id, *why)));
+        rejected.extend(refused.iter().map(|(id, why)| (*id, *why)));
+
+        // **The refusals are handed over; *held* is not.** `render_excluding`
+        // computes that itself from the clock, because a hold compares a reading
+        // to *now* and its answer expires — a signature that accepted one would
+        // let a caller pass a verdict that was true a minute ago.
+        let hidden: std::collections::BTreeSet<_> = refused.keys().copied().collect();
+        let messages = view.render_excluding(&limits, at, &hidden);
 
         Ok(Outcome::Opened {
-            more_history: self.store.history_incomplete(),
+            more_history: self.store.history_incomplete(&channel),
             channel,
-            messages: view.render(&limits, at),
+            messages,
             rejected,
-            authors: authors.len(),
+            authors,
+            oldest,
+            newest,
+            older,
+            newer,
         })
     }
 

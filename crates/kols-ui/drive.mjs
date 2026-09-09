@@ -62,7 +62,13 @@ const calls = [];
 const answers = {
   me: () => me,
   sidebar: () => channels.map((channel) => ({ kind: "channel", channel })),
-  open_channel: ({ channel }) => ({ channel, messages, authors: 2, refused: [] }),
+  open_channel: ({ channel }) => ({
+    channel, messages, authors: 2, refused: [],
+    // The range `design/09` §4.4 describes: this fixture holds the whole
+    // channel, so there is nothing either side and it runs to the tail.
+    oldest: "cursor-oldest", newest: null, older: false, newer: false,
+    more_history: false,
+  }),
   people: () => people,
   waiting: () => waiting,
   relays: () => ({ designated: [], live: [], cached: [], standing: "none", detail: "" }),
@@ -298,7 +304,15 @@ await settled();
 say("escape gives it back", el("settings").hidden && !window.document.querySelector(".app").hidden);
 
 // ── first sight of a message ───────────────────────────────────────────
-const rows = () => [...el("messages").children].map((r) => r.classList.contains("fresh"));
+// **`.message`, not every child.** The list also carries a notice about the list
+// — where history stops, or that this is the start of the channel — which is
+// deliberately not a message so that anything selecting `.message` cannot find
+// it. This read every child, so adding the notice shifted every index by one and
+// four checks failed for a reason that had nothing to do with marks. The app's
+// own comment warned that a row which looks like a message and is not one is
+// fine "until the day something counts them"; this was the thing counting them.
+const rows = () =>
+  [...el("messages").querySelectorAll(".message")].map((r) => r.classList.contains("fresh"));
 say("first visit highlights nothing", rows().every((f) => !f), JSON.stringify(rows()));
 messages = [
   messages[0],
@@ -335,7 +349,7 @@ say("your own message is never marked", JSON.stringify(rows()) === "[false,false
     JSON.stringify(rows()));
 
 // Hovering it is reading it.
-const marked = [...el("messages").children].find((r) => r.classList.contains("fresh"));
+const marked = [...el("messages").querySelectorAll(".message")].find((r) => r.classList.contains("fresh"));
 marked?.dispatchEvent(new window.MouseEvent("mouseenter", { bubbles: false }));
 await settled();
 say("hovering a marked message clears it", rows().every((f) => !f), JSON.stringify(rows()));
@@ -451,14 +465,19 @@ answers.fetch_history = (args) => {
   asked.push(args);
   return null;
 };
-const ask = notice.querySelector('[data-kols="fetch-history"]');
-ask.dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
+// Guarded: this used to dereference `notice` directly, so any change that
+// stopped the notice rendering aborted the whole run at this line and hid every
+// check after it. A driver that stops reporting on the first surprise is worth
+// less than the surprise it found.
+const ask = notice?.querySelector('[data-kols="fetch-history"]');
+if (!ask) say("the fetch control is on the notice", false, "(no notice to carry it)");
+ask?.dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
 await settled();
 say("asking is bounded by the oldest message on screen",
     asked.at(-1)?.beforeMillis === messages[0].at_millis,
     JSON.stringify(asked.at(-1)));
 say("and says it asked rather than claiming to have fetched",
-    ask.disabled && !ask.textContent.includes("fetched"), ask.textContent);
+    Boolean(ask?.disabled) && !ask?.textContent.includes("fetched"), ask?.textContent);
 
 say("and the notice is not a message",
     notice !== null && !notice.classList.contains("message"));
@@ -467,7 +486,7 @@ say("and the notice is not a message",
 // class string, since the selector is what actually decides.
 say("so the first-sight marks cannot reach it",
     ![...el("messages").querySelectorAll(".message")].includes(notice) &&
-      !notice.classList.contains("fresh"));
+      !notice?.classList.contains("fresh"));
 
 // ── the ceiling that stops a disk filling up ───────────────────────────
 await window.drawCeiling();
@@ -582,6 +601,202 @@ el("maker").dispatchEvent(new window.Event("submit", { bubbles: true, cancelable
 await settled();
 say("creating a network with a shared relay warns as well",
     confirmed.length === 1 && !calls.includes("create_network"));
+
+// ── paging: the loaded range ───────────────────────────────────────────
+//
+// jsdom applies no layout, so `scrollTop`, `clientHeight` and `scrollHeight` are
+// all zero here and no amount of driving can produce a real scroll. That is why
+// `design/09` §4.4 requires the range to be pure state fed numbers by the DOM
+// layer: everything below is answerable without a viewport, and it is the half
+// that carries the rules.
+
+console.log("\n── paging ──");
+
+const w = (js) => window.eval(js);
+
+// Nothing loaded is how "give me the newest page" is expressed. It must send no
+// cursor at all rather than inventing one — this file never builds one.
+const fresh = w("JSON.stringify(windowFor(null))");
+say("an empty range asks for a page and names no cursor",
+    JSON.parse(fresh).back === 50 && JSON.parse(fresh).oldest === undefined, fresh);
+
+// The tick asks for the range it holds, reaching nowhere.
+const ticking = JSON.parse(w('JSON.stringify(windowFor({ oldest: "o", newest: null }))'));
+say("a tick re-reads the held range and reaches nowhere",
+    ticking.oldest === "o" && ticking.newest === null && ticking.back === 0,
+    JSON.stringify(ticking));
+
+// A reach names the same range and asks for one page more.
+const reaching = JSON.parse(w('JSON.stringify(windowFor({ oldest: "o", newest: null }, { back: 50 }))'));
+say("a reach names the same range and asks for one page more",
+    reaching.oldest === "o" && reaching.back === 50, JSON.stringify(reaching));
+
+say("reaching the top is a scroll position, not a guess",
+    w("reachedTop({ scrollTop: 0, clientHeight: 100, scrollHeight: 1000 })") === true);
+say("and part way down is not",
+    w("reachedTop({ scrollTop: 900, clientHeight: 100, scrollHeight: 1000 })") === false);
+// The case that would otherwise walk a whole channel backwards with nobody
+// touching it: a list shorter than its container is always at the top.
+say("a list too short to scroll never asks for more",
+    w("reachedTop({ scrollTop: 0, clientHeight: 500, scrollHeight: 400 })") === false);
+
+// ── the three top-of-list states ───────────────────────────────────────
+//
+// Three because they are three different promises: a disk read that loads
+// itself, a network round trip that may not answer, and the start of the
+// conversation. The middle one must never be shown above undrawn local history,
+// which would be the interface saying this machine is not holding what it holds.
+const topRow = () => {
+  const first = el("messages").firstElementChild;
+  return first?.dataset?.kols ?? "(none)";
+};
+
+answers.open_channel = ({ channel }) => ({
+  channel, messages, authors: 2, refused: [],
+  oldest: "o", newest: null, older: true, newer: false, more_history: true,
+});
+await w('openChannel("c1")');
+await settled();
+say("local history outranks the network notice",
+    topRow() === "older-local"
+      && el("messages").querySelector('[data-kols="more-history"]') === null,
+    topRow());
+
+// **And the branch is keyed on the local boundary, not on the network one.**
+// Without this case the check above passes even when the two conditions are
+// swapped, because the fixture sets both — which is how it read for its first
+// half hour of existence.
+answers.open_channel = ({ channel }) => ({
+  channel, messages, authors: 2, refused: [],
+  oldest: "o", newest: null, older: true, newer: false, more_history: false,
+});
+await w('openChannel("c1")');
+await settled();
+say("undrawn local history shows on its own, with no network boundary at all",
+    topRow() === "older-local", topRow());
+
+answers.open_channel = ({ channel }) => ({
+  channel, messages, authors: 2, refused: [],
+  oldest: "o", newest: null, older: false, newer: false, more_history: true,
+});
+await w('openChannel("c1")');
+await settled();
+say("with nothing local left, the network notice is what shows",
+    topRow() === "more-history", topRow());
+
+answers.open_channel = ({ channel }) => ({
+  channel, messages, authors: 2, refused: [],
+  oldest: "o", newest: null, older: false, newer: false, more_history: false,
+});
+await w('openChannel("c1")');
+await settled();
+say("and a whole channel says where it begins",
+    topRow() === "channel-start", topRow());
+
+// ── the range is sent back ─────────────────────────────────────────────
+//
+// The property the whole model rests on: a tick must ask about the range that
+// is loaded, not about the newest page, or backfill landing in the past is
+// correctly ordered and permanently invisible.
+let asks = [];
+answers.open_channel = (args) => {
+  asks.push(args);
+  return {
+    channel: args.channel, messages, authors: 2, refused: [],
+    oldest: "held-oldest", newest: null, older: true, newer: false, more_history: false,
+  };
+};
+await w('openChannel("c1")');
+await settled();
+say("opening a channel sends no range",
+    asks.length === 1 && asks[0].window?.oldest === undefined,
+    JSON.stringify(asks[0]?.window));
+
+asks = [];
+await w("refresh()");
+await settled();
+const sent = asks.find((a) => a.channel === "c1");
+say("and the next read names the range that was drawn",
+    sent?.window?.oldest === "held-oldest", JSON.stringify(sent?.window));
+
+// A range from the channel somebody just left names positions that do not exist
+// in the one they moved to, and would be answered with the newest page — which
+// would read as a jump. Produced by answering with a *different* channel than
+// was asked for, which is the same disagreement a tick landing after somebody
+// moved creates, and the only one reachable from out here.
+answers.open_channel = (args) => {
+  asks.push(args);
+  return {
+    channel: "c2", messages, authors: 2, refused: [],
+    oldest: "belongs-to-c2", newest: null, older: false, newer: false, more_history: false,
+  };
+};
+await w('openChannel("c1")');
+await settled();
+say("a range is held for the channel it describes and no other",
+    w("heldRange()") === null, JSON.stringify(w("heldRange()")));
+
+asks = [];
+await w("refresh()");
+await settled();
+const other = asks.find((a) => a.channel === "c1");
+say("so the next read names no range rather than one from elsewhere",
+    other !== undefined && other.window?.oldest === undefined,
+    JSON.stringify(other?.window));
+
+// ── marks: scrolling back is navigation, not arrival ───────────────────
+//
+// §4.4 takes §4.3's first-sight rule down one level. Without this, scrolling
+// back on the second visit sets every old message alight.
+answers.open_channel = ({ channel }) => ({
+  channel, messages, authors: 2, refused: [],
+  oldest: "o", newest: null, older: true, newer: false, more_history: false,
+});
+// A first visit files what is there and marks nothing, so the second visit has
+// something to compare against.
+await w('openChannel("c1")');
+await settled();
+await w('openChannel("c1")');
+await settled();
+
+const earlier = [
+  { id: "m0", author: "sam", author_id: "id-sam-0002", at: "09:00", at_millis: 500,
+    body: "long ago", edited: false, withdrawn: false, redacted: false, pinned: false,
+    reactions: [], mine: false },
+  ...messages,
+];
+answers.open_channel = ({ channel }) => ({
+  channel, messages: earlier, authors: 2, refused: [],
+  // Still more behind it, or the second reach below is refused by the guard and
+  // this file would be testing that nothing happens twice.
+  oldest: "further", newest: null, older: true, newer: false, more_history: false,
+});
+await w("reachBack()");
+await settled();
+const afterReach = el("messages").querySelectorAll(".message.fresh").length;
+say("a page reached by scrolling back marks nothing",
+    afterReach === 0, `${afterReach} marked`);
+say("and it was drawn — the reach is not a no-op",
+    el("messages").querySelectorAll(".message").length === earlier.length,
+    `${el("messages").querySelectorAll(".message").length} rows`);
+
+// The other half, and the reason the split is on the previous tail rather than
+// on the reach alone: a message arriving in the same breath as a reach must
+// still be marked, or nothing ever comes back for it.
+const both = [...earlier, {
+  id: "m9", author: "sam", author_id: "id-sam-0002", at: "10:05", at_millis: 9000,
+  body: "just now", edited: false, withdrawn: false, redacted: false, pinned: false,
+  reactions: [], mine: false,
+}];
+answers.open_channel = ({ channel }) => ({
+  channel, messages: both, authors: 2, refused: [],
+  oldest: "further", newest: null, older: false, newer: false, more_history: false,
+});
+await w("reachBack()");
+await settled();
+const fresh9 = [...el("messages").querySelectorAll(".message.fresh")].length;
+say("but a message that arrived during the reach is still marked",
+    fresh9 === 1, `${fresh9} marked`);
 
 console.log(problems.length ? "\nPROBLEMS:\n" + problems.join("\n") : "\nno uncaught errors");
 process.exit(0);

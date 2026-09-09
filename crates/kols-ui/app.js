@@ -60,6 +60,18 @@ const state = {
   // What the open channel looked like when it was last drawn, so a poll that
   // finds nothing new does no DOM work.
   channelSignature: null,
+  // The range of the open channel this window is holding — `design/09` §4.4.
+  //
+  // Its ends are opaque tokens the node issued; this file never builds one. A
+  // `newest` of null means the range runs to the tail and is *live*, which is
+  // what makes arrivals appear in it without anything asking.
+  //
+  // Null between channels: opening one has nothing loaded, which is exactly what
+  // "give me the newest page" is expressed as.
+  loaded: null,
+  // Set while a reach backwards is in flight, so scrolling does not queue four
+  // of them before the first answers.
+  reaching: false,
   // Which settings panel is showing, and which role is expanded in it. Both are
   // local view state that reaches nobody: `design/09` §4.2's line runs between
   // what a *change* costs, and looking at a panel costs nothing.
@@ -72,6 +84,20 @@ const state = {
 /// Matches the daemon's own 2-second sync tick: asking faster than records can
 /// arrive only costs replays.
 const CHANNEL_REFRESH_MILLIS = 2000;
+
+/// How many messages one reach backwards adds.
+///
+/// Local, never network policy — presentation, and safe to be local only
+/// because the rate verdict is folded over the whole channel and stored, so what
+/// renders cannot depend on how much was loaded (`design/09` §4.4).
+const PAGE = 50;
+
+/// How close to the top counts as reaching it.
+///
+/// Not zero: a reader who has arrived at the top has stopped scrolling, and
+/// waiting for the exact pixel means the page arrives after they have already
+/// seen the end of it.
+const REACH_MARGIN = 200;
 
 /// How often to re-read the waiting room while it is on screen.
 ///
@@ -1414,6 +1440,32 @@ function actions(channel, message) {
   return bar;
 }
 
+/// What to ask the node for, given the range this window is already holding.
+///
+/// Pure, and separated from the DOM on purpose: jsdom applies no layout, so
+/// `scrollTop` and `scrollHeight` are always zero there and nothing about
+/// scrolling can be observed in the harness this interface has. Keeping the
+/// decisions out of the handlers is what makes them answerable at all
+/// (`design/09` §4.4).
+///
+/// Nothing loaded means an ordinary open, which is expressed by sending no range
+/// at all rather than by inventing one: this file never builds a cursor.
+function windowFor(loaded, { back = 0, forward = 0 } = {}) {
+  if (!loaded) return { back: PAGE, forward: 0 };
+  return { oldest: loaded.oldest, newest: loaded.newest, back, forward };
+}
+
+/// Whether a scroll position has reached the point of asking for more.
+///
+/// Takes the three numbers rather than the element, for the reason above.
+function reachedTop({ scrollTop, clientHeight, scrollHeight }) {
+  // A list shorter than its container has never been scrolled and is already
+  // showing its top; asking again on every draw would walk the whole channel
+  // backwards without anybody touching it.
+  if (scrollHeight <= clientHeight) return false;
+  return scrollTop <= REACH_MARGIN;
+}
+
 /// Enough of a channel to tell whether redrawing it would change anything.
 function signatureOf(opened) {
   const last = opened.messages.at(-1);
@@ -1425,6 +1477,14 @@ function signatureOf(opened) {
     // changing how many there are, so the last one's shape rides along.
     last ? `${last.body}|${last.edited}|${last.withdrawn}|${last.reactions.length}` : "",
     opened.refused.length,
+    // The range's own ends. A reach backwards adds older messages and changes
+    // neither the last message nor the count in a way this would otherwise
+    // notice on a quiet channel, so without these the page arrives and is never
+    // drawn.
+    opened.oldest ?? "",
+    opened.newest ?? "",
+    opened.older ? "older" : "",
+    opened.more_history ? "bounded" : "",
     // Pins, anywhere in the channel rather than only on the last message: a
     // moderator pinning something from an hour ago changes nothing else about
     // the view, so without this a pin by somebody else would never be drawn.
@@ -1435,9 +1495,32 @@ function signatureOf(opened) {
   ].join(":");
 }
 
-function drawMessages(opened) {
+/// The range held for the channel that is actually open.
+///
+/// Guarded on the channel because a tick can land after somebody moved, and a
+/// range from the previous channel names positions that do not exist in this
+/// one — which would be answered with the newest page and look like a jump.
+function heldRange() {
+  return state.loaded?.channel === state.current ? state.loaded : null;
+}
+
+/// Draws the loaded range.
+///
+/// `reached` says this draw is the result of a reach *backwards*, which decides
+/// two things that cannot be read off the contents: where the reader is put
+/// afterwards, and whether the messages it brought in are marked unread
+/// (`design/09` §4.4 — going back into history is navigation, and nothing you
+/// navigated to deliberately is an arrival).
+function drawMessages(opened, { reached = false } = {}) {
   state.channelSignature = signatureOf(opened);
-  const fresh = freshIn(opened);
+  state.loaded = {
+    channel: opened.channel,
+    oldest: opened.oldest,
+    newest: opened.newest,
+    older: opened.older,
+    newer: opened.newer,
+  };
+  const fresh = freshIn(opened, reached);
   const channel = state.channels.find((c) => c.id === opened.channel);
   el("channel-name").textContent = channel ? `#${channel.name}` : "channel";
   el("channel-topic").textContent = channel ? channel.topic : "";
@@ -1447,25 +1530,36 @@ function drawMessages(opened) {
   // bottom" and every redraw would then scroll.
   const atBottom =
     list.scrollHeight - list.scrollTop - list.clientHeight < 40 || list.children.length === 0;
+  // Held across the rebuild below. `replaceChildren` empties the list, which
+  // clamps `scrollTop` to zero and does not put it back — so a reader scrolled
+  // up was thrown to the top by every redraw that changed anything, which on a
+  // busy channel is every two seconds. Restoring it is a fix in its own right
+  // and is what makes reaching backwards usable at all.
+  const wasHeight = list.scrollHeight;
+  const wasTop = list.scrollTop;
   list.replaceChildren();
 
-  // **At the top, because it changes what the list below it means.** The first
-  // message shown is where this node stopped collecting, not where the
-  // conversation started — and a bounded channel renders exactly like a quiet
-  // one. A member seeing fewer messages than everybody else in the network, with
-  // nothing saying why, has no reading available to them except that nobody said
-  // much.
+  // **Three states at the top, and they are three because they are three
+  // different promises** (`design/09` §4.4). More history on this disk is a read
+  // that always succeeds and loads itself. History this machine does not hold is
+  // a network round trip that may not answer, and keeps its button. Neither
+  // means the start of the conversation, which is the third.
   //
-  // Not phrased as a failure: the history is not lost, other members hold it,
-  // and raising the ceiling is what collects it here. There is no fetch-a-page
-  // gesture yet, so the notice points at the thing that actually works rather
-  // than at a control that does not exist.
-  if (opened.more_history) {
+  // Ordered rather than combined: the local boundary is always the nearer one,
+  // and the network notice sitting above undrawn local history would say this
+  // machine is not holding what it is holding.
+  if (opened.older) {
     const note = document.createElement("li");
     // Deliberately **not** class `message`: it is a notice about the list, not an
     // entry in it, and anything selecting `.message` — the first-sight marks do
     // — must not find it. A row that looks like a message and is not one is the
     // kind of thing that is fine until the day something counts them.
+    note.className = "history-note dim";
+    note.dataset.kols = "older-local";
+    note.textContent = "Loading older messages…";
+    list.append(note);
+  } else if (opened.more_history) {
+    const note = document.createElement("li");
     note.className = "history-note dim";
     note.dataset.kols = "more-history";
     note.textContent =
@@ -1501,6 +1595,12 @@ function drawMessages(opened) {
       }
     });
     note.append(ask);
+    list.append(note);
+  } else if (opened.messages.length > 0) {
+    const note = document.createElement("li");
+    note.className = "history-note dim";
+    note.dataset.kols = "channel-start";
+    note.textContent = "This is the beginning of the channel.";
     list.append(note);
   }
 
@@ -1606,11 +1706,27 @@ function drawMessages(opened) {
     list.append(row);
   }
 
-  // Only when they were already at the bottom. Now that a redraw happens on a
-  // timer rather than only on their own action, scrolling to the end
-  // unconditionally would drag a reader out of the history they scrolled up to
-  // read, every two seconds.
-  if (atBottom) list.scrollTop = list.scrollHeight;
+  // Three ways to end up somewhere, and each is the answer to a different
+  // question about what just moved.
+  //
+  // At the bottom: follow it. Now that a redraw happens on a timer rather than
+  // only on their own action, scrolling to the end unconditionally would drag a
+  // reader out of the history they scrolled up to read, every two seconds.
+  //
+  // After a reach backwards, the list grew **above** them, so holding the
+  // scroll offset would slide the content out from under their eye by exactly
+  // the height of what arrived. Adding that height back is what keeps the
+  // message they were reading where it was.
+  //
+  // Otherwise, put it back where it was. Anything that arrived did so below, and
+  // `replaceChildren` had already thrown it to zero.
+  if (atBottom) {
+    list.scrollTop = list.scrollHeight;
+  } else if (reached) {
+    list.scrollTop = wasTop + (list.scrollHeight - wasHeight);
+  } else {
+    list.scrollTop = wasTop;
+  }
 
   // A record this node refused is one another client may be showing. Silence
   // would make the two look like they agree.
@@ -1679,7 +1795,13 @@ function watchChannel() {
     }
     if (!state.current) return;
     try {
-      const opened = await invoke("open_channel", { channel: state.current });
+      const opened = await invoke("open_channel", {
+        channel: state.current,
+        // The range this window holds, not the newest page. `design/09` §4.4:
+        // backfill lands in the *past*, so a tail-only re-read would leave a
+        // recovered message correctly ordered and permanently invisible.
+        window: windowFor(heldRange()),
+      });
       if (signatureOf(opened) === state.channelSignature) return;
       drawMessages(opened);
     } catch {
@@ -1689,6 +1811,43 @@ function watchChannel() {
     }
   }, CHANNEL_REFRESH_MILLIS);
 }
+
+/// Reaches one page further back into the channel that is open.
+///
+/// **Loads itself rather than asking**, which is the whole reason it is
+/// separate from the history button above it: this is a read off this machine's
+/// own disk, it always succeeds, and there is nothing worth making somebody
+/// click for. The network fetch keeps its button because it is a round trip that
+/// may not answer, and `design/09` §4.4 keeps the two apart on exactly that
+/// difference.
+///
+/// Guarded rather than debounced. Scrolling fires continuously, and the guard is
+/// what stops four identical reaches being queued before the first answers —
+/// which would jump the reader four pages for one gesture.
+async function reachBack() {
+  const held = heldRange();
+  if (state.reaching || !held?.older) return;
+  state.reaching = true;
+  try {
+    const opened = await invoke("open_channel", {
+      channel: state.current,
+      window: windowFor(held, { back: PAGE }),
+    });
+    // Only if they are still here. An answer that lands after somebody moved
+    // channels would draw the previous one over the one they are looking at.
+    if (opened.channel === state.current) drawMessages(opened, { reached: true });
+  } catch {
+    // A reach that failed leaves the list exactly as it was, and scrolling
+    // again retries. Reporting it would be a background read interrupting
+    // somebody who is reading.
+  } finally {
+    state.reaching = false;
+  }
+}
+
+el("messages").addEventListener("scroll", () => {
+  if (reachedTop(el("messages"))) void reachBack();
+});
 
 /// Unread counts, per channel, for this person on this machine.
 ///
@@ -1744,12 +1903,12 @@ const SEEN_ID_CHARS = 8;
 /// habit to every member. `design/09` §7.7 is the thing to revisit here: read
 /// state becomes shared when multi-device lands, and this is per device until
 /// it does.
-function freshIn(opened) {
+function freshIn(opened, reached = false) {
   // A visit, not a draw. The channel is redrawn every two seconds by the poll,
   // and recomputing from `seen` each time would clear the highlight on the
   // first tick after it appeared.
   if (state.holding?.channel !== opened.channel) {
-    state.holding = { channel: opened.channel, ids: new Set() };
+    state.holding = { channel: opened.channel, ids: new Set(), tail: undefined };
   }
 
   const stored = state.seen[opened.channel];
@@ -1758,14 +1917,33 @@ function freshIn(opened) {
   // size of the channel on every redraw.
   const before = stored ? new Set(stored) : null;
   const now = [];
+  // Where the previously-drawn last message sits in this list. Everything after
+  // it arrived; everything before it is history, whether it was reached
+  // backwards or backfilled into the middle.
+  //
+  // **Splitting on this rather than on `reached` alone** closes a hole that
+  // would otherwise be permanent: a message arriving in the same two seconds as
+  // a reach backwards would be filed as seen without ever being marked, and
+  // nothing would come back for it.
+  const tail = state.holding.tail;
+  let arrived = tail === undefined;
   for (const message of opened.messages) {
     const key = message.id.slice(0, SEEN_ID_CHARS);
     now.push(key);
+    const isArrival = arrived;
+    if (message.id === tail) arrived = true;
+    // A page reached by scrolling back marks nothing. `design/09` §4.4 takes
+    // §4.3's own first-sight rule down one level: a page this machine has never
+    // displayed is *no idea* rather than *none of this has been seen*, and the
+    // alternative sets four hundred old messages alight the moment somebody
+    // scrolls.
+    if (reached && !isArrival) continue;
     // Not your own. You were there when it was written, and a mark saying
     // "you have not seen this" over something you just typed is the interface
     // disagreeing with the person using it.
     if (before && !before.has(key) && !message.mine) state.holding.ids.add(message.id);
   }
+  state.holding.tail = opened.messages.at(-1)?.id;
 
   // Written only when the set actually moved. Ids never change once a record
   // exists — an edit rewrites a body, not an id — so a difference in length is
@@ -1909,6 +2087,9 @@ async function openChannel(id, { arriving = false } = {}) {
     void announce();
   }
   state.current = id;
+  // A new visit holds nothing, which is exactly how "give me the newest page" is
+  // expressed: by sending no range rather than by inventing one.
+  state.loaded = null;
   drawSidebar(state.sidebar);
 
   const opened = await invoke("open_channel", { channel: id });
@@ -1936,7 +2117,12 @@ async function refresh() {
   if (state.current) {
     // Re-read rather than patch: the projection is the core's, and redrawing
     // from it is what makes a duplicate delivery a non-event.
-    drawMessages(await invoke("open_channel", { channel: state.current }));
+    drawMessages(
+      await invoke("open_channel", {
+        channel: state.current,
+        window: windowFor(heldRange()),
+      }),
+    );
   }
 }
 
@@ -3192,6 +3378,8 @@ async function watch() {
 /// that would have corrected the screen.
 function clearNetworkView() {
   el("messages").replaceChildren();
+  // The range belonged to a channel on the network being left.
+  state.loaded = null;
   el("channel-name").textContent = "no channel";
   el("channel-topic").textContent = "";
   el("composer").hidden = true;

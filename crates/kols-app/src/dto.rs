@@ -26,7 +26,7 @@
 
 use intranet_crypto::to_hex;
 use kols_core::{Hlc, Privacy, RenderedMessage};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 /// A channel, as the interface lists it.
 #[derive(Debug, Serialize)]
@@ -187,7 +187,67 @@ pub struct Opened {
     /// A bounded channel and a quiet one render identically, and only one is
     /// worth saying. Without this, a member at their storage ceiling has no
     /// reason to think anything but that nobody said much.
+    ///
+    /// **Not the same claim as `older`, and they must never share a control.**
+    /// This is a network round trip that may not answer; that one is a disk read
+    /// that always succeeds (`design/09` §4.4).
     pub more_history: bool,
+    /// Where the rendered range starts, as an opaque token.
+    pub oldest: Option<String>,
+    /// Where it ends, or absent when it runs to the tail and is therefore live.
+    pub newest: Option<String>,
+    /// Whether this machine holds messages before the range, undrawn.
+    pub older: bool,
+    /// Whether it holds messages after it.
+    pub newer: bool,
+}
+
+/// The range the interface is holding, as it sends it back.
+///
+/// Defaulted rather than required, so an interface that has nothing loaded — the
+/// first open of a channel — sends nothing and gets the newest page.
+#[derive(Debug, Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WindowArg {
+    /// The token this range started at, if it has one.
+    pub oldest: Option<String>,
+    /// The token it ended at, absent when it runs to the tail.
+    pub newest: Option<String>,
+    /// How many further messages to reach back beyond `oldest`.
+    pub back: Option<usize>,
+    /// How many further messages to reach forward beyond `newest`.
+    pub forward: Option<usize>,
+}
+
+impl WindowArg {
+    /// How many messages one page holds.
+    ///
+    /// Local rather than network policy — presentation, like the fetch
+    /// concurrency Storage §4.4 keeps per node. It is *safe* to be local only
+    /// because the rate verdict is folded over the whole channel and stored, so
+    /// what renders cannot depend on how much was loaded; without that, page
+    /// size would silently be a policy knob and two members reading at
+    /// different sizes would see different messages (`design/09` §4.4).
+    pub const PAGE: usize = 50;
+
+    /// Reads the range back, discarding anything that is not a cursor.
+    ///
+    /// A malformed token falls back to the newest page rather than failing. It
+    /// arrives from the interface, so it is ordinary input, and "show me this
+    /// channel" always has a correct answer.
+    pub fn resolve(self) -> kols_core::Window {
+        let oldest = self.oldest.as_deref().and_then(kols_core::Cursor::from_token);
+        // Clamped **here**, because this is where input from the window arrives
+        // and the store is not the place to second-guess what a caller asked
+        // for. A ceiling applied further down silently truncated the terminal's
+        // deliberate whole-channel read.
+        kols_core::Window {
+            newest: self.newest.as_deref().and_then(kols_core::Cursor::from_token),
+            back: self.back.unwrap_or(Self::PAGE).min(kols_node::store::MAX_REACH),
+            forward: self.forward.unwrap_or(0).min(kols_node::store::MAX_REACH),
+            oldest,
+        }
+    }
 }
 
 /// The ceiling on everything this installation stores, and what it is using.

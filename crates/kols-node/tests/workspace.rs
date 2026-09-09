@@ -955,7 +955,7 @@ fn shedding_gives_back_cached_copies_and_never_duty_or_records() {
     assert!(store.segment_link(&older).is_some());
     assert!(store.chain_whole(&newer));
     assert!(
-        !store.history_incomplete(),
+        !store.history_incomplete(&channel),
         "shedding a servable copy must be invisible to the member: the links still \
          describe a whole chain and the records still render, so nothing tells them \
          their history shrank — because it did not"

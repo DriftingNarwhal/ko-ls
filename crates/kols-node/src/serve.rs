@@ -705,7 +705,7 @@ pub async fn serve(
                         .records(&channel)
                         .map(|records| records.iter().any(|record| record.hlc < before))
                         .unwrap_or(false);
-                    if satisfied || !store.history_incomplete() {
+                    if satisfied || !store.history_incomplete(&channel) {
                         let _ = store.forget_want(&channel);
                     }
                 }
@@ -2387,6 +2387,12 @@ fn absorb_chain(
         walk.backfill.remove(&cid);
         store
             .mark_segment_link(&cid, segment.sequence, segment.previous)
+            .map_err(|e| e.to_string())?;
+        // Which channel this belongs to, so "older history exists" can be asked
+        // per channel rather than of the whole node (`design/09` §4.4). Written
+        // here because this is the one place that knows both at once.
+        store
+            .mark_segment_channel(&cid, channel)
             .map_err(|e| e.to_string())?;
 
         let (Some(previous), Some(earlier)) = (segment.previous, segment.sequence.checked_sub(1))

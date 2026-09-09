@@ -53,6 +53,20 @@ impl Verdict {
     pub const fn renders(self) -> bool {
         matches!(self, Self::Admitted)
     }
+
+    /// How a reader is told about it.
+    ///
+    /// A refusal is surfaced rather than dropped (`design/05` §3): a record this
+    /// node refuses is one another client may be showing, and silence would make
+    /// the two look like they agree. So a stored verdict has to be able to say
+    /// *why*, in the same vocabulary the per-record checks use.
+    pub const fn rejection(self) -> Option<kols_core::Rejection> {
+        match self {
+            Self::Admitted => None,
+            Self::OverRate => Some(kols_core::Rejection::TooFast),
+            Self::TooSoon => Some(kols_core::Rejection::Slowmode),
+        }
+    }
 }
 
 /// Decides one record's verdict from what the projection already holds.

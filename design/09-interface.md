@@ -1,6 +1,6 @@
 # Interface
 
-**Document status:** v0.22 — §2's behaviour set is built and the section stops claiming the liveness tiers are: a node is constructed `Discovery::Off` for a conversation and `Discovery::Full` for a server, read from replayed policy, and hot/warm/cold remains unwritten policy. It also records the one window E10 has to close — a joiner cannot know the profile before it syncs, so the DM flow must supply it. Previously v0.21 — §3's shared-relay notice is built, and the section records what building it settled: a relay is compared by peer id and never by address, since one relay answers at several and a string comparison reports no overlap in exactly the case D29 is about; there are two designations rather than one, the second being the network-creation form; and joining is deliberately not covered, because a joiner adopts what an invite carried rather than choosing it. Previously v0.20 — §4.1's presence is built, and the section is rewritten around what that cost: two marks that may never stand in for each other, an absence case that stays deliberately silent, and invisible as *publishes nothing* rather than *publishes "invisible"*. The control sits in the roster rather than settings, which is an argued exception to §4.2's grouping. Previously v0.19 — §4.2 gains the rule a stale contribution panel cost: copy that describes an unbuilt mechanism rots into a false claim about what the software does, and is guarded by a check that reads the live document rather than by remembering to revisit it. Previously v0.18 — §4.2 gains a third settings group, *this machine, here*, for contribution: local and revocable like *mine*, and broadcast, which the *mine* heading explicitly says its contents are not. Previously v0.17 — §1 gains the third landing a join can have: the request reached the issuer and nothing came back, which is not a refusal and used to be reported as one — costing somebody a use-limited invite on a retry into a network that already held them. Membership now comes from replay rather than from what the handshake said, and the interface tells *not admitted* apart from *admitted and not yet keyed*. Previously v0.16 — §3 revises what the client does about a relay shared between two networks: it warns and never refuses, since a refusal is unenforceable anyway and would block a member legitimately relaying on their own LAN for two of their own networks. Previously v0.15 — §2 records that the picker's *forget* becomes *leave* on the open network, since publishing a departure needs a running node and only the open one has one; and that what it reports afterwards is how many members could have heard rather than how many did. Previously v0.14 — §5.1 records what the first working drag found: a drag needs a target for every destination rather than for every thing, and two of four were unreachable — the end of a list, and the top level once every channel was in a folder. Previously v0.13 — §5.1 gains the rule reordering cost: a capability whose only route is one nobody can verify has no route. Drag-and-drop never worked because Tauri's native drag handler took it first, and channels keep move up and move down beside the fixed drag. Previously v0.12 — the row handle is removed at the tester's request, one way to a menu being enough; §5.1 keeps the two sizing rules it cost, which were never about it. Previously v0.11 — §5.1 gains the rule the sidebar bug actually needed: draw an icon rather than typing one, and take a control beside shrinkable text out of flow, because correct arithmetic is not the same as no arithmetic. Previously v0.10 — §4.3 gains the two ways a mark ends, and that it never marks your own; §5.1 gains the flex sizing rule that turned a sidebar into columns of one letter on Windows and not on macOS. Previously v0.9 — §4.1 says where the roster went and what the one number left on screen is for; §4.2 records settings becoming a screen rather than a layer, and the rule that decides which surface a thing gets; §4.3 is new and separates *where something arrived* from *what you have not seen*, which cannot be derived from it because a message is ordered by its author's clock rather than by its arrival. §7.1 and §7.3 narrowed rather than closed. Previously v0.8 — §4.2's Network section takes admission mode, the abuse limits and the retention windows, and says the three things a number on screen does not carry. Previously v0.7 — §4.2's settings sections are built, and it says what shape they took and which of them is a panel over a feature that does not exist yet; §5 gains the line between asking *whether* and asking *what*, which is what decides whether a dialog may live in the document a theme can reach. Previously v0.6 — §4.1 says plainly that presence is unbuilt, why it is last, and what the window shows instead; that was being carried in a status file. Previously v0.5 — §4.2 fixes what settings is and how it is divided, §6.4 and §6.5 settle reset and the two things that must leave the document before a theme can reach them (D36, D37). Theming remains designed and unbuilt. Previously v0.4 — D29 (a relay is never shared between networks) and what it does and does not mean for §3's direct-message bootstrap;  an interface now exists and is a first pass, not a settled one: it
+**Document status:** v0.24 — §4.4 is built: paging, the three top-of-list states, the cursor, and per-channel history. Building it settled three more — a ceiling belongs where untrusted input arrives rather than in the store, restoring the scroll position is a fix that predates paging, and the first-sight rule splits on the previously-drawn tail rather than on the gesture alone, or a message arriving during a reach is filed as seen and never marked. Previously v0.23 — §4.4 is new and settles what `05` §5 built and left switched off: paging. Two kinds of *older* that must never share a control, a loaded range that only grows, a cursor that is the merge-order key rather than a clock reading — the `Hlc` the command has carried since it was written silently drops a message when a page boundary falls between two records sharing a reading — and §4.3's own first-sight rule applied one level down, so scrolling back marks nothing. It also takes a fix it cannot inherit: `history_incomplete` is node-wide and would contradict the local boundary sitting above it, so a segment records its channel. Previously v0.22 — §2's behaviour set is built and the section stops claiming the liveness tiers are: a node is constructed `Discovery::Off` for a conversation and `Discovery::Full` for a server, read from replayed policy, and hot/warm/cold remains unwritten policy. It also records the one window E10 has to close — a joiner cannot know the profile before it syncs, so the DM flow must supply it. Previously v0.21 — §3's shared-relay notice is built, and the section records what building it settled: a relay is compared by peer id and never by address, since one relay answers at several and a string comparison reports no overlap in exactly the case D29 is about; there are two designations rather than one, the second being the network-creation form; and joining is deliberately not covered, because a joiner adopts what an invite carried rather than choosing it. Previously v0.20 — §4.1's presence is built, and the section is rewritten around what that cost: two marks that may never stand in for each other, an absence case that stays deliberately silent, and invisible as *publishes nothing* rather than *publishes "invisible"*. The control sits in the roster rather than settings, which is an argued exception to §4.2's grouping. Previously v0.19 — §4.2 gains the rule a stale contribution panel cost: copy that describes an unbuilt mechanism rots into a false claim about what the software does, and is guarded by a check that reads the live document rather than by remembering to revisit it. Previously v0.18 — §4.2 gains a third settings group, *this machine, here*, for contribution: local and revocable like *mine*, and broadcast, which the *mine* heading explicitly says its contents are not. Previously v0.17 — §1 gains the third landing a join can have: the request reached the issuer and nothing came back, which is not a refusal and used to be reported as one — costing somebody a use-limited invite on a retry into a network that already held them. Membership now comes from replay rather than from what the handshake said, and the interface tells *not admitted* apart from *admitted and not yet keyed*. Previously v0.16 — §3 revises what the client does about a relay shared between two networks: it warns and never refuses, since a refusal is unenforceable anyway and would block a member legitimately relaying on their own LAN for two of their own networks. Previously v0.15 — §2 records that the picker's *forget* becomes *leave* on the open network, since publishing a departure needs a running node and only the open one has one; and that what it reports afterwards is how many members could have heard rather than how many did. Previously v0.14 — §5.1 records what the first working drag found: a drag needs a target for every destination rather than for every thing, and two of four were unreachable — the end of a list, and the top level once every channel was in a folder. Previously v0.13 — §5.1 gains the rule reordering cost: a capability whose only route is one nobody can verify has no route. Drag-and-drop never worked because Tauri's native drag handler took it first, and channels keep move up and move down beside the fixed drag. Previously v0.12 — the row handle is removed at the tester's request, one way to a menu being enough; §5.1 keeps the two sizing rules it cost, which were never about it. Previously v0.11 — §5.1 gains the rule the sidebar bug actually needed: draw an icon rather than typing one, and take a control beside shrinkable text out of flow, because correct arithmetic is not the same as no arithmetic. Previously v0.10 — §4.3 gains the two ways a mark ends, and that it never marks your own; §5.1 gains the flex sizing rule that turned a sidebar into columns of one letter on Windows and not on macOS. Previously v0.9 — §4.1 says where the roster went and what the one number left on screen is for; §4.2 records settings becoming a screen rather than a layer, and the rule that decides which surface a thing gets; §4.3 is new and separates *where something arrived* from *what you have not seen*, which cannot be derived from it because a message is ordered by its author's clock rather than by its arrival. §7.1 and §7.3 narrowed rather than closed. Previously v0.8 — §4.2's Network section takes admission mode, the abuse limits and the retention windows, and says the three things a number on screen does not carry. Previously v0.7 — §4.2's settings sections are built, and it says what shape they took and which of them is a panel over a feature that does not exist yet; §5 gains the line between asking *whether* and asking *what*, which is what decides whether a dialog may live in the document a theme can reach. Previously v0.6 — §4.1 says plainly that presence is unbuilt, why it is last, and what the window shows instead; that was being carried in a status file. Previously v0.5 — §4.2 fixes what settings is and how it is divided, §6.4 and §6.5 settle reset and the two things that must leave the document before a theme can reach them (D36, D37). Theming remains designed and unbuilt. Previously v0.4 — D29 (a relay is never shared between networks) and what it does and does not mean for §3's direct-message bootstrap;  an interface now exists and is a first pass, not a settled one: it
 creates and joins networks, runs a node, renders a channel, brings the next member in, and gates
 its chrome on permission. §1's workspace, **both halves of §5**, all three of §4's questions and
 most of §7's second are built; §2's tiering and §6's theming are not, and §7's
@@ -641,6 +641,196 @@ toast means a plugin and a permission this client has never asked for, and that 
 to make on purpose rather than one to slip in beside a title change. §7.3 is the larger
 question this answers only within one network.
 
+### 4.4 Reaching Back
+
+Opening a channel reads every record in it. That is 20 ms at five hundred and about four
+seconds at a hundred thousand (`05` §5), on a control the window re-runs every two seconds —
+so the cost is not paid once when somebody arrives, it is paid continuously for as long as
+they stay. `01` §5 has always said a UI bounds this by pages. This is what that means.
+
+**The mechanism is built and was deliberately left switched off** (`05` §5): the index, the
+stored rate verdict and the page read all exist and are proved against `kols_core::withheld`
+itself. What was missing is this section. Rendering a page into an interface that cannot ask
+for the next one hides history with no way to reach it, which is a worse failure than the
+slowness it fixes.
+
+#### There are two kinds of *older* and they must never be one control
+
+**History this machine holds and has not drawn** is a disk read. It is instant, it always
+succeeds, and there is no reason to make somebody ask for it twice.
+
+**History this machine does not hold** is `history_incomplete` — the chain stops because the
+storage ceiling stopped it or because it is still arriving. Reaching it is a network round
+trip that may not answer at all, which is why the existing control says *asked — it arrives
+shortly* rather than pretending to have it.
+
+They arrive at the same gesture and they are not the same promise, so they get different
+ones: **local pages load on scroll, and the network boundary keeps its button.** Anything
+else either makes a disk read look like it might fail, or makes a network fetch look like it
+cannot.
+
+This ordering is also a correctness constraint, not a preference. The network notice sits at
+the top of the list and says *this machine is not holding older history*. Wired naively
+behind a page, it would say that above ninety thousand records the machine is holding. **A
+notice that is true of a node must not be rendered as a claim about a page.**
+
+Which forces a fix this section owns rather than inherits: `history_incomplete` is node-wide.
+It scans every held segment for one whose predecessor is missing, so a single truncated chain
+anywhere lights the notice at the top of every channel. That was tolerable while it was the
+only thing up there and vague in the same direction as the truth. It stops being tolerable
+the moment a *local* boundary sits above it, because then the two contradict each other in
+the same three lines. So a segment records the channel it was absorbed for, and the question
+is asked per channel.
+
+**A segment with no channel recorded counts toward every channel** — the answer this gave
+before. The degradation is one-directional on purpose: it can say *incomplete* about a
+channel that is whole, which is today's behaviour and merely vague, and it can never say
+*whole* about a channel that is truncated, which would be the interface concealing exactly
+the thing this notice exists to disclose.
+
+#### The window keeps a loaded range, not a page
+
+A page is what the store hands over. What the interface holds is the range it has drawn, and
+almost everything below follows from that being the unit.
+
+The range is defined by its ends, and **it only ever grows**. Scrolling up extends the older
+end; it never slides, and nothing already drawn is taken away. So a reader who has gone back
+a thousand messages keeps them, and the cost of that is bounded by one visit rather than by
+the channel — it resets when they leave.
+
+**The live range has one open end.** Its older end is a cursor and its newer end is *the
+tail*, which is what makes new messages appear without anything asking for them.
+
+#### A cursor is a merge-order key, and a clock reading is not one
+
+The command has carried `before: Option<Hlc>` since it was written. That type cannot express
+a page boundary correctly, and the bug it causes is silent.
+
+Records are merged by reading and then by record id (`01` §4), because two records can carry
+the same reading — the counter is per author *and device* (spec 07 §2.6), so two members
+writing in the same millisecond collide legitimately and neither is wrong. When a page
+boundary lands between such a pair, `before = that reading` excludes **both**: the one already
+drawn and the one never drawn. A message disappears, no control reveals it, and every
+individual layer is behaving exactly as written.
+
+So a cursor is the pair the merge actually sorts on, and it comes from the one place that
+defines that order rather than from a second copy of the comparator — the same discipline
+that made the verdict fold assert against `kols_core::withheld` instead of reimplementing it.
+
+**The interface never constructs one.** It receives cursors as opaque strings and hands them
+back. An interface that could build a cursor could build a wrong one, and an HLC is exactly
+the shape that invites arithmetic.
+
+#### Anchoring, and the range that has left the tail
+
+A pin, a reply, and eventually a search result (§7.6) all name a message rather than a
+position, and none of them can be reached by scrolling to it. So a range may also be opened
+**around** a cursor, and then it has two closed ends and is *detached*: it is a window onto
+history rather than onto the present.
+
+The read that answers this is not new machinery. Walking the index back from a cursor and
+walking it forward from one are two queries against the index that already exists, and every
+shape here composes from them — a page back is the first, a page around is both, and
+re-reading a range is the second with a stopping point.
+
+**A detached range must not reattach on its own**, which is the one thing that makes this
+feature worth having rather than infuriating. Somebody who jumped to a message from last year
+did so deliberately, and a live tick that silently returned them to the present two seconds
+later would make the jump useless. Reattaching is a gesture — scrolling down to the tail, or
+saying so — and never a timer. This is the same rule the scroll position already follows, now
+applied to the data as well as to the viewport.
+
+#### What the tick re-reads
+
+`05` §3's standing discipline is *re-read rather than patch*: the projection is the core's,
+and redrawing from it is what makes a duplicate delivery a non-event. Paging does not get an
+exception, it gets a smaller argument.
+
+The tick re-reads **the loaded range** — from its older cursor to its newer end, which for a
+live range is the tail. Not the newest page.
+
+The difference is decisive rather than stylistic, and it is `01` §4 again: **backfill lands in
+the past.** A record recovered from a stale author's chain sorts where its author's clock puts
+it, which is *inside* the loaded range and frequently nowhere near the bottom. A tick that
+re-read only the newest page would never show it, and the message would sit in the store,
+correctly ordered and permanently invisible, until something unrelated forced a redraw.
+
+#### Marks come from the page you land on
+
+§4.3 rests on a property paging removes: *everything is drawn, so what was here last time is
+the complete answer, and there is no eviction policy to get wrong.* Draw one page and the
+remembered set quietly becomes partial — and every message on the pages below it reads as
+never seen, for good.
+
+The rule that keeps §4.3 true is its own, applied one level down. Its first commitment is that
+first sight of a channel marks nothing, because *no idea* is the honest reading of a channel
+this machine has never displayed, and the alternative sets a hundred messages of backlog
+alight on the day somebody joins. **A page this machine has never displayed is the same
+claim about a smaller thing.**
+
+So: the page a visit *lands on* produces marks, exactly as §4.3 describes. Pages reached by
+**scrolling back** file their ids and mark nothing. Going back into history is navigation, and
+nothing you navigated to deliberately is an arrival.
+
+Stated that way round rather than as *a page absent from the stored set marks nothing*, which
+sounds equivalent and is not: a busy channel can turn over an entire screenful between visits,
+and that reading would mark nothing in precisely the case §4.3 exists for. What separates them
+is how the page was reached, which the interface knows and the contents cannot tell it.
+
+The remembered set is then the union of what was drawn across a visit, replaced at the start
+of the next one. Still bounded by the channel, still no eviction policy.
+
+#### Two things that stay whole-channel, and one that is local
+
+**The author count stays whole-channel.** It is a `COUNT(DISTINCT author)` against the index —
+cheap — and a number that changed as somebody scrolled would be worse than the query it saved.
+
+**Refusals become the page's**, and the interface says so. `05` §3's reason for surfacing them
+at all is that a record this node refuses is one another client may be showing, and silence
+would make the two look like they agree; a count that is honest about its scope keeps that,
+and a whole-channel count would mean reading the whole channel, which is the thing being
+removed.
+
+**Page size is local, never network policy** — presentation, like the fetch concurrency
+Storage §4.4 keeps per node. It is safe to be local only because of a property already built:
+the rate verdict is folded over the whole channel and stored, so *what renders cannot depend
+on how much was loaded*. Without that, page size would silently be a policy knob, and two
+members reading the same channel at different page sizes would see different messages —
+the divergence `01` §10.1 makes these limits network policy to prevent, arriving through a
+presentation setting.
+
+#### Built 2026-09-09
+
+All of the above, and three things the building of it settled that the design above had not.
+
+**The reach limit belongs where untrusted input arrives.** It began in the store, which then
+silently truncated a deliberate whole-channel read to five hundred records — the terminal would
+have shown the end of a channel and said nothing about the rest. A ceiling that quietly rewrites
+what a caller asked for is the same failure as a boundary that drops a message: the answer is
+wrong and nothing reveals it. The window's requests are clamped at the boundary they arrive
+through; inside the process, callers ask for what they mean.
+
+**Restoring the scroll position turned out to be a fix in its own right.** Emptying the list to
+redraw it clamps the scroll to the top and does not put it back, so a reader scrolled up was
+thrown to the top by every redraw that changed anything — every two seconds on a busy channel.
+That was true before paging and is why scrolling up has never been worth doing in this client.
+
+**The first-sight rule needed the previous tail, not just the gesture.** Marking nothing on a
+draw that reached backwards is almost right, and loses a message: one arriving in the same two
+seconds as the reach would be filed as seen without ever being marked, and nothing would come
+back for it. So the split is at the last message previously drawn — everything after it arrived,
+everything before it is history — and the gesture decides only what happens on the older side.
+
+#### What this owes its own tests
+
+jsdom applies no layout, so `scrollHeight`, `scrollTop` and `clientHeight` are all zero there
+and nothing about scrolling can be observed in the harness this interface has. That decides
+the shape rather than excusing it: **the loaded range is pure state with pure transitions,
+and the DOM layer only feeds it numbers.** What is worth asserting — that a range grows and
+never slides, that a detached one does not reattach on a tick, that scrolling back marks
+nothing, that a boundary between two records sharing a reading loses neither — is then
+answerable without a viewport.
+
 ---
 
 ## 5. Chrome Follows Permission
@@ -882,7 +1072,9 @@ not a capability.
 4. **What "recent" means for warm tier membership.** §2 says recent networks stay warm;
    the rule that decides which is not written.
 5. **Attachment and media presentation**, including whether a theme may restyle inline media.
-6. **Search surface** — `05` §3 has the command; where results live is undecided.
+6. **Search surface** — `05` §3 has the command; where results live is undecided. What a result
+   does when opened is no longer part of that question: §4.4 opens a range *around* a cursor, so a
+   result has somewhere to land, and this narrows to where the list of them lives.
 7. **Multi-device** (`05` §6) is designed and unbuilt; read state becomes shared when it
    lands, and the interface should not assume it is local forever.
 8. **A governance surface.** Roles, membership, moderation and the waiting room are one

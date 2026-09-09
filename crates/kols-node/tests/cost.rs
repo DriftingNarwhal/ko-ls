@@ -237,11 +237,18 @@ fn what_replay_costs_as_structure_grows() {
 #[test]
 #[ignore = "a measurement, not an assertion — see the module comment"]
 fn what_opening_a_channel_costs_as_it_fills() {
-    // The read path's twin of the send measurement. `open_channel` reads every
-    // record in the channel from its own file, decodes it, merges the whole set
-    // and runs the reader-side rate pass over it — so rendering a screenful
-    // costs the size of the conversation, and `before`/`limit` bound what is
-    // *returned* rather than what is read.
+    // The read path's twin of the send measurement, and what O4 exists for.
+    //
+    // **This used to read every record in the channel** from its own file,
+    // decode it, merge the whole set and run the reader-side rate pass over it —
+    // so rendering a screenful cost the size of the conversation, about 0.037 ms
+    // a record, and roughly four seconds at a hundred thousand. On a control the
+    // window re-runs every two seconds, which is what made it the half that
+    // bites first.
+    //
+    // It now asks the index which records the range holds and reads those. Both
+    // columns are measured, because the answer that matters is not how fast a
+    // page is but whether it stops depending on the channel.
     let dir = Dir::new("open");
     let workspace = Workspace::at(dir.0.clone());
     let store = workspace.create("cost", Vec::new()).expect("creates");
@@ -270,7 +277,7 @@ fn what_opening_a_channel_costs_as_it_fills() {
         other => panic!("unexpected outcome: {other:?}"),
     };
 
-    println!("\n  records    open channel");
+    println!("\n  records    settled page    first after a batch    whole channel");
     let batch = 500;
     for round in 0..rounds("KOLS_COST_BATCHES", 8) {
         for n in 0..batch {
@@ -283,18 +290,55 @@ fn what_opening_a_channel_costs_as_it_fills() {
                 })
                 .expect("posts");
         }
+
+        // **The first open after a batch pays for folding the batch**, which is
+        // an honest cost and not the page's: five hundred records arrived at
+        // once. In use a tick sees one or two, so this column is a worst case
+        // that nothing real produces.
         let started = Instant::now();
         executor
             .submit(Command::OpenChannel {
                 channel,
-                before: None,
-                limit: 50,
+                window: kols_core::Window::opening(50),
             })
             .expect("opens");
+        let cold = started.elapsed();
+
+        // The settled page, which is what the window's two-second tick actually
+        // costs once the index is up to date. This is the number O4 is about.
+        let started = Instant::now();
+        executor
+            .submit(Command::OpenChannel {
+                channel,
+                window: kols_core::Window::opening(50),
+            })
+            .expect("opens");
+        let page = started.elapsed();
+
+        // The same call asking for everything — what the terminal does, and what
+        // the window did until this change. Measured beside the page so the two
+        // curves can be compared rather than described.
+        //
+        // **Asked under the same limits**, which sounds like a detail and is
+        // not: a verdict is only true of the limits that produced it, so a
+        // measurement that varied them would re-fold the channel on every call
+        // and report the cost of the fold as the cost of the read. That is
+        // exactly what an earlier version of this did.
+        let started = Instant::now();
+        executor
+            .submit(Command::OpenChannel {
+                channel,
+                window: kols_core::Window::opening(usize::MAX),
+            })
+            .expect("opens");
+        let whole = started.elapsed();
+
         println!(
-            "  {:>7}    {:>8.1}ms",
+            "  {:>7}    {:>10.1}ms    {:>17.1}ms    {:>10.1}ms",
             (round + 1) * batch,
-            millis(started.elapsed())
+            millis(page),
+            millis(cold),
+            millis(whole)
         );
     }
 }

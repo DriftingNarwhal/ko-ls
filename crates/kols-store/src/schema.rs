@@ -2,7 +2,7 @@
 
 use crate::Verdict;
 use intranet_identity::PerNetworkIdentityId;
-use kols_core::{ChannelId, Hlc, MessageId, Record, RecordClass};
+use kols_core::{ChannelId, Cursor, Hlc, MessageId, Record, RecordClass};
 use rusqlite::Connection;
 
 /// What can go wrong reading or writing the projection.
@@ -141,40 +141,149 @@ impl Projection {
         Ok(())
     }
 
-    /// The ids of a page, oldest first, taking `limit` from before `before`.
+    /// The records of a channel *before* a position, oldest first.
     ///
     /// Oldest first because that is the order a reader renders in, and taking
     /// them from the *end* is what makes a page cheap: the index is walked
     /// backwards from `before` and stopped, rather than read and then trimmed.
-    pub fn page(
+    ///
+    /// The bound is a [`Cursor`] rather than a reading, and that is a
+    /// correctness fix rather than a tidying: two records can share a reading,
+    /// so a boundary that named only the reading excluded both of them —
+    /// including the one that had never been drawn (`design/09` §4.4).
+    pub fn before(
         &self,
         channel: &ChannelId,
-        before: Option<Hlc>,
+        before: Option<Cursor>,
         limit: usize,
     ) -> Result<Vec<MessageId>, ProjectionError> {
-        let (wall, counter) = match before {
-            Some(hlc) => (hlc.wall_millis, i64::from(hlc.counter)),
-            None => (i64::MAX, i64::MAX),
-        };
+        // **Past the newest record rather than at it**, so `None` means "the
+        // tail" without a special case in the predicate below.
+        let end = before.unwrap_or(Cursor::new(Hlc::new(i64::MAX, u32::MAX), MessageId::from_bytes([0xFF; 32])));
         let mut statement = self.conn.prepare_cached(
             "SELECT id FROM records
               WHERE channel = ?1
-                AND (hlc_wall < ?2 OR (hlc_wall = ?2 AND hlc_counter < ?3))
+                AND (hlc_wall < ?2
+                  OR (hlc_wall = ?2 AND hlc_counter < ?3)
+                  OR (hlc_wall = ?2 AND hlc_counter = ?3 AND id < ?4))
               ORDER BY hlc_wall DESC, hlc_counter DESC, id DESC
-              LIMIT ?4",
+              LIMIT ?5",
+        )?;
+        let mut ids = Self::collect(&mut statement, channel, end, limit)?;
+        // Walked backwards to find them and handed back forwards, which is the
+        // order everything above reads in.
+        ids.reverse();
+        Ok(ids)
+    }
+
+    /// The records of a channel *after* a position, oldest first.
+    ///
+    /// The other half of [`Self::before`], and the two together compose every
+    /// shape `design/09` §4.4 asks for: a page back is one, a page around a
+    /// cursor is both, and re-reading a loaded range is this one with a
+    /// stopping point.
+    pub fn after(
+        &self,
+        channel: &ChannelId,
+        after: Option<Cursor>,
+        limit: usize,
+    ) -> Result<Vec<MessageId>, ProjectionError> {
+        // Before the oldest possible record, so `None` means "from the start".
+        let start = after.unwrap_or(Cursor::new(Hlc::new(i64::MIN, 0), MessageId::from_bytes([0; 32])));
+        let mut statement = self.conn.prepare_cached(
+            "SELECT id FROM records
+              WHERE channel = ?1
+                AND (hlc_wall > ?2
+                  OR (hlc_wall = ?2 AND hlc_counter > ?3)
+                  OR (hlc_wall = ?2 AND hlc_counter = ?3 AND id > ?4))
+              ORDER BY hlc_wall ASC, hlc_counter ASC, id ASC
+              LIMIT ?5",
+        )?;
+        Self::collect(&mut statement, channel, start, limit)
+    }
+
+    /// The records from `from` up to and including `to`, oldest first.
+    ///
+    /// `to` absent means the tail, which is what makes a *live* range live: it
+    /// picks up arrivals without anything having to ask for them, and it picks
+    /// up backfill landing inside the range, which a tail-only read never would
+    /// (`design/09` §4.4).
+    pub fn between(
+        &self,
+        channel: &ChannelId,
+        from: Cursor,
+        to: Option<Cursor>,
+        limit: usize,
+    ) -> Result<Vec<MessageId>, ProjectionError> {
+        let end = to.unwrap_or(Cursor::new(Hlc::new(i64::MAX, u32::MAX), MessageId::from_bytes([0xFF; 32])));
+        let mut statement = self.conn.prepare_cached(
+            "SELECT id FROM records
+              WHERE channel = ?1
+                AND (hlc_wall > ?2
+                  OR (hlc_wall = ?2 AND hlc_counter > ?3)
+                  OR (hlc_wall = ?2 AND hlc_counter = ?3 AND id >= ?4))
+                AND (hlc_wall < ?5
+                  OR (hlc_wall = ?5 AND hlc_counter < ?6)
+                  OR (hlc_wall = ?5 AND hlc_counter = ?6 AND id <= ?7))
+              ORDER BY hlc_wall ASC, hlc_counter ASC, id ASC
+              LIMIT ?8",
         )?;
         let rows = statement.query_map(
-            rusqlite::params![channel.as_bytes().to_vec(), wall, counter, limit as i64],
+            rusqlite::params![
+                channel.as_bytes().to_vec(),
+                from.hlc.wall_millis,
+                i64::from(from.hlc.counter),
+                from.id.as_bytes().to_vec(),
+                end.hlc.wall_millis,
+                i64::from(end.hlc.counter),
+                end.id.as_bytes().to_vec(),
+                limit as i64
+            ],
             |row| row.get::<_, Vec<u8>>(0),
         )?;
         let mut ids = Vec::new();
         for row in rows {
             ids.push(message_id(&row?)?);
         }
-        // Walked backwards to find them and handed back forwards, which is the
-        // order everything above reads in.
-        ids.reverse();
         Ok(ids)
+    }
+
+    /// Runs one of the one-bound walks above.
+    fn collect(
+        statement: &mut rusqlite::CachedStatement<'_>,
+        channel: &ChannelId,
+        bound: Cursor,
+        limit: usize,
+    ) -> Result<Vec<MessageId>, ProjectionError> {
+        let rows = statement.query_map(
+            rusqlite::params![
+                channel.as_bytes().to_vec(),
+                bound.hlc.wall_millis,
+                i64::from(bound.hlc.counter),
+                bound.id.as_bytes().to_vec(),
+                limit as i64
+            ],
+            |row| row.get::<_, Vec<u8>>(0),
+        )?;
+        let mut ids = Vec::new();
+        for row in rows {
+            ids.push(message_id(&row?)?);
+        }
+        Ok(ids)
+    }
+
+    /// How many distinct authors have written in a channel.
+    ///
+    /// Whole-channel rather than per page, and answered from the index rather
+    /// than by reading records. `design/09` §4.4: a number that changed as
+    /// somebody scrolled would be worse than the query it saved.
+    pub fn authors(&self, channel: &ChannelId) -> Result<usize, ProjectionError> {
+        let count: i64 = self.conn.query_row(
+            "SELECT COUNT(DISTINCT author) FROM records WHERE channel = ?1",
+            rusqlite::params![channel.as_bytes().to_vec()],
+            |row| row.get(0),
+        )?;
+        Ok(count.max(0) as usize)
     }
 
     /// The ids of records acting on any of `targets`.
@@ -261,7 +370,7 @@ impl Projection {
     /// For the paths that genuinely want all of it — a rebuild, and the fold
     /// that follows an out-of-order arrival.
     pub fn all(&self, channel: &ChannelId) -> Result<Vec<MessageId>, ProjectionError> {
-        self.page(channel, None, usize::MAX)
+        self.before(channel, None, usize::MAX)
     }
 
     /// How many of a channel's records are folded in.
@@ -301,17 +410,23 @@ impl Projection {
     /// What decides whether an arrival extends the fold or reaches into it. A
     /// record that sorts after everything stored changes no verdict already
     /// decided; one that sorts before may change every verdict after it.
-    pub fn newest(&self, channel: &ChannelId) -> Result<Option<Hlc>, ProjectionError> {
+    pub fn newest(&self, channel: &ChannelId) -> Result<Option<Cursor>, ProjectionError> {
         let found = self.conn.query_row(
-            "SELECT hlc_wall, hlc_counter FROM records WHERE channel = ?1
-              ORDER BY hlc_wall DESC, hlc_counter DESC LIMIT 1",
+            "SELECT hlc_wall, hlc_counter, id FROM records WHERE channel = ?1
+              ORDER BY hlc_wall DESC, hlc_counter DESC, id DESC LIMIT 1",
             rusqlite::params![channel.as_bytes().to_vec()],
-            |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?)),
+            |row| {
+                Ok((
+                    row.get::<_, i64>(0)?,
+                    row.get::<_, i64>(1)?,
+                    row.get::<_, Vec<u8>>(2)?,
+                ))
+            },
         );
         match found {
-            Ok((wall, counter)) => Ok(Some(Hlc::new(
-                wall,
-                u32::try_from(counter).unwrap_or(u32::MAX),
+            Ok((wall, counter, id)) => Ok(Some(Cursor::new(
+                Hlc::new(wall, u32::try_from(counter).unwrap_or(u32::MAX)),
+                message_id(&id)?,
             ))),
             Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
             Err(err) => Err(err.into()),

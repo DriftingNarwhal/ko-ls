@@ -1,7 +1,7 @@
 //! What a command produced.
 
 use intranet_identity::PerNetworkIdentityId;
-use kols_core::{CategoryId, ChannelId, MessageId, Privacy, Rejection, RenderedMessage};
+use kols_core::{CategoryId, ChannelId, Cursor, MessageId, Privacy, Rejection, RenderedMessage};
 
 /// The result of running a command.
 ///
@@ -27,8 +27,29 @@ pub enum Outcome {
         /// other client may be showing, and silence would make the two look like
         /// they agree.
         rejected: Vec<(MessageId, Rejection)>,
-        /// How many distinct authors contributed to what was rendered.
+        /// How many distinct authors have written in the channel.
+        ///
+        /// Whole-channel rather than per range, and answered from the index
+        /// rather than by reading records: a number that changed as somebody
+        /// scrolled would be worse than the query it saved (`design/09` §4.4).
         authors: usize,
+        /// Where the rendered range starts, and where it ends.
+        ///
+        /// `newest` absent means the range runs to the tail — it is *live*, and
+        /// arrivals will appear in it. Handed back so the next request can name
+        /// the range it already holds; the interface never builds one.
+        oldest: Option<Cursor>,
+        /// Where the rendered range ends, or absent when it runs to the tail.
+        newest: Option<Cursor>,
+        /// Whether this node holds records before the range, undrawn.
+        ///
+        /// **Not the same claim as `more_history`**, and the two must never
+        /// share a control: this is a disk read that always succeeds, and that
+        /// one is a network round trip that may not answer at all
+        /// (`design/09` §4.4).
+        older: bool,
+        /// Whether it holds records after the range.
+        newer: bool,
         /// Whether history exists behind this that the node does not hold.
         ///
         /// Carried because a bounded channel and a quiet one render identically,

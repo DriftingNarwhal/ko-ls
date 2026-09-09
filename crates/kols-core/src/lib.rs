@@ -20,6 +20,7 @@
 
 pub mod capabilities;
 mod channel;
+mod cursor;
 mod hlc;
 mod log;
 mod permissions;
@@ -39,6 +40,7 @@ pub use channel::{
     CategoryChange, EntrySubject, MAX_CATEGORY_NAME_BYTES, Privacy, SidebarCategory,
     SidebarChannel, SidebarRow, admit, sidebar_order,
 };
+pub use cursor::{Cursor, Window};
 pub use hlc::Hlc;
 pub use live::{LivePayload, channel_content_key};
 pub use presence::{

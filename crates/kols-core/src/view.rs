@@ -19,7 +19,7 @@
 //! the durable path guarantees they eventually do.
 
 use crate::{
-    Attachment, Authority, ChannelId, Hlc, MessageId, Placement, ReaderLimits, Record, RecordBody,
+    Attachment, Authority, ChannelId, Cursor, Hlc, MessageId, Placement, ReaderLimits, Record, RecordBody,
     Withheld,
 };
 use intranet_identity::PerNetworkIdentityId;
@@ -99,7 +99,9 @@ impl RenderedMessage {
 pub struct ChannelView {
     channel: ChannelId,
     placement: Placement,
-    records: BTreeMap<(Hlc, MessageId), Record>,
+    /// Keyed on the merged order itself, so the order a page is cut on and
+    /// the order this merges in cannot drift apart (`design/09` §4.4).
+    records: BTreeMap<Cursor, Record>,
     rejected: Vec<(MessageId, Rejection)>,
 }
 
@@ -136,7 +138,7 @@ impl ChannelView {
                 self.rejected.push((id, reason));
                 continue;
             }
-            self.records.insert((record.hlc, id), record);
+            self.records.insert(record.cursor(), record);
         }
     }
 
@@ -283,8 +285,8 @@ impl ChannelView {
         let mut order: Vec<MessageId> = Vec::new();
 
         // Pass one: messages, in merge order, so later passes can target them.
-        for ((hlc, id), record) in &self.records {
-            if withheld.excludes(id) {
+        for (&Cursor { hlc, id }, record) in &self.records {
+            if withheld.excludes(&id) {
                 continue;
             }
             if let RecordBody::Message {
@@ -293,13 +295,13 @@ impl ChannelView {
                 attachments,
             } = &record.body
             {
-                order.push(*id);
+                order.push(id);
                 messages.insert(
-                    *id,
+                    id,
                     RenderedMessage {
-                        id: *id,
+                        id,
                         author: record.author,
-                        hlc: *hlc,
+                        hlc,
                         body: body.clone(),
                         reply_to: *reply_to,
                         attachments: attachments.clone(),
@@ -321,8 +323,8 @@ impl ChannelView {
         // reaction refused for rate has to not land on its target, and a
         // future-dated withdrawal has to not hide a message before its own
         // claimed moment arrives.
-        for ((_, id), record) in &self.records {
-            if withheld.excludes(id) {
+        for (&Cursor { id, .. }, record) in &self.records {
+            if withheld.excludes(&id) {
                 continue;
             }
             match &record.body {

@@ -1,7 +1,7 @@
 //! What the interface may ask for, and how much a request costs in consent.
 
 use kols_core::{
-    Attachment, CategoryChange, CategoryId, ChannelChange, ChannelId, Hlc, MessageId, Privacy,
+    Attachment, CategoryChange, CategoryId, ChannelChange, ChannelId, Hlc, MessageId, Privacy, Window,
 };
 
 /// One thing the interface can ask the core to do.
@@ -25,10 +25,15 @@ pub enum Command {
     OpenChannel {
         /// Which channel.
         channel: ChannelId,
-        /// Page backwards from this reading, or from the head when absent.
-        before: Option<Hlc>,
-        /// How many messages to return.
-        limit: usize,
+        /// Which slice of it to render — `design/09` §4.4.
+        ///
+        /// **This used to be `before: Option<Hlc>` and a limit**, which could
+        /// not express a page boundary: two records can share a reading, so a
+        /// boundary naming only the reading excluded both of them, including the
+        /// one never drawn. Neither field was ever read — the executor
+        /// destructured them away — so the bug was latent rather than shipped,
+        /// and the type is the fix.
+        window: Window,
     },
     /// Write a message.
     SendMessage {

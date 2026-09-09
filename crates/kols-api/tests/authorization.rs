@@ -836,8 +836,7 @@ fn every_command() -> Vec<Command> {
     vec![
         Command::OpenChannel {
             channel: channel(1),
-            before: None,
-            limit: 50,
+            window: kols_core::Window::opening(50),
         },
         send(channel(1), "hello"),
         Command::EditMessage {

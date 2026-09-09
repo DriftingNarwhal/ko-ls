@@ -24,6 +24,65 @@ Kept because this project keeps re-learning the same lessons and paying for them
 
 ---
 
+- **2026-09-09** — **Paging, and the boundary that could not be expressed.**
+
+  O4's other half. `open_channel` now renders a *range* rather than a channel: a settled page is
+  3.6 ms at five hundred records and 6.1 ms at eight thousand, against 22.8 ms and 397.7 ms for
+  the whole channel — linear, and about five seconds at a hundred thousand, on a control the
+  window re-runs every two seconds. `design/09` §4.4 is the design; the shape is a loaded range
+  that only grows, local pages that load on scroll while the network fetch keeps its button, and
+  three top-of-list states told apart.
+
+  **The load-bearing fix was a type.** `Command::OpenChannel` had carried `before: Option<Hlc>`
+  since it was written, and a clock reading cannot express a page boundary: records merge by
+  reading and *then* by record id, because the counter is per author and device, so two members
+  writing in the same millisecond share a reading legitimately. A boundary landing between such a
+  pair excluded **both** — including the one that had never been drawn. A message disappears from
+  the channel, nothing on screen reveals it, and every layer behaves exactly as written. It had
+  never shipped only because neither field was ever read: the executor destructured them away.
+  `Cursor` is the pair the merge sorts on, and `ChannelView` is keyed on it, so the order a page
+  is cut on and the order the view merges in are one definition rather than two that agree today.
+
+  **The measurement found the index being paid for and not used.** Before every page, the fold
+  read *every record file in the channel and decoded it* — to compare a count. So a page still
+  cost the channel, and the first reading showed the paged open slower than the unpaged one.
+  Record files are named by their id, so the directory answers which records exist without
+  opening one; and underneath that was the same mistake one layer smaller, materialising every
+  identifier out of SQLite to discover none were new. This is the third time on this feature that
+  the fix has been *stop reading what you already know*, which is worth saying out loud.
+
+  **Twice the measurement itself was the thing that was wrong**, and both readings looked
+  plausible. The first conflated folding a five-hundred-record batch with reading a page and
+  reported 40 ms for something that costs 4. The second added a store-level column under
+  hand-written limits that differed from the command's — so every call re-folded the channel, and
+  the column measured the fold while appearing to measure the read. A verdict being true only of
+  the limits that produced it is a property of this design; a measurement that varies them is
+  measuring that property rather than the thing it asked about.
+
+  **A ceiling that lied.** The reach limit began in the store, which silently truncated
+  `Window::opening(usize::MAX)` — so `kols read` would have shown the last five hundred messages
+  of a channel and said nothing about the rest. That is the same class of failure as the boundary
+  above: the answer is wrong and nothing reveals it. It belongs where untrusted input arrives.
+
+  Three smaller things the build settled. **Restoring the scroll position is a fix that predates
+  paging** — emptying the list to redraw it clamps the scroll to the top and never puts it back,
+  so a reader scrolled up was thrown to the top by every redraw that changed anything, which is
+  why scrolling up has never been worth doing in this client. **The first-sight rule splits on the
+  previously-drawn tail, not on the gesture**: marking nothing on a draw that reached backwards is
+  almost right and loses a message, because one arriving in the same two seconds would be filed as
+  seen and never marked. And **a want was kept alive by the wrong channel** — `history_incomplete`
+  was node-wide, so a truncated chain anywhere stopped every channel's want from ever being
+  forgotten; per-channel now, which the notice needed anyway.
+
+  Two tests were green for the wrong reason and are not any more. The driver's `rows()` counted
+  every child of the message list rather than every `.message`, so adding a notice shifted four
+  mark checks by one index — the app's own comment had warned that a row which looks like a
+  message and is not one is fine "until the day something counts them", and this was the thing
+  counting them. And my own check that local history outranks the network notice passed with the
+  branches *swapped*, because the fixture set both flags; the case that pins it is local history
+  with no network boundary at all. The driver also aborted the whole run on the first missing
+  element rather than reporting, which hid every check after it.
+
 - **2026-09-09** — **The projection is built and switched off, and the reason it is switched off
   is not a technical one.**
 

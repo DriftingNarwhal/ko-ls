@@ -438,11 +438,13 @@ fn submit(root: std::path::PathBuf, command: Command) -> Result<(), String> {
             let channel = executor.resolve_channel(&channel).map_err(say)?;
             ApiCommand::OpenChannel {
                 channel,
-                before: None,
                 // A terminal has no scroll position to page from, the same
-                // reason `kols serve` walks to the start of history. A UI bounds
-                // this by pages (`design/01` §5).
-                limit: usize::MAX,
+                // reason `kols serve` walks to the start of history — and
+                // scrollback is what a terminal already has. So it asks for the
+                // whole channel deliberately: `design/09` §4.4's range is an
+                // answer to a window that draws a screenful, and D30 keeps this
+                // a test harness rather than a second interface to design.
+                window: kols_core::Window::opening(usize::MAX),
             }
         }
         Command::Name { name } => ApiCommand::SetName {

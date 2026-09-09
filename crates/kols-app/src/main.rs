@@ -1169,22 +1169,31 @@ fn move_channel(
     channel_change(&app, &channel, kols_core::ChannelChange::SetPosition(position))
 }
 
-/// Opens a channel and renders it.
+/// Opens a channel and renders the range a reader is holding.
+///
+/// `window` is what the interface already has, and absent means it has nothing —
+/// an ordinary open, which answers with the newest page. The cursors in it were
+/// issued by a previous answer and are opaque to the interface by design
+/// (`design/09` §4.4): a front end that could build a cursor could build a wrong
+/// one, and a clock reading is exactly the shape that invites arithmetic.
 #[tauri::command]
-fn open_channel(app: tauri::State<'_, App>, channel: String) -> Result<dto::Opened, String> {
+fn open_channel(
+    app: tauri::State<'_, App>,
+    channel: String,
+    window: Option<dto::WindowArg>,
+) -> Result<dto::Opened, String> {
     let channel = App::channel(&channel)?;
-    app.with(|executor| open_one(executor, channel))
+    let window = window.unwrap_or_default().resolve();
+    app.with(|executor| open_one(executor, channel, window))
 }
 
-fn open_one(executor: &Executor, channel: ChannelId) -> Result<dto::Opened, String> {
+fn open_one(
+    executor: &Executor,
+    channel: ChannelId,
+    window: kols_core::Window,
+) -> Result<dto::Opened, String> {
     let outcome = executor
-        .submit(Command::OpenChannel {
-            channel,
-            before: None,
-            // No scroll position yet, so this asks for everything the store
-            // holds. `design/01` §5 bounds it by pages once there is one.
-            limit: usize::MAX,
-        })
+        .submit(Command::OpenChannel { channel, window })
         .map_err(|err| err.to_string())?;
 
     let Outcome::Opened {
@@ -1192,6 +1201,10 @@ fn open_one(executor: &Executor, channel: ChannelId) -> Result<dto::Opened, Stri
         rejected,
         authors,
         more_history,
+        oldest,
+        newest,
+        older,
+        newer,
         ..
     } = outcome
     else {
@@ -1214,6 +1227,10 @@ fn open_one(executor: &Executor, channel: ChannelId) -> Result<dto::Opened, Stri
             .map(|(id, why)| format!("{}: {why:?}", &to_hex(id.as_bytes())[..8]))
             .collect(),
         more_history,
+        oldest: oldest.map(kols_core::Cursor::to_token),
+        newest: newest.map(kols_core::Cursor::to_token),
+        older,
+        newer,
     })
 }
 
