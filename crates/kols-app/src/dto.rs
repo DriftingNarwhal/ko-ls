@@ -250,6 +250,31 @@ impl WindowArg {
     }
 }
 
+/// Whether this installation has an account, and whether it is open.
+///
+/// Two questions rather than one, because they need different screens: no
+/// account is a first run, and a locked one is a login. `design/02` §6.3 forces
+/// the first — an account somebody can click past is a preference rather than a
+/// release gate.
+#[derive(Debug, Serialize)]
+pub struct AccountState {
+    /// Whether an account has been made here.
+    pub exists: bool,
+    /// Whether this process has unlocked it.
+    pub unlocked: bool,
+    /// Who it belongs to, readable before anybody has typed a password.
+    ///
+    /// A username is not a secret, and a login that cannot say whose it is makes
+    /// a shared machine guesswork.
+    pub username: Option<String>,
+    /// How many networks on this disk still hold their seed in the clear.
+    ///
+    /// Zero on any installation made after the keyring landed. Carried so the
+    /// first run can say what it is about to protect rather than asking for a
+    /// password with no reason given.
+    pub unprotected: usize,
+}
+
 /// The ceiling on everything this installation stores, and what it is using.
 #[derive(Debug, Serialize)]
 pub struct StorageCeiling {

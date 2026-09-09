@@ -326,6 +326,31 @@ impl Workspace {
         )
     }
 
+    /// How many stores here still hold their seed in the clear.
+    ///
+    /// What the first run needs in order to say what it is about to protect. It
+    /// reads a length rather than opening anything, so it works while the
+    /// installation is still locked — which is the only moment it is asked.
+    pub fn unprotected(&self) -> usize {
+        let roots: Vec<PathBuf> = if is_store(&self.root) {
+            vec![self.root.clone()]
+        } else {
+            std::fs::read_dir(&self.root)
+                .into_iter()
+                .flatten()
+                .filter_map(Result::ok)
+                .map(|entry| entry.path())
+                .filter(|path| is_store(path))
+                .collect()
+        };
+        roots
+            .iter()
+            .filter(|root| {
+                std::fs::metadata(root.join("seed")).is_ok_and(|meta| meta.len() == 32)
+            })
+            .count()
+    }
+
     /// Makes sure this process is unlocked for this workspace.
     ///
     /// The window unlocks by somebody logging in; this is the other path, which

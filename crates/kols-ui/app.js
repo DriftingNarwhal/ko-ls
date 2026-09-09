@@ -125,6 +125,7 @@ function show(view) {
   document.querySelector(".app").hidden = view !== "app";
   el("picker").hidden = view !== "picker";
   el("settings").hidden = view !== "settings";
+  el("lock").hidden = view !== "lock";
 }
 
 async function drawPicker() {
@@ -2419,7 +2420,10 @@ async function drawSettings() {
   }
   if (state.settingsTab === "permissions") await drawRoles();
   if (state.settingsTab === "contribution") await drawContribution();
-  if (state.settingsTab === "device") await drawCeiling();
+  if (state.settingsTab === "device") {
+    await drawCeiling();
+    await drawAccount();
+  }
 }
 
 /// The ceiling on everything this installation keeps, and what it is using.
@@ -3448,7 +3452,123 @@ function said(outcome) {
     `Left, and the departure went out to ${who}. Anybody offline learns of it from them.`;
 }
 
+/// Who this installation belongs to, on the settings screen.
+async function drawAccount() {
+  const account = await invoke("account_state");
+  el("account-who").textContent = account.username
+    ? `signed in as ${account.username}`
+    : "this installation";
+}
+
+/// The screen before every other one — `design/02` §6.3.
+///
+/// Two questions rather than one, because they need different answers on screen:
+/// **no account** is a first run, and **a locked one** is a login. The account is
+/// forced rather than offered, since one somebody can click past is a preference
+/// and not the release gate `00` §5 calls it.
+///
+/// Returns whether the installation is open. Everything downstream depends on
+/// that: with the seeds wrapped there is no identity to derive and therefore no
+/// network to open, so this runs before anything asks for one.
+async function gate() {
+  const account = await invoke("account_state");
+  if (account.unlocked) return true;
+
+  show("lock");
+  el("first-run").hidden = account.exists;
+  el("login").hidden = !account.exists;
+
+  if (account.exists) {
+    el("login-greeting").textContent = account.username
+      ? `welcome back, ${account.username}`
+      : "unlock this installation";
+    el("login-password").focus();
+  } else {
+    // **Says what it is about to protect**, rather than asking for a password
+    // with no reason given. An installation that predates the keyring has seeds
+    // on disk in the clear, and that is the fact worth putting on screen.
+    el("first-run-note").textContent =
+      account.unprotected > 0
+        ? `${account.unprotected === 1 ? "One network" : `${account.unprotected} networks`} on ` +
+          "this machine still hold their identity unencrypted on disk. A password " +
+          "wraps them, and nothing else here changes."
+        : "A password wraps every identity this machine holds. It is local to this " +
+          "machine and no network ever sees it.";
+    el("first-run-name").focus();
+  }
+  return false;
+}
+
+function lockError(id, err) {
+  const line = el(id);
+  line.hidden = false;
+  line.textContent = String(err && err.message ? err.message : err);
+}
+
+el("first-run").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  el("first-run-error").hidden = true;
+  const password = el("first-run-password").value;
+  // Checked here rather than trusted, because there is no reset behind it: a
+  // mistyped password on this form is every identity on the disk.
+  if (password !== el("first-run-again").value) {
+    lockError("first-run-error", "those two passwords are not the same");
+    return;
+  }
+  if (!password) {
+    lockError("first-run-error", "a password is required");
+    return;
+  }
+  try {
+    await invoke("create_account", {
+      username: el("first-run-name").value.trim() || "me",
+      password,
+    });
+    el("first-run-password").value = "";
+    el("first-run-again").value = "";
+    await start();
+  } catch (err) {
+    lockError("first-run-error", err);
+  }
+});
+
+el("login").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  el("login-error").hidden = true;
+  try {
+    await invoke("unlock", { password: el("login-password").value });
+    el("login-password").value = "";
+    await start();
+  } catch (err) {
+    lockError("login-error", err);
+  }
+});
+
+/// Locks the interface. The node keeps running, deliberately.
+async function lockNow() {
+  await invoke("lock");
+  // Stop the timers that would otherwise keep asking a locked store questions
+  // and drawing the answers into a hidden screen.
+  if (state.channelPoll) clearInterval(state.channelPoll);
+  if (state.relayPoll) clearInterval(state.relayPoll);
+  if (state.doorPoll) clearInterval(state.doorPoll);
+  state.current = null;
+  state.loaded = null;
+  el("messages").replaceChildren();
+  await gate();
+}
+
+el("lock-now").addEventListener("click", () => void lockNow());
+
 async function start() {
+  if (!(await gate())) return;
+  // Whichever network is there, once there is a key to open it with. This used
+  // to happen before the window existed and is now too early by construction.
+  try {
+    await invoke("resume");
+  } catch {
+    // Nothing to resume is not a failure; the picker asks.
+  }
   let me;
   try {
     me = await invoke("me");

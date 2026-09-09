@@ -429,6 +429,83 @@ fn fetch_history(app: tauri::State<'_, App>, channel: String, before_millis: i64
     })
 }
 
+/// Opens the network to work in, once somebody has logged in.
+///
+/// **Where the startup logic went.** This used to run before the window existed,
+/// which is now too early by construction: with the seeds wrapped there is
+/// nothing to open until an account is unlocked.
+///
+/// Whichever network is there, if exactly one is — the common case for somebody
+/// who has made or joined a single network, and the case where being asked to
+/// choose is noise. Anything else leaves the picker to ask.
+#[tauri::command]
+fn resume(handle: tauri::AppHandle, app: tauri::State<'_, App>) -> Result<bool, String> {
+    let only = match app.workspace.list().as_slice() {
+        [only] => only.path.clone(),
+        _ => return Ok(false),
+    };
+    let executor = Executor::open(only.clone()).map_err(|err| err.to_string())?;
+    *app.open.lock().map_err(|_| "the workspace lock is poisoned")? = Some(executor);
+    start_node(&handle, app, only);
+    Ok(true)
+}
+
+/// Whether this installation has an account, and whether it is open.
+///
+/// The first thing the window asks, before it asks anything else, because every
+/// other answer depends on it: with a locked installation there is no seed to
+/// derive an identity from and therefore no network to open.
+#[tauri::command]
+fn account_state(app: tauri::State<'_, App>) -> dto::AccountState {
+    let root = app.workspace.root();
+    dto::AccountState {
+        exists: kols_node::account::Account::exists(root),
+        unlocked: kols_node::account::is_unlocked(root),
+        username: kols_node::account::Account::username(root),
+        unprotected: app.workspace.unprotected(),
+    }
+}
+
+/// Makes this installation's account and wraps whatever was in the clear.
+///
+/// **Wrapping happens here rather than being offered**, because the account
+/// exists to make the seeds unreadable and one that left them as they were would
+/// be a password protecting nothing (`design/02` §6.3).
+#[tauri::command]
+fn create_account(
+    app: tauri::State<'_, App>,
+    username: String,
+    password: String,
+) -> Result<usize, String> {
+    let root = app.workspace.root().to_path_buf();
+    let account = kols_node::account::create_process(&root, &username, &password)
+        .map_err(|err| err.to_string())?;
+    Ok(app.workspace.adopt_all(&account))
+}
+
+/// Opens it.
+#[tauri::command]
+fn unlock(app: tauri::State<'_, App>, password: String) -> Result<usize, String> {
+    let root = app.workspace.root().to_path_buf();
+    let account =
+        kols_node::account::unlock_process(&root, &password).map_err(|err| err.to_string())?;
+    // An installation that skipped a release still gets wrapped, on the next
+    // unlock rather than on a step somebody has to remember.
+    Ok(app.workspace.adopt_all(&account))
+}
+
+/// Locks the interface, and deliberately does not stop the node.
+///
+/// `design/02` §6.3: *nobody at my keyboard can act as me* and *I want to
+/// disappear from the network* are different requests, and only the first one is
+/// being made. The node keeps serving what it holds, keeps its relay
+/// reservation and keeps answering for its member; quitting the application is
+/// how somebody makes the second request.
+#[tauri::command]
+fn lock(_app: tauri::State<'_, App>) {
+    kols_node::account::lock_process();
+}
+
 /// The ceiling on everything this installation stores, and what it is using.
 ///
 /// A workspace command rather than a network one, and outside the `kols-api`
@@ -1901,30 +1978,19 @@ fn start_node(handle: &tauri::AppHandle, app: tauri::State<'_, App>, root: std::
 fn main() {
     let workspace = Workspace::at(Workspace::default_root());
 
-    // Whichever network is there, if exactly one is — the common case for
-    // somebody who has made or joined a single network, and the case where being
-    // asked to choose is noise. Anything else opens on the picker.
-    let open = match workspace.list().as_slice() {
-        [only] => Executor::open(only.path.clone()).ok(),
-        _ => None,
-    };
-
-    let opened_at = open.as_ref().map(|executor| executor.store().root().to_path_buf());
-
+    // **Nothing is opened here, and no node is started.** `design/02` §6.3: a
+    // node runs only once somebody has logged in, and that half is what decides
+    // what the password protects. Starting one before then would require the
+    // seeds to be unwrappable without it — at which point the password protects
+    // nothing at rest and O7 is a lock over an unlocked door.
+    //
+    // So the window asks `account_state` first and drives what follows: a first
+    // run, a login, or — once unlocked — `resume`, which is where the single
+    // network that used to be opened here is opened instead.
     tauri::Builder::default()
-        .setup(move |app| {
-            // The node for a network opened at startup. In `setup` rather than
-            // before the builder, because spawning needs a handle to emit
-            // through, and there is nothing to emit to until there is an app.
-            if let Some(root) = opened_at.clone() {
-                let handle = app.handle().clone();
-                start_node(&handle, handle.state::<App>(), root);
-            }
-            Ok(())
-        })
         .manage(App {
             workspace,
-            open: Mutex::new(open),
+            open: Mutex::new(None),
             node: Mutex::new(None),
             relay: Mutex::new(None),
             reorg: Mutex::new(None),
@@ -1943,6 +2009,11 @@ fn main() {
             archive_channel,
             delete_channel,
             move_channel,
+            account_state,
+            resume,
+            create_account,
+            unlock,
+            lock,
             open_channel,
             send_message,
             create_channel,

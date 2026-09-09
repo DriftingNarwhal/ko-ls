@@ -1333,11 +1333,45 @@ body {
 
 /* ---- the picker ---------------------------------------------------------- */
 
-.picker {
+.picker,
+.lock {
   display: grid;
   place-items: center;
   height: 100vh;
   padding: var(--gap);
+}
+
+.lock-inner {
+  max-width: 420px;
+  width: 100%;
+}
+
+.lock-inner form {
+  display: grid;
+  gap: calc(var(--gap) / 2);
+}
+
+.lock-inner label {
+  font-size: 0.85em;
+  opacity: 0.75;
+}
+
+/* Said before the password is chosen rather than after it is lost. Weighted so
+   it is read, because there is no reset behind it and nobody to ask. */
+.lock-warning {
+  border-left: 3px solid var(--warn);
+  padding-left: calc(var(--gap) / 2);
+  font-size: 0.9em;
+}
+
+.lock-note {
+  font-size: 0.9em;
+  opacity: 0.75;
+}
+
+.lock-error {
+  color: var(--bad);
+  font-size: 0.9em;
 }
 
 .picker-inner {

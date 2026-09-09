@@ -12,6 +12,58 @@
     <!-- Shown until a network is open. Not a modal over the app: with no network
          there is nothing behind it, and dimming an empty room to ask which room
          you want is theatre. -->
+    <!-- Shown before anything else, and before any network is opened. `design/02`
+         §6.3: a node runs only once somebody has logged in, because starting one
+         first would need the seeds unwrappable without the password — at which
+         point the password protects nothing at rest. Two forms in one screen,
+         because a first run and a login are different questions. -->
+    <section class="lock" id="lock" data-kols="lock" hidden>
+      <div class="lock-inner">
+        <h1>ko-ls</h1>
+
+        <form id="first-run" data-kols="first-run" hidden>
+          <h2>protect this installation</h2>
+          <p class="lock-note" id="first-run-note"></p>
+          <label for="first-run-name">a name for this account</label>
+          <input id="first-run-name" data-kols="first-run-name" autocomplete="username"
+                 placeholder="local to this machine" required />
+          <label for="first-run-password">a password</label>
+          <input id="first-run-password" data-kols="first-run-password" type="password"
+                 autocomplete="new-password" required />
+          <label for="first-run-again">and again</label>
+          <input id="first-run-again" data-kols="first-run-again" type="password"
+                 autocomplete="new-password" required />
+          <!-- Said before it is asked for rather than after it is lost. There is
+               no reset and nobody to ask: this password is the only thing that
+               opens the seeds, and the seeds are the member. -->
+          <p class="lock-warning" data-kols="no-recovery">
+            There is no way to reset this. Nothing here is stored anywhere but on
+            this machine, and no one can recover it for you — losing this password
+            loses every identity on this disk.
+          </p>
+          <button type="submit" data-kols="first-run-go">protect it</button>
+          <p class="lock-error" id="first-run-error" data-kols="first-run-error" hidden></p>
+        </form>
+
+        <form id="login" data-kols="login" hidden>
+          <h2 id="login-greeting"></h2>
+          <label for="login-password">password</label>
+          <input id="login-password" data-kols="login-password" type="password"
+                 autocomplete="current-password" required />
+          <button type="submit" data-kols="login-go">unlock</button>
+          <p class="lock-error" id="login-error" data-kols="login-error" hidden></p>
+          <!-- What a lock does and does not do, on the screen that does it. The
+               node kept running while this was up, and saying so is the honest
+               reading of a member who is still answering for their network. -->
+          <p class="lock-note" data-kols="lock-note">
+            Locking hides this window and does not stop your node — it keeps
+            serving what it holds and keeps answering for you. Quitting is how you
+            stop it.
+          </p>
+        </form>
+      </div>
+    </section>
+
     <section class="picker" id="picker" data-kols="picker" hidden>
       <div class="picker-inner">
         <h1>ko-ls</h1>
@@ -321,6 +373,23 @@
             <p class="dim">
               Anything nothing else needs to know — local to this installation,
               across every network on it.
+            </p>
+
+            <!-- Here rather than beside a network's settings, because the account
+                 is one for the whole installation: `design/00` D33 defers
+                 per-network credentials rather than rejecting them. -->
+            <h4 id="account-who" data-kols="account-who"></h4>
+            <p class="dim">
+              Every identity on this disk is wrapped under this password. It is
+              local to this machine and no network ever sees it.
+            </p>
+            <button type="button" id="lock-now" data-kols="lock-now">lock this window</button>
+            <p class="dim">
+              <strong>Locking does not stop your node.</strong> It keeps serving
+              what it holds, keeps its relay reservation and keeps answering for
+              you — because <em>nobody at my keyboard can act as me</em> and
+              <em>I want to disappear from the network</em> are different requests,
+              and locking makes only the first. Quitting makes the second.
             </p>
 
             <form id="ceiling-form" class="settings-form">

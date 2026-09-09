@@ -60,6 +60,13 @@ let people = [
 
 const calls = [];
 const answers = {
+  // Unlocked by default, so the checks below are about the app rather than about
+  // the gate in front of it. The gate has its own section at the end.
+  account_state: () => ({ exists: true, unlocked: true, username: "corey", unprotected: 0 }),
+  resume: () => true,
+  create_account: () => 0,
+  unlock: () => 0,
+  lock: () => null,
   me: () => me,
   sidebar: () => channels.map((channel) => ({ kind: "channel", channel })),
   open_channel: ({ channel }) => ({
@@ -797,6 +804,89 @@ await settled();
 const fresh9 = [...el("messages").querySelectorAll(".message.fresh")].length;
 say("but a message that arrived during the reach is still marked",
     fresh9 === 1, `${fresh9} marked`);
+
+// ── the gate in front of everything ────────────────────────────────────
+//
+// `design/02` §6.3: a node runs only once somebody has logged in, because
+// starting one first would need the seeds unwrappable without the password — at
+// which point the password protects nothing at rest.
+
+console.log("\n── the lock ──");
+
+const shown = () =>
+  ["lock", "picker", "settings"].filter((id) => !el(id).hidden).concat(
+    window.document.querySelector(".app").hidden ? [] : ["app"],
+  );
+
+// A first run: no account. The account is forced rather than offered, so there
+// is no way past this screen that does not make one.
+answers.account_state = () => ({ exists: false, unlocked: false, username: null, unprotected: 2 });
+await window.eval("gate()");
+await settled();
+say("with no account, the first run is what shows", JSON.stringify(shown()) === '["lock"]', JSON.stringify(shown()));
+say("and it is the first-run form, not a login",
+    !el("first-run").hidden && el("login").hidden);
+// Said before the password is chosen rather than after it is lost.
+const warned = el("lock").querySelector('[data-kols="no-recovery"]');
+say("it says there is no reset before asking for one",
+    warned !== null && warned.textContent.includes("no one can recover it"),
+    warned ? warned.textContent.trim().slice(0, 40) : "(absent)");
+// And it says what it is about to protect, rather than asking for nothing given.
+say("and names what is currently unprotected",
+    el("first-run-note").textContent.includes("2 networks"),
+    el("first-run-note").textContent.slice(0, 50));
+
+// A password typed twice and not matching must not reach the shell: there is no
+// reset behind it, so a mistype here is every identity on the disk.
+calls.length = 0;
+el("first-run-name").value = "corey";
+el("first-run-password").value = "one";
+el("first-run-again").value = "another";
+el("first-run").dispatchEvent(new window.Event("submit", { bubbles: true, cancelable: true }));
+await settled();
+say("two passwords that differ never reach the shell",
+    !calls.includes("create_account") && !el("first-run-error").hidden,
+    el("first-run-error").textContent);
+
+// An existing account: a login, greeting whoever it belongs to. A username is
+// not a secret, and a login that cannot say whose it is makes a shared machine
+// guesswork.
+answers.account_state = () => ({ exists: true, unlocked: false, username: "corey", unprotected: 0 });
+await window.eval("gate()");
+await settled();
+say("with an account, it is a login", !el("login").hidden && el("first-run").hidden);
+say("and it greets whoever it belongs to",
+    el("login-greeting").textContent.includes("corey"), el("login-greeting").textContent);
+
+// A wrong password reports and stays put rather than falling through.
+answers.unlock = () => {
+  throw new Error("that password does not unlock this installation");
+};
+el("login-password").value = "wrong";
+el("login").dispatchEvent(new window.Event("submit", { bubbles: true, cancelable: true }));
+await settled();
+say("a wrong password says so and stays on the lock screen",
+    !el("login-error").hidden && JSON.stringify(shown()) === '["lock"]',
+    el("login-error").textContent);
+
+// And the right one gets in.
+answers.unlock = () => 0;
+answers.account_state = () => ({ exists: true, unlocked: true, username: "corey", unprotected: 0 });
+el("login-password").value = "right";
+el("login").dispatchEvent(new window.Event("submit", { bubbles: true, cancelable: true }));
+await settled();
+say("the right one opens the window", JSON.stringify(shown()) === '["app"]', JSON.stringify(shown()));
+say("and the password is not left in the field", el("login-password").value === "");
+
+// Locking hides the window and deliberately does not stop the node.
+calls.length = 0;
+answers.account_state = () => ({ exists: true, unlocked: false, username: "corey", unprotected: 0 });
+await window.eval("lockNow()");
+await settled();
+say("locking returns to the lock screen", JSON.stringify(shown()) === '["lock"]', JSON.stringify(shown()));
+say("and it locks rather than stopping the node",
+    calls.includes("lock") && !calls.includes("stop_node"),
+    JSON.stringify(calls));
 
 console.log(problems.length ? "\nPROBLEMS:\n" + problems.join("\n") : "\nno uncaught errors");
 process.exit(0);
