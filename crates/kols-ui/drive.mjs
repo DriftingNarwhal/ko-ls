@@ -329,7 +329,7 @@ messages = [
     edited: false, withdrawn: false, redacted: false, pinned: false, reactions: [], mine: false },
   messages[1],
 ];
-await listeners["kols://records"]({ payload: ["c1", true] });
+await listeners["kols://records"]({ payload: [null, "c1", true] });
 await settled();
 say("a message landing mid-timeline is marked", JSON.stringify(rows()) === "[false,true,false]", JSON.stringify(rows()));
 await window.eval("refresh()");
@@ -337,12 +337,46 @@ await settled();
 say("the mark survives a redraw", JSON.stringify(rows()) === "[false,true,false]", JSON.stringify(rows()));
 
 // A redraw under a reader who has not moved must keep it; arriving again clears it.
-await listeners["kols://records"]({ payload: ["c1", true] });
+await listeners["kols://records"]({ payload: [null, "c1", true] });
 await settled();
 say("another arrival keeps the earlier mark", JSON.stringify(rows()) === "[false,true,false]", JSON.stringify(rows()));
 el("channel-list").querySelector("button").dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
 await settled();
 say("clicking the channel clears them", rows().every((f) => !f), JSON.stringify(rows()));
+
+// ── an event from a network this window is not showing ─────────────────
+//
+// Several nodes run at once now (`design/09` §2), so events arrive from
+// networks nobody has open. One of those must not redraw or mark the network on
+// screen — a message in a conversation would otherwise count against a server's
+// unread and reopen its channel.
+//
+// `state` is not reachable from here (app.js runs under an indirect eval, so its
+// `const` bindings are not global) so this drives the real path: `openNetwork`
+// is what records which network is being shown.
+answers.open_network = () => null;
+await window.eval("openNetwork('aa11bb22')");
+await settled();
+
+// Observed through the redraw the handler performs, not through the rows it
+// leaves behind: an unguarded foreign event re-opens the current channel, and
+// comparing rendered rows would miss that because it redraws the same content.
+// A first attempt did exactly that and survived deleting the guard.
+const drewFor = [];
+const drawChannel = answers.open_channel;
+answers.open_channel = (args) => { drewFor.push(args?.channel ?? null); return drawChannel(args); };
+
+await listeners["kols://records"]({ payload: ["ffffffff", "c2", true] });
+await settled();
+say("an event from another network reaches nothing here",
+    drewFor.length === 0,
+    JSON.stringify(drewFor));
+
+// And the guard is not simply off for everything.
+await listeners["kols://records"]({ payload: ["aa11bb22", "c1", true] });
+await settled();
+say("and one from the network in view still arrives", drewFor.length > 0, JSON.stringify(drewFor));
+answers.open_channel = drawChannel;
 
 // ── what a mark is not for ─────────────────────────────────────────────
 messages = [
@@ -352,7 +386,7 @@ messages = [
   { id: "m5", author: "sam", author_id: "id-sam-0002", at: "10:03", at_millis: 4000, body: "theirs",
     edited: false, withdrawn: false, redacted: false, pinned: false, reactions: [], mine: false },
 ];
-await listeners["kols://records"]({ payload: ["c1", true] });
+await listeners["kols://records"]({ payload: [null, "c1", true] });
 await settled();
 say("your own message is never marked", JSON.stringify(rows()) === "[false,false,false,false,true]",
     JSON.stringify(rows()));
@@ -364,7 +398,7 @@ await settled();
 say("hovering a marked message clears it", rows().every((f) => !f), JSON.stringify(rows()));
 
 // ── being told from outside the window ─────────────────────────────────
-await listeners["kols://records"]({ payload: ["c2", true] });
+await listeners["kols://records"]({ payload: [null, "c2", true] });
 await settled();
 say("unread reaches the title", titles.at(-1) === "ko-ls (1)", titles.at(-1));
 
@@ -461,7 +495,7 @@ say("an unreachable node never claims to relay", saved.at(-1).relayWilling === f
 answers.open_channel = ({ channel }) => ({
   channel, messages, authors: 2, refused: [], more_history: true,
 });
-await listeners["kols://records"]({ payload: ["c1", true] });
+await listeners["kols://records"]({ payload: [null, "c1", true] });
 await settled();
 const notice = el("messages").querySelector('[data-kols="more-history"]');
 say("a bounded channel says so at the top",

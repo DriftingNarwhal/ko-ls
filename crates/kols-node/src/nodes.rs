@@ -313,12 +313,26 @@ impl Nodes {
         }
     }
 
-    /// Stops everything.
-    pub fn stop_all(&mut self) {
+    /// Stops everything, handing back the tasks so a caller can await them.
+    ///
+    /// **Aborting is a request, not a stop**, and the difference is the whole
+    /// reason this returns anything: a claim is released when the serving future
+    /// is *dropped*, and `abort` only asks the task to stop at its next await
+    /// point. A caller that returned here immediately would leave every store
+    /// claimed and every relay reservation held, which is exactly the state
+    /// stopping was supposed to avoid — and the next launch would sit waiting
+    /// out the staleness window on each of them.
+    #[must_use = "the tasks must be awaited, or the claims they hold are not released"]
+    pub fn stop_all(&mut self) -> Vec<tokio::task::JoinHandle<()>> {
         let networks: Vec<NetworkId> = self.running.keys().copied().collect();
+        let mut stopping = Vec::new();
         for network in networks {
-            self.stop(&network);
+            if let Some(run) = self.running.remove(&network) {
+                run.handle.abort();
+                stopping.push(run.handle);
+            }
         }
+        stopping
     }
 
     fn start(
@@ -376,7 +390,12 @@ impl Nodes {
 
 impl Drop for Nodes {
     fn drop(&mut self) {
-        self.stop_all();
+        // Nothing to await here — a `Drop` cannot — so this is the backstop
+        // rather than the shutdown path. A caller that wants the claims released
+        // promptly awaits [`Nodes::stop_all`] before dropping; one that does not
+        // falls back on the six-second expiry, which is what that expiry is for
+        // (`05` §1.1).
+        let _ = self.stop_all();
     }
 }
 

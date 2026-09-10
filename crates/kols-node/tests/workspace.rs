@@ -1776,7 +1776,9 @@ fn a_supervisor_runs_every_joined_network_at_once() {
             assert_eq!(nodes.tier(&b_id), Tier::Hot);
             assert_eq!(nodes.running().len(), 3, "still all three");
 
-            nodes.stop_all();
+            for task in nodes.stop_all() {
+                let _ = task.await;
+            }
             assert!(nodes.running().is_empty());
         });
 }
@@ -1831,7 +1833,9 @@ fn a_network_the_member_set_aside_is_polled_rather_than_abandoned() {
             nodes.reconcile(&specs, None, &sink, kols_node::serve::SEAL_TARGET_BYTES, due);
             assert_eq!(nodes.running().len(), 1, "woken again when the poll comes round");
 
-            nodes.stop_all();
+            for task in nodes.stop_all() {
+                let _ = task.await;
+            }
         });
 }
 
@@ -1872,7 +1876,9 @@ fn reconciling_twice_changes_nothing_and_a_tier_change_is_not_a_restart() {
             assert_eq!(nodes.tier(&b_id), Tier::Hot);
             assert_eq!(nodes.tier(&a_id), Tier::Warm);
             assert_eq!(nodes.running().len(), 2, "both still up; only the labels moved");
-            nodes.stop_all();
+            for task in nodes.stop_all() {
+                let _ = task.await;
+            }
         });
 }
 

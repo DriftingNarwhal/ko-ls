@@ -31,6 +31,10 @@ const state = {
   dragging: null,
   mayManage: false,
   current: null,
+  // The network being shown, as hex. Every node event now says which network it
+  // came from — several run at once (`design/09` §2) — and one that arrived from
+  // a network this window is not showing must not redraw the one it is.
+  network: null,
   me: null,
   // The designated set as last drawn, and when a restart was last taken. Both
   // exist to keep the automatic restart below from firing twice for one change.
@@ -211,9 +215,27 @@ async function drawPicker() {
   }
 }
 
+/// Whether a node event belongs to the network this window is showing.
+///
+/// Several nodes run at once (`design/09` §2), so an event carries the network
+/// it came from. One from anywhere else must not redraw what is on screen: a
+/// record arriving in a conversation nobody has open would otherwise reopen the
+/// server's channel and count against its unread.
+///
+/// **Unknown is treated as ours**, deliberately and in one direction only. Before
+/// several nodes ran, events carried no network at all; a payload this build does
+/// not recognise is more likely an older shell than a foreign network, and the
+/// failure it causes is a redundant redraw rather than a missed message.
+function mine(payload) {
+  const from = typeof payload === "string" ? payload : payload?.[0];
+  if (!from || !state.network) return true;
+  return state.network.startsWith(from) || from.startsWith(state.network);
+}
+
 async function openNetwork(id) {
   try {
     await invoke("open_network", { network: id });
+    state.network = id;
     state.current = null;
     await start();
   } catch (err) {
@@ -3285,7 +3307,10 @@ async function watch() {
   // reader posted, at which point the composer's own re-read revealed it. The
   // records were in the store the whole time.
   await listen("kols://records", async (event) => {
-    const [channel, messages] = event.payload;
+    // `[network, channel, messages]` now — the network first, because every
+    // event carries one and the consumer has to check it before anything else.
+    const [network, channel, messages] = event.payload;
+    if (!mine(network)) return;
     // Unread is driven by arrival rather than by scanning, which is what makes
     // it free: the node reports what it learned, and a channel nobody is
     // looking at gains a count. It survives the app being closed for the same
@@ -3302,7 +3327,8 @@ async function watch() {
 
   // Channels, permissions and names all come out of replay, so anything that
   // moved the log may have made the sidebar and the header stale.
-  await listen("kols://governance", async () => {
+  await listen("kols://governance", async (event) => {
+    if (!mine(event.payload)) return;
     drawMe(await invoke("me"));
     drawSidebar(await invoke("sidebar"));
     // Relays are policy, so an entry that moved the log may have changed them —
@@ -3321,11 +3347,13 @@ async function watch() {
   // listened, so a founder watching the door saw nobody at it while the joiner
   // waited to be let in. The same shape as the relay panel missing its report,
   // and the reason the doorway now polls as well.
-  await listen("kols://joins", async () => {
+  await listen("kols://joins", async (event) => {
+    if (!mine(event.payload)) return;
     drawMe(await invoke("me"));
   });
 
-  await listen("kols://keys", async () => {
+  await listen("kols://keys", async (event) => {
+    if (!mine(event.payload)) return;
     drawMe(await invoke("me"));
   });
 
@@ -3333,20 +3361,23 @@ async function watch() {
   // member stops being here because nothing came, which is not an event. So the
   // roster also redraws on the poll below, and this only makes somebody
   // appearing feel immediate rather than up to a poll late.
-  await listen("kols://presence", async () => {
+  await listen("kols://presence", async (event) => {
+    if (!mine(event.payload)) return;
     await drawPeople();
   });
 
   // The node's standing with the relay, reported once at startup — and
   // reported on success, which is the half a window never used to get.
-  await listen("kols://relay", async () => {
+  await listen("kols://relay", async (event) => {
+    if (!mine(event.payload)) return;
     // The payload is not read: the node holds this answer and `relays` returns
     // it, so the event's only job is to say "ask again now" rather than to be
     // the answer itself. That is what makes a missed one harmless.
     await drawRelays();
   });
 
-  await listen("kols://reorg", async () => {
+  await listen("kols://reorg", async (event) => {
+    if (!mine(event.payload)) return;
     await drawReorg();
   });
 

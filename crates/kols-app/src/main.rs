@@ -108,12 +108,21 @@ struct App {
     /// the projection. Replayed state is the *winning* branch, so a consumer
     /// that missed the event has nowhere else to learn that something lost.
     reorg: Mutex<Option<dto::Reorg>>,
-    /// The node running for the open network.
+    /// Every network's node — `design/09` §2, `kols_node::nodes`.
     ///
-    /// Dropping the handle aborts it, which is the whole shutdown protocol:
-    /// there is no signal to forget to send, and switching networks drops the
-    /// task for the one being left.
-    node: Mutex<Option<tauri::async_runtime::JoinHandle<()>>>,
+    /// One handle used to live here, for "the node running for the open
+    /// network", and switching networks dropped the task for the one being
+    /// left. That is right for a client that shows one network and wrong for one
+    /// that *belongs* to several: a member in a dozen networks received in one
+    /// of them, and a conversation — a network neither party is usually looking
+    /// at — could neither be reached nor deliver.
+    ///
+    /// Dropping this stops everything, which is still the whole shutdown
+    /// protocol; there is simply more than one thing to stop.
+    nodes: Mutex<kols_node::nodes::Nodes>,
+    /// The network the member is looking at, which is the only thing that makes
+    /// a node hot rather than warm.
+    in_view: Mutex<Option<intranet_identity::NetworkId>>,
 }
 
 impl App {
@@ -445,8 +454,12 @@ fn resume(handle: tauri::AppHandle, app: tauri::State<'_, App>) -> Result<bool, 
         _ => return Ok(false),
     };
     let executor = Executor::open(only.clone()).map_err(|err| err.to_string())?;
+    let id = *executor.store().network();
     *app.open.lock().map_err(|_| "the workspace lock is poisoned")? = Some(executor);
-    start_node(&handle, app, only);
+    if let Ok(mut view) = app.in_view.lock() {
+        *view = Some(id);
+    }
+    reconcile_nodes(&handle, &app);
     Ok(true)
 }
 
@@ -1031,11 +1044,11 @@ fn set_relays(
         .iter()
         .map(|relay| kols_node::parse_relay(relay))
         .collect::<Result<Vec<_>, _>>()?;
-    let root = app.with(|executor| {
+    let designated = app.with(|executor| {
         executor
             .submit(Command::SetBootstrapRelays { relays })
             .map_err(|err| err.to_string())?;
-        Ok(executor.store().root().to_path_buf())
+        Ok(*executor.store().network())
     })?;
 
     // Restarted here rather than asked for. A relay is dialled when a node
@@ -1047,7 +1060,12 @@ fn set_relays(
     // The cost, stated: this drops whatever connections the node had. On the
     // path that matters it had none, because designating the first relay is
     // what a network does before it can reach anybody.
-    start_node(&handle, app, root);
+    //
+    // **A restart rather than a reconcile.** Reconciling is idempotent and would
+    // leave a running node exactly as it is, which is right everywhere else and
+    // wrong here: the point is to make it read a relay set it only consults at
+    // startup. Stopping it first is what turns the next reconcile into a start.
+    restart_one(&handle, &app, designated);
     Ok(())
 }
 
@@ -1081,9 +1099,26 @@ fn new_relay_identity() -> Result<String, String> {
 /// since before it existed. Same problem, one machine removed.
 #[tauri::command]
 fn restart_node(handle: tauri::AppHandle, app: tauri::State<'_, App>) -> Result<(), String> {
-    let root = app.with(|executor| Ok(executor.store().root().to_path_buf()))?;
-    start_node(&handle, app, root);
+    let network = app.with(|executor| Ok(*executor.store().network()))?;
+    restart_one(&handle, &app, network);
     Ok(())
+}
+
+/// Stops one network's node so the reconcile that follows starts it again.
+///
+/// The only thing that needs a restart rather than a reconcile: a node reads its
+/// relay set once, at startup, so a designation made while it runs changes policy
+/// and reaches nothing until it comes back. Everywhere else, reconciling is both
+/// sufficient and cheaper — a running node stays running.
+fn restart_one(
+    handle: &tauri::AppHandle,
+    app: &tauri::State<'_, App>,
+    network: intranet_identity::NetworkId,
+) {
+    if let Ok(mut nodes) = app.nodes.lock() {
+        nodes.stop(&network);
+    }
+    reconcile_nodes(handle, app);
 }
 
 /// The channels replay currently knows about.
@@ -1702,8 +1737,13 @@ fn create_network(
         keyed: false,
         open: true,
     };
+    let id = *executor.store().network();
     *app.open.lock().map_err(|_| "the workspace lock is poisoned")? = Some(executor);
-    start_node(&handle, app, path);
+    if let Ok(mut view) = app.in_view.lock() {
+        *view = Some(id);
+    }
+    let _ = path;
+    reconcile_nodes(&handle, &app);
     Ok(known)
 }
 
@@ -1731,13 +1771,18 @@ async fn join_network(
     // else, and showing them that — rather than nothing — is the difference
     // between "you are waiting" and "something went wrong".
     let executor = Executor::open(path.clone()).map_err(|err| err.to_string())?;
+    let joined = *executor.store().network();
     {
         let app = handle.state::<App>();
         *app.open
             .lock()
             .map_err(|_| "the workspace lock is poisoned")? = Some(executor);
+        if let Ok(mut view) = app.in_view.lock() {
+            *view = Some(joined);
+        }
     }
-    start_node(&handle, handle.state::<App>(), path);
+    let _ = path;
+    reconcile_nodes(&handle, &handle.state::<App>());
 
     Ok(match landed {
         kols_node::join::Landed::Admitted => dto::Joined {
@@ -1856,34 +1901,58 @@ fn open_network(
 ) -> Result<(), String> {
     let store = app.workspace.open(&network)?;
     let root = store.root().to_path_buf();
+    let id = *store.network();
     drop(store);
-    let executor = Executor::open(root.clone()).map_err(|err| err.to_string())?;
+    let executor = Executor::open(root).map_err(|err| err.to_string())?;
     *app.open.lock().map_err(|_| "the workspace lock is poisoned")? = Some(executor);
-    start_node(&handle, app, root);
+    if let Ok(mut view) = app.in_view.lock() {
+        *view = Some(id);
+    }
+    // **Reconciled rather than restarted.** Opening a network used to stop the
+    // node for the one being left; now it raises one to hot and lowers the other
+    // to warm, and neither is torn down — a tier change between two running
+    // tiers is a label, and dropping a node's connections to change one would
+    // cost its member every message that arrived during the reconnect.
+    reconcile_nodes(&handle, &app);
     Ok(())
 }
 
-/// Runs a node for one network, forwarding what it learns to the interface.
+/// Brings the running nodes in line with what the member has joined.
 ///
-/// Replaces whatever was running, because the window shows one network at a
-/// time and the node for the one being left has nothing to do. `design/09` §2's
-/// hot/warm/cold tiering is what turns this into several at once, and is not
-/// this.
-fn start_node(handle: &tauri::AppHandle, app: tauri::State<'_, App>, root: std::path::PathBuf) {
-    let mut node = match app.node.lock() {
-        Ok(node) => node,
-        Err(_) => return,
+/// `design/09` §2's policy, applied: the network in view is hot, everything else
+/// joined is warm, and only a network the member set aside is cold — woken on
+/// the poll rather than abandoned. Idempotent, so this is safe to call from
+/// anywhere that might have changed the answer and from a tick that does not
+/// know whether anything did.
+///
+/// This replaced a function that ran exactly one node and stopped it when the
+/// member looked elsewhere. Everything below is the same forwarding it always
+/// did, with one addition that is not cosmetic: **an event says which network it
+/// came from**. It did not need to while a single node reported.
+fn reconcile_nodes(handle: &tauri::AppHandle, app: &tauri::State<'_, App>) {
+    let Ok(mut nodes) = app.nodes.lock() else {
+        return;
     };
-    // A new node has not reported yet, and the standing of the one being
-    // replaced says nothing about it. Cleared here rather than when the new one
-    // reports, so the gap reads as "asking" instead of as a stale answer.
-    if let Ok(mut relay) = app.relay.lock() {
-        *relay = None;
-    }
-    let previous = node.take();
+    let in_view = app.in_view.lock().ok().and_then(|view| *view);
+
+    let specs: Vec<kols_node::nodes::Spec> = app
+        .workspace
+        .list()
+        .into_iter()
+        .filter_map(|known| {
+            let store = kols_node::store::Store::open(known.path.clone()).ok()?;
+            Some(kols_node::nodes::Spec {
+                network: *store.network(),
+                root: known.path,
+                set_aside: store.is_set_aside(),
+            })
+        })
+        .collect();
 
     let emitter = handle.clone();
-    let sink: kols_node::serve::Sink = std::sync::Arc::new(move |events: &[kols_api::Event]| {
+    let sink: kols_node::nodes::TaggedSink = std::sync::Arc::new(
+        move |network: &intranet_identity::NetworkId, events: &[kols_api::Event]| {
+        let from = network.short();
         for event in events {
             // Named for what happened rather than carrying the payload: the
             // interface re-reads the channel, because `design/05` §3's third
@@ -1906,9 +1975,12 @@ fn start_node(handle: &tauri::AppHandle, app: tauri::State<'_, App>, root: std::
                     // their store, so the absorb that follows reports nothing,
                     // and anything they write live goes to the channel they are
                     // looking at. Nothing here can mark your own post unread.
+                    // The network first, because a consumer has to know whether
+                    // this event is even about the network it is showing before
+                    // it looks at anything else in the payload.
                     let _ = emitter.emit(
                         "kols://records",
-                        (to_hex(channel.as_bytes()), messages),
+                        (from.clone(), to_hex(channel.as_bytes()), messages),
                     );
                     continue;
                 }
@@ -1966,60 +2038,35 @@ fn start_node(handle: &tauri::AppHandle, app: tauri::State<'_, App>, root: std::
                             failures: failures.clone(),
                         });
                     }
-                    let _ = emitter.emit("kols://relay", ());
+                    let _ = emitter.emit("kols://relay", from.clone());
                     continue;
                 }
             };
-            let _ = emitter.emit(name, ());
+            // **Every event now says where it came from.** `Event` carries no
+            // network id — it never needed one while a single node reported —
+            // and a consumer that could not tell a record in a conversation from
+            // one in a server would render each into the other. Tagged here
+            // rather than in the type, so `design/05` §3's vocabulary is
+            // unchanged for anything that still watches one network.
+            let _ = emitter.emit(name, from.clone());
         }
     });
 
-    let failed = handle.clone();
-    *node = Some(tauri::async_runtime::spawn(async move {
-        // Stopping the previous node is *awaited*, not merely requested, and
-        // that distinction is the whole reason this is here rather than above.
-        //
-        // Only one process may run a node per store, and the claim is released
-        // when the serving future is dropped. `abort()` does not drop it — it
-        // asks the task to stop at its next await point. Spawning the
-        // replacement immediately therefore races the claim of the node being
-        // replaced, and `hold_node` does not fail fast on a claim that looks
-        // fresh: it waits the staleness window out, so the window would appear
-        // to hang for half a minute and then work.
-        //
-        // Awaited in the new task rather than at the call site so nothing blocks
-        // the thread the interface is on.
-        if let Some(previous) = previous {
-            previous.abort();
-            let _ = previous.await;
-        }
+    // The relay standing belongs to whichever network is in view, and a node
+    // that has not reported yet says nothing about it. Cleared on reconcile
+    // rather than when a new one reports, so the gap reads as *asking* instead
+    // of as a stale answer about a different network.
+    if let Ok(mut relay) = app.relay.lock() {
+        *relay = None;
+    }
 
-        let outcome = kols_node::serve::serve(
-            root,
-            // Dual-stack: TCP and QUIC over IPv4 and IPv6. See `serve`.
-            "",
-            &[],
-            kols_node::serve::SEAL_TARGET_BYTES,
-            true,
-            kols_node::serve::LIVE_WINDOW_MILLIS,
-            &kols_node::serve::Output {
-                events: &sink,
-                // Nowhere, and deliberately. A GUI-subsystem binary has no
-                // console, so a `println!` here would not be ignored — Rust
-                // panics on the write error — and the window would crash on the
-                // node's first line of output. What this window actually needs
-                // from those lines reaches it as events instead.
-                report: &kols_node::quiet(),
-            },
-        )
-        .await;
-        if let Err(why) = outcome {
-            // The one that matters here is another process already serving this
-            // network, which is a thing to say rather than a window that quietly
-            // never syncs.
-            let _ = failed.emit("kols://degraded", why);
-        }
-    }));
+    nodes.reconcile(
+        &specs,
+        in_view.as_ref(),
+        &sink,
+        kols_node::serve::SEAL_TARGET_BYTES,
+        std::time::Instant::now(),
+    );
 }
 
 fn main() {
@@ -2034,11 +2081,12 @@ fn main() {
     // So the window asks `account_state` first and drives what follows: a first
     // run, a login, or — once unlocked — `resume`, which is where the single
     // network that used to be opened here is opened instead.
-    tauri::Builder::default()
+    let app = tauri::Builder::default()
         .manage(App {
             workspace,
             open: Mutex::new(None),
-            node: Mutex::new(None),
+            nodes: Mutex::new(kols_node::nodes::Nodes::new()),
+            in_view: Mutex::new(None),
             relay: Mutex::new(None),
             reorg: Mutex::new(None),
         })
@@ -2104,13 +2152,47 @@ fn main() {
             forget_network
         ])
         .build(tauri::generate_context!())
-        .expect("the window opens")
-        .run(|handle, event| {
-            if let tauri::RunEvent::ExitRequested { .. } = event {
-                stop_node(handle);
+        .expect("the window opens");
+
+    // **A tick, because a poll is a schedule and a schedule needs something to
+    // ask it.** `reconcile` is idempotent and decides everything from the state
+    // it is handed, so calling it on a timer costs nothing while nothing has
+    // changed — and it is the only thing that will ever wake a network the
+    // member set aside (`design/09` §2's poll interval). Without this, cold
+    // would be the "no node, ever" this was just corrected away from.
+    //
+    // A minute, against a ten-minute poll: fine enough that a wake is not late
+    // by a noticeable fraction of its interval, coarse enough to be free.
+    {
+        let handle = app.handle().clone();
+        tauri::async_runtime::spawn(async move {
+            let mut tick = tokio::time::interval(SUPERVISOR_TICK);
+            // The first tick fires immediately and would race the login that has
+            // not happened yet, which is deliberate elsewhere and wrong here.
+            tick.tick().await;
+            loop {
+                tick.tick().await;
+                // Nothing runs before somebody has logged in (`02` §6.3), and
+                // `list` is empty until the workspace is unlocked, so this is a
+                // no-op until then rather than a thing to guard.
+                reconcile_nodes(&handle, &handle.state::<App>());
             }
         });
+    }
+
+    app.run(|handle, event| {
+        if let tauri::RunEvent::ExitRequested { .. } = event {
+            stop_node(handle);
+        }
+    });
 }
+
+/// How often the supervisor re-decides which nodes should be running.
+///
+/// Idempotent, so this is cheap while nothing has changed — and it is the only
+/// thing that wakes a network the member set aside, whose poll would otherwise
+/// never come round.
+const SUPERVISOR_TICK: std::time::Duration = std::time::Duration::from_secs(60);
 
 /// How long to wait for the node to stop before leaving without it.
 ///
@@ -2149,19 +2231,33 @@ const ANNOUNCE_GRACE: std::time::Duration = std::time::Duration::from_millis(500
 /// dropped nothing, and returning immediately would leave exactly the state this
 /// exists to avoid.
 fn stop_node(handle: &tauri::AppHandle) {
-    let Some(node) = handle
-        .state::<App>()
-        .node
-        .lock()
-        .ok()
-        .and_then(|mut node| node.take())
-    else {
-        return;
+    // **Every node, not one.** The reasoning above is unchanged and now applies
+    // several times over: a member closing the window may be holding a dozen
+    // claims and a dozen relay reservations, and leaving each to expire is a
+    // dozen networks that cannot be reopened for six seconds and a dozen slots
+    // held on other people's machines.
+    let app = handle.state::<App>();
+    let stopping = {
+        let Ok(mut nodes) = app.nodes.lock() else {
+            return;
+        };
+        nodes.stop_all()
     };
-    node.abort();
-    // Bounded, and the failure mode of the bound being hit is what the six-second
-    // expiry already covers.
+    if stopping.is_empty() {
+        return;
+    }
+    // **Awaited, not merely requested**, for the reason above: abort asks a task
+    // to stop and the claim goes when the future is dropped. Bounded, and the
+    // failure mode of the bound being hit is what the six-second expiry covers.
+    //
+    // One grace for the whole set rather than one apiece — closing a window must
+    // not take a dozen timeouts — so they are awaited together.
     let _ = tauri::async_runtime::block_on(async {
-        tokio::time::timeout(SHUTDOWN_GRACE, node).await
+        tokio::time::timeout(SHUTDOWN_GRACE, async {
+            for task in stopping {
+                let _ = task.await;
+            }
+        })
+        .await
     });
 }
