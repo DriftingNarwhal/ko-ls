@@ -97,9 +97,24 @@ sequencing.
 | **Next decision needed** | Nothing blocking. Both branches merged to `main` and `v0.12.0` was cut on 2026-09-09, which were the two open acts. What comes next is P2's first item below, and it is work rather than a decision |
 
 **What P2 starts with, in dependency order** — `design/06` §17 owns the sequencing and §13 owns
-why the middle item is not optional: **E10** (`/chat/dm-invite/1.0.0`, small) → **E13**
+why the next item is not optional: ~~**E10**~~ **landed 2026-09-10** → **E13**
 (cross-network bootstrap, medium, and the disclosure gate is the hard half) → O1's direct-message
-commands → **E7** (channel-scoped MLS, large) → O1's `Search`. E7 is where `design/03` §3.5's
+commands → **E7** (channel-scoped MLS, large) → O1's `Search`.
+
+**E10 landed as a carrier rather than as a chat protocol** — Core §5.1's
+`/intranet/direct/1.0.0`, taking a namespace, a kind and an opaque payload, with chat's
+`dm-invite` as its first tenant. Third time a chat-shaped request became a platform-shaped one
+after E2 and E9, and `design/06` §10 now records that as a pattern to expect. The carrier owes
+the signature, the connection binding and the per-identity metering; `kols-core::DmInvite` owes
+the identity-link check, which is the half no platform can hold — a proof with two genuine
+signatures over a true statement about **somebody else** verifies perfectly, so the pair it
+names has to be compared against the pair expected. Building it also found that
+`CommonOwnershipProof` had no serialized form: Core §1.2 called it *shared voluntarily* while
+providing no way to share it, the same gap §5.6 records for invites.
+
+**So E13 is now the only thing between the platform and direct messages**, and what remains on
+this side is the flow rather than the mechanism — O1's commands to create a conversation, deliver
+a request and accept one. E7 is where `design/03` §3.5's
 obligation comes due: placement must rank over a private channel's **roster** rather than over the
 capability ledger, or its effective replica set becomes *roster ∩ top-k* and can be empty. That is
 written down as a requirement of the work rather than left to be found during it, which is the
@@ -232,7 +247,7 @@ as a fix nobody had got round to.
 
 | Crate | State |
 |---|---|
-| `kols-core` | Encoding, author logs, merge, collision recovery, chat policy, channel structure, `sidebar_order`, reader-side limits, and `Scope` — the one construction of a capability's name, used by the writer and the resolver alike. 140 tests |
+| `kols-core` | Encoding, author logs, merge, collision recovery, chat policy, channel structure, `sidebar_order`, reader-side limits, and `Scope` — the one construction of a capability's name, used by the writer and the resolver alike, and the direct-message request payload with the identity-link check no platform can make for it. 150 tests |
 | `kols-net` | Publish and fetch over a running node. Two live two-node tests |
 | `kols-api` | The whole boundary — all three of `design/05` §3's properties held. 25 commands, 10 events, 50 tests, and the consent drift test is guarded at both ends: a new command stops the suite compiling until it is sampled, which is how `LeaveNetwork` was caught unsampled the moment it existed |
 | `kols-node` | `kols`, its node daemon, the executor, the store and the workspace — the window's entire backend, and the largest crate here at 175 tests. Sixteen of them run over a live wire between separate processes (`two_nodes`, `three_nodes`, `relay`); the rest cover the workspace, the store, roles and grants, invites, names, records and the paged read |
@@ -243,8 +258,10 @@ as a fix nobody had got round to.
 
 **Protocol extensions.** [`design/06`](design/06-protocol-extensions.md) §0 carries the table
 and is the one place their state is kept. In summary: E1 and E3 withdrawn as unnecessary;
-**E2, E4, E5, E9, E11, E12, E14, E15 and E16 landed**; E7, E10 and E13 are P2, E6 is P3 and E8
-is P4. E15 landed on 2026-09-09 beside the credentials work it describes, as it was sequenced
+**E2, E4, E5, E9, E10, E11, E12, E14, E15 and E16 landed**; E7 and E13 are P2, E6 is P3 and E8
+is P4. E10 landed on 2026-09-10 as a generic carrier rather than the chat-named protocol it was
+asked as, which is the third time that has happened and is now recorded in `design/06` §10 as a
+pattern to expect. **E13 is the only extension left before direct messages work.** E15 landed on 2026-09-09 beside the credentials work it describes, as it was sequenced
 to — and took one amendment its proposal had not asked for: the harness spec tested the derived
 *mechanism* rather than the properties Core §1.2 requires, so the conformance suite would have
 failed a client the amended §1.1 calls conformant.

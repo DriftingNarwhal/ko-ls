@@ -1,6 +1,6 @@
 # Required Protocol Extensions
 
-**Document status:** v2.5 — **E15 landed** as Core v1.2: §1.1–§1.3 admit independent per-network seeds beside the derived model, and §1.2 states unlinkability, reproducibility and voluntary common ownership as requirements on the *result* rather than as consequences of the derivation. It took one amendment §15 had not asked for — the harness spec tested the mechanism rather than the properties, so the conformance suite would have failed a conformant client, which is a specification permitting two models and a test permitting one. Previously v2.4 — §12 records that E12's first client half is built: a conversation-profile network can be created and its node is constructed without discovery, the accessor that landed upstream beside it, and the obligation this puts on E10 — a joiner cannot know the profile before it syncs, so the DM flow must supply it. Previously v2.3 — **E16 landed**, as Core §2.5.1, and it came with a second rule the proposal had not seen: an entry needing no capability must carry no fork-choice weight, so a departure is excluded from branch length alongside device certificates. §16 also corrects the capability it named: the entry is gated on `manage-membership`, not `revoke-node`, which is what the epoch rotation needs. What the client owes is unchanged and is O22. Previously v2.2 — **E16 added**: there is no way to leave a network, because every membership change is gated on `revoke-node` and the one member who knows they are leaving is the one who cannot say so; §16 also settles the rejoin question the client was carrying as open, which turns out to be answered already for `forget` and settled since for the leave that would have kept the seed — the client is deliberately not growing one, and §16 says why the protocol should permit it anyway. Previously v2.1 — §13 records that D29 turned E13 from a friction item into the mechanism, and §12 records that `Discovery::Off` is a privacy requirement rather than a saving; both were being carried in a status file. Previously v2.0 — **E14 landed**, as leaf replacement rather than the re-delivery this document asked for;  E1 and E3 withdrawn, **E9, E2, E5, E4, E11 and E12 landed**; E12 narrowed to its protocol half on landing, E13 added from `09`, E14 added from a bug, **E15 added from a divergence this document should have been carrying already**. §2's branch-length and profile-enforcement claims corrected to what landed
+**Document status:** v2.6 — **E10 landed, in generalised form.** §10 asked for `/chat/dm-invite/1.0.0` and got Core §5.1's `/intranet/direct/1.0.0`, a carrier taking a namespace, a kind and an opaque payload — the third chat-shaped request to become a platform-shaped mechanism after E2 and E9, which is now recorded as a pattern to expect rather than a surprise to re-derive. Three of the four acceptance criteria are the carrier's; the identity-link check is `kols-core`'s, because only it knows what the payload is. Two findings came with it: the forgery that matters is a valid proof about the *wrong pair*, not a broken signature, and `CommonOwnershipProof` had no serialized form at all — Core §1.2 called it "shared voluntarily" while providing no way to share it, which is the gap §5.6 already records for invites. **Only E13 is left before direct messages work.** Previously v2.5 — **E15 landed** as Core v1.2: §1.1–§1.3 admit independent per-network seeds beside the derived model, and §1.2 states unlinkability, reproducibility and voluntary common ownership as requirements on the *result* rather than as consequences of the derivation. It took one amendment §15 had not asked for — the harness spec tested the mechanism rather than the properties, so the conformance suite would have failed a conformant client, which is a specification permitting two models and a test permitting one. Previously v2.4 — §12 records that E12's first client half is built: a conversation-profile network can be created and its node is constructed without discovery, the accessor that landed upstream beside it, and the obligation this puts on E10 — a joiner cannot know the profile before it syncs, so the DM flow must supply it. Previously v2.3 — **E16 landed**, as Core §2.5.1, and it came with a second rule the proposal had not seen: an entry needing no capability must carry no fork-choice weight, so a departure is excluded from branch length alongside device certificates. §16 also corrects the capability it named: the entry is gated on `manage-membership`, not `revoke-node`, which is what the epoch rotation needs. What the client owes is unchanged and is O22. Previously v2.2 — **E16 added**: there is no way to leave a network, because every membership change is gated on `revoke-node` and the one member who knows they are leaving is the one who cannot say so; §16 also settles the rejoin question the client was carrying as open, which turns out to be answered already for `forget` and settled since for the leave that would have kept the seed — the client is deliberately not growing one, and §16 says why the protocol should permit it anyway. Previously v2.1 — §13 records that D29 turned E13 from a friction item into the mechanism, and §12 records that `Discovery::Off` is a privacy requirement rather than a saving; both were being carried in a status file. Previously v2.0 — **E14 landed**, as leaf replacement rather than the re-delivery this document asked for;  E1 and E3 withdrawn, **E9, E2, E5, E4, E11 and E12 landed**; E12 narrowed to its protocol half on landing, E13 added from `09`, E14 added from a bug, **E15 added from a divergence this document should have been carrying already**. §2's branch-length and profile-enforcement claims corrected to what landed
 **Depends on:** all preceding documents
 **Consumed by:** work in `distributed-intranet`
 
@@ -35,7 +35,7 @@ Two rules govern this list:
 | E7 | Channel-scoped MLS groups | P2 | Large |
 | E8 | Track metadata in sealed media payloads | P4 | Small |
 | ~~E9~~ | App-layer policy map in `NetworkPolicy` — **landed**, Core §2.6.2 | — | Done |
-| E10 | Direct member-to-member delivery for DM invitations | P2 | Small |
+| ~~E10~~ | Direct delivery for DM invitations — **landed, in generalised form**, Core §5.1. Asked as `/chat/dm-invite/1.0.0`; landed as `/intranet/direct/1.0.0` carrying a namespace and an opaque payload | — | Done |
 | ~~E11~~ | Namespace registration for extension capabilities — **landed**, Core §2.2.1 | — | Done |
 | ~~E12~~ | Optional peer discovery — **landed**, Core §5.1.1. Asked as tiered liveness; only the behaviour set was the protocol's, and the tiering stayed in the client | — | Done |
 | E13 | Cross-network connection bootstrap, for direct messages — **load-bearing since D29, not merely convenient**: without it a conversation across NAT needs its own relay, so there are no DMs at all (§13) | P2 | Medium |
@@ -425,7 +425,7 @@ already covers the delegable case that actually comes up.*
 
 ---
 
-## 10. E10 — Direct Delivery for DM Invitations
+## 10. E10 — Direct Delivery for DM Invitations ✅ **landed, in generalised form**
 
 A direct message conversation is its own network (`03` §4), which leaves exactly one
 thing to solve: getting the invitation to somebody you can currently only reach inside a
@@ -455,6 +455,59 @@ so this cannot become a spam channel.
 
 *Flagged: blocking is a client-side list, since there is no shared state to record it in
 and no reason to want one. A blocked sender's requests are refused before display.*
+
+### What landed, and why it is not what this section asked for
+
+**This section asked for a protocol named after this application, and that was the wrong
+shape for the same reason E2's four entry variants were.** A protocol name lives in
+`MemberBehaviour`, which is `intranet-transport`'s and which a consuming client cannot
+extend — so `/chat/dm-invite/1.0.0` would have put chat's vocabulary in the platform's
+transport stack, and Core §0 rules that out in as many words.
+
+So it landed as **Core §5.1's `/intranet/direct/1.0.0`**, carrying a namespace, a kind and
+an opaque payload, with chat's `dm-invite` as its first tenant. **That is the third time**
+— E2 asked for four chat entries and got one application entry, E9 asked for `chat:`-named
+policy fields and got a map the protocol does not interpret, and now this. The pattern is
+worth stating rather than rediscovering: when this design asks the platform for a
+mechanism, the platform gives it a door rather than a room, and a fourth request should
+expect the same. A test sends `ledger` / `settle-up` over the carrier so that generality is
+demonstrated rather than claimed.
+
+**Three of the four acceptance criteria are now the carrier's**, and it holds them for any
+consumer: the payload is signed over sender, namespace, kind and content together; the
+claimed sender is checked against the connection it arrived on; and delivery is metered per
+sending identity. The middle one is worth naming because a signature cannot do it — a
+signature proves authorship and *travels*, so anybody who has ever received one can replay
+it, and without the connection check a peer presents another member's request as its own.
+
+### Two things the platform could not do, and one gap this work found
+
+**The identity-link check is `kols-core`'s**, because it is the only layer that knows what
+this payload is. `DmInvite::verify_from` requires the proof to link the sender's identity in
+the shared network to the *invite's issuer in the invite's network* — both halves, because
+either alone is useless: without the first anybody forwards Alice's request as their own,
+and without the second Alice proves who she is while handing over an invite to a network
+somebody else runs.
+
+**The forgery that matters is not a broken signature.** A proof carrying two genuine
+signatures over a true statement about *somebody else* verifies perfectly and says nothing
+about the sender — Core §1.2 now states this, and it is what the pair comparison exists
+for. Probed by removing that comparison: four tests fail, and they are exactly the four
+written for it.
+
+**And the proof could not be sent at all**, which is the gap this work turned up.
+`CommonOwnershipProof` had no serialized form — Core §1.2 called it "only created and shared
+voluntarily" while providing no way to share it, so it could be built and verified inside one
+process and never reach the person it was about. **The same gap Core §5.6 records for
+invites**, whose bytes once existed only inside the join request that presents them, found
+the same way: by something finally trying to send one. Core §1.2 now requires the encoding,
+requires decoding to verify both signatures, and requires a recipient to check which pair is
+named.
+
+**What is still owed is the flow rather than the mechanism**, and it is not this item: the
+commands that create a conversation, deliver a request and accept one are O1's, and they wait
+on E13 for connectivity across NAT. E10 is what makes them possible; §13 is what makes them
+work.
 
 ---
 

@@ -9,6 +9,7 @@ license.workspace = true
 [dependencies]
 intranet-crypto.workspace = true
 intranet-identity.workspace = true
+intranet-invite.workspace = true
 intranet-governance.workspace = true
 intranet-storage.workspace = true
 

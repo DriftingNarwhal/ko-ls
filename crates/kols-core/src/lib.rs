@@ -21,6 +21,7 @@
 pub mod capabilities;
 mod channel;
 mod cursor;
+mod dm;
 mod hlc;
 mod log;
 mod permissions;
@@ -41,6 +42,7 @@ pub use channel::{
     SidebarChannel, SidebarRow, admit, sidebar_order,
 };
 pub use cursor::{Cursor, Window};
+pub use dm::{DM_KIND, DM_NAMESPACE, DmInvite};
 pub use hlc::Hlc;
 pub use live::{LivePayload, channel_content_key};
 pub use presence::{
@@ -123,6 +125,14 @@ pub enum CoreError {
         /// The reading offered.
         offered: crate::Hlc,
     },
+    /// A direct-message request's proof did not link the pair it should.
+    ///
+    /// Distinct from [`Self::BadSignature`], and the distinction is the point: the
+    /// signatures verified, so somebody really made this statement — it is simply
+    /// about a different pair than the request claims. Core §1.2 names that as the
+    /// forgery worth guarding against, since a broken signature is caught by
+    /// decoding and this is not.
+    UnlinkedInvite,
     /// The storage layer refused the publish.
     Storage(intranet_storage::StorageError),
     /// A field exceeded the bound that applies to it.
@@ -158,6 +168,10 @@ impl std::fmt::Display for CoreError {
             Self::SubjectMismatch { kind } => {
                 write!(f, "a {kind} entry names the wrong kind of subject")
             }
+            Self::UnlinkedInvite => write!(
+                f,
+                "the request's proof is valid but links a different pair than it claims"
+            ),
             Self::NonMonotonicClock { previous, offered } => write!(
                 f,
                 "clock did not advance: previous {previous:?}, offered {offered:?}"

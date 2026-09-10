@@ -3064,6 +3064,7 @@ dependencies = [
  "intranet-crypto",
  "intranet-governance",
  "intranet-identity",
+ "intranet-invite",
  "intranet-storage",
  "unicode-normalization",
  "unicode-segmentation",
