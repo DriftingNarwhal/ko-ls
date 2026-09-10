@@ -24,6 +24,53 @@ Kept because this project keeps re-learning the same lessons and paying for them
 
 ---
 
+- **2026-09-10** — **A joiner test started failing deterministically, and it is not from tonight.**
+
+  `a_joiner_is_admitted_keyed_and_reads_what_was_written_before_they_arrived`: the joiner dials
+  the founder, the founder writes and picks up the membership entry, and the joiner never leaves
+  *not a member of this network yet*. Never keyed, wait expires at 45 s.
+
+  **Attributed by removing things.** It fails at `main`, at the commit before the supervisor, at
+  the commit before E10's client half, and at the exact `v0.12.0` state of both repositories.
+  That last step is the one worth keeping: the protocol is a **path dependency**, so checking out
+  an old client commit still builds it against *today's* protocol — moving only one repo back
+  proves nothing, and I nearly stopped after doing exactly that.
+
+  **And it passed on this machine an hour earlier at identical code**, which rules out a plain
+  code fault and points at machine state. Orphans, ports, `/tmp` scratch and disk were all checked
+  and clean; the fd limit is a million and the load average is under one.
+
+  **It is isolated.** Eleven of twelve in that file pass, including
+  `a_joiner_walks_back_through_sealed_segments_to_read_the_start` — also a joiner — and
+  `a_founder_can_still_key_somebody_in_after_restarting`, which is the keying path. So neither
+  joining nor keying is broken in general.
+
+  Left open rather than chased at this hour, but **filed as urgent rather than as a flake**,
+  because it is the admit-and-key path a two-machine test walks first. O20's signature is a test
+  that fails under contention and passes alone; this one fails alone, five times running, which
+  is a different animal and should not be filed with it.
+
+- **2026-09-10** — **`v0.13.1` tested on one machine, and what that does and does not settle.**
+
+  Confirmed by hand on Windows, portable build: the window starts, asks for the password, unlocks,
+  lists the networks, **opens one without crashing** — which is what `v0.13.0` could not do —
+  sends messages, and switches between networks.
+
+  **What it settles** is the whole of the crash and most of the shell rewiring: opening a network
+  no longer takes the process down, and switching between two no longer stops the one being left,
+  which was the single-node behaviour this work existed to remove.
+
+  **What it does not settle is the thing the release is about.** One machine cannot show whether
+  several nodes contend for one runtime under load, whether a message reaches a network nobody is
+  looking at, or whether claims are actually released when the window closes — that last one only
+  appears as a *later* launch waiting out staleness. All three need a second client.
+
+  Worth writing down as a distinction rather than a caveat, because the same shape has now cost
+  this project twice in two days: a green suite and a window that opens are both real evidence for
+  a narrower claim than the one they get read as. The release before this shipped on exactly that
+  mistake — a smoke test that proved the window *opened* was reported as though it proved the
+  window *worked*, and the crash was one click past where the check stopped.
+
 - **2026-09-10** — **`v0.13.0` crashed on selecting a network, and the suite could not have caught it.**
 
   The window opened, unlocked, listed the networks, and died the moment one was chosen. The

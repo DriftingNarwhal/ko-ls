@@ -1,11 +1,10 @@
 # ko-ls — Status
 
 **Updated:** 2026-09-10
-**Phase:** P1 — two nodes talk live and durably, a joiner reads back through sealed history,
-the boundary carries commands in and events out, and the seeds behind all of it are no longer
-on disk in the clear. **The owed register has nothing actionable left in it**, which was the
-condition the two working branches were held for; both merged on 2026-09-09 and `v0.12.0` was
-cut from `main`. What remains is P2, and §1 says where it starts.
+**Phase:** P2 has started. P1's register was cleared, both working branches merged on 2026-09-09,
+and the client now **runs a node per network** rather than one for whichever is in view — which is
+what direct messages were actually waiting on, and what `v0.13.1` carries. What remains before
+they work is the flow itself, and §1 says where it starts.
 
 **This file is a map, and holds nothing that lives anywhere else.** It says where the work
 stands and which document owns each part of it. Anything long-lived — how a mechanism works,
@@ -94,12 +93,26 @@ sequencing.
 |---|---|
 | **Milestone** | A client that can be handed to somebody else, so two people **on entirely separate networks** can talk, using a bootstrap relay and no VPS. The first test is two of the user's own laptops, one on a mobile hotspot |
 | **Blocked on** | Nothing |
-| **Next decision needed** | Nothing blocking. Both branches merged to `main` and `v0.12.0` was cut on 2026-09-09, which were the two open acts. What comes next is P2's first item below, and it is work rather than a decision |
+| **Next decision needed** | Nothing blocking, but **O26 comes before the two-machine test rather than after it**: a joiner being admitted and keyed fails deterministically in the suite, which is the path that test walks. It predates this work — bisected to the `v0.12.0` state of both repos — and it is isolated, so it may well be the harness rather than the client. Finding out which is cheaper than losing a two-machine session to it |
 
-**What P2 starts with, in dependency order** — `design/06` §17 owns the sequencing and §13 owns
-why the next item is not optional: ~~**E10**~~ **landed 2026-09-10** → **E13**
-(cross-network bootstrap, medium, and the disclosure gate is the hard half) → O1's direct-message
-commands → **E7** (channel-scoped MLS, large) → O1's `Search`.
+**What P2 starts with** — and the order changed on 2026-09-10, because the thing blocking direct
+messages turned out not to be on the list at all.
+
+~~**E10**~~ **landed** → ~~multi-node hosting~~ **landed** → **O1's direct-message commands**
+(next) → **E13**, much reduced → **E7** (channel-scoped MLS, large) → O1's `Search`.
+
+**The blocker was that the client could only run one node**, and nothing had written that down as
+blocking anything: `design/05` §4 described a node per network as the architecture while `09` §2
+called the liveness tiers unwritten policy, and no document joined those two facts to direct
+messages. It bit a step earlier than messaging, too — minting a conversation's invite needs an
+address, and only a running node knows one (`02` §6.1).
+
+**E13 is smaller than it was.** `design/06` §13 asks for a hand-rolled simultaneous open with the
+shared network's connection as the signalling channel, and libp2p's `dcutr` cannot be driven that
+way. It is not needed: a pair who can dial each other directly need no punch, and a pair who
+cannot may **borrow** the shared network's relay under D39 and let ordinary tier 2 do the work.
+What is left of E13 is the address exchange over E10's carrier and the disclosure gate — a
+member's addresses for network X go only to a member of X, verified by replay.
 
 **E10 landed as a carrier rather than as a chat protocol** — Core §5.1's
 `/intranet/direct/1.0.0`, taking a namespace, a kind and an opaque payload, with chat's
@@ -147,6 +160,8 @@ Where that milestone stands:
 | Knowing who is around | **done** — presence, `design/01` §9's ephemeral gossip: a signed beat every thirty seconds under the network's epoch key, and a roster carrying two marks that may never stand in for each other — a ring for *this node has a connection to them*, a word for *what they said*. **No word is silence rather than "offline"**, because a stale beat, a member who chose to be invisible and one never heard from are three different things and nothing here tells them apart. Invisible publishes nothing at all, not the word "invisible" |
 | An interface that survives being used | **done** — the first field test's list, worked through: first-sight marks on messages that land mid-timeline, the roster as a counted dropdown at the top right, the door as a sheet behind a counted button, and settings as a screen rather than a sheet over a dimmed channel (`design/09` §4.1–§4.3) |
 | A stolen laptop that is not an identity | **done** — the release gate `design/00` §5 has carried since before there was code. An account password derives an Argon2id key that *wraps* each per-network seed and never derives one, because a derived identity is checkable offline against ids the network publishes. There is no unwrapped path, including for tests. The window gates on login and starts no node until somebody has logged in, which is the half that decides what the password protects; locking hides the window and leaves the node answering. The export is **portability rather than recovery** — the seed is the member and lives on one disk (`design/02` §6.3) |
+| Belonging to more than one network at a time | **done, and it never had.** The shell ran a single node — for whichever network was in view — and stopped it the moment the member looked elsewhere, so somebody in a dozen networks received in one of them and the other eleven **served nothing**, quietly dropping replica duty they had taken. `design/05` §4 had described a node per network since before there was code; nothing recorded that the shell did not do it. Everything joined is warm unless the member sets it aside, and a set-aside network is *polled* rather than switched off (`design/09` §2) |
+| Knowing which network an event came from | **done** — `Event` says what happened and not where, which was unambiguous while one node reported and is not now. The supervisor tags each batch with the network whose node produced it, and the interface ignores what is not about the network it is showing. Without it a message in a conversation would count against a server's unread and reopen its channel |
 | Scrolling back without reading the whole channel | **done** — and bounded rather than merely fast, which is the stronger claim. A settled page costs one file read per record drawn and **no directory listings at all**: 52 reads for a page of fifty, identical at five hundred records and at eight thousand. The guarantee is a count of work asserted equal across a fifteen-fold growth, not a duration that looked flat — `design/09` §4.4 forbids the two-second tick growing at all, which is the storage ceiling's argument about the other resource |
 
 **Runnable.** `kols-desktop` is the product (`design/00` D30); `kols` is a development tool
@@ -174,10 +189,10 @@ over the same `kols-api` boundary, owed no feature parity and no end-user docume
   contribute, presence, storage, history, and channel
   create/list/rename/topic/slowmode/archive.
 
-**Gates green, re-run 2026-09-09 rather than carried forward:** 389 passed and 0 failed here
-(4 ignored, all measurements), 681 passed and 0 failed in `../distributed-intranet`, clippy
-clean in both, and `crates/kols-ui/drive.mjs`'s 121 checks green by hand with no uncaught
-errors. The daemon suites were clean on this run, full width. O20 reproduced once
+**Gates green, re-run 2026-09-10:** 417 passed and 0 failed here (4 ignored, all measurements),
+703 passed and 0 failed in `../distributed-intranet`, clippy clean in both, and
+`crates/kols-ui/drive.mjs`'s 123 checks green by hand with no uncaught errors. The daemon suites
+were clean on this run, full width. O20 reproduced once
 across four full-width runs on 2026-08-31 and 2026-09-01, which makes it **intermittent rather
 than deterministic** — `CONTRIBUTING.md` said it failed on every full-workspace run, and that
 was a run of bad luck rather than a property. The one failure arrived directly after a
@@ -186,7 +201,17 @@ comparison is worth running even when you are sure, is in `CONTRIBUTING.md`.
 
 **`v0.13.1` is the release the rows above describe**, cut 2026-09-10, and it exists because
 `v0.13.0` crashed on selecting a network — `tokio::spawn` panics outside a runtime, and a Tauri
-command is a synchronous caller with none entered. `docs/log.md` has why no test saw it.
+command is a synchronous caller with none entered. `docs/log.md` has why no test saw it, and why
+the smoke test before that tag could not have: it checked that the window *opened*, which is a
+different claim from the window *working*.
+
+**What `v0.13.1` has actually been exercised for, stated at the strength it holds.** On one
+machine: it starts, unlocks, opens a network, sends messages, and switches between networks
+without stopping the one being left. **Not tested: anything between two clients.** That is the
+gap worth naming rather than leaving implied — the change this release is *about* is running
+several nodes at once, and the failure modes that matters for are contention, delivery to a
+network nobody is looking at, and claims released on close, none of which one machine can show.
+`docs/two-machine-test.md` is the procedure.
 
 **`v0.13.0`**, cut 2026-09-10. What it adds is a change in
 how the client *runs* rather than a feature beside the others: **a node per network**. Until it,
@@ -232,6 +257,7 @@ not, the dependency is named in the owning document.
 | # | Owed | Specified in |
 |---|---|---|
 | O1 | Commands for direct messages, search, voice and stage — each has a line in `design/05` §3's boundary *grammar* and nothing in `kols-api`. **Not work that can start**: the DM commands wait on E10 and E13, `Search` on `03` §6's two indexes, and the voice and stage set on `kols-media`, which does not exist because nothing has written code for it yet. This is P2's surface rather than a debt before it | `design/05` §3, `design/00` §5 |
+| O26 | **`a_joiner_is_admitted_keyed_and_reads_what_was_written_before_they_arrived` fails deterministically, and it is not from this work.** The joiner dials the founder, the founder writes and picks up the membership entry, and the joiner never leaves *not a member of this network yet* — so it is never keyed and the 45-second wait expires. **Attributed by removing things, not by reading**: it fails at `main`, at the commit before the supervisor, at the commit before E10's client half, and at the exact `v0.12.0` state of *both* repositories — the protocol being a path dependency means an old client commit still builds against today's protocol, so both had to be moved back. It also **passed on this machine an hour earlier at identical code**, which makes it state-dependent rather than a plain code fault. It is isolated: 11 of 12 in that file pass, including `a_joiner_walks_back_through_sealed_segments_to_read_the_start` and `a_founder_can_still_key_somebody_in_after_restarting`, which exercise joining and keying respectively. **Worth treating as urgent despite that**, because it is the admit-and-key path the two-machine test depends on | `tests/two_nodes.rs`, `CONTRIBUTING.md` |
 | O20 | **The daemon suite run starved is unreliable**, and `CONTRIBUTING.md` asks for exactly that run. One or two of eleven time out in `wait_for` under `taskset -c 0,1`; each passes alone. Measured at `main` on 2026-08-29, so it is the suite rather than any change — but it makes the starved run a signal to isolate rather than a gate, which is weaker than what it was added for | `CONTRIBUTING.md`, `tests/common::patience` |
 
 O2, O3, O4, O5, O6, O7, O8, O9, O10, O12, O13, O14, O15, O17, O18, O21, O22, O23 and O24 are
@@ -270,8 +296,8 @@ as a fix nobody had got round to.
 | `kols-core` | Encoding, author logs, merge, collision recovery, chat policy, channel structure, `sidebar_order`, reader-side limits, and `Scope` — the one construction of a capability's name, used by the writer and the resolver alike, and the direct-message request payload with the identity-link check no platform can make for it. 150 tests |
 | `kols-net` | Publish and fetch over a running node. Two live two-node tests |
 | `kols-api` | The whole boundary — all three of `design/05` §3's properties held. 25 commands, 10 events, 50 tests, and the consent drift test is guarded at both ends: a new command stops the suite compiling until it is sampled, which is how `LeaveNetwork` was caught unsampled the moment it existed |
-| `kols-node` | `kols`, its node daemon, the executor, the store and the workspace — the window's entire backend, and the largest crate here at 175 tests. Sixteen of them run over a live wire between separate processes (`two_nodes`, `three_nodes`, `relay`); the rest cover the workspace, the store, roles and grants, invites, names, records and the paged read |
-| `kols-app` | The Tauri shell, holding a workspace and an executor for whichever network is open. Builds `kols-desktop`. 8 tests, one of which resolves the webview's ACL against the real configuration — the boundary whose failure produces no output |
+| `kols-node` | `kols`, its node daemon, the executor, the store and the workspace — the window's entire backend, and the largest crate here at 193 tests. Sixteen of them run over a live wire between separate processes (`two_nodes`, `three_nodes`, `relay`); the rest cover the workspace, the store, roles and grants, invites, names, records and the paged read |
+| `kols-app` | The Tauri shell, holding a workspace, an executor for whichever network is open, and **the supervisor running a node for every network** (`design/09` §2). Builds `kols-desktop`. 8 tests, one of which resolves the webview's ACL against the real configuration — the boundary whose failure produces no output |
 | `kols-ui` | The interface: HTML, CSS and one script, holding no keys, no sockets and no files |
 | `kols-store` | The read-side projection, **built and switched on**: the schema, the range and target queries, the stored rate verdict and its fingerprint. 14 tests — six compare its verdicts against `kols_core::withheld` itself rather than a second implementation of the fold, and eight walk a channel whose records share a reading, which is the boundary a bare clock reading cannot cut. This row said 19 until 2026-09-09, while its own breakdown summed to 14 |
 | `kols-media` | Not created. A crate is made when there is code for it — an empty one is a claim that something exists |
@@ -281,7 +307,13 @@ and is the one place their state is kept. In summary: E1 and E3 withdrawn as unn
 **E2, E4, E5, E9, E10, E11, E12, E14, E15 and E16 landed**; E7 and E13 are P2, E6 is P3 and E8
 is P4. E10 landed on 2026-09-10 as a generic carrier rather than the chat-named protocol it was
 asked as, which is the third time that has happened and is now recorded in `design/06` §10 as a
-pattern to expect. **E13 is the only extension left before direct messages work.** E15 landed on 2026-09-09 beside the credentials work it describes, as it was sequenced
+pattern to expect.
+
+**E13 is no longer what stands between here and direct messages, and is smaller than it was.**
+What stood there was the client running one node, which is built. And §13's hand-rolled
+simultaneous open is not needed: a pair who can dial each other directly need no punch, and a
+pair who cannot may borrow the shared network's relay (D39) and let ordinary tier 2 do it. What
+remains of E13 is address exchange over E10's carrier plus the disclosure gate. E15 landed on 2026-09-09 beside the credentials work it describes, as it was sequenced
 to — and took one amendment its proposal had not asked for: the harness spec tested the derived
 *mechanism* rather than the properties Core §1.2 requires, so the conformance suite would have
 failed a client the amended §1.1 calls conformant.
@@ -293,7 +325,7 @@ produced, which the whole segment model rests on, are in `design/08` §4.
 
 ## 4. Log
 
-Moved to [`docs/log.md`](docs/log.md) — 138 entries, newest first.
+Moved to [`docs/log.md`](docs/log.md) — 140 entries, newest first.
 
 What happened *lately* is §1. The log is why things are the way they are: the reasoning behind
 a change, the thing tried and abandoned, the bug that turned out to be a different bug. It
