@@ -1510,3 +1510,209 @@ fn a_node_for_a_conversation_is_built_without_discovery_and_says_so() {
         "a server needs discovery: {said:?}"
     );
 }
+
+use intranet_governance::{EntryBody, GroupId, LogEntry, MembershipAction};
+use kols_node::store::Store;
+
+// ── a conversation borrows its rendezvous and never keeps it ────────────
+//
+// The rule these pin is a decision rather than a mechanism: a conversation
+// between two people who cannot dial each other directly may use the **shared**
+// network's relay, and only while both are still members of it. Designating it
+// instead would write replayed state that outlives its reason, with nothing able
+// to un-designate it — no member of a conversation can know the other two left
+// some third network.
+
+/// Admits `who` to `store`'s `everyone`, signed by `founder`.
+fn admit_to(store: &Store, founder: &intranet_identity::PerNetworkIdentity, who: &intranet_identity::PerNetworkIdentityId) {
+    let log = store.log().expect("log");
+    let parent = log.canonical_chain().last().copied();
+    store
+        .append_entry(&LogEntry::create(
+            founder,
+            parent,
+            intranet_crypto::Timestamp::from_millis(100),
+            EntryBody::MembershipChange {
+                group: GroupId::everyone(),
+                identity: *who,
+                action: MembershipAction::Add { via_invite: None },
+            },
+        ))
+        .expect("admits");
+}
+
+/// Removes `who` from `store`'s `everyone`, signed by `founder`.
+fn remove_from(store: &Store, founder: &intranet_identity::PerNetworkIdentity, who: &intranet_identity::PerNetworkIdentityId) {
+    let log = store.log().expect("log");
+    let parent = log.canonical_chain().last().copied();
+    store
+        .append_entry(&LogEntry::create(
+            founder,
+            parent,
+            intranet_crypto::Timestamp::from_millis(200),
+            EntryBody::MembershipChange {
+                group: GroupId::everyone(),
+                identity: *who,
+                action: MembershipAction::Remove { cascade: None },
+            },
+        ))
+        .expect("removes");
+}
+
+/// A shared network with a relay, a peer admitted to it, and a conversation
+/// whose origin points back at that network and peer.
+fn conversation_with_origin(dir: &Dir) -> (Workspace, Store, Store, intranet_identity::PerNetworkIdentity, intranet_identity::PerNetworkIdentityId) {
+    let workspace = Workspace::at(dir.0.clone());
+    let shared = workspace
+        .create("the workshop", vec![format!("/dns4/relay.example/tcp/443/p2p/{RELAY}")])
+        .expect("creates");
+    let founder = shared.identity().expect("identity");
+    let peer = intranet_identity::MasterSeed::from_entropy([77u8; 32])
+        .identity_for(shared.network())
+        .expect("identity")
+        .id();
+    admit_to(&shared, &founder, &peer);
+
+    let conversation = workspace.create_conversation("alice").expect("creates");
+    conversation.set_origin(shared.network(), &peer).expect("records origin");
+    (workspace, shared, conversation, founder, peer)
+}
+
+#[test]
+fn a_conversation_borrows_the_shared_networks_relay_while_both_are_members() {
+    let dir = Dir::new("borrow-relay");
+    let (workspace, _shared, conversation, _founder, _peer) = conversation_with_origin(&dir);
+
+    let borrowed = workspace
+        .borrowable_relay(&conversation)
+        .expect("both are members, so there is somewhere to meet");
+    assert_eq!(borrowed.len(), 1);
+    assert!(borrowed[0].contains(RELAY), "the shared network's relay, not one of its own");
+}
+
+#[test]
+fn the_relay_stops_being_borrowable_when_the_peer_leaves_the_shared_network() {
+    // **The whole point of borrowing rather than designating.** A designated
+    // relay would still be in the conversation's policy here, and nothing in the
+    // conversation could know to remove it.
+    let dir = Dir::new("borrow-revoked");
+    let (workspace, shared, conversation, founder, peer) = conversation_with_origin(&dir);
+    assert!(workspace.borrowable_relay(&conversation).is_some(), "borrowable first");
+
+    remove_from(&shared, &founder, &peer);
+
+    assert!(
+        workspace.borrowable_relay(&conversation).is_none(),
+        "once the shared membership ends, the rendezvous is returned with it"
+    );
+}
+
+#[test]
+fn the_relay_stops_being_borrowable_when_this_member_is_revoked() {
+    // **Both sides, not just the peer.** Borrowing on one's own membership alone
+    // would let a departed member keep using their old network's infrastructure
+    // to reach somebody still in it.
+    //
+    // Constructing this needs somebody with the authority to remove *me*, so the
+    // peer is promoted to `Founders` first and does it.
+    //
+    // Two earlier attempts were wrong in the same way and are worth recording.
+    // Both removed me from `everyone` — and a network's creator is never in
+    // `everyone`: Core §2.3 puts them in `Founders` alone, and `everyone` is
+    // where *admitted* members land (§2.4). So the entry removed a non-member,
+    // governance refused the whole log, `state()` errored, and `borrowable_relay`
+    // returned `None` through the `?` without the membership check running at
+    // all. It survived the probe that deletes that check, which is how it was
+    // caught. The founder is removed from the group they are actually in.
+    let dir = Dir::new("borrow-mine");
+    let (workspace, shared, conversation, founder, peer) = conversation_with_origin(&dir);
+    let me = shared.identity().expect("identity").id();
+
+    // Promote the peer so there is somebody who may remove me.
+    let log = shared.log().expect("log");
+    let parent = log.canonical_chain().last().copied();
+    shared
+        .append_entry(&LogEntry::create(
+            &founder,
+            parent,
+            intranet_crypto::Timestamp::from_millis(150),
+            EntryBody::MembershipChange {
+                group: GroupId::founders(),
+                identity: peer,
+                action: MembershipAction::Add { via_invite: None },
+            },
+        ))
+        .expect("promotes");
+
+    let peer_identity = intranet_identity::MasterSeed::from_entropy([77u8; 32])
+        .identity_for(shared.network())
+        .expect("identity");
+    let log = shared.log().expect("log");
+    let parent = log.canonical_chain().last().copied();
+    shared
+        .append_entry(&LogEntry::create(
+            &peer_identity,
+            parent,
+            intranet_crypto::Timestamp::from_millis(200),
+            EntryBody::MembershipChange {
+                group: GroupId::founders(),
+                identity: me,
+                action: MembershipAction::Remove { cascade: None },
+            },
+        ))
+        .expect("revokes me");
+
+    // The log still replays — which is what makes this a test of the membership
+    // check rather than of a broken log.
+    let state = shared.state().expect("replays");
+    assert!(!state.is_member(&me), "the revocation took effect");
+    assert!(state.is_member(&peer), "and the peer is still there, so only my side changed");
+
+    assert!(
+        workspace.borrowable_relay(&conversation).is_none(),
+        "a member who left borrows nothing, even from a network still holding the other party"
+    );
+}
+
+#[test]
+fn a_conversation_with_no_origin_borrows_nothing() {
+    // Fail-closed: a conversation whose origin was never recorded reads exactly
+    // like one whose shared network is gone, and both borrow nothing.
+    let dir = Dir::new("borrow-no-origin");
+    let workspace = Workspace::at(dir.0.clone());
+    workspace
+        .create("the workshop", vec![format!("/dns4/relay.example/tcp/443/p2p/{RELAY}")])
+        .expect("creates");
+    let orphan = workspace.create_conversation("nobody").expect("creates");
+
+    assert!(workspace.borrowable_relay(&orphan).is_none());
+}
+
+#[test]
+fn nothing_about_borrowing_is_written_into_the_conversation() {
+    // The conversation's own designated relays stay empty throughout, which is
+    // what makes this borrowing rather than designating — there is no state to
+    // outlive the membership that justified it, and so nothing to un-designate.
+    let dir = Dir::new("borrow-unwritten");
+    let (workspace, _shared, conversation, _founder, _peer) = conversation_with_origin(&dir);
+
+    assert!(workspace.borrowable_relay(&conversation).is_some());
+    assert!(
+        conversation.relays().is_empty(),
+        "asking for a rendezvous must not record one"
+    );
+}
+
+#[test]
+fn an_origin_survives_being_written_and_read_back() {
+    let dir = Dir::new("origin-roundtrip");
+    let (_workspace, shared, conversation, _founder, peer) = conversation_with_origin(&dir);
+
+    let (network, who) = conversation.origin().expect("recorded");
+    assert_eq!(network, *shared.network());
+    assert_eq!(who, peer);
+
+    // And a server network has none, so the question is answerable for every
+    // store rather than only for conversations.
+    assert!(shared.origin().is_none());
+}

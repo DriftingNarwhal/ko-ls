@@ -168,6 +168,62 @@ impl Workspace {
         networks
     }
 
+    /// A relay a conversation may borrow right now, if one is available.
+    ///
+    /// # Borrowed, never designated, and that is the whole rule
+    ///
+    /// Two people in a conversation who cannot dial each other directly need
+    /// somewhere to meet, and a fresh two-person network has no infrastructure
+    /// of its own. The obvious move is to designate the shared network's relay
+    /// in the conversation's policy — and it is wrong, because designation is
+    /// **replayed state that outlives its reason**. Once written it stays after
+    /// the shared membership that justified it has ended, and there is nothing
+    /// to un-designate it: no member of the conversation can know that the other
+    /// two left some third network.
+    ///
+    /// So the relay is borrowed at the moment it is needed and never recorded.
+    /// The permission to borrow is not stored either — it is *recomputed*, which
+    /// is `design/00` §2's third principle applied to infrastructure: a standing
+    /// grant is a cached claim, and this asks the question again every time.
+    ///
+    /// # What it costs when the answer is no
+    ///
+    /// A conversation between two people who no longer share a network, and who
+    /// cannot reach each other directly, **stops working**. That is the intended
+    /// consequence rather than a shortfall, and it is the same shape as Core
+    /// §5.2's honest limit everywhere else: a pair that cannot punch reaches each
+    /// other over IPv6 or not at all. What a DM adds is that its rendezvous is
+    /// lent by a shared network, so it is returned when that network is.
+    ///
+    /// # Why both members, and not just this one
+    ///
+    /// A relay serves whoever dials it (Core §5.5 — it replays no log), so this
+    /// check is not enforced by the relay and cannot be. It is a rule this client
+    /// keeps on itself. Requiring *both* parties to still be members is what
+    /// makes it a shared network rather than a relay one party happens to know
+    /// about: borrowing on one's own membership alone would let a departed member
+    /// keep using their old network's infrastructure to reach somebody still in
+    /// it, which is precisely the standing dependency this avoids.
+    pub fn borrowable_relay(&self, conversation: &Store) -> Option<Vec<String>> {
+        let (shared, peer) = conversation.origin()?;
+        // The shared network has to still be on this disk, still be replayable,
+        // and still hold both of us.
+        let store = self
+            .list()
+            .into_iter()
+            .filter_map(|known| Store::open(known.path).ok())
+            .find(|store| *store.network() == shared)?;
+
+        let state = store.state().ok()?;
+        let mine = store.identity().ok()?.id();
+        if !state.is_member(&mine) || !state.is_member(&peer) {
+            return None;
+        }
+
+        let relays = store.relays();
+        if relays.is_empty() { None } else { Some(relays) }
+    }
+
     /// Which of `relays` another of this member's networks already designates.
     ///
     /// D29, and the concern is mechanical rather than stylistic: `kad` runs

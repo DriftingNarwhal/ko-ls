@@ -1576,6 +1576,51 @@ impl Store {
         fs::read_to_string(self.root.join("label")).ok()
     }
 
+    /// Records where a conversation was arranged, and with whom.
+    ///
+    /// # Why this is local state and not an entry in the conversation's log
+    ///
+    /// It is the one fact that ties a conversation network to the network it was
+    /// arranged in, which is precisely the correlation Core §1.2 keeps nobody
+    /// else able to make. `design/03` §4.6 already says where that knowledge is
+    /// allowed to live: inside the client that holds the workspace, and nowhere
+    /// a peer can read it. Writing it into the conversation's governance log
+    /// would put it somewhere replayed and permanent, so it stays here.
+    ///
+    /// # What it is for
+    ///
+    /// A conversation borrows its rendezvous rather than designating one. When
+    /// two participants cannot dial each other directly, the client may use the
+    /// **shared** network's relay — but only while both are still members of
+    /// that network, which is a question only this record makes askable. A
+    /// conversation that designated the relay instead would keep it after the
+    /// shared membership ended, which is the outcome that rule exists to
+    /// prevent, and there would be nothing to un-designate it.
+    ///
+    /// Stored as two lines: the shared network's id, then the peer's identity
+    /// **in that network** — not in the conversation, since the whole point is
+    /// to ask the shared network's governance a question about them.
+    pub fn set_origin(&self, shared: &NetworkId, peer: &PerNetworkIdentityId) -> Result<(), StoreError> {
+        let mut e = intranet_crypto::Enc::domain("kols.conversation-origin.v1");
+        shared.encode(&mut e);
+        peer.encode(&mut e);
+        write_atomically(&self.root, self.root.join("origin"), &e.finish())
+    }
+
+    /// Where this conversation was arranged, if it was.
+    ///
+    /// `None` for a `server` network, and for a conversation whose origin was
+    /// never recorded — which reads the same way and should: a conversation with
+    /// no known origin borrows no relay, which is the fail-closed direction.
+    pub fn origin(&self) -> Option<(NetworkId, PerNetworkIdentityId)> {
+        let bytes = fs::read(self.root.join("origin")).ok()?;
+        let mut d = intranet_crypto::Dec::domain(&bytes, "kols.conversation-origin.v1").ok()?;
+        let shared = NetworkId::from_bytes(d.fixed::<32>().ok()?);
+        let key = intranet_crypto::VerifyingKey::from_bytes(d.fixed::<32>().ok()?).ok()?;
+        d.finish().ok()?;
+        Some((shared, PerNetworkIdentityId::from_verifying_key(key)))
+    }
+
     /// Records what this machine contributes to this network — Core §4.3.
     ///
     /// One file rather than four, written whole. The four values are set
