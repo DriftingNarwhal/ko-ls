@@ -1,6 +1,6 @@
 # ko-ls — Status
 
-**Updated:** 2026-09-09
+**Updated:** 2026-09-10
 **Phase:** P1 — two nodes talk live and durably, a joiner reads back through sealed history,
 the boundary carries commands in and events out, and the seeds behind all of it are no longer
 on disk in the clear. **The owed register has nothing actionable left in it**, which was the
@@ -30,6 +30,11 @@ somewhere the work is not.** `ko-ls` and `distributed-intranet` were on
 2026-09-09, deliberately, until the owed register was clear. It is, so both merged — fast-forward
 in each repo, since `main` had no commit either branch lacked — and both are pushed.
 
+**There are no branches now, in any of the three.** The merged ones were deleted locally and on
+their remotes on 2026-09-10, `settings-and-permissions` included — it had been an ancestor of
+`main` for weeks and was carrying nothing. Each was checked for commits `main` lacked before it
+went, which for all three was zero.
+
 Kept as a caution rather than deleted, because the state it describes was reached twice. A branch
 held until a register clears is fine; a `main` that quietly falls sixteen commits behind while
 this file says otherwise is how somebody clones a client whose seeds are written to disk in the
@@ -46,6 +51,17 @@ The client builds against `../distributed-intranet` by **path dependency** while
 extensions still move, so a fresh machine needs those two cloned as siblings.
 `.devcontainer/` lives in *this* repo and builds both, plus the Tauri toolchain — open the
 `ko-ls` folder in it, not the parent.
+
+**The protocol is tagged `v1.2.0`** as of 2026-09-10, its first tag since `v1.0.2` on 08-22. The
+major and minor track the Core spec, as the `v1.0.x` run did while Core sat at v1.0; Core is now
+v1.2, and `v1.1.0` is deliberately absent because Core v1.1 existed only between commits and was
+never tagged. `DI-Relay` still pins `v1.0.2` and can move whenever its operator wants a redeploy —
+nothing obliges it to.
+
+**This client stays on the path dependency**, and `design/07` S1's instruction to switch to a tag
+"once the protocol changes have landed and stabilised" is not yet met: E7, E10 and E13 are P2 and
+unbuilt, so the extensions are still moving. The tag is for consumers who are not sitting in this
+workspace.
 
 ### Which document owns what
 
