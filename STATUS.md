@@ -184,7 +184,23 @@ was a run of bad luck rather than a property. The one failure arrived directly a
 governance change and was attributed by measurement rather than by reading; how, and why the
 comparison is worth running even when you are sure, is in `CONTRIBUTING.md`.
 
-**`v0.12.0` is the release the rows above describe**, cut 2026-09-09 from `main` after both
+**`v0.13.0` is the release the rows above describe**, cut 2026-09-10. What it adds is a change in
+how the client *runs* rather than a feature beside the others: **a node per network**. Until it,
+the shell ran one — for whichever network was in view — so a member in a dozen networks was
+receiving in one of them, and every other network's node was stopped the moment they looked
+away. `design/05` §4 had described a node per network as the architecture since before there was
+code; nothing had recorded that the shell did not do it, or that it was what direct messages were
+waiting on.
+
+Also in it: E10's direct-delivery carrier and the request payload that rides it, and D39's
+borrowed rendezvous. **Not** the direct-message flow itself, which is next.
+
+**One thing this release is thin on evidence for, said plainly.** The supervisor is covered by
+tests and the window's own startup was checked by launching it, but no manual session has yet
+opened two networks and switched between them. The failure modes there — a dozen nodes competing
+for one runtime, claims not released on close — are the kind this suite is weakest at.
+
+**`v0.12.0`**, cut 2026-09-09 from `main` after both
 branches merged. It carries the nineteen commits `v0.11.1` was missing, and **what it adds
 differs in kind from an ordinary release**: the storage ceilings and repair, the paged read and
 the bounded tick, and the whole of O7 — an account password wrapping every seed, a lock in front
