@@ -116,6 +116,7 @@ pub mod join;
 pub mod network;
 pub mod readings;
 pub mod secret;
+pub mod nodes;
 pub mod serve;
 pub mod replica;
 pub mod store;

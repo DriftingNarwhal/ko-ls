@@ -1716,3 +1716,135 @@ fn an_origin_survives_being_written_and_read_back() {
     // store rather than only for conversations.
     assert!(shared.origin().is_none());
 }
+
+// ── running a node per network — `design/05` §4, `design/09` §2 ─────────
+//
+// The unit tests beside `nodes::tier_for` pin the policy. This pins the thing
+// the policy is for and the thing the client could not do until now: **two
+// networks live at the same time**. A conversation is a network neither party is
+// usually looking at, so a client that runs only the node in view can neither
+// receive a message nor be reached to deliver one — which is why direct messages
+// were impossible rather than merely slow.
+
+#[test]
+fn a_supervisor_runs_a_server_and_a_conversation_at_the_same_time() {
+    use kols_node::nodes::{Nodes, Spec, Tier};
+
+    let dir = Dir::new("supervisor-two");
+    let workspace = Workspace::at(dir.0.clone());
+    let server = workspace.create("the workshop", Vec::new()).expect("creates");
+    let conversation = workspace.create_conversation("sam").expect("creates");
+
+    let server_id = *server.network();
+    let conversation_id = *conversation.network();
+    let specs = vec![
+        Spec {
+            network: server_id,
+            root: server.root().to_path_buf(),
+            is_conversation: false,
+        },
+        Spec {
+            network: conversation_id,
+            root: conversation.root().to_path_buf(),
+            is_conversation: true,
+        },
+    ];
+
+    // Events are tagged, because `Event` says what happened and not where —
+    // unambiguous while one node ran, and not now.
+    let seen = std::sync::Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
+    let sink: kols_node::nodes::TaggedSink = {
+        let seen = std::sync::Arc::clone(&seen);
+        std::sync::Arc::new(move |network, batch| {
+            let mut seen = seen.lock().expect("not poisoned");
+            for _ in batch {
+                seen.push(network.short());
+            }
+        })
+    };
+
+    tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+        .expect("a runtime")
+        .block_on(async {
+            let mut nodes = Nodes::new();
+            nodes.reconcile(&specs, Some(&server_id), &sink, kols_node::serve::SEAL_TARGET_BYTES);
+
+            // Both run: the server because it is in view, the conversation
+            // because a conversation is warm whenever the application is
+            // running — which is the whole of `design/09` §2's rule.
+            assert_eq!(nodes.tier(&server_id), Tier::Hot);
+            assert_eq!(nodes.tier(&conversation_id), Tier::Warm);
+            assert_eq!(nodes.running().len(), 2, "two nodes, at once");
+
+            // Long enough for both to have claimed their stores and started.
+            // If the two contended for one claim, one would have exited.
+            tokio::time::sleep(std::time::Duration::from_millis(1500)).await;
+            assert_eq!(
+                nodes.running().len(),
+                2,
+                "neither node stopped: the claim is per store, so running many trips nothing"
+            );
+
+            // Looking away from the server drops it to cold and stops it, while
+            // the conversation keeps running — the asymmetry that makes a DM
+            // reachable when nobody has it open.
+            nodes.reconcile(&specs, None, &sink, kols_node::serve::SEAL_TARGET_BYTES);
+            assert_eq!(nodes.tier(&server_id), Tier::Cold);
+            assert_eq!(nodes.tier(&conversation_id), Tier::Warm);
+            assert_eq!(nodes.running().len(), 1);
+
+            nodes.stop_all();
+            assert!(nodes.running().is_empty());
+        });
+}
+
+#[test]
+fn reconciling_twice_changes_nothing_and_a_tier_change_is_not_a_restart() {
+    use kols_node::nodes::{Nodes, Spec, Tier};
+
+    let dir = Dir::new("supervisor-idempotent");
+    let workspace = Workspace::at(dir.0.clone());
+    let a = workspace.create("the workshop", Vec::new()).expect("creates");
+    let b = workspace.create_conversation("sam").expect("creates");
+    let (a_id, b_id) = (*a.network(), *b.network());
+    let specs = vec![
+        Spec { network: a_id, root: a.root().to_path_buf(), is_conversation: false },
+        Spec { network: b_id, root: b.root().to_path_buf(), is_conversation: true },
+    ];
+    let sink: kols_node::nodes::TaggedSink = std::sync::Arc::new(|_, _| {});
+
+    tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+        .expect("a runtime")
+        .block_on(async {
+            let mut nodes = Nodes::new();
+            nodes.reconcile(&specs, Some(&a_id), &sink, kols_node::serve::SEAL_TARGET_BYTES);
+            let first = nodes.running();
+
+            // Idempotent: a caller may run this on every tick without tracking
+            // what it did last time, which is what keeps the policy in one place.
+            nodes.reconcile(&specs, Some(&a_id), &sink, kols_node::serve::SEAL_TARGET_BYTES);
+            assert_eq!(nodes.running(), first, "nothing restarted");
+
+            // Moving the conversation into view raises it to hot without
+            // restarting it — hot and warm are both running nodes, and dropping a
+            // node's connections to change a label would be a cost for nothing.
+            nodes.reconcile(&specs, Some(&b_id), &sink, kols_node::serve::SEAL_TARGET_BYTES);
+            assert_eq!(nodes.tier(&b_id), Tier::Hot);
+
+            // **And the server it replaced goes cold rather than warm**, which is
+            // deliberate and is the conservative half of an open question.
+            // `design/09` §2 lists "recent networks" as warm and §7 says plainly
+            // that the rule deciding which ones is not written. Until it is, a
+            // server is warm only while it is in view — the reading that runs
+            // fewer nodes rather than the one that keeps a set nobody has
+            // defined. A conversation is unaffected, because §2 settles that case
+            // outright.
+            assert_eq!(nodes.tier(&a_id), Tier::Cold);
+            assert_eq!(nodes.running().len(), 1);
+            nodes.stop_all();
+        });
+}
