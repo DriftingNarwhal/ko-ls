@@ -24,6 +24,36 @@ Kept because this project keeps re-learning the same lessons and paying for them
 
 ---
 
+- **2026-09-10** — **`v0.13.0` crashed on selecting a network, and the suite could not have caught it.**
+
+  The window opened, unlocked, listed the networks, and died the moment one was chosen. The
+  panic: *there is no reactor running, must be called from the context of a Tokio 1.x runtime*.
+
+  **`tokio::spawn` finds the runtime entered on the calling thread, and panics when there is
+  none.** The supervisor used it; `open_network` is a **synchronous** Tauri command, so no
+  runtime is entered on the thread it runs on. The code it replaced used
+  `tauri::async_runtime::spawn`, which works from any thread — so the regression was introduced
+  by making the spawn *look* more ordinary than it was.
+
+  **Why every test passed.** All of them reconcile inside `block_on`, which enters a runtime and
+  makes the ambient lookup succeed. The dependency was invisible in the only place it was
+  exercised and fatal in the only place it was used — a suite agreeing with the code about an
+  assumption neither had stated.
+
+  The fix is to stop asking the ambient context: `Nodes` holds a `tokio::runtime::Handle` given
+  to it once, and a handle works from any thread. `Nodes::here()` keeps the convenient form for
+  async callers and panics *at construction* where there is no runtime, which is the right place
+  to fail — it names the problem where it can be fixed rather than at the first reconcile.
+
+  **The regression test is the shape worth keeping**: reconcile from a plainly synchronous
+  caller, outside any runtime, which is what the shell actually does. It fails against the
+  shipped code with the exact panic a member saw.
+
+  Recorded also because the smoke test run before tagging did not catch it and could not have: it
+  launched the window against a fresh home, so it sat on the lock screen and never started a
+  node. **"The window opens" and "the window works" are different claims**, and only the first
+  was checked.
+
 - **2026-09-09** — **The release build failed on the first tag after O7, and the local gate could
   not have caught it.**
 

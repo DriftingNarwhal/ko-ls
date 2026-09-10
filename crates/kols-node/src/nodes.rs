@@ -175,7 +175,6 @@ struct Running {
 /// same one the single-node shell already had, applied to a set. Each task's
 /// abort drops its node, which drops its store claim and releases its relay
 /// reservation rather than leaving both to expire (`05` §1.1).
-#[derive(Default)]
 pub struct Nodes {
     running: BTreeMap<NetworkId, Running>,
     /// When each cold network was last woken.
@@ -183,6 +182,25 @@ pub struct Nodes {
     /// Kept for networks that are not running, which is the whole point: a poll
     /// schedule has to survive the node it starts and stops.
     polled: BTreeMap<NetworkId, std::time::Instant>,
+    /// The runtime nodes are spawned onto.
+    ///
+    /// # Held rather than taken from the ambient context, and that is a fix
+    ///
+    /// The first version called `tokio::spawn`, which finds the runtime *entered
+    /// on the calling thread* — and **panics** when there is none rather than
+    /// returning an error. That is fine from an async caller and fatal from a
+    /// synchronous one, which is exactly what a Tauri command is: selecting a
+    /// network took the whole window down, every time, with "there is no reactor
+    /// running".
+    ///
+    /// Nothing in a test caught it because every test here reconciles inside
+    /// `block_on`, which enters a runtime and makes the ambient lookup succeed.
+    /// So the dependency was invisible in the one place it was exercised and
+    /// fatal in the one place it was used.
+    ///
+    /// A held handle removes the question: a caller supplies the runtime once,
+    /// where it is known, and every spawn after that works from any thread.
+    runtime: tokio::runtime::Handle,
 }
 
 /// Where a supervised node's events go, tagged with the network they came from.
@@ -204,9 +222,23 @@ pub struct Spec {
 }
 
 impl Nodes {
-    /// A supervisor running nothing.
-    pub fn new() -> Self {
-        Self::default()
+    /// A supervisor running nothing, spawning onto `runtime`.
+    pub fn new(runtime: tokio::runtime::Handle) -> Self {
+        Self {
+            running: BTreeMap::new(),
+            polled: BTreeMap::new(),
+            runtime,
+        }
+    }
+
+    /// A supervisor spawning onto the runtime the caller is already inside.
+    ///
+    /// For an async caller that has one. **Panics** where there is none, which is
+    /// the honest behaviour for a constructor: failing here names the problem at
+    /// the point it can be fixed, rather than at the first reconcile — which is
+    /// how this went out as a crash on selecting a network.
+    pub fn here() -> Self {
+        Self::new(tokio::runtime::Handle::current())
     }
 
     /// Which networks are running, and at what tier.
@@ -356,7 +388,7 @@ impl Nodes {
             tagged(&network, batch);
         });
 
-        let handle = tokio::spawn(async move {
+        let handle = self.runtime.spawn(async move {
             // A refusal here is ordinary rather than exceptional: another
             // process may hold this network's claim, which is exactly what the
             // claim is for. It stops this node and leaves every other one
@@ -462,7 +494,10 @@ mod tests {
 
     #[test]
     fn a_supervisor_starting_nothing_reports_everything_cold() {
-        let nodes = Nodes::new();
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .build()
+            .expect("a runtime");
+        let nodes = Nodes::new(runtime.handle().clone());
         assert_eq!(nodes.tier(&net(1)), Tier::Cold);
         assert!(nodes.running().is_empty());
     }

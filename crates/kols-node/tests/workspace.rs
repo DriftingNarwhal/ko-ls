@@ -1752,7 +1752,7 @@ fn a_supervisor_runs_every_joined_network_at_once() {
         .expect("a runtime")
         .block_on(async {
             let now = std::time::Instant::now();
-            let mut nodes = Nodes::new();
+            let mut nodes = Nodes::here();
             nodes.reconcile(&specs, Some(&a_id), &sink, kols_node::serve::SEAL_TARGET_BYTES, now);
 
             assert_eq!(nodes.tier(&a_id), Tier::Hot, "the one in view");
@@ -1808,7 +1808,7 @@ fn a_network_the_member_set_aside_is_polled_rather_than_abandoned() {
         .expect("a runtime")
         .block_on(async {
             let start = std::time::Instant::now();
-            let mut nodes = Nodes::new();
+            let mut nodes = Nodes::here();
 
             // First reconcile wakes it, because it has never been polled.
             nodes.reconcile(&specs, None, &sink, kols_node::serve::SEAL_TARGET_BYTES, start);
@@ -1860,7 +1860,7 @@ fn reconciling_twice_changes_nothing_and_a_tier_change_is_not_a_restart() {
         .expect("a runtime")
         .block_on(async {
             let now = std::time::Instant::now();
-            let mut nodes = Nodes::new();
+            let mut nodes = Nodes::here();
             nodes.reconcile(&specs, Some(&a_id), &sink, kols_node::serve::SEAL_TARGET_BYTES, now);
             let first = nodes.running();
 
@@ -1895,4 +1895,43 @@ fn setting_a_network_aside_survives_a_reopen() {
 
     reopened.set_aside(false).expect("brings it back");
     assert!(!reopened.is_set_aside());
+}
+
+
+#[test]
+fn reconciling_from_a_synchronous_caller_does_not_panic() {
+    // **The crash `v0.13.0` shipped.** `open_network` is a synchronous Tauri
+    // command, so no runtime is entered on the thread it runs on — and
+    // `tokio::spawn` panics outside a runtime context rather than returning an
+    // error. Selecting a network from the picker took the window down every
+    // time, and nothing in this suite saw it because every other test here
+    // reconciles inside `block_on`.
+    use kols_node::nodes::{Nodes, Spec};
+
+    let dir = Dir::new("reconcile-sync");
+    let workspace = Workspace::at(dir.0.clone());
+    let network = workspace.create("the workshop", Vec::new()).expect("creates");
+    let specs = vec![Spec {
+        network: *network.network(),
+        root: network.root().to_path_buf(),
+        set_aside: false,
+    }];
+    let sink: kols_node::nodes::TaggedSink = std::sync::Arc::new(|_, _| {});
+
+    // Deliberately *not* inside a runtime: this is the caller the shell has.
+    // The runtime is supplied rather than found, which is the fix — a handle
+    // works from any thread, and `tokio::spawn`'s ambient lookup does not.
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+        .expect("a runtime");
+    let mut nodes = Nodes::new(runtime.handle().clone());
+    nodes.reconcile(
+        &specs,
+        None,
+        &sink,
+        kols_node::serve::SEAL_TARGET_BYTES,
+        std::time::Instant::now(),
+    );
+    let _ = nodes.stop_all();
 }

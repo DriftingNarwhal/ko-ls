@@ -2085,7 +2085,15 @@ fn main() {
         .manage(App {
             workspace,
             open: Mutex::new(None),
-            nodes: Mutex::new(kols_node::nodes::Nodes::new()),
+            // **The runtime is handed over rather than looked up**, and that
+            // is a fix rather than a style. `tokio::spawn` finds the runtime
+            // *entered on the calling thread* and panics when there is none —
+            // and a Tauri command is a synchronous caller with none entered, so
+            // selecting a network took the window down with "there is no reactor
+            // running". A handle works from any thread.
+            nodes: Mutex::new(kols_node::nodes::Nodes::new(
+                tauri::async_runtime::handle().inner().clone(),
+            )),
             in_view: Mutex::new(None),
             relay: Mutex::new(None),
             reorg: Mutex::new(None),

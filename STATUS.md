@@ -184,7 +184,11 @@ was a run of bad luck rather than a property. The one failure arrived directly a
 governance change and was attributed by measurement rather than by reading; how, and why the
 comparison is worth running even when you are sure, is in `CONTRIBUTING.md`.
 
-**`v0.13.0` is the release the rows above describe**, cut 2026-09-10. What it adds is a change in
+**`v0.13.1` is the release the rows above describe**, cut 2026-09-10, and it exists because
+`v0.13.0` crashed on selecting a network — `tokio::spawn` panics outside a runtime, and a Tauri
+command is a synchronous caller with none entered. `docs/log.md` has why no test saw it.
+
+**`v0.13.0`**, cut 2026-09-10. What it adds is a change in
 how the client *runs* rather than a feature beside the others: **a node per network**. Until it,
 the shell ran one — for whichever network was in view — so a member in a dozen networks was
 receiving in one of them, and every other network's node was stopped the moment they looked
@@ -289,7 +293,7 @@ produced, which the whole segment model rests on, are in `design/08` §4.
 
 ## 4. Log
 
-Moved to [`docs/log.md`](docs/log.md) — 137 entries, newest first.
+Moved to [`docs/log.md`](docs/log.md) — 138 entries, newest first.
 
 What happened *lately* is §1. The log is why things are the way they are: the reasoning behind
 a change, the thing tried and abandoned, the bug that turned out to be a different bug. It
