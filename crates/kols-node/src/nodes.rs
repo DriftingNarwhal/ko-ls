@@ -22,24 +22,48 @@
 //!
 //! # What decides which nodes run
 //!
-//! [`Tier`], which is `design/09` §2's policy and had been unwritten since that
-//! section was drafted. The short of it: **the network in view is hot, every
-//! conversation is warm whenever the application is running, and everything else
-//! is cold.** §2 says the second part in as many words — the cold poll interval
-//! "never applies to direct messages, which are warm whenever the application is
-//! running" — and it is the whole reason this module exists.
+//! **Everything a member has joined is warm unless they say otherwise.** The
+//! network in view is hot; a network the member has explicitly set aside is cold;
+//! everything else runs. That is a decision taken deliberately over two narrower
+//! policies, and the reason is that the narrow ones make a network *silently*
+//! unreachable — somebody in a dozen networks would be receiving in one of them
+//! and would have no way to tell that was why the others were quiet.
+//!
+//! Resource use is the member's own to manage, which is the same answer `02`
+//! §6.4 already gives for storage and bandwidth: contribution is per network and
+//! the client does not decide it on anybody's behalf. A tier is that choice
+//! applied to whether a node runs at all.
+//!
+//! # Cold is polled, not switched off
+//!
+//! §2's table gives cold a wake latency of "the poll interval", and a member
+//! setting: ten minutes by default. So a cold network is **woken periodically to
+//! catch up**, not abandoned. This module got that wrong on its first pass —
+//! cold meant no node, ever — and the difference matters in a way that reaches
+//! other people: a network with no node running serves no content, so a machine
+//! that had taken replica duty there stops holding up its end of `05` §5.1 for
+//! everybody else in it, without anybody being told.
 //!
 //! # What a tier does and does not mean
 //!
-//! Hot and warm are both *running nodes*. The difference is what they are doing:
-//! a hot node is connected and subscribed to its channels' topics, a warm one is
-//! reachable and quiet. Cold is the only tier that is not a process at all.
+//! Hot and warm are both *continuously running nodes*. The difference is what
+//! they are doing: a hot node is connected and subscribed to its channels'
+//! topics, a warm one is reachable and quiet.
 //!
 //! That is worth stating because "warm" sounds cheaper than it is. §2 chose it
 //! against a held connection, not against a running node: what a warm network
 //! needs is to be *dialable*, so an incoming stream can wake it, and being
 //! dialable is what a relay reservation provides. The saving is connections and
 //! gossip meshes, not processes.
+//!
+//! # A conversation is no longer a special case
+//!
+//! §2 says a conversation is warm whenever the application runs, and `05` §4
+//! says idle conversations "should be suspended and woken on demand rather than
+//! all held live" — a tension nobody had to resolve while neither was built.
+//! Defaulting *everything* to warm resolves it without choosing a side: a
+//! conversation is warm because every joined network is, and a member who wants
+//! one quiet sets it aside exactly as they would a server.
 //!
 //! # The claim still does the enforcing
 //!
@@ -63,20 +87,25 @@ pub enum Tier {
     Hot,
     /// Running and reachable, without the connections a hot node holds.
     ///
-    /// Every conversation, whenever the application is running, plus recently
-    /// used servers. What this buys is being **dialable**, so the dial itself is
-    /// the wake signal and there is no wake-up message to design (`09` §2).
+    /// The default for everything a member has joined. What it buys is being
+    /// **dialable**, so the dial itself is the wake signal and there is no
+    /// wake-up message to design (`09` §2).
     Warm,
-    /// Not running at all.
+    /// Woken on the poll interval rather than held running.
+    ///
+    /// Only where the member set a network aside. **Not "off"**: §2 gives cold a
+    /// wake latency of the poll interval, so a cold network still catches up —
+    /// it is slower, not silent. The distinction reaches other people, because a
+    /// network with no node running serves nothing and quietly stops holding up
+    /// this machine's replica duty (`05` §5.1).
     Cold,
 }
 
 impl Tier {
-    /// Whether a node runs at this tier.
+    /// Whether a node runs *continuously* at this tier.
     ///
-    /// The line this whole module turns on, and it falls between warm and cold
-    /// rather than between hot and warm: a warm node is a running process that
-    /// holds fewer connections, not an absent one.
+    /// False for cold, which runs in bursts on the poll rather than not at all —
+    /// so this answers "is it held up", not "does it ever run".
     pub fn runs(self) -> bool {
         matches!(self, Self::Hot | Self::Warm)
     }
@@ -91,29 +120,53 @@ impl Tier {
     }
 }
 
+/// How long a cold network waits between polls — `design/09` §2.
+///
+/// §2 makes this a member setting defaulting to ten minutes. The default is here;
+/// where a member has changed it is the shell's to pass.
+pub const POLL_INTERVAL: std::time::Duration = std::time::Duration::from_secs(600);
+
+/// How long a polled network is left running before it is put back to sleep.
+///
+/// Long enough to connect, sync governance and take what is new; short enough
+/// that a cold network is not a warm one with extra steps. A poll that ended
+/// before the node had connected would be a poll that never caught anything up,
+/// which is the failure worth avoiding — it would look like working software and
+/// deliver nothing.
+pub const POLL_SETTLE: std::time::Duration = std::time::Duration::from_secs(45);
+
 /// What tier a network should be kept at — `design/09` §2's policy, applied.
 ///
-/// `in_view` is the network the member is looking at, if any.
+/// `in_view` is the network the member is looking at, if any. `set_aside` is
+/// whether the member has asked for this one to be kept cold.
 ///
-/// **A conversation is warm whether or not it is in view**, which is the rule
-/// that makes direct messages work at all: a conversation nobody is looking at
-/// still has to be reachable, or a message can neither arrive nor be delivered.
-/// §2 states it directly, and it is the one place this policy is not a matter of
-/// taste.
-pub fn tier_for(network: &NetworkId, is_conversation: bool, in_view: Option<&NetworkId>) -> Tier {
+/// **Everything joined is warm unless the member says otherwise**, which is the
+/// decision taken over two narrower policies. The narrow ones save resources by
+/// making some networks silently unreachable, and "silently" is the objection: a
+/// member in a dozen networks would be receiving in one and have no way to tell
+/// that was why the rest were quiet.
+///
+/// Note there is no case for conversations. §2 says a conversation is warm
+/// whenever the application runs and `05` §4 says idle ones should be suspended;
+/// defaulting everything to warm satisfies the first without having to settle the
+/// second, and a member who wants a conversation quiet sets it aside exactly as
+/// they would a server.
+pub fn tier_for(network: &NetworkId, set_aside: bool, in_view: Option<&NetworkId>) -> Tier {
     if in_view == Some(network) {
         return Tier::Hot;
     }
-    if is_conversation {
-        return Tier::Warm;
+    if set_aside {
+        return Tier::Cold;
     }
-    Tier::Cold
+    Tier::Warm
 }
 
 /// A node this supervisor started.
 struct Running {
     tier: Tier,
     handle: tokio::task::JoinHandle<()>,
+    /// When it was started, which is what bounds a poll.
+    since: std::time::Instant,
 }
 
 /// The nodes a client is running, one per network.
@@ -125,6 +178,11 @@ struct Running {
 #[derive(Default)]
 pub struct Nodes {
     running: BTreeMap<NetworkId, Running>,
+    /// When each cold network was last woken.
+    ///
+    /// Kept for networks that are not running, which is the whole point: a poll
+    /// schedule has to survive the node it starts and stops.
+    polled: BTreeMap<NetworkId, std::time::Instant>,
 }
 
 /// Where a supervised node's events go, tagged with the network they came from.
@@ -141,8 +199,8 @@ pub struct Spec {
     pub network: NetworkId,
     /// Where its store lives.
     pub root: std::path::PathBuf,
-    /// Whether it is a conversation, which decides its tier when out of view.
-    pub is_conversation: bool,
+    /// Whether the member has asked for this network to be kept cold.
+    pub set_aside: bool,
 }
 
 impl Nodes {
@@ -186,21 +244,47 @@ impl Nodes {
         in_view: Option<&NetworkId>,
         events: &TaggedSink,
         seal_bytes: usize,
+        now: std::time::Instant,
     ) {
         let mut wanted: BTreeMap<NetworkId, (&Spec, Tier)> = BTreeMap::new();
+        let mut polling: BTreeMap<NetworkId, &Spec> = BTreeMap::new();
+
         for spec in specs {
-            let tier = tier_for(&spec.network, spec.is_conversation, in_view);
-            if tier.runs() {
-                wanted.insert(spec.network, (spec, tier));
+            match tier_for(&spec.network, spec.set_aside, in_view) {
+                tier if tier.runs() => {
+                    wanted.insert(spec.network, (spec, tier));
+                }
+                // **Cold is a schedule, not an absence.** A network the member
+                // set aside is woken when its poll comes round and put back to
+                // sleep once it has had time to catch up.
+                _ => {
+                    let due = self
+                        .polled
+                        .get(&spec.network)
+                        .is_none_or(|last| now.duration_since(*last) >= POLL_INTERVAL);
+                    let settled = self
+                        .running
+                        .get(&spec.network)
+                        .is_some_and(|run| now.duration_since(run.since) >= POLL_SETTLE);
+                    if self.running.contains_key(&spec.network) {
+                        // Mid-poll. Leave it alone until it has settled.
+                        if !settled {
+                            wanted.insert(spec.network, (spec, Tier::Cold));
+                        }
+                    } else if due {
+                        polling.insert(spec.network, spec);
+                    }
+                }
             }
         }
 
-        // Stop first, so a network moving out of the running set has released
-        // its claim before anything else asks for one.
+        // Stop first, so a network leaving the running set has released its
+        // claim before anything else asks for one — including a poll that has
+        // settled and is going back to sleep.
         let stopping: Vec<NetworkId> = self
             .running
             .keys()
-            .filter(|network| !wanted.contains_key(*network))
+            .filter(|network| !wanted.contains_key(*network) && !polling.contains_key(*network))
             .copied()
             .collect();
         for network in stopping {
@@ -209,11 +293,16 @@ impl Nodes {
 
         for (network, (spec, tier)) in wanted {
             match self.running.get_mut(&network) {
-                // Already running. Hot and warm are both running nodes, so a
-                // tier change is a label rather than a restart.
+                // Already running. Hot and warm are both continuously running,
+                // so a change between them is a label rather than a restart.
                 Some(run) => run.tier = tier,
-                None => self.start(spec, tier, events, seal_bytes),
+                None => self.start(spec, tier, events, seal_bytes, now),
             }
+        }
+
+        for (network, spec) in polling {
+            self.polled.insert(network, now);
+            self.start(spec, Tier::Cold, events, seal_bytes, now);
         }
     }
 
@@ -232,7 +321,14 @@ impl Nodes {
         }
     }
 
-    fn start(&mut self, spec: &Spec, tier: Tier, events: &TaggedSink, seal_bytes: usize) {
+    fn start(
+        &mut self,
+        spec: &Spec,
+        tier: Tier,
+        events: &TaggedSink,
+        seal_bytes: usize,
+        now: std::time::Instant,
+    ) {
         let network = spec.network;
         let root = spec.root.clone();
         let tagged = events.clone();
@@ -267,7 +363,14 @@ impl Nodes {
             .await;
         });
 
-        self.running.insert(network, Running { tier, handle });
+        self.running.insert(
+            network,
+            Running {
+                tier,
+                handle,
+                since: now,
+            },
+        );
     }
 }
 
@@ -292,36 +395,50 @@ mod tests {
     }
 
     #[test]
-    fn a_conversation_is_warm_even_when_nobody_is_looking_at_it() {
-        // The rule the whole feature rests on. A conversation nobody has open
-        // still has to be reachable, or a message can neither arrive nor be
-        // delivered — `design/09` §2 says the cold poll "never applies to direct
-        // messages, which are warm whenever the application is running".
-        let conversation = net(2);
-        assert_eq!(tier_for(&conversation, true, Some(&net(1))), Tier::Warm);
-        assert_eq!(tier_for(&conversation, true, None), Tier::Warm);
+    fn everything_joined_is_warm_by_default() {
+        // The decision this policy turns on. A member in a dozen networks
+        // receives in all of them, because the alternative makes the other
+        // eleven silently unreachable — and "silently" is the objection, not the
+        // resource use.
+        assert_eq!(tier_for(&net(2), false, Some(&net(1))), Tier::Warm);
+        assert_eq!(tier_for(&net(3), false, None), Tier::Warm);
     }
 
     #[test]
-    fn a_server_nobody_is_looking_at_is_cold() {
-        assert_eq!(tier_for(&net(3), false, Some(&net(1))), Tier::Cold);
-        assert_eq!(tier_for(&net(3), false, None), Tier::Cold);
+    fn only_a_network_the_member_set_aside_is_cold() {
+        assert_eq!(tier_for(&net(4), true, Some(&net(1))), Tier::Cold);
+        assert_eq!(tier_for(&net(4), true, None), Tier::Cold);
     }
 
     #[test]
-    fn a_conversation_in_view_is_hot_rather_than_merely_warm() {
-        // Being a conversation raises the floor; it does not cap the ceiling.
-        let conversation = net(2);
-        assert_eq!(tier_for(&conversation, true, Some(&conversation)), Tier::Hot);
+    fn looking_at_a_network_outranks_having_set_it_aside() {
+        // Opening something you had set aside is as clear a statement as setting
+        // it aside was, and the later one wins.
+        let aside = net(5);
+        assert_eq!(tier_for(&aside, true, Some(&aside)), Tier::Hot);
     }
 
     #[test]
-    fn both_running_tiers_run_and_only_cold_does_not() {
-        // The line falls between warm and cold, not between hot and warm: a warm
-        // node is a running process holding fewer connections, not an absent one.
+    fn a_conversation_needs_no_case_of_its_own() {
+        // `09` §2 wants conversations warm whenever the application runs; `05`
+        // §4 wants idle ones suspended. Defaulting everything to warm satisfies
+        // the first without settling the second, and a member who wants one
+        // quiet sets it aside exactly as they would a server. There is no
+        // `is_conversation` argument here, and that absence is the resolution.
+        assert_eq!(tier_for(&net(6), false, None), Tier::Warm);
+        assert_eq!(tier_for(&net(6), true, None), Tier::Cold);
+    }
+
+    #[test]
+    fn cold_is_not_the_same_as_never_running() {
+        // The correction. `runs()` answers "is it held up", not "does it ever
+        // run" — a cold network is woken on the poll interval, which §2 gives it
+        // a wake latency for. Treating cold as off is what the first pass did,
+        // and it silently stops a machine serving content it had taken duty for.
         assert!(Tier::Hot.runs());
         assert!(Tier::Warm.runs());
         assert!(!Tier::Cold.runs());
+        assert!(POLL_INTERVAL > POLL_SETTLE, "a poll sleeps longer than it wakes");
     }
 
     #[test]

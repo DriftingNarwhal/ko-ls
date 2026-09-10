@@ -1576,6 +1576,32 @@ impl Store {
         fs::read_to_string(self.root.join("label")).ok()
     }
 
+    /// Records that the member wants this network kept cold — `design/09` §2.
+    ///
+    /// The default is warm: everything joined runs while the application does,
+    /// because the alternative makes some networks *silently* unreachable and a
+    /// member has no way to tell that is why one is quiet. Setting one aside is
+    /// the member saying they would rather have the resources — which is the
+    /// same choice, one level up, that `02` §6.4 gives them over storage and
+    /// bandwidth, and it is theirs for the same reason.
+    ///
+    /// Local, like every other per-network preference here: nobody else has any
+    /// business knowing how live this machine keeps a network.
+    pub fn set_aside(&self, aside: bool) -> Result<(), StoreError> {
+        let path = self.root.join("set-aside");
+        if aside {
+            write_atomically(&self.root, path, b"1")
+        } else {
+            let _ = fs::remove_file(path);
+            Ok(())
+        }
+    }
+
+    /// Whether the member has set this network aside.
+    pub fn is_set_aside(&self) -> bool {
+        self.root.join("set-aside").exists()
+    }
+
     /// Records where a conversation was arranged, and with whom.
     ///
     /// # Why this is local state and not an entry in the conversation's log
