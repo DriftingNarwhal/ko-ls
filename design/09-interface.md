@@ -1,6 +1,15 @@
 # Interface
 
-**Document status:** v0.32 — §§1.6–1.8 are **built**: conversation windows, starting one from a
+**Document status:** v0.34 — §1.11 gains the door macOS actually uses: the **Dock icon**.
+`applicationShouldHandleReopen` was unhandled, so on macOS a member who closed the window had
+the menu bar extra and nothing else, and the gesture everybody tries first did nothing — the
+same shape as `v0.13.2`'s defect, a documented way back that does not open. Raised only when
+nothing is showing, which is AppKit's own convention. Previously v0.33 — §1.5 gains a third rule, from the first field test of this
+design: **the command that opens a window must be `async`**. `v0.13.2` opened the network
+window from a synchronous one, and on Windows that is the message-loop thread — a blank white
+window that could not be closed, and a tray whose quit did nothing, from one stuck thread. It
+is a platform rule and lives in `05` §1; it is named here because this section is what requires
+windows to be made at runtime in the first place. Previously v0.32 — §§1.6–1.8 are **built**: conversation windows, starting one from a
 roster, and answering a request that arrived. Three things building it settled. Per-message
 delivery state is **not** built and is owed, because `03` §4.5's three states need evidence the
 shell does not collect — a window drawing two ticks it had not earned would be making the exact
@@ -293,6 +302,16 @@ moment ago. §1 above already requires the screen to be cleared before it is dra
 overwritten; **the native title is part of what is cleared.** A window mid-switch shows neither
 network rather than one network's name over another's messages.
 
+**And a third rule, from the field: the command that opens it must be `async`.** `v0.13.2`
+opened this window from a synchronous one, which on Windows gave a blank white window that
+could not be closed and a tray whose quit did nothing — all three because a synchronous
+`#[tauri::command]` runs inline in the IPC handler, and on Windows that is the message-loop
+thread that WebView2's creation needs pumped. It is a platform rule rather than an interface
+one, and it is recorded here as well as in `05` §1 because this section is what asks for a
+window to be created at all: **this design requires windows made at runtime, and that requires
+them made off the thread that draws them.** `05` §1 has the mechanism, and
+`kols-app/tests/window_creation.rs` is the guard.
+
 ### 1.6 Conversations open their own small windows
 
 A conversation window is **compact and deliberately unlike a network window**: no channel rail,
@@ -525,6 +544,15 @@ quit, a crash, an operating system ending the session and a power cut are all st
 process stops between a truncate and a fill. What changes is that the ordinary way to stop is now
 a deliberate Quit, which is the one case that *can* run a shutdown path: stopping every node and
 awaiting it, so claims and relay reservations are released rather than left to expire.
+
+**The way back is per platform, and naming only one of them was a gap.** A tray icon is the
+answer on Windows and on the Linux desktops that have a host for one; on macOS the menu bar
+extra exists too, but the **Dock icon** is the gesture somebody actually makes, and
+`applicationShouldHandleReopen` is how AppKit reports it. Unhandled, that click does nothing,
+which is this section's promise failing quietly on one platform — so the shell handles it, and
+raises the workspace window only when nothing is showing. There is no equivalent on Windows or
+Linux: a taskbar button belongs to a window rather than to an application, so where the last
+window is hidden there is nothing to click, and the tray is the whole of the answer there.
 
 ### 1.12 The lock reaches every window, and the tray must not leak around it
 

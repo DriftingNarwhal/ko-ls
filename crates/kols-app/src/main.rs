@@ -820,8 +820,11 @@ fn executor_for(app: &App, network: &str) -> Result<Executor, String> {
 }
 
 /// Draws a conversation in a window of its own, creating or raising it.
+///
+/// `async` for the reason [`open_network`] carries in full: a synchronous
+/// command builds this window on the Windows main thread, and that deadlocks.
 #[tauri::command]
-fn open_conversation(
+async fn open_conversation(
     handle: tauri::AppHandle,
     app: tauri::State<'_, App>,
     network: String,
@@ -2415,8 +2418,38 @@ fn set_unread(handle: tauri::AppHandle, app: tauri::State<'_, App>, unread: usiz
 }
 
 /// Opens one of this client's networks, and starts a node for it.
+///
+/// # `async` is load-bearing, and this is what v0.13.2 shipped without
+///
+/// **A synchronous `#[tauri::command]` runs its body inline in the IPC
+/// handler**, which on Windows is the window's own message-loop thread — the
+/// main thread. `WebviewWindowBuilder::build()` there is the deadlock
+/// `tauri::WebviewWindowBuilder` documents under *Known issues*
+/// ([wry#583]): WebView2's controller is created asynchronously and completes
+/// through the message loop, so the thread that must pump it is the thread
+/// blocked waiting for it.
+///
+/// What that looks like from the outside is not a crash and not an error: the
+/// window is created natively and stays **blank white**, and because the main
+/// thread never returns from the handler, that window cannot be closed and the
+/// tray's quit does nothing. Three symptoms, one stuck thread.
+///
+/// **It could not have been caught on Linux**, which is where every gate this
+/// project runs executes. WebKitGTK creates its webview synchronously on the
+/// calling thread, so the same code is correct there — the container is not a
+/// weaker test of this, it is a test of something else. The guard is therefore a
+/// source rule rather than a test that runs the window:
+/// `tests/window_creation.rs` asserts that no command building a window is
+/// synchronous, because that is the property, and it holds on every platform.
+///
+/// Making it `async` moves the body onto the async runtime
+/// (`ExecutionContext::Async` in Tauri's command macro), which is what the same
+/// documentation prescribes: *use `async` commands and separate threads when
+/// creating windows*.
+///
+/// [wry#583]: https://github.com/tauri-apps/wry/issues/583
 #[tauri::command]
-fn open_network(
+async fn open_network(
     handle: tauri::AppHandle,
     app: tauri::State<'_, App>,
     network: String,
@@ -2923,7 +2956,37 @@ fn main() {
             // The nodes are stopped on the way out however the exit was asked
             // for, including a signal or the session ending — the one thing
             // `05` §1.1 says a deliberate stop can do that a crash cannot.
+            //
+            // On macOS this is also what ⌘Q reaches: the predefined quit item
+            // terminates the application, `applicationWillTerminate` becomes
+            // tao's `LoopDestroyed`, and that is this. Worth knowing because
+            // the arm above must not swallow it — `ExitRequested` carries
+            // `code: None` only when the **last window was destroyed**, which
+            // is the case `prevent_exit` is for, so the standard quit gesture
+            // cannot be prevented by it.
             tauri::RunEvent::Exit => stop_node(handle),
+            // **The Dock icon is a way back too, and on macOS it is the one
+            // somebody tries first** — `09` §1.11 promises a way back and named
+            // only the tray.
+            //
+            // `applicationShouldHandleReopen`, which AppKit sends when the icon
+            // is clicked. Without this, a member who closed the window has the
+            // menu bar extra and nothing else, and clicking the Dock icon —
+            // the obvious gesture — does nothing at all. Which is the same
+            // shape of defect as the one this release fixes: a door that is
+            // documented and does not open.
+            //
+            // Only when nothing is showing, which is AppKit's own convention:
+            // a click while a window is up should not rearrange the desktop.
+            #[cfg(target_os = "macos")]
+            tauri::RunEvent::Reopen {
+                has_visible_windows,
+                ..
+            } => {
+                if !has_visible_windows {
+                    let _ = show_workspace(handle.clone());
+                }
+            }
             _ => {}
         }
     });

@@ -335,7 +335,7 @@ over the same `kols-api` boundary, owed no feature parity and no end-user docume
   contribute, presence, storage, history, and channel
   create/list/rename/topic/slowmode/archive.
 
-**Gates green, re-run 2026-09-11:** 431 passed and 0 failed here (4 ignored, all measurements),
+**Gates green, re-run 2026-09-11:** 433 passed and 0 failed here (4 ignored, all measurements),
 704 passed and 0 failed in `../distributed-intranet`, clippy clean in both, and
 `crates/kols-ui/drive.mjs`'s 172 checks green by hand, over all three documents with no uncaught
 errors. Two of those checks had never run: they sat after the `process.exit` that ends the
@@ -348,18 +348,57 @@ was a run of bad luck rather than a property. The one failure arrived directly a
 governance change and was attributed by measurement rather than by reading; how, and why the
 comparison is worth running even when you are sure, is in `CONTRIBUTING.md`.
 
-**`v0.13.2` is the release the rows above describe**, cut 2026-09-11: direct messages and the
+**`v0.13.3` is the release the rows above describe**, cut 2026-09-11: direct messages and the
 window model they live in — the workspace as a window of its own, a network window reused as
 the member switches, a small window per conversation, a tray, and a second launch that raises
 what is already running. `design/09` §§1.1–1.14 is the design and D40 the decision.
 
-**What it has not been exercised for**, stated before anybody reads the paragraph below as
-covering it. Every part of this was driven by hand in the development container and by the
-front-end driver, and two things that container cannot do are **show two windows at once** —
-it has no window manager — and **produce a conversation**, since a request needs a second
+**`v0.13.2` did not work on Windows, and `v0.13.3` is the fix**, cut 2026-09-11. Opening a
+network gave a **blank white window that could not be closed**, and the tray's quit did
+nothing: three symptoms of one stuck thread. A synchronous `#[tauri::command]` runs its body
+inline in the IPC handler — on Windows the webview's own message-loop thread — and
+`WebviewWindowBuilder::build()` there is the deadlock Tauri documents under *Known issues*
+(wry#583), because WebView2's controller completes through the message loop that is blocked
+waiting for it. The two commands that create a window are now `async`, which is that
+documentation's own remedy.
+
+**It could not have been caught here**, and that is the part worth keeping: every gate this
+project runs executes on Linux, where WebKitGTK creates its webview synchronously on the
+calling thread and the same code is correct. Nor did `v0.13.1` have the shape — one window,
+created from the configuration at startup, never from a command. So the guard is a rule about
+the source rather than behaviour under test (`kols-app/tests/window_creation.rs`, written by
+reverting the fix and watching it fail), and `CONTRIBUTING.md` now carries the question it
+answers: could this assertion be true here and false where it ships. `design/05` §1 has it as
+the third shell trap, and the first that is a platform rather than a default.
+
+**The same question asked of macOS, answered by reading rather than by shipping.** The
+deadlock is WebView2's: the runtime runs window creation *inline* when it is asked from the
+main thread and *posts* it to the event loop otherwise, and only WebView2 needs that loop
+pumped to finish. So `v0.13.2` would most likely have opened its window on macOS. The check
+that mattered more was the other direction — **tao panics outright if a window is created off
+the main thread on macOS** — and the fix is safe there: `build()` from a worker only posts the
+request, and the creation runs inside the event loop on the main thread, which is where AppKit
+requires it. ⌘Q is fine too, and worth writing down: the predefined quit item terminates the
+application, which reaches `RunEvent::Exit` through `applicationWillTerminate`, while the
+`prevent_exit` above only ever sees the *last window destroyed*.
+
+**One macOS gap did turn up, and it is the same shape as the bug**: `RunEvent::Reopen` —
+the Dock icon — was unhandled, so a member who closed the window had the menu bar extra and
+nothing else, and the gesture everybody tries first did nothing. Handled now (`09` §1.11).
+**That arm is the one thing in this release that could not be compiled here**: it is
+`#[cfg(target_os = "macos")]`, and a cross-check for that target fails in `ring`'s build script
+for want of an Apple SDK. What stands behind it instead is that `Cargo.lock` pins the exact
+`tauri` the variant's definition was read from, and that the call it makes is the one the
+already-compiled tray handler makes.
+
+**What is still unexercised**, stated before anybody reads the paragraph below as covering it.
+The first field test reached the workspace window, the account and the network list, and
+stopped at the window that would not draw — so nothing past opening a network has been
+exercised on Windows at all. In this container, two things cannot be driven: **two windows at
+once**, for want of a window manager, and **a conversation**, since a request needs a second
 member and `dm::start` refuses yourself. So the reuse rule and the whole direct-message round
 trip rest on the code, on unit and driver coverage, and on the protocol half being tested
-upstream between two real nodes. A two-machine run is what settles either.
+upstream between two real nodes. A two-machine run is what settles them.
 
 **`v0.13.1`**, cut 2026-09-10, exists because
 `v0.13.0` crashed on selecting a network — `tokio::spawn` panics outside a runtime, and a Tauri

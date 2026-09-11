@@ -70,6 +70,20 @@ It is not wired into the gate — adding a second toolchain to `cargo test` is a
 nobody has made — and it applies no CSS, so it says nothing about layout. Run it after
 changing `app.js`. Its first half hour found two bugs that reading had not.
 
+**A green suite here can still be wrong about Windows, and once was.** `v0.13.2` opened a
+window from a synchronous `#[tauri::command]`, which runs inline in the IPC handler — on
+Windows the webview's message-loop thread, where `WebviewWindowBuilder::build()` deadlocks
+(Tauri's *Known issues*, wry#583). It shipped: a blank white window that could not be closed,
+and a tray whose quit did nothing. On Linux the identical code is correct, because WebKitGTK
+creates its webview synchronously on the calling thread, so nothing here could have failed.
+
+So when a shell behaviour depends on the platform, ask the second question as well as the
+first — not only *is this asserted against the real configuration* (`design/05` §1), but
+*could that assertion be true here and false where it ships*. Where it could,
+the property gets checked as a rule about the source, which holds everywhere:
+`crates/kols-app/tests/window_creation.rs` is that, and the way to write one is to revert the
+fix and watch it fail, because a guard that passes on the broken code is not a guard.
+
 Three things about the suite that are not obvious, each learned by getting them wrong:
 
 - **`cargo clippy` on the Windows target is a second run**, `cargo clippy -p kols-node

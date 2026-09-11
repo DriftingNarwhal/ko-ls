@@ -24,6 +24,87 @@ Kept because this project keeps re-learning the same lessons and paying for them
 
 ---
 
+- **2026-09-11** — **`v0.13.2` did not open a window on Windows, and the suite could not
+  have known.**
+
+  The report: the app launches, unlocks, lists networks; clicking one opens a window that
+  stays blank white and **cannot be closed**; the tray's quit does nothing; Task Manager is
+  the way out. Three symptoms, and the useful move was to look for one cause rather than
+  three bugs.
+
+  It is one stuck thread. A synchronous `#[tauri::command]` runs its body **inline in the IPC
+  handler** — `ExecutionContext::Blocking` is the command macro's default and becomes `Async`
+  only when the function is `async` — and on Windows that handler is dispatched on the
+  webview's own message-loop thread. `WebviewWindowBuilder::build()` there is the deadlock
+  Tauri documents under *Known issues*, pointing at wry#583: WebView2's controller is created
+  asynchronously and completes through the message loop, so the thread that has to pump it is
+  the thread blocked waiting for it. The window gets created natively — hence white — and
+  nothing after that returns, which takes the close with it and the tray's menu dispatch
+  besides.
+
+  **The fix is one keyword in two places**, which is the documentation's own remedy: *use
+  `async` commands and separate threads when creating windows*. `open_network` and
+  `open_conversation` are `async fn` now, so the body runs on the async runtime and the main
+  thread is free to service the window it is being asked to build.
+
+  **What took the time was not the fix but establishing it without Windows.** No reproduction
+  was available, so the evidence came from reading: Tauri's own doc comment naming the
+  deadlock, then the macro source to confirm what *synchronous* actually means for where a
+  body runs, then a sweep for the same class — any window **getter** called on the main
+  thread waits for a reply and would deadlock the same way, and there are none; the shell only
+  uses setters and registry lookups. The query string in `index.html?network=…` was a second
+  candidate for a blank page and was eliminated the same way: the asset handler splits on `?`
+  before resolving, with a comment saying so.
+
+  **Why nothing here failed, which is the part worth keeping.** Every gate this project runs
+  executes on Linux, where WebKitGTK creates its webview synchronously on the calling thread
+  and the identical code is correct. The container is not a weaker test of this property — it
+  is a test of a different platform. And `v0.13.1` never had the shape: one window, created
+  from the configuration during setup, never built from a command. The feature that needed
+  windows made at runtime is the feature that introduced the trap, so the first build to
+  contain it was the first build to break.
+
+  So the guard is a **rule about the source**, which holds on every platform:
+  `tests/window_creation.rs` asserts that no command building a window is synchronous and that
+  no event handler builds one, following one level of call so a command reaching a helper
+  counts — `open_network` builds through `show_network_window`, and a body scan alone would
+  have missed it. It was written by reverting the fix and watching it name `open_network`,
+  because a guard that passes on the broken code is not a guard.
+
+  **Then the same question asked of macOS before building for it**, which was worth more than
+  it looked. The bug itself is WebView2's: `send_user_message` runs a window creation *inline*
+  when it is called on the main thread and *posts* it to the event loop otherwise, and only
+  WebView2 needs that loop pumped to finish creating a webview — so v0.13.2 would most likely
+  have opened its window on macOS. The check that mattered was the **other direction**: tao
+  panics outright if a window is created off the main thread on macOS, so the fix could have
+  traded a Windows deadlock for a macOS crash. It does not — `build()` from a worker only posts
+  `Message::CreateWindow`, and the closure runs inside the event loop's `UserEvent` handler on
+  the main thread, which is exactly where AppKit wants it. Only the request moved.
+
+  Two macOS things came out of that reading. ⌘Q is fine, and now says so in a comment: the
+  predefined quit item terminates the app, `applicationWillTerminate` becomes tao's
+  `LoopDestroyed`, and that is `RunEvent::Exit` — while the `prevent_exit` beside it only ever
+  sees `code: None` from *the last window being destroyed*, so it cannot swallow a quit. And
+  `RunEvent::Reopen` — the **Dock icon** — was unhandled, which is the same shape as the bug
+  being fixed: a documented way back that does not open. On macOS the Dock is the gesture
+  somebody actually makes, and a member who had closed the window had the menu bar extra and
+  nothing else.
+
+  That arm could not be compiled here. `cargo check --target aarch64-apple-darwin` dies in
+  `ring`'s build script for want of an Apple SDK, and the variant does not exist on Linux, so
+  there is no cfg trick that gets it compiled either. What it rests on instead: `Cargo.lock`
+  pins the exact `tauri` whose definition of the variant was read, and the call inside the arm
+  is the one the tray handler already makes in compiled code. Stated because "could not be
+  compiled locally" is the sort of thing that ought to be in the record before it matters
+  rather than after.
+
+  Third time a Tauri default or platform has removed a feature silently here, after the
+  missing capability file and the native drag handler. The first two were denials that
+  produced no output; this one produced no output *on the only platform the tests run on*.
+  `CONTRIBUTING.md` now carries the second question that leaves: not only whether a shell
+  behaviour is asserted against the real configuration, but whether that assertion could be
+  true here and false where it ships.
+
 - **2026-09-11** — **Slice 3, and three defects that were all one mistake.**
 
   Conversation windows, starting one from a roster, accepting and declining. The code went in
