@@ -498,6 +498,9 @@ pub async fn serve(
     }
     // Emitted in every case, including the good one. A terminal has had this all
     // along only to the report; a window had only the failures, through `Degraded`.
+    // Whether one was granted, kept before the value is handed to the event —
+    // the backoff below starts from it.
+    let reserved_at_startup = reserved.is_some();
     sink(&[Event::Relay {
         reserved,
         designated: designated.len(),
@@ -577,6 +580,19 @@ pub async fn serve(
     relay_watch.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
     relay_watch.reset();
 
+    // **How long to wait before asking again, which is not the same as how
+    // often to look.** Looking is a local question — `has_circuit` reads a set —
+    // and stays on the tick above. *Asking* costs a token from the relay's
+    // bucket, so it backs off. See `RELAY_BACKOFF_CEILING`.
+    let mut relay_backoff = RELAY_RECHECK;
+    let mut ask_relay_after = if reserved_at_startup {
+        None
+    } else {
+        // A reservation that already failed at startup starts the backoff
+        // rather than getting a free retry twenty seconds later.
+        Some(tokio::time::Instant::now() + relay_backoff)
+    };
+
     // Nothing re-dialled a peer that went away.
     //
     // The addresses were dialled once, at startup, and a peer lost after that
@@ -624,17 +640,35 @@ pub async fn serve(
                 continue;
             }
             _ = relay_watch.tick(), if !designated.is_empty() => {
-                if !node.has_circuit() {
-                    let regained = reserve_any(&mut node, &designated, sink).await;
-                    sink(&[Event::Relay {
-                        reserved: regained,
-                        designated: designated.len(),
-                        // The reasons were reported when the reservation was
-                        // first settled. Repeating them every recheck would bury
-                        // whatever is happening now.
-                        failures: Vec::new(),
-                    }]);
+                if node.has_circuit() {
+                    // Holding one resets the backoff, so a relay that fails
+                    // again later is asked promptly rather than inheriting the
+                    // patience earned by the last outage.
+                    relay_backoff = RELAY_RECHECK;
+                    ask_relay_after = None;
+                    continue;
                 }
+                let now = tokio::time::Instant::now();
+                if ask_relay_after.is_some_and(|at| now < at) {
+                    // Still looking every twenty seconds; just not asking yet.
+                    continue;
+                }
+                let regained = reserve_any(&mut node, &designated, sink).await;
+                if regained.is_some() {
+                    relay_backoff = RELAY_RECHECK;
+                    ask_relay_after = None;
+                } else {
+                    relay_backoff = next_relay_backoff(relay_backoff);
+                    ask_relay_after = Some(tokio::time::Instant::now() + relay_backoff);
+                }
+                sink(&[Event::Relay {
+                    reserved: regained,
+                    designated: designated.len(),
+                    // The reasons were reported when the reservation was
+                    // first settled. Repeating them every recheck would bury
+                    // whatever is happening now.
+                    failures: Vec::new(),
+                }]);
                 continue;
             }
             _ = refresh.tick() => {
@@ -2336,6 +2370,38 @@ fn render(events: &[Event]) {
 /// which is the case that actually happens.
 const RELAY_RECHECK: std::time::Duration = std::time::Duration::from_secs(20);
 
+/// The longest a node will wait between asking a relay for a circuit again.
+///
+/// # Why asking again has to slow down, which cost a two-machine test
+///
+/// A relay's reservation limiter is a token bucket, and libp2p's defaults refill
+/// it **one token per two minutes per peer**. This loop asked every
+/// [`RELAY_RECHECK`] — three times a minute — for as long as it had no circuit.
+/// That spends six times what it earns, so roughly ten minutes of any failure
+/// empties the bucket, and from then on the relay refuses *every* request while
+/// the node keeps making them at the same rate. The bucket can never refill.
+///
+/// **So the retry turned a transient failure into a permanent one.** Whatever
+/// started it — a relay redeploy, a laptop asleep through a reservation, a
+/// restart — the loop guaranteed it would not recover, on every machine at
+/// once, while ordinary connections kept working and the relay's log kept
+/// showing both peers arriving. That is a long way from where anybody looks.
+///
+/// Doubling from `RELAY_RECHECK` to this keeps the case the recheck exists for
+/// — a relay that restarted is asked again within twenty seconds — and settles
+/// a persistent failure at one ask per ten minutes, comfortably under the
+/// refill rate, so a relay that starts granting again is found on the next ask
+/// rather than never.
+const RELAY_BACKOFF_CEILING: std::time::Duration = std::time::Duration::from_secs(600);
+
+/// The wait after a failed reservation, given the wait before it.
+///
+/// Doubles, then stops at [`RELAY_BACKOFF_CEILING`]. Separated from the loop so
+/// that the arithmetic this depends on is testable without a relay.
+fn next_relay_backoff(previous: std::time::Duration) -> std::time::Duration {
+    (previous * 2).min(RELAY_BACKOFF_CEILING)
+}
+
 /// How often to re-dial a known peer this node is not connected to.
 ///
 /// Long enough not to hammer a peer that is genuinely away, short enough that a
@@ -2428,17 +2494,32 @@ async fn reserve_any_reporting(
                     println!("  relay     reserved a circuit on {relay}");
                     return Some(relay.clone());
                 }
-                // Deliberately does not say the relay answered.
-                // `reserve_via_relay` returning `Ok` means the reservation was
-                // *started* — a circuit listener registered — not that anything
-                // replied. Claiming otherwise sent a real deployment looking at
-                // a correctly configured relay for an evening, because the
-                // message asserted more than the code knew.
-                let reason = format!(
-                    "no circuit from {relay} within the reservation window. Either \
-                     nothing reached it — check the relay's own log for a connection — \
-                     or it replied announcing no address of its own"
-                );
+                // **Says which, when the relay said which.** This used to
+                // describe three possibilities, because `reserve_via_relay`
+                // returning `Ok` means the reservation was *started* rather
+                // than answered, and nothing kept the answer: libp2p reports a
+                // failed reservation by closing the circuit listener with the
+                // reason attached, and that arm discarded it. So a refusal for
+                // capacity, a reply with no addresses, and silence all arrived
+                // here as the same sentence — which sent a real deployment
+                // looking at a correctly configured relay for an evening.
+                //
+                // `last_reservation_error` is that reason when there is one.
+                // Its absence is still meaningful and still the honest form of
+                // the old message: nothing came back at all.
+                let reason = match node.last_reservation_error() {
+                    Some(said) => format!(
+                        "the relay {relay} refused a circuit: {said}. This is the relay's \
+                         own answer rather than a guess — a capacity limit is the relay's \
+                         to raise or to restart, and an empty address list is its \
+                         RELAY_PUBLIC_ADDR"
+                    ),
+                    None => format!(
+                        "no answer from {relay} within the reservation window. Nothing came \
+                         back at all — not a refusal, which would say so here — so check \
+                         the relay's own log for a connection from this machine"
+                    ),
+                };
                 failures.push(reason.clone());
                 sink(&[Event::Degraded { reason }]);
             }
@@ -3177,10 +3258,51 @@ fn start_sync(node: &mut MemberNode, peer: PeerId) {
 
 #[cfg(test)]
 mod tests {
-    use super::retires;
+    use super::{next_relay_backoff, retires, RELAY_BACKOFF_CEILING, RELAY_RECHECK};
     use kols_core::Retention;
 
     const DAY: i64 = 86_400_000;
+
+    /// **The property that matters is a rate, not a sequence.**
+    ///
+    /// A relay refills one reservation token per two minutes per peer. Asking
+    /// every twenty seconds spends six times that, so any failure lasting ten
+    /// minutes empties the bucket and the relay then refuses everything while
+    /// the node keeps asking at the same rate — which is how a transient
+    /// failure became a permanent one on two machines at once.
+    #[test]
+    fn asking_again_settles_below_the_rate_a_relay_refills_at() {
+        let refill = std::time::Duration::from_secs(120);
+        assert!(
+            RELAY_RECHECK < refill,
+            "the first retry is deliberately prompt: a relay that restarted should be              found again quickly"
+        );
+
+        // Ten consecutive failures, which is under two hours of outage.
+        let mut wait = RELAY_RECHECK;
+        for _ in 0..10 {
+            wait = next_relay_backoff(wait);
+        }
+        assert!(
+            wait >= refill,
+            "after a run of failures a node must ask more slowly than the relay              refills, or it can never recover: settled at {wait:?} against {refill:?}"
+        );
+        assert_eq!(
+            wait, RELAY_BACKOFF_CEILING,
+            "and it should have reached the ceiling rather than growing forever"
+        );
+    }
+
+    #[test]
+    fn the_backoff_stops_growing() {
+        // Unbounded doubling would turn a relay that came back after a long
+        // outage into one this node never asks again.
+        let mut wait = RELAY_RECHECK;
+        for _ in 0..50 {
+            wait = next_relay_backoff(wait);
+        }
+        assert_eq!(wait, RELAY_BACKOFF_CEILING);
+    }
 
     #[test]
     fn nothing_ages_out_of_the_default_window() {

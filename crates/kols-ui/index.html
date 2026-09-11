@@ -465,15 +465,24 @@
                list built from its own private container address. -->
           <div class="relay-help" id="relay-help" hidden>
             <p class="dim">
-              <strong>Look at the relay's own log first.</strong> If it shows no
-              connection, nothing reached it and the address or the port is
-              wrong. If it shows one, it replied announcing nothing.
+              <strong>The line above is the relay's own answer</strong> where it
+              gave one, rather than a guess between causes. A <em>refusal</em> is
+              the relay declining: usually its reservation capacity, which is
+              per-peer and refills slowly, and which restarting the relay clears
+              outright since it keeps no state. <em>No answer</em> means nothing
+              came back at all — check the relay's log for a connection from this
+              machine, and if there is none, the address or the port is wrong.
             </p>
             <p class="dim">
-              Announcing nothing is a relay behind a proxy with no public address
-              set: it hands back its private container address, grants the
-              reservation anyway, and keeps reporting healthy. Its
-              <code>/health</code> shows what it announces.
+              <strong>A relay can also succeed and still not work.</strong>
+              Behind a proxy with no public address set, it hands back its
+              private container address, the reservation is
+              <em>granted</em>, and the line above turns green — while no peer
+              can reach you through a circuit at an address that exists only
+              inside the host. If two members cannot connect and both say they
+              reserved a circuit, that is this. The relay's
+              <code>/health</code> shows what it announces, and
+              <code>RELAY_PUBLIC_ADDR</code> is what fixes it.
             </p>
           </div>
 

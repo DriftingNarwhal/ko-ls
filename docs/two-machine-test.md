@@ -109,10 +109,17 @@ browser.
    redeploy.
 
 **Step 5 is the one that is skipped, and skipping it fails in the least helpful way.** The relay
-listens on a private container address, so what it announces is unreachable. It still accepts
-reservations, still reports healthy, and hands clients an address list they reject — so
-everything looks fine except that no circuit is ever granted. `RELAY_PUBLIC_ADDR` is what tells
-it where it actually is. It is harmless when unnecessary.
+listens on a private container address and announces that, because a relay promotes every
+non-loopback address it binds. So the reservation **is granted** and both clients report
+*reserved a circuit on …* — and no peer can reach either of them, because the circuit address
+they advertise names a host that exists only inside the platform. `RELAY_PUBLIC_ADDR` is what
+tells it where it actually is. It is harmless when unnecessary.
+
+*This paragraph said the opposite until 2026-09-11: that the announced list would be empty and
+clients would reject it, so the symptom was no circuit at all. That is only true of a relay
+bound to loopback. The corrected version matters because the two failures look nothing alike —
+one is two green lines and silence, the other is a red one — and looking for the wrong one is
+how an evening goes.*
 
 **Both parts of step 3 are required and it is easy to do only the first.** Without the domain
 the health check fails and Railway restarts forever. Without the TCP proxy the service looks
@@ -147,7 +154,9 @@ The node then restarts itself onto the new relay. Watch the line above the panel
 |---|---|
 | **reserved a circuit on …** | Working. Continue |
 | **asking the relay for a circuit…** | Working on it. Settles within about 20 seconds |
-| **designated, and no circuit was granted** | **Stop here** — and see step 4.5. The relay answered and handed back nothing usable, which is nearly always a missing `RELAY_PUBLIC_ADDR`. The panel says so, with the value to set |
+| **the relay … refused a circuit: …** | The relay's own answer. Reservation capacity is per peer and refills slowly; restarting the relay clears it, since a relay keeps no state |
+| **no answer from … within the reservation window** | Nothing came back at all. Check the relay's log for a connection from this machine; if there is none, the address or the port is wrong |
+| **reserved a circuit on …**, and the two members still cannot talk | Step 5 was skipped. The relay announced its private address, so the circuit address each member advertises is unreachable — see the note under step 5 |
 | **none designated** | The designation did not take. Check for a refusal under the form |
 
 Nothing downstream can work without a circuit, so do not carry on past the second row.

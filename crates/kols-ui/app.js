@@ -352,17 +352,20 @@ function drawRelayState(relays) {
   }
   if (relays.reported) {
     line.className = "relay-state bad";
-    // The reasons rather than a summary of them. "No circuit" has two causes
-    // needing opposite fixes — nothing answered there, or something answered
-    // and named no address — and only the node knows which happened.
+    // The reasons rather than a summary of them, and they are now the relay's
+    // own answer rather than a list of possibilities: a refusal says it was
+    // refused and why, and silence says that nothing came back.
     line.textContent =
       relays.failures.length > 0
         ? relays.failures.join(" · ")
         : "designated, and no circuit was granted";
-    // The note is about a relay that answered. It says nothing useful about one
-    // nothing could reach, so it is shown only for the case it explains.
-    el("relay-help").hidden = !relays.failures.some((why) =>
-      why.includes("no circuit from"),
+    // Shown for a relay that answered *and* for one that did not, because the
+    // note now tells those two apart rather than assuming one of them. Matched
+    // on the words the node actually produces — this condition was left
+    // matching a sentence that had been rewritten, which silently hid the
+    // help for every case it was written for.
+    el("relay-help").hidden = !relays.failures.some(
+      (why) => why.includes("refused a circuit") || why.includes("no answer from"),
     );
     stopWatchingRelay();
     return;
