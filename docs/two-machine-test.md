@@ -157,6 +157,21 @@ The node then restarts itself onto the new relay. Watch the line above the panel
 | **the relay … refused a circuit: …** | The relay's own answer. Reservation capacity is per peer and refills slowly; restarting the relay clears it, since a relay keeps no state |
 | **no answer from … within the reservation window** | Nothing came back at all. Check the relay's log for a connection from this machine; if there is none, the address or the port is wrong |
 | **reserved a circuit on …**, and the two members still cannot talk | Step 5 was skipped. The relay announced its private address, so the circuit address each member advertises is unreachable — see the note under step 5 |
+| **a different node answered there: it is …** | The designation names one relay and another is answering. Re-designate from the relay's own `bootstrap:` line — see below |
+
+**A designation outlives the relay it names, and that is the failure to expect.** The address
+carries a peer id, so it identifies *that* relay and no other. Its identity is derived from
+`RELAY_PHRASE` and the network id and is stable across restarts — but a redeploy that changes
+either, or a service rebuilt from scratch, is a different relay at the same host and port. The
+designation then points at something that no longer exists, and **every member fails
+identically**, because the address is a governance entry they all replay.
+
+It is cheap to check and costs an evening to diagnose: after any redeploy, compare the relay's
+`peer-id:` line against the designated address. The relay prints the whole line to paste under
+`bootstrap:`, which is why it prints it at all.
+
+**Re-designating on one machine is enough.** The relay list is governance, so the other members
+replay it. Doing it on the second machine as well is harmless and proves nothing.
 | **none designated** | The designation did not take. Check for a refusal under the form |
 
 Nothing downstream can work without a circuit, so do not carry on past the second row.

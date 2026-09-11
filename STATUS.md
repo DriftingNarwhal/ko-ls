@@ -348,12 +348,17 @@ was a run of bad luck rather than a property. The one failure arrived directly a
 governance change and was attributed by measurement rather than by reading; how, and why the
 comparison is worth running even when you are sure, is in `CONTRIBUTING.md`.
 
-**`v0.13.3` is the release the rows above describe**, cut 2026-09-11: direct messages and the
+**`v0.13.4` is the release the rows above describe**, cut 2026-09-11: direct messages and the
 window model they live in — the workspace as a window of its own, a network window reused as
 the member switches, a small window per conversation, a tray, and a second launch that raises
 what is already running. `design/09` §§1.1–1.14 is the design and D40 the decision.
 
-**`v0.13.2` did not work on Windows, and `v0.13.3` is the fix**, cut 2026-09-11. Opening a
+**`v0.13.4` carries what two machines found**, cut 2026-09-11: a relay dial that reports which
+node actually answered, a reservation retry that backs off, and the fetch fix that lets two
+members who both wrote while apart reconcile when they meet. The three paragraphs above have
+each of them.
+
+**`v0.13.2` did not work on Windows, and `v0.13.3` was the fix**, cut 2026-09-11. Opening a
 network gave a **blank white window that could not be closed**, and the tray's quit did
 nothing: three symptoms of one stuck thread. A synchronous `#[tauri::command]` runs its body
 inline in the IPC handler — on Windows the webview's own message-loop thread — and
