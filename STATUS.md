@@ -348,13 +348,26 @@ was a run of bad luck rather than a property. The one failure arrived directly a
 governance change and was attributed by measurement rather than by reading; how, and why the
 comparison is worth running even when you are sure, is in `CONTRIBUTING.md`.
 
-**`v0.13.1` is the release the rows above describe**, cut 2026-09-10, and it exists because
+**`v0.13.2` is the release the rows above describe**, cut 2026-09-11: direct messages and the
+window model they live in — the workspace as a window of its own, a network window reused as
+the member switches, a small window per conversation, a tray, and a second launch that raises
+what is already running. `design/09` §§1.1–1.14 is the design and D40 the decision.
+
+**What it has not been exercised for**, stated before anybody reads the paragraph below as
+covering it. Every part of this was driven by hand in the development container and by the
+front-end driver, and two things that container cannot do are **show two windows at once** —
+it has no window manager — and **produce a conversation**, since a request needs a second
+member and `dm::start` refuses yourself. So the reuse rule and the whole direct-message round
+trip rest on the code, on unit and driver coverage, and on the protocol half being tested
+upstream between two real nodes. A two-machine run is what settles either.
+
+**`v0.13.1`**, cut 2026-09-10, exists because
 `v0.13.0` crashed on selecting a network — `tokio::spawn` panics outside a runtime, and a Tauri
 command is a synchronous caller with none entered. `docs/log.md` has why no test saw it, and why
 the smoke test before that tag could not have: it checked that the window *opened*, which is a
 different claim from the window *working*.
 
-**What `v0.13.1` has actually been exercised for, stated at the strength it holds.** On one
+**What `v0.13.1` was actually exercised for, stated at the strength it holds.** On one
 machine: it starts, unlocks, opens a network, sends messages, and switches between networks
 without stopping the one being left.
 
