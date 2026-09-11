@@ -584,6 +584,19 @@ pub async fn serve(
     // often to look.** Looking is a local question — `has_circuit` reads a set —
     // and stays on the tick above. *Asking* costs a token from the relay's
     // bucket, so it backs off. See `RELAY_BACKOFF_CEILING`.
+    // The peer ids the designated addresses name. A dial failure against one of
+    // these is worth reporting; every other dial failure is routine.
+    let designated_peers: std::collections::BTreeSet<libp2p::PeerId> = designated
+        .iter()
+        .filter_map(|address| address.parse::<libp2p::Multiaddr>().ok())
+        .filter_map(|address| {
+            address.iter().find_map(|part| match part {
+                libp2p::multiaddr::Protocol::P2p(peer) => Some(peer),
+                _ => None,
+            })
+        })
+        .collect();
+
     let mut relay_backoff = RELAY_RECHECK;
     let mut ask_relay_after = if reserved_at_startup {
         None
@@ -1190,6 +1203,34 @@ pub async fn serve(
             // through the relay?" had no answer short of taking the relay away
             // — which is how somebody found out that losing a circuit dropped a
             // peer they could still reach directly.
+            // **A dial that failed against a designated relay**, which was
+            // being discarded along with every other dial failure.
+            //
+            // Most dial failures are routine — a hole punch that missed, a peer
+            // that has gone — and reporting each would bury everything else. A
+            // *designated relay* is the exception: every member replays that
+            // address, so a dial failure against it fails identically for all
+            // of them, and it is the one dial whose failure explains why
+            // nothing else works.
+            //
+            // The failure that earned this arm: a designation naming a peer id
+            // that was not the relay answering at that host and port. libp2p
+            // said so precisely — a different node answered — and nothing
+            // passed it on, because this event had no arm at all and the relay
+            // client reports a dial failure to nobody. What reached the member
+            // instead was a reservation that timed out, over a relay whose own
+            // log showed both machines connecting perfectly.
+            NodeEvent::DialFailed {
+                peer: Some(peer),
+                error,
+            } if designated_peers.contains(&peer) => {
+                crate::say!(report, "  relay     {peer} — {error}");
+                sink(&[Event::Degraded {
+                    reason: format!("the relay {peer} could not be dialled: {error}"),
+                }]);
+                continue;
+            }
+
             NodeEvent::HolePunchSucceeded { peer } => {
                 crate::say!(report, "  direct    hole-punched to {peer} — the relay is out of the path");
                 sink(&[Event::Degraded {
@@ -2516,8 +2557,10 @@ async fn reserve_any_reporting(
                     ),
                     None => format!(
                         "no answer from {relay} within the reservation window. Nothing came \
-                         back at all — not a refusal, which would say so here — so check \
-                         the relay's own log for a connection from this machine"
+                         back at all — not a refusal, which would say so here. If the relay's \
+                         own log shows a connection from this machine and no reservation, the \
+                         peer id in this address is not the relay answering there: check it \
+                         against the one the relay reports"
                     ),
                 };
                 failures.push(reason.clone());
