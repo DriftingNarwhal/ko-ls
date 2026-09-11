@@ -24,6 +24,71 @@ Kept because this project keeps re-learning the same lessons and paying for them
 
 ---
 
+- **2026-09-11** — **Two members who both wrote while apart, and a rule broken by the code
+  that states it.**
+
+  A two-machine session: the relay designation was stale, nothing connected, and both people
+  kept typing anyway. Once the designation was fixed, new messages flowed and **the backlog
+  never moved**. Three findings, and the interesting one is last.
+
+  **The relay.** The designated address named a peer id that was not the relay answering at
+  that host and port — so no circuit, while TCP and Noise both completed, which is why the
+  relay's log showed both machines arriving and no reservation ever being denied. Fixed by
+  re-designating on *one* machine, which surprised the tester: a designation is a governance
+  entry, so replay carried it to the other. Worth writing down because "I only changed it on
+  one side" reads as evidence against the fix and is actually the design working.
+
+  **The relay's identity was then checked rather than believed.** The report was that the peer
+  id changes on every restart, which would make every designation stale within a day. It
+  cannot: it is a KDF over (backup phrase, network id), and three runs of the deployed binary
+  print a byte-identical peer id. So a variable changed, or two different things were being
+  compared — but not the derivation. Measuring took two minutes and replaced a scary
+  hypothesis with a fact.
+
+  **Then the real one.** `design/05` §5.1 has said from the beginning that *a provider count is
+  safe in one direction only, so nobody answered and nobody holds it must never collapse into
+  one answer*. The fetch collapsed them: an empty provider list marked the chunk **exhausted**,
+  which ends the fetch for the life of the process.
+
+  With three parties that is invisible. With two it is total. Both members meet, exchange
+  pointers successfully, and each asks the DHT who holds the segment the other's pointer names.
+  Over a two-peer routing table the lookup names nobody *without asking anybody* — provider
+  records have nowhere to live but the holder, and a member behind NAT never becomes a DHT
+  server — so both fetches ended immediately. The holder was the peer that had just served the
+  pointer.
+
+  Reproducing it took three attempts, and the two failures were instructive. The first waited
+  on a daemon line that arrives folded into a count of governance entries. The second passed
+  for the wrong reason: records written seconds earlier are inside the live window, so the
+  backlog rode gossip and the test said nothing about the durable path. Turning the live path
+  off on both sides is what made it faithful — in the field those messages were hours old and
+  no window covered them.
+
+  Then the diagnosis, by probe rather than by reading: pointers exchanged fine (offered 2, want
+  2, accepted 2), the wanted CID matched one that had been announced, `start_providing`
+  succeeded — and the provider query returned **0 providers, 78,000 times**, with the Kademlia
+  routing table reporting **0 entries** for 77,696 of them. Both numbers were needed. Zero
+  providers alone looks like missing content; zero providers with an empty routing table is a
+  question that was never asked.
+
+  **The 78,000 is the second bug.** A fetch that completes with nothing was re-planned at once,
+  so plan → empty → complete → plan ran thousands of times a second. That burned a core and
+  flooded the peer until Kademlia evicted it from the routing table, after which every lookup
+  answered "nobody" instantly and the node could never recover. A failure that repairs itself
+  into permanence, which is the same shape as the relay backoff earlier the same day.
+
+  The fix has two halves, and the first attempt got them backwards: adding connected peers to
+  the reported provider list broke `a_chunk_nobody_holds_reports_no_providers`, correctly —
+  that list feeds the replica census, and stuffing it with peers that may hold nothing
+  corrupts an under-replication report. *Who holds this* and *who to ask next* are two
+  questions and they were one parameter. So the fallback lives in the fetch plan, the holder
+  count stays what the lookup produced (zero), and the census sees exactly what the DHT said.
+  A good test earning its keep by refusing a plausible fix.
+
+  Recorded in Storage §4.4 as a requirement rather than left as client policy: a spec that
+  hands back the holder set and the holder count from one query is inviting an implementation
+  to read an empty result as an answer.
+
 - **2026-09-11** — **`v0.13.2` did not open a window on Windows, and the suite could not
   have known.**
 

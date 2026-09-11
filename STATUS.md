@@ -335,8 +335,8 @@ over the same `kols-api` boundary, owed no feature parity and no end-user docume
   contribute, presence, storage, history, and channel
   create/list/rename/topic/slowmode/archive.
 
-**Gates green, re-run 2026-09-11:** 433 passed and 0 failed here (4 ignored, all measurements),
-704 passed and 0 failed in `../distributed-intranet`, clippy clean in both, and
+**Gates green, re-run 2026-09-11:** 436 passed and 0 failed here (4 ignored, all measurements),
+709 passed and 0 failed in `../distributed-intranet`, clippy clean in both, and
 `crates/kols-ui/drive.mjs`'s 172 checks green by hand, over all three documents with no uncaught
 errors. Two of those checks had never run: they sat after the `process.exit` that ends the
 second pass, which is what moving the storage panel between documents left behind — and one of
@@ -370,6 +370,32 @@ the source rather than behaviour under test (`kols-app/tests/window_creation.rs`
 reverting the fix and watching it fail), and `CONTRIBUTING.md` now carries the question it
 answers: could this assertion be true here and false where it ships. `design/05` §1 has it as
 the third shell trap, and the first that is a platform rather than a default.
+
+**Two machines found three things `v0.13.3` did not fix, 2026-09-11**, and only the first was
+about the relay.
+
+**A stale relay designation.** The address the network designated named a peer id that was not
+the relay answering at that host and port, so no circuit could be granted on it — while TCP and
+Noise both completed, which is why the relay's own log showed both machines arriving. Fixed by
+re-designating, on **one** machine: a relay designation is a governance entry, so replay carried
+it to the other. The relay's identity was checked for stability afterwards rather than assumed —
+it is a KDF over (phrase, network), and three runs of the deployed binary produce a byte-identical
+peer id, so it cannot change across a restart unless a variable does.
+
+**Two members who both wrote while apart never reconciled** once they met. New messages flowed
+and the backlog did not, and the cause was `05` §5.1's own rule being broken by the code that
+implements it: an empty provider lookup marked the chunk **exhausted**, so the fetch ended for
+the life of the process. On a two-member network that lookup names nobody *without asking
+anybody*, and the holder is the peer that just served the pointer. Reproduced in
+`two_nodes.rs::two_members_who_both_wrote_while_apart_converge_when_they_meet` — the symmetric
+partition, which nothing here covered: every other test of this had a third party, or a member
+who was merely absent while somebody online kept writing.
+
+**And that failure was spinning.** A fetch completing with nothing was re-planned at once,
+thousands of times a second, until the peer was flooded hard enough that Kademlia evicted it
+from the routing table — after which every lookup answered "nobody" instantly and the node could
+not recover. Storage §4.4 now carries the requirement, since a spec that gave the holder count
+and the holder set from one query invited exactly this.
 
 **The same question asked of macOS, answered by reading rather than by shipping.** The
 deadlock is WebView2's: the runtime runs window creation *inline* when it is asked from the

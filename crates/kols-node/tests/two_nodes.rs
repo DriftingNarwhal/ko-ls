@@ -750,3 +750,98 @@ fn presence_travels_and_invisible_sends_nothing() {
     );
     bob_node.wait_for("is here", patience(Duration::from_secs(90)));
 }
+
+#[test]
+fn two_members_who_both_wrote_while_apart_converge_when_they_meet() {
+    // **The case no other test here covers, and the one a real pair hit.**
+    //
+    // Every other partition test has a third party, or a member who was merely
+    // absent while somebody online kept writing — so there was always a node
+    // holding what had to travel, and catching up meant fetching from a peer
+    // that already had it.
+    //
+    // This is the symmetric case: both members write while neither can see the
+    // other, so each record exists on exactly one disk and the only holder of
+    // anything is the peer at the far end. It is what two people on two
+    // machines do when the relay is misconfigured — they carry on typing — and
+    // when the connection came back, new messages flowed while the backlog
+    // never moved.
+    //
+    // **The live path is off on both sides**, which is what makes this about the
+    // backlog. An author retries a record that failed to publish, and a record
+    // inside the live window goes out the moment a peer subscribes — so with
+    // gossip on, a freshly written backlog rides the live path and this test
+    // passes while saying nothing about the durable one. In the field those
+    // messages were hours old and no live window covered them.
+    let alice = Home::new("apart-alice");
+    let bob = Home::new("apart-bob");
+
+    let created = ok(&alice, &["init", "apart"]);
+    let network = field(&created, "network   ");
+
+    let bob_identity = field(&ok(&bob, &["attach", &network]), "kols admit ");
+    ok(&alice, &["admit", &bob_identity]);
+
+    let mut alice_node = serve_sealing(&alice, 45241, None, None, false);
+    let address = field(
+        &alice_node.wait_for("listening", Duration::from_secs(20)),
+        "listening ",
+    );
+    ok(&alice, &["channel", "create", "general"]);
+
+    let mut bob_node = serve_sealing(&bob, 45242, Some(&address), None, false);
+    bob_node.wait_for("keyed into this network", Duration::from_secs(45));
+
+    // Bob has to hold the channel before he can write in it, and that is a
+    // governance entry rather than a record — so it is waited for by asking his
+    // own store rather than by reading his daemon's output, where it arrives
+    // folded into a count of entries.
+    let deadline = Instant::now() + patience(Duration::from_secs(45));
+    while !ok(&bob, &["channel", "list"]).contains("general") {
+        assert!(
+            Instant::now() < deadline,
+            "bob never picked up the channel, so this test cannot reach the thing it \
+             is about"
+        );
+        std::thread::sleep(Duration::from_millis(500));
+    }
+
+    // Apart. Both daemons stop, so nothing can carry anything either way.
+    drop(bob_node);
+    drop(alice_node);
+
+    ok(&alice, &["post", "general", "alice wrote this while apart"]);
+    ok(&bob, &["post", "general", "bob wrote this while apart"]);
+
+    // They meet again.
+    let mut alice_again = serve_sealing(&alice, 45243, None, None, false);
+    let address = field(
+        &alice_again.wait_for("listening", Duration::from_secs(20)),
+        "listening ",
+    );
+    let mut bob_again = serve_sealing(&bob, 45244, Some(&address), None, false);
+
+    // Each side has exactly one record to learn: the other's.
+    let both_learned = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        bob_again.wait_for("learned 1 record", Duration::from_secs(45));
+        alice_again.wait_for("learned 1 record", Duration::from_secs(45));
+    }));
+
+    let alice_read = ok(&alice, &["read", "general"]);
+    let bob_read = ok(&bob, &["read", "general"]);
+    assert!(
+        both_learned.is_ok(),
+        "neither side learned the other's record. alice reads:\n{alice_read}\nbob \
+         reads:\n{bob_read}\nevery daemon log:\n{}",
+        every_daemon_log()
+    );
+    assert!(
+        alice_read.contains("bob wrote this while apart"),
+        "alice must receive what bob wrote while they were apart — she is the only \
+         party who can hold it for him:\n{alice_read}"
+    );
+    assert!(
+        bob_read.contains("alice wrote this while apart"),
+        "and bob must receive what alice wrote while they were apart:\n{bob_read}"
+    );
+}

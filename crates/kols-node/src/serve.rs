@@ -1348,14 +1348,30 @@ pub async fn serve(
                 request_foreign_segments(&store, &mut node, &identity, &mut fetched, &backfill, history_budget(disk.room_for_history(), asked_for_history(&store)))?;
             }
 
-            NodeEvent::FetchComplete { .. } => {
+            NodeEvent::FetchComplete { received, .. } => {
                 sink(&absorb_segments(
                     &store,
                     &mut node,
                     &identity,
                     &mut backfill,
                 )?);
-                request_foreign_segments(&store, &mut node, &identity, &mut fetched, &backfill, history_budget(disk.room_for_history(), asked_for_history(&store)))?;
+                // **Only when something arrived, and this was an unbounded
+                // spin.** A fetch whose chunks have no reachable holder
+                // completes immediately with nothing, and re-planning here sent
+                // it straight back: plan, complete empty, plan again, thousands
+                // of times a second. Two costs, and the second is the one that
+                // mattered — it burned a core, and it flooded the peer with
+                // provider queries until Kademlia evicted it from the routing
+                // table, after which *every* lookup answered "nobody" without
+                // asking and the node could never recover.
+                //
+                // Nothing is lost by waiting: the pointer sync re-plans every
+                // couple of seconds anyway, so a holder that becomes reachable
+                // is found on the next ordinary pass rather than by spinning
+                // between them.
+                if !received.is_empty() {
+                    request_foreign_segments(&store, &mut node, &identity, &mut fetched, &backfill, history_budget(disk.room_for_history(), asked_for_history(&store)))?;
+                }
             }
 
             // Somebody asked to be keyed in. Every gate — the request signature,

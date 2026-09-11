@@ -1,6 +1,6 @@
 # Client Architecture
 
-**Document status:** v1.30 — §1 records the **third** shell trap, and the first that is a
+**Document status:** v1.31 — §5.1's own rule — *nobody answered* and *nobody holds it* must never collapse into one answer — turns out to have been violated by the fetch that implements it: a provider lookup naming nobody marked the chunk **exhausted**, so two members who both wrote while partitioned never reconciled after meeting, each holding a pointer it had just fetched *from the other*. A lookup that reached no peers is not an answer about the content, so a connected peer is now a candidate, with the holder count left at what the lookup produced. And a fetch that completed with nothing was re-planned immediately, which spun thousands of times a second and flooded the peer until Kademlia evicted it from the routing table — after which every lookup answered "nobody" without asking, and the node could not recover. Recorded in Storage §4.4 as a requirement rather than left as client policy. Previously v1.30 — §1 records the **third** shell trap, and the first that is a
 platform rather than a default: a synchronous `#[tauri::command]` runs inline in the IPC
 handler, which on Windows is the message-loop thread, so building a window there deadlocks
 (Tauri's own *Known issues*, wry#583). `v0.13.2` shipped it — a blank white network window that
@@ -1111,6 +1111,31 @@ Nothing in the interface should imply the system can retract bytes somebody alre
 ---
 
 ## 5.1 What This Machine Holds, and For Whom
+
+**The rule this section states was broken by the code that implements it**, found 2026-09-11 by
+a pair of real members. *A provider count is safe in one direction only, so **nobody answered**
+and **nobody holds it** must never collapse into one answer* — and the fetch collapsed them: an
+empty provider list marked a chunk exhausted, ending the fetch for the life of the process.
+
+That is invisible in any test with three parties and total with two. Two members who both wrote
+while apart meet again, exchange pointers successfully, and each then asks the DHT who holds the
+segment the other's pointer names. Over a two-peer routing table the lookup names nobody
+*without asking anybody* — provider records have nowhere to live but the holder, and a member
+behind NAT never becomes a DHT server (Core §5.1.1) — so both fetches ended at once and neither
+message ever moved. The holder was the peer that had just served the pointer.
+
+A connected peer is now a candidate when a lookup names nobody, and the **holder count stays
+what the lookup produced**: zero. That keeps rarest-first honest, and keeps an under-replication
+report from counting a peer that merely might hold something. *Who holds this* and *who to ask
+next* are two questions; they were one parameter.
+
+**And a fetch that completed with nothing was re-planned at once**, which turned a failure into
+a spin: thousands of plans a second, each issuing a provider query, until the peer was flooded
+hard enough that Kademlia evicted it from the routing table. After that every lookup answered
+"nobody" instantly and without asking, so the node could not recover even when a holder became
+reachable. The re-plan is conditional on something having arrived now; the pointer sync's
+ordinary two-second pass picks up the rest.
+
 
 Built over 2026-09-07 and 08. `02` §6.4 owns what a member *offers*; this owns what the client
 does with the offer, because it is architecture rather than policy.
