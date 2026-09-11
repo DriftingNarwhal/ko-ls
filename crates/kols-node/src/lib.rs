@@ -110,6 +110,7 @@ macro_rules! say {
 pub mod account;
 pub mod bundle;
 pub mod chat;
+pub mod dm;
 pub mod executor;
 pub mod invite;
 pub mod join;
@@ -135,6 +136,18 @@ pub fn parse_identity(hex: &str) -> Result<intranet_identity::PerNetworkIdentity
     let key = intranet_crypto::VerifyingKey::from_bytes(bytes)
         .map_err(|_| "those bytes are not a valid identity key".to_owned())?;
     Ok(intranet_identity::PerNetworkIdentityId::from_verifying_key(key))
+}
+
+/// Reads a network id out of the 64 hex characters that display it.
+///
+/// Beside [`parse_identity`] and for its reason: both front ends take one, and
+/// two copies of a parser for the same 32 bytes is how they end up disagreeing
+/// about what is valid.
+pub fn parse_network(hex: &str) -> Result<intranet_identity::NetworkId, String> {
+    let bytes = intranet_crypto::from_hex(hex.trim())
+        .and_then(|b| <[u8; 32]>::try_from(b.as_slice()).ok())
+        .ok_or("a network id is 64 hex characters")?;
+    Ok(intranet_identity::NetworkId::from_bytes(bytes))
 }
 
 /// Checks a relay address before it becomes policy.

@@ -1,0 +1,46 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>ko-ls</title>
+    <link rel="stylesheet" href="style.css" />
+  </head>
+  <body class="conversation-body">
+    <!-- A conversation window — `design/09` §1.6, D40.
+         Compact and deliberately unlike a network window: no channel rail, no
+         roster dropdown, no settings screen. That is honesty rather than
+         minimalism — a `conversation`-profile network has exactly one implied
+         channel and no roles (spec 07 §1.2), so a server-shaped frame would
+         draw furniture that is always empty and imply controls that cannot
+         exist. -->
+
+    <main class="conversation" id="conversation" data-kols="conversation">
+      <header class="conversation-head" data-kols="conversation-head">
+        <!-- A name with enough identity beside it to tell two lookalikes
+             apart. spec 07 §3.9.1 deliberately does not fold confusables and
+             §8 makes rendering identity beside a name an obligation — and this
+             is the window where somebody is deciding who they are talking to. -->
+        <h1 id="who" data-kols="who"></h1>
+        <p class="conversation-where" id="where" data-kols="where"></p>
+      </header>
+
+      <!-- Said where it is true rather than rendered as silence — `09` §1.9.
+           A conversation borrows its rendezvous from the network it was
+           arranged in (D39), recomputed every time and never stored, so a pair
+           who no longer share a network and cannot reach each other directly
+           stops working. That renders identically to nobody talking, and only
+           one of the two is worth knowing about. -->
+      <p class="conversation-stopped" id="stopped" data-kols="stopped" hidden></p>
+
+      <div class="conversation-messages" id="messages" data-kols="messages"></div>
+
+      <form class="conversation-composer" id="composer" data-kols="composer">
+        <input id="body" data-kols="body" autocomplete="off" placeholder="say something" />
+        <button type="submit" data-kols="send">send</button>
+      </form>
+      <p class="conversation-error" id="error" data-kols="error" hidden></p>
+    </main>
+
+    <script src="conversation.js"></script>
+  </body>
+</html>

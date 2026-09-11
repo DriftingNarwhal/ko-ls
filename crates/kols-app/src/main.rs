@@ -123,6 +123,27 @@ struct App {
     /// The network the member is looking at, which is the only thing that makes
     /// a node hot rather than warm.
     in_view: Mutex<Option<intranet_identity::NetworkId>>,
+    /// Whether this application can be reached after its last window closes.
+    ///
+    /// True when a tray icon was built (`design/09` §1.11). **False is not a
+    /// smaller version of true**: with no tray there is no way back to a hidden
+    /// window and no way to quit short of killing the process, so closing the
+    /// last window has to end the application instead — which is what it did
+    /// before the tray existed, and is honest.
+    outlives_windows: Mutex<bool>,
+    /// This installation's claim on being the running application.
+    ///
+    /// # Held here so that quitting can release it
+    ///
+    /// It would be simpler to leave it in the task that beats it, and that has
+    /// a bug in it: `handle.exit` ends the process without dropping a running
+    /// task, so the claim files would outlive the application by their whole
+    /// staleness window — and **quit followed immediately by relaunch would
+    /// find a fresh heartbeat with nobody behind it**, exit as a second
+    /// instance, and look like an application that will not start. The node
+    /// claim survives the same gap because waiting six seconds for a node is a
+    /// pause; waiting six seconds for a window is a bug report.
+    claim: Mutex<Option<kols_node::workspace::AppClaim>>,
 }
 
 impl App {
@@ -438,29 +459,35 @@ fn fetch_history(app: tauri::State<'_, App>, channel: String, before_millis: i64
     })
 }
 
-/// Opens the network to work in, once somebody has logged in.
+/// Starts serving everything this installation belongs to, once somebody has
+/// logged in.
 ///
 /// **Where the startup logic went.** This used to run before the window existed,
 /// which is now too early by construction: with the seeds wrapped there is
 /// nothing to open until an account is unlocked.
 ///
-/// Whichever network is there, if exactly one is — the common case for somebody
-/// who has made or joined a single network, and the case where being asked to
-/// choose is noise. Anything else leaves the picker to ask.
+/// # It opens nothing, and it used to — two defects from the same leftover
+///
+/// This began as *resume the network you were in*, from before the workspace
+/// window existed, and it held on to two habits that became wrong when D40 made
+/// a window a view.
+///
+/// It **marked a network as in view** and held its executor. Nothing was showing
+/// it: unlocking arrives at the list (`09` §1.13), so the row drew itself as the
+/// open one and offered *leave* where it meant *forget*, for a network nobody
+/// had opened. In-view is now set by `open_network` alone, which is the only
+/// thing that puts a network on a screen.
+///
+/// And it gave up unless there was **exactly one** network — a single-network
+/// relic that quietly meant a member with two networks unlocked and served
+/// neither until they clicked one. `09` §2 makes every joined network warm
+/// whether or not anybody is looking at it, which is the whole reason a
+/// conversation nobody has open still arrives.
 #[tauri::command]
 fn resume(handle: tauri::AppHandle, app: tauri::State<'_, App>) -> Result<bool, String> {
-    let only = match app.workspace.list().as_slice() {
-        [only] => only.path.clone(),
-        _ => return Ok(false),
-    };
-    let executor = Executor::open(only.clone()).map_err(|err| err.to_string())?;
-    let id = *executor.store().network();
-    *app.open.lock().map_err(|_| "the workspace lock is poisoned")? = Some(executor);
-    if let Ok(mut view) = app.in_view.lock() {
-        *view = Some(id);
-    }
+    let any = !app.workspace.list().is_empty();
     reconcile_nodes(&handle, &app);
-    Ok(true)
+    Ok(any)
 }
 
 /// Exports every identity on this disk, sealed under its own passphrase.
@@ -562,8 +589,366 @@ fn unlock(app: tauri::State<'_, App>, password: String) -> Result<usize, String>
 /// reservation and keeps answering for its member; quitting the application is
 /// how somebody makes the second request.
 #[tauri::command]
-fn lock(_app: tauri::State<'_, App>) {
+fn lock(handle: tauri::AppHandle, _app: tauri::State<'_, App>) {
     kols_node::account::lock_process();
+    // **The lock reaches every window** — `design/09` §1.12. It hid one window
+    // when there was one; a network window left on screen after a lock would
+    // leave this installation's messages readable to somebody at the keyboard,
+    // which is the first of the three things `02` §6.3 says the lock protects.
+    //
+    // Closed rather than hidden, because this window is cheap to reopen and
+    // because a hidden window holding a network's drawn state is a copy of that
+    // state sitting behind a lock that did not clear it.
+    if let Some(window) = handle.get_webview_window(NETWORK_WINDOW) {
+        let _ = window.close();
+    }
+    if let Some(window) = handle.get_webview_window(WORKSPACE_WINDOW) {
+        let _ = window.set_focus();
+    }
+}
+
+/// Hides the workspace window without ending the application.
+///
+/// What closing it does too (`design/09` §1.11) — this is the button on the
+/// notice that says so, so that the first close is an informed one rather than
+/// a surprise.
+#[tauri::command]
+fn hide_workspace(handle: tauri::AppHandle) -> Result<(), String> {
+    let Some(window) = handle.get_webview_window(WORKSPACE_WINDOW) else {
+        return Ok(());
+    };
+    window.hide().map_err(|err| err.to_string())
+}
+
+/// Stops every node and ends the application — the deliberate way out.
+///
+/// The only path that runs a shutdown properly: claims and relay reservations
+/// are released rather than left to expire (`05` §1.1). Offered beside the
+/// notice because the moment somebody learns that closing is not quitting is
+/// the moment they may want to actually quit.
+#[tauri::command]
+fn quit_app(handle: tauri::AppHandle) {
+    stop_node(&handle);
+    handle.exit(0);
+}
+
+/// Every conversation this installation holds, at whatever stage — `09` §1.4.
+///
+/// # Gathered across networks, which is the workspace window's whole point
+///
+/// A conversation is arranged inside a shared network, so what is pending lives
+/// in *that* network's store (spec 07 §6.2 permits the two parties to hold a
+/// request and nobody else). A member should not have to open each network in
+/// turn to find out who has asked to talk to them, so this asks all of them.
+///
+/// Local knowledge only, and worth saying which kind: the correlation between a
+/// member's networks exists in this directory and nowhere else (`03` §4.6). No
+/// peer learns it, and nothing here is published.
+#[tauri::command]
+fn conversations(app: tauri::State<'_, App>) -> Result<Vec<dto::Conversation>, String> {
+    let stores: Vec<kols_node::store::Store> = app
+        .workspace
+        .list()
+        .into_iter()
+        .filter_map(|known| kols_node::store::Store::open(known.path).ok())
+        .collect();
+
+    let mut found = Vec::new();
+    for store in &stores {
+        let shared = to_hex(store.network().as_bytes());
+        // A request waiting on an answer. Every one of these verified before it
+        // reached the disk (spec 07 §6.2), so there is no unverified state to
+        // render and no badge to put on one.
+        for (who, _) in store.requests() {
+            found.push(dto::Conversation {
+                network: String::new(),
+                who: to_hex(who.verifying_key().as_bytes()),
+                shared: shared.clone(),
+                state: "asked".to_owned(),
+                label: name_in(store, &who),
+            });
+        }
+        // One this member offered and the daemon has not delivered, or has
+        // delivered and nobody has answered — which are the same row, because
+        // nothing tells the sender which (`09` §1.8).
+        for (who, network) in store.offered_conversations() {
+            found.push(dto::Conversation {
+                network: to_hex(network.as_bytes()),
+                who: to_hex(who.verifying_key().as_bytes()),
+                shared: shared.clone(),
+                state: "offered".to_owned(),
+                label: name_in(store, &who),
+            });
+        }
+    }
+
+    // And the ones that exist: a conversation network on this disk, named by
+    // where it was arranged rather than by its own id.
+    for store in &stores {
+        if store.cached_profile() != Some(kols_core::NetworkProfile::Conversation) {
+            continue;
+        }
+        let (shared, who) = match store.origin() {
+            Some(origin) => origin,
+            // A conversation with no origin recorded borrows no relay and can
+            // say nothing about who it is with (`Store::origin`). Listed
+            // anyway, because it is on this disk and hiding it would be worse.
+            None => {
+                found.push(dto::Conversation {
+                    network: to_hex(store.network().as_bytes()),
+                    who: String::new(),
+                    shared: String::new(),
+                    state: "joined".to_owned(),
+                    label: store.label().unwrap_or_default(),
+                });
+                continue;
+            }
+        };
+        let label = stores
+            .iter()
+            .find(|other| other.network() == &shared)
+            .map(|other| name_in(other, &who))
+            .unwrap_or_else(|| to_hex(who.verifying_key().as_bytes())[..8].to_owned());
+        found.push(dto::Conversation {
+            network: to_hex(store.network().as_bytes()),
+            who: to_hex(who.verifying_key().as_bytes()),
+            shared: to_hex(shared.as_bytes()),
+            state: "joined".to_owned(),
+            label,
+        });
+    }
+    Ok(found)
+}
+
+/// What to call somebody, in the network the name was claimed in.
+///
+/// **A name is never sufficient on its own** (spec 07 §8, §3.9.1): the
+/// uniqueness key deliberately does not fold confusables, so an interface has
+/// to render enough identity beside a name to tell two lookalikes apart. This
+/// returns the name; the row puts the identity beside it, which is where a
+/// person is actually deciding who they are talking to.
+fn name_in(store: &kols_node::store::Store, who: &intranet_identity::PerNetworkIdentityId) -> String {
+    let short = to_hex(who.verifying_key().as_bytes())[..8].to_owned();
+    let Ok(state) = store.state() else {
+        return short;
+    };
+    let Ok(executor) = Executor::open(store.root().to_path_buf()) else {
+        return short;
+    };
+    executor
+        .names(&state)
+        .ok()
+        .and_then(|names| names.of(who).map(str::to_owned))
+        .unwrap_or(short)
+}
+
+/// Offers a conversation to a member of a network this installation is in.
+#[tauri::command]
+fn start_conversation(
+    app: tauri::State<'_, App>,
+    network: String,
+    with: String,
+) -> Result<String, String> {
+    let shared = app.workspace.open(&network)?;
+    let with = kols_node::parse_identity(&with)?;
+    let started = kols_node::dm::start(&app.workspace, &shared, &with, None)?;
+    Ok(to_hex(started.conversation.as_bytes()))
+}
+
+/// Accepts a request, which joins the conversation's network.
+#[tauri::command]
+async fn accept_conversation(
+    handle: tauri::AppHandle,
+    network: String,
+    from: String,
+) -> Result<String, String> {
+    let from = kols_node::parse_identity(&from)?;
+    let shared = kols_node::parse_network(&network)?;
+    let workspace = {
+        let app = handle.state::<App>();
+        Workspace::at(app.workspace.root().to_path_buf())
+    };
+    let conversation = kols_node::dm::accept(&workspace, &shared, &from).await?;
+    // The new network is one this installation belongs to, so it is warm like
+    // every other (`09` §2) — and a conversation neither party has open is
+    // exactly the case that has to keep running.
+    reconcile_nodes(&handle, &handle.state::<App>());
+    Ok(to_hex(conversation.as_bytes()))
+}
+
+/// Declines a request, which tells nobody — spec 07 §6.2.
+#[tauri::command]
+fn decline_conversation(
+    app: tauri::State<'_, App>,
+    network: String,
+    from: String,
+) -> Result<(), String> {
+    let shared = app.workspace.open(&network)?;
+    kols_node::dm::decline(&shared, &kols_node::parse_identity(&from)?)
+}
+
+/// The label a conversation window is drawn under.
+///
+/// One window per conversation, each its own view (`design/09` §1.6) — unlike
+/// the single network window, because several conversations at once is the
+/// shape's whole advantage and they are small. Every label must appear in
+/// `capabilities/default.json`, or the window gets an empty allow-list and no
+/// node event ever reaches it, silently (`design/05` §1).
+fn conversation_label(network: &str) -> String {
+    format!("conversation-{}", &network[..16.min(network.len())])
+}
+
+/// An executor for a network that is not the one in view.
+///
+/// # Why conversations do not use the open executor
+///
+/// `App::open` is the network a member is *looking at*, and a conversation
+/// window is looking at a different one — possibly three of them at once. So
+/// each call opens an executor for the network it names, which is exactly what
+/// the terminal does on every invocation and is cheap for the same reason: the
+/// store caches its replayed state, so this is a directory read rather than a
+/// replay (`design/05` §5).
+///
+/// It crosses the same boundary either way. `Executor::submit` authorizes and
+/// then runs, and there is no second path into it — `05` §3's first property is
+/// held by a type rather than by which caller happens to be asking.
+fn executor_for(app: &App, network: &str) -> Result<Executor, String> {
+    let store = app.workspace.open(network)?;
+    let root = store.root().to_path_buf();
+    drop(store);
+    Executor::open(root).map_err(|err| err.to_string())
+}
+
+/// Draws a conversation in a window of its own, creating or raising it.
+#[tauri::command]
+fn open_conversation(
+    handle: tauri::AppHandle,
+    app: tauri::State<'_, App>,
+    network: String,
+    label: String,
+) -> Result<(), String> {
+    // Opened for its side effects: it refuses a network this disk does not
+    // hold, which is the check worth making before a window exists to report
+    // it in.
+    let _ = executor_for(&app, &network)?;
+
+    let shown = if label.trim().is_empty() {
+        network[..8.min(network.len())].to_owned()
+    } else {
+        label.trim().to_owned()
+    };
+    let title = format!("{shown} — a conversation");
+    let name = conversation_label(&network);
+
+    if let Some(existing) = handle.get_webview_window(&name) {
+        let _ = existing.set_focus();
+        return Ok(());
+    }
+    tauri::WebviewWindowBuilder::new(
+        &handle,
+        name,
+        tauri::WebviewUrl::App(format!("conversation.html?network={network}").into()),
+    )
+    .title(title)
+    // Small, because a conversation is one implied channel and a person
+    // (`09` §1.6) — a window sized for a channel rail and a roster would be
+    // claiming to hold things a conversation does not have.
+    .inner_size(460.0, 620.0)
+    .min_inner_size(320.0, 360.0)
+    .disable_drag_drop_handler()
+    .build()
+    .map_err(|err| format!("could not open a window for this conversation: {err}"))?;
+    Ok(())
+}
+
+/// Who a conversation is with, and whether it can still be reached.
+#[tauri::command]
+fn conversation_who(app: tauri::State<'_, App>, network: String) -> Result<dto::Conversation, String> {
+    let id = kols_node::parse_network(&network)?;
+    let store = app
+        .workspace
+        .store_for(&id)
+        .ok_or("that conversation is not on this disk")?;
+
+    let (shared, who) = store.origin().unzip();
+    let label = match (shared, who) {
+        (Some(shared), Some(who)) => app
+            .workspace
+            .store_for(&shared)
+            .map(|other| name_in(&other, &who))
+            .unwrap_or_else(|| to_hex(who.verifying_key().as_bytes())[..8].to_owned()),
+        _ => store.label().unwrap_or_default(),
+    };
+
+    // **Whether the rendezvous can still be borrowed** — D39, and `09` §1.9's
+    // owed sentence. The permission is recomputed rather than stored, so this
+    // is the answer *now*: both parties still members of the network this was
+    // arranged in. A conversation that has stopped connecting and one where
+    // nobody is talking render identically, and only the first is worth saying.
+    let reachable = app.workspace.borrowable_relay(&store).is_some();
+    Ok(dto::Conversation {
+        network,
+        who: who
+            .map(|who| to_hex(who.verifying_key().as_bytes()))
+            .unwrap_or_default(),
+        shared: shared.map(|it| to_hex(it.as_bytes())).unwrap_or_default(),
+        state: if reachable { "joined".to_owned() } else { "adrift".to_owned() },
+        label,
+    })
+}
+
+/// Reads a conversation's one implied channel.
+#[tauri::command]
+fn conversation_read(
+    app: tauri::State<'_, App>,
+    network: String,
+    window: Option<dto::WindowArg>,
+) -> Result<dto::Opened, String> {
+    let id = kols_node::parse_network(&network)?;
+    // **Derived, never declared** (spec 07 §3.6): a conversation has exactly
+    // one channel and nothing announces it, so both ends compute the same id
+    // from the network. There is nothing to look up and nothing to disagree
+    // about.
+    let channel = kols_core::conversation_channel_id(&id);
+    let executor = executor_for(&app, &network)?;
+    open_one(&executor, channel, window.unwrap_or_default().resolve())
+}
+
+/// Says something in a conversation.
+#[tauri::command]
+fn conversation_send(
+    app: tauri::State<'_, App>,
+    network: String,
+    body: String,
+) -> Result<(), String> {
+    let id = kols_node::parse_network(&network)?;
+    let channel = kols_core::conversation_channel_id(&id);
+    executor_for(&app, &network)?
+        .submit(Command::SendMessage {
+            channel,
+            body,
+            reply_to: None,
+            attachments: Vec::new(),
+        })
+        .map(|_| ())
+        .map_err(|err| err.to_string())
+}
+
+/// Raises the window listing everything this installation belongs to.
+///
+/// The way back from a network, and the shell's to do rather than the
+/// document's: a document asking to be shown a window it does not own is a
+/// document with an opinion about window management.
+#[tauri::command]
+fn show_workspace(handle: tauri::AppHandle) -> Result<(), String> {
+    let Some(window) = handle.get_webview_window(WORKSPACE_WINDOW) else {
+        return Ok(());
+    };
+    // Unhidden rather than recreated: closing this window hides it (below), so
+    // it is always there to be shown and its state survives being put away.
+    window.show().map_err(|err| err.to_string())?;
+    window.unminimize().map_err(|err| err.to_string())?;
+    window.set_focus().map_err(|err| err.to_string())
 }
 
 /// The ceiling on everything this installation stores, and what it is using.
@@ -1765,7 +2150,16 @@ async fn join_network(
     };
     let path = workspace.path_for(&credential.network);
 
-    let landed = kols_node::join::redeem(path.clone(), credential, 30, false).await?;
+    // A pasted invite is a server's: accepting a conversation goes through the
+    // direct-message flow, which says so (`design/09` §1.7).
+    let landed = kols_node::join::redeem(
+        path.clone(),
+        credential,
+        30,
+        false,
+        kols_core::NetworkProfile::Server,
+    )
+    .await?;
 
     // Open it either way. A waiting-room member holds an identity and nothing
     // else, and showing them that — rather than nothing — is the difference
@@ -1892,6 +2286,134 @@ fn forget_network(
     })
 }
 
+/// The label of the window a network is drawn in — `design/09` §1.5, D40.
+///
+/// One, reused as the member switches, with a second available on request
+/// later. Every label this application creates has to appear in
+/// `capabilities/default.json`, or the window gets an empty allow-list and no
+/// node event ever reaches it — silently (`design/05` §1).
+const NETWORK_WINDOW: &str = "network";
+
+/// The label of the window listing everything this installation belongs to.
+const WORKSPACE_WINDOW: &str = "workspace";
+
+/// What a network window's title says — D36, `design/09` §6.5.
+///
+/// # Composed here rather than in the document, which is the point of it
+///
+/// D36 takes the network and the identity out of the themeable document
+/// because a theme that makes one network resemble another does not cause
+/// confusion, it causes a message written into the wrong network. A title the
+/// *document* sets is a title the document can set wrongly, so it is only
+/// outside the theme's reach in the sense that matters if the shell is the one
+/// composing it — which is what this does. The interface supplies a number
+/// (`set_unread`) and never a name: a document lying about a count is
+/// harmless, and one lying about which network you are in is the whole risk.
+///
+/// The network's own name (D32) rather than the local label where it has one,
+/// because that is what every member sees and what travels with the network.
+fn network_title(store: &kols_node::store::Store, unread: usize) -> String {
+    let replayed = store.state().ok();
+    let named = replayed
+        .as_ref()
+        .and_then(|state| kols_core::ChatPolicy::of(&state.policy).network_name().map(str::to_owned))
+        .filter(|name| !name.trim().is_empty())
+        .or_else(|| store.label().filter(|label| !label.trim().is_empty()))
+        .unwrap_or_else(|| to_hex(store.network().as_bytes())[..8].to_owned());
+
+    // Which member you are *here*. Identities are per network (Core §1.2), so
+    // this is not decoration: the same person is a different member in each,
+    // and two windows open at once is exactly when that matters.
+    let me = store
+        .identity()
+        .map(|identity| identity.id().short())
+        .unwrap_or_else(|_| "not keyed".to_owned());
+
+    if unread > 0 {
+        format!("{named} ({unread}) — {me}")
+    } else {
+        format!("{named} — {me}")
+    }
+}
+
+/// Draws a network in the network window, creating or raising it.
+///
+/// **The title is set before the window is shown, and cleared before a reuse
+/// redraws.** `design/09` §1.5: a reused window turns D36's spoof into a
+/// temporal one — click, the content redraws, the title lags, and the next
+/// message goes to the network that was there a moment ago. §1 already
+/// requires the screen cleared rather than overwritten; the native title is
+/// part of what is cleared.
+fn show_network_window(
+    handle: &tauri::AppHandle,
+    store: &kols_node::store::Store,
+) -> Result<(), String> {
+    let title = network_title(store, 0);
+    let network = to_hex(store.network().as_bytes());
+
+    if let Some(existing) = handle.get_webview_window(NETWORK_WINDOW) {
+        // Cleared first, so nothing names the outgoing network over the
+        // incoming one's content.
+        let _ = existing.set_title("ko-ls");
+        // **An event rather than `eval`.** Injecting a script to tell a window
+        // which network it is showing would be this shell writing code into a
+        // document it spends a CSP keeping other people's code out of, with the
+        // network id interpolated into that script — which is the shape of every
+        // injection bug there has ever been. The event channel is already how
+        // every other push reaches the interface.
+        existing
+            .emit("kols://network", &network)
+            .map_err(|err| err.to_string())?;
+        existing.set_title(&title).map_err(|err| err.to_string())?;
+        let _ = existing.set_focus();
+        return Ok(());
+    }
+
+    tauri::WebviewWindowBuilder::new(
+        handle,
+        NETWORK_WINDOW,
+        tauri::WebviewUrl::App(format!("index.html?network={network}").into()),
+    )
+    .title(title)
+    .inner_size(1100.0, 720.0)
+    .min_inner_size(640.0, 480.0)
+    // The same default that had to be turned off for the one window this
+    // application used to have: Tauri installs a native drag handler that takes
+    // the drag before the page sees it, so HTML5 drag-and-drop — which is how
+    // channels are reordered — never fires (`design/05` §1).
+    .disable_drag_drop_handler()
+    .build()
+    .map_err(|err| format!("could not open a window for this network: {err}"))?;
+    Ok(())
+}
+
+/// Folds the interface's unread count into the network window's title.
+///
+/// **The document supplies a number and never a name**, which is the whole of
+/// how D36 survives having a count in the title at all. `network_title` composes
+/// the string from replayed state; this only says how many. A document that
+/// lied about the count would be a document lying to its own member about their
+/// own messages, which is harmless; a document that could write the *network*
+/// into the title could make one network wear another's name, which is the
+/// failure D36 exists to prevent.
+///
+/// `design/09` §1.3: a network window's title carries its own network and never
+/// a total across all of them — the cross-network count belongs on the
+/// workspace window, which names no network and cannot be confused for one.
+#[tauri::command]
+fn set_unread(handle: tauri::AppHandle, app: tauri::State<'_, App>, unread: usize) -> Result<(), String> {
+    let Some(window) = handle.get_webview_window(NETWORK_WINDOW) else {
+        return Ok(());
+    };
+    let open = app.open.lock().map_err(|_| "the workspace lock is poisoned")?;
+    let Some(executor) = open.as_ref() else {
+        return Ok(());
+    };
+    window
+        .set_title(&network_title(executor.store(), unread))
+        .map_err(|err| err.to_string())
+}
+
 /// Opens one of this client's networks, and starts a node for it.
 #[tauri::command]
 fn open_network(
@@ -1902,6 +2424,7 @@ fn open_network(
     let store = app.workspace.open(&network)?;
     let root = store.root().to_path_buf();
     let id = *store.network();
+    show_network_window(&handle, &store)?;
     drop(store);
     let executor = Executor::open(root).map_err(|err| err.to_string())?;
     *app.open.lock().map_err(|_| "the workspace lock is poisoned")? = Some(executor);
@@ -1997,6 +2520,15 @@ fn reconcile_nodes(handle: &tauri::AppHandle, app: &tauri::State<'_, App>) {
                 // recomputed anyway — a member stops being here because nothing
                 // arrived, which is not an event and can never be one.
                 kols_api::Event::MemberPresence { .. } => "kols://presence",
+                // Re-read from the store rather than carried, for the same
+                // reason as everything else here — the request is on disk
+                // (spec 07 §6.2 lets exactly the two parties keep one), and a
+                // consumer that rendered from this payload would be appending
+                // where it should be merging. The workspace window's
+                // conversations group listens for this and asks again
+                // (`09` §1.8): without it a verified request sat on the disk
+                // until something else happened to redraw that list.
+                kols_api::Event::DirectMessageRequest { .. } => "kols://conversations",
                 kols_api::Event::GovernanceReorg { mine, others } => {
                     // Recorded before it is emitted, like the relay standing:
                     // the emit makes it prompt, the record makes it reliable.
@@ -2072,6 +2604,25 @@ fn reconcile_nodes(handle: &tauri::AppHandle, app: &tauri::State<'_, App>) {
 fn main() {
     let workspace = Workspace::at(Workspace::default_root());
 
+    // **A second launch raises the windows that already exist** — `design/09`
+    // §1.1, and the second door §1.11 needs. The application outlives its
+    // windows, so launching it again is the ordinary way back when a tray icon
+    // is not where somebody expects one; without this, that gesture would
+    // start a second copy which then loses every store claim to the first, one
+    // network at a time.
+    //
+    // Before Tauri, deliberately: the cheapest possible answer is to not build
+    // a window at all, and a member who double-clicked an icon should see the
+    // application come forward rather than watch a second one start and
+    // vanish.
+    let claim = match workspace.hold_application() {
+        kols_node::workspace::Launch::First(claim) => claim,
+        // Not a refusal, and it must not be reported as one: from where the
+        // member is standing the application came to the front, which is what
+        // they asked for.
+        kols_node::workspace::Launch::Second => return,
+    };
+
     // **Nothing is opened here, and no node is started.** `design/02` §6.3: a
     // node runs only once somebody has logged in, and that half is what decides
     // what the password protects. Starting one before then would require the
@@ -2095,8 +2646,51 @@ fn main() {
                 tauri::async_runtime::handle().inner().clone(),
             )),
             in_view: Mutex::new(None),
+            outlives_windows: Mutex::new(false),
+            claim: Mutex::new(Some(claim)),
             relay: Mutex::new(None),
             reorg: Mutex::new(None),
+        })
+        .on_window_event(|window, event| {
+            let tauri::WindowEvent::CloseRequested { api, .. } = event else {
+                return;
+            };
+            // A network window closes for real. It is a view of one network and
+            // is created again the moment one is opened, so there is nothing to
+            // keep — and keeping it would mean a hidden window holding a
+            // network's drawn state, which is what `lock` refuses for the same
+            // reason (`design/09` §1.12).
+            if window.label() != WORKSPACE_WINDOW {
+                return;
+            }
+
+            // Nothing to hide into. Let the close proceed, and `ExitRequested`
+            // below will stop the nodes on the way out.
+            let app = window.state::<App>();
+            if !app.outlives_windows.lock().is_ok_and(|it| *it) {
+                return;
+            }
+
+            // **The workspace window hides rather than closing**, because the
+            // application outlives it (`09` §1.11) and a window that was
+            // destroyed would have to be rebuilt, losing whatever was on screen
+            // for no gain.
+            api.prevent_close();
+
+            let workspace = Workspace::at(app.workspace.root().to_path_buf());
+            if workspace.told_closing_is_not_quitting() {
+                let _ = window.hide();
+                return;
+            }
+            // **Said once, the first time, and before the window goes.** A
+            // member who closed every window may reasonably believe they shut
+            // the application down, and it is still serving other members'
+            // content (`05` §5.1). Shown rather than hidden-then-announced,
+            // because a notice nobody can see is not one — and it carries the
+            // way out, since the moment somebody learns closing is not quitting
+            // is the moment they may want to quit.
+            let _ = workspace.remember_closing_is_not_quitting();
+            let _ = window.emit("kols://still-running", ());
         })
         .invoke_handler(tauri::generate_handler![
             me,
@@ -2130,6 +2724,18 @@ fn main() {
             create_network,
             join_network,
             open_network,
+            set_unread,
+            show_workspace,
+            conversations,
+            open_conversation,
+            conversation_who,
+            conversation_read,
+            conversation_send,
+            start_conversation,
+            accept_conversation,
+            decline_conversation,
+            hide_workspace,
+            quit_app,
             relays,
             people,
             set_relays,
@@ -2171,6 +2777,36 @@ fn main() {
     //
     // A minute, against a ten-minute poll: fine enough that a wake is not late
     // by a noticeable fraction of its interval, coarse enough to be free.
+    // **The claim is beaten and the ask is watched on the same second.** A
+    // `stat` and a small write per second, which is bounded in the sense `09`
+    // §4.4 means it: the work does not grow with anything. It is separate from
+    // the supervisor's minute because a member who has just double-clicked an
+    // icon is waiting, and a minute is not an answer.
+    {
+        let handle = app.handle().clone();
+        tauri::async_runtime::spawn(async move {
+            let mut tick = tokio::time::interval(std::time::Duration::from_secs(1));
+            loop {
+                tick.tick().await;
+                let asked = {
+                    let state = handle.state::<App>();
+                    let Ok(held) = state.claim.lock() else { continue };
+                    let Some(claim) = held.as_ref() else {
+                        // Released on the way out. Nothing left to answer for.
+                        return;
+                    };
+                    // Losing it stops nothing (see `AppClaim::beat`): the holder
+                    // is whoever the disk says, and if it is no longer this
+                    // process then raising its window is not its job.
+                    claim.beat() && claim.asked_to_show()
+                };
+                if asked {
+                    let _ = show_workspace(handle.clone());
+                }
+            }
+        });
+    }
+
     {
         let handle = app.handle().clone();
         tauri::async_runtime::spawn(async move {
@@ -2188,9 +2824,107 @@ fn main() {
         });
     }
 
+    // **The tray, and what it makes true** — `design/09` §1.11, D40.
+    //
+    // A window is a view: closing one must not set a network aside or stop its
+    // node, which would reintroduce the defect `v0.13.0` was cut to fix while
+    // looking like a feature. So the application outlives its windows and
+    // quitting is a separate, explicit act — `00` §6 already decided that
+    // *nobody at my keyboard can act as me* and *I want to disappear from the
+    // network* are different requests, and `05` §5.1 has this machine holding
+    // replica duty for other people that a close must not silently drop.
+    {
+        let handle = app.handle().clone();
+        let show = tauri::menu::MenuItem::with_id(&handle, "show", "open ko-ls", true, None::<&str>)
+            .expect("a menu item");
+        let quit = tauri::menu::MenuItem::with_id(&handle, "quit", "quit", true, None::<&str>)
+            .expect("a menu item");
+        let menu = tauri::menu::Menu::with_items(&handle, &[&show, &quit]).expect("a menu");
+
+        // **Two items, and no more, because the tray is reachable while locked.**
+        // `02` §6.3 says the lock stops somebody at the keyboard seeing which
+        // networks this installation belongs to — and a tray menu listing them
+        // would read them out without the password. So it never lists anything:
+        // there is nothing here to keep in step with the lock, which is a
+        // stronger arrangement than one that hides the list at the right moment
+        // (`design/09` §1.12).
+        let tray = tauri::tray::TrayIconBuilder::with_id("kols")
+            .icon(app.default_window_icon().expect("a bundled icon").clone())
+            .tooltip("ko-ls — still running")
+            .menu(&menu)
+            .show_menu_on_left_click(false)
+            .on_menu_event(|handle, event| match event.id().as_ref() {
+                "show" => {
+                    let _ = show_workspace(handle.clone());
+                }
+                // The one deliberate stop, and the only path that runs a
+                // shutdown properly: every node stopped and awaited, so claims
+                // and relay reservations are released rather than left to
+                // expire (`05` §1.1).
+                "quit" => {
+                    stop_node(handle);
+                    handle.exit(0);
+                }
+                _ => {}
+            })
+            .on_tray_icon_event(|tray, event| {
+                // Clicking the icon is the ordinary way back, and is what
+                // somebody tries first.
+                if let tauri::tray::TrayIconEvent::Click {
+                    button: tauri::tray::MouseButton::Left,
+                    button_state: tauri::tray::MouseButtonState::Up,
+                    ..
+                } = event
+                {
+                    let _ = show_workspace(tray.app_handle().clone());
+                }
+            })
+            .build(&handle);
+
+        // **A tray that could not be built must not be fatal, and must not be
+        // assumed either.** Without one there is no way back to a hidden
+        // window and no way to quit but killing the process — so the promise
+        // in §1.11 inverts: closing the last window ends the application, which
+        // is the behaviour before this slice and is honest. Recorded in the
+        // state so the close handler and the notice both follow it rather than
+        // each deciding for themselves.
+        if let Err(err) = &tray {
+            eprintln!("no tray icon ({err}); closing the last window will quit");
+        }
+        if let Ok(mut outlives) = handle.state::<App>().outlives_windows.lock() {
+            *outlives = tray.is_ok();
+        }
+    }
+
     app.run(|handle, event| {
-        if let tauri::RunEvent::ExitRequested { .. } = event {
-            stop_node(handle);
+        match event {
+            // **Closing the last window does not end the application.** Tauri
+            // exits when no window is left, which was right while there was one
+            // window and is the *close is going offline* behaviour `09` §1.11
+            // refuses now that there are several. The tray keeps it reachable
+            // and `quit` is the way out.
+            //
+            // `api.prevent_exit()` is not reached by the tray's own quit,
+            // which calls `exit` after stopping the nodes: that path passes
+            // through here with a code, and `ExitRequested` carries none for a
+            // window-driven exit.
+            tauri::RunEvent::ExitRequested { api, code, .. } => {
+                let outlives = handle
+                    .state::<App>()
+                    .outlives_windows
+                    .lock()
+                    .is_ok_and(|it| *it);
+                if code.is_none() && outlives {
+                    api.prevent_exit();
+                } else {
+                    stop_node(handle);
+                }
+            }
+            // The nodes are stopped on the way out however the exit was asked
+            // for, including a signal or the session ending — the one thing
+            // `05` §1.1 says a deliberate stop can do that a crash cannot.
+            tauri::RunEvent::Exit => stop_node(handle),
+            _ => {}
         }
     });
 }
@@ -2239,6 +2973,16 @@ const ANNOUNCE_GRACE: std::time::Duration = std::time::Duration::from_millis(500
 /// dropped nothing, and returning immediately would leave exactly the state this
 /// exists to avoid.
 fn stop_node(handle: &tauri::AppHandle) {
+    // **The application claim goes first, and before anything that can block.**
+    // `handle.exit` does not drop a running task, so a claim left to its
+    // staleness window would make a relaunch within six seconds exit as a
+    // second instance with nobody to raise — an application that appears not to
+    // start. Dropping it here removes the files (`AppClaim::drop`), and doing
+    // it before the nodes are awaited means a slow shutdown does not hold the
+    // next launch hostage.
+    if let Ok(mut held) = handle.state::<App>().claim.lock() {
+        drop(held.take());
+    }
     // **Every node, not one.** The reasoning above is unchanged and now applies
     // several times over: a member closing the window may be holding a dozen
     // claims and a dozen relay reservations, and leaving each to expire is a

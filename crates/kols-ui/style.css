@@ -699,25 +699,7 @@ body {
 /* Destructive, and styled as the quiet option rather than the obvious one:
    forgetting a network you are keyed into destroys the seed, and a button that
    invites a click is the wrong shape for that. */
-/* `.picker-list .forget` rather than `.forget`, because `.picker-list button`
-   is more specific than a bare class and would otherwise win — stretching this
-   to the full width of the row and giving it the same weight as the button that
-   opens the network. */
-.picker-list .forget {
-  background: transparent;
-  border: 1px solid var(--line);
-  border-radius: var(--radius);
-  color: var(--dim);
-  cursor: pointer;
-  flex: none;
-  font: inherit;
-  font-size: 11px;
-  margin-bottom: 6px;
-  padding: 3px 8px;
-  text-align: center;
-  width: auto;
-}
-.picker-list .forget:hover { border-color: var(--bad); color: var(--bad); }
+
 
 /* ---- network settings -------------------------------------------------- */
 
@@ -1333,7 +1315,6 @@ body {
 
 /* ---- the picker ---------------------------------------------------------- */
 
-.picker,
 .lock {
   display: grid;
   place-items: center;
@@ -1374,57 +1355,169 @@ body {
   font-size: 0.9em;
 }
 
-.picker-inner {
-  max-width: 420px;
-  width: 100%;
+/* ---- the workspace window ------------------------------------------------
+ *
+ * A buddy list rather than a dashboard (`design/09` §1.2): narrow, tall, and
+ * meant to sit at the edge of a screen beside something else. It has to be
+ * usable at around 300px, which is narrower than the sidebar that taught this
+ * file §5.1's two sizing rules — so nothing here sizes a flex item from its
+ * content, and the one control beside shrinkable text is taken out of flow. */
+
+.workspace-body { margin: 0; }
+
+.workspace {
+  display: grid;
+  grid-template-rows: auto 1fr auto;
+  height: 100vh;
 }
 
-.picker-inner h1 {
-  font-size: 20px;
-  margin: 0 0 24px;
+.workspace-head {
+  border-bottom: 1px solid var(--line);
+  padding: 14px var(--gap) 12px;
 }
 
-.picker-inner h2 {
+.workspace-head h1 {
+  font-size: 15px;
+  letter-spacing: 0.01em;
+  margin: 0;
+}
+
+/* The groups scroll together and the head and footer do not. `min-height: 0`
+   is what makes a grid row actually scroll rather than grow past the viewport:
+   without it the row's minimum is its content and `overflow` never engages. */
+.workspace-scroll {
+  min-height: 0;
+  overflow-y: auto;
+  padding-bottom: 8px;
+}
+
+.group { padding: 14px var(--gap) 0; }
+
+.group-head {
   color: var(--dim);
-  font-size: 11px;
+  font-size: 10px;
   font-weight: 600;
-  letter-spacing: 0.08em;
+  letter-spacing: 0.09em;
   margin: 0 0 8px;
   text-transform: uppercase;
 }
 
-.picker-list {
-  list-style: none;
-  margin: 0 0 28px;
-  padding: 0;
+.group-empty {
+  color: var(--dim);
+  font-size: 12px;
+  line-height: 1.5;
+  margin: 0;
 }
 
-.picker-list li {
-  align-items: baseline;
+.workspace-foot {
+  border-top: 1px solid var(--line);
   display: flex;
-  gap: 10px;
+  flex-direction: column;
+  gap: 6px;
+  padding: var(--gap);
 }
 
-.picker-list button {
-  background: var(--raised);
-  border: 1px solid var(--line);
+.workspace-foot button {
+  background: var(--accent);
+  border: 0;
   border-radius: var(--radius);
-  color: var(--text);
+  color: var(--on-accent);
   cursor: pointer;
   font: inherit;
-  margin-bottom: 6px;
-  padding: 10px 12px;
-  text-align: left;
+  padding: 9px 12px;
   width: 100%;
 }
 
-.picker-list button:hover { border-color: var(--accent); }
-
-.picker-list .picker-note {
-  color: var(--warn);
-  flex: none;
-  font-size: 11px;
+.workspace-foot button.quiet {
+  background: transparent;
+  border: 1px solid var(--line);
+  color: var(--dim);
 }
+
+.workspace-foot button.quiet:hover { border-color: var(--accent); color: var(--text); }
+
+.workspace-list {
+  list-style: none;
+  margin: 0 0 4px;
+  padding: 0;
+}
+
+/* **The row is the button, and the leave control is taken out of flow.**
+ * §5.1's second rule, and this window is where it bites hardest: a control
+ * sitting in the same flex row as a name that may shrink makes the name's width
+ * depend on the control's, which is a font question — so it renders one way
+ * here and another on Windows. The row is positioned and the control is
+ * absolute, with padding reserving its space, so the name's width depends on
+ * nothing. */
+.workspace-row {
+  position: relative;
+  margin-bottom: 3px;
+}
+
+.workspace-open {
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--radius);
+  color: var(--text);
+  cursor: pointer;
+  display: block;
+  font: inherit;
+  /* Room for the leave control, which sits over this. */
+  padding: 9px 62px 9px 10px;
+  text-align: left;
+  /* An ellipsis rather than wrapping, in a column this narrow. */
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  width: 100%;
+}
+
+.workspace-open:hover { background: var(--hover); border-color: var(--line); }
+
+.workspace-row.open .workspace-open {
+  background: var(--sunken);
+  border-color: var(--line);
+  font-weight: 600;
+}
+
+/* The network in view, marked without moving anything: §1.10 forbids the list
+   reordering itself, and a row that changed size would be the same hazard at a
+   smaller scale. */
+.workspace-row.open::before {
+  background: var(--accent);
+  border-radius: 0 2px 2px 0;
+  content: "";
+  height: 18px;
+  left: 0;
+  position: absolute;
+  top: 11px;
+  width: 3px;
+}
+
+.workspace-note {
+  color: var(--warn);
+  display: block;
+  font-size: 10px;
+  padding: 0 62px 4px 10px;
+}
+
+.workspace-note:empty { display: none; }
+
+.workspace-list .forget {
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--radius);
+  color: var(--dim);
+  cursor: pointer;
+  font: inherit;
+  font-size: 10px;
+  padding: 3px 7px;
+  position: absolute;
+  right: 6px;
+  top: 8px;
+}
+
+.workspace-list .forget:hover { border-color: var(--bad); color: var(--bad); }
 
 .maker label {
   color: var(--dim);
@@ -1466,7 +1559,7 @@ body {
   padding: 10px 18px;
 }
 
-.picker-error {
+.workspace-error {
   color: var(--warn);
   font-size: 12px;
   margin-top: 16px;
@@ -1491,13 +1584,13 @@ body {
 /* Two forms on the picker, so they need separating rather than running together. */
 #joiner { border-bottom: 1px solid var(--line); margin-bottom: 20px; padding-bottom: 20px; }
 #joiner button[disabled] { opacity: 0.6; cursor: default; }
-.picker-error { line-height: 1.6; white-space: pre-wrap; }
+.workspace-error { line-height: 1.6; white-space: pre-wrap; }
 
 /* The same line, reporting something that worked. A departure that went out is
    not a warning, and the colour is the only thing on screen saying which of the
    two a person is reading — `design/02` §6.5 turns on that distinction, so it
    would be an odd place to render both identically. */
-.picker-error.told { color: var(--dim); }
+.workspace-error.told { color: var(--dim); }
 
 /* ── folders and moving things (spec 07 §1.6, §1.8) ─────────────────── */
 
@@ -1619,3 +1712,261 @@ body {
 }
 
 .reorg button:hover { background: var(--hover); }
+
+/* ---- the workspace window's sheets ---------------------------------------
+ *
+ * Join and create are done rarely, deliberately, and then left (`design/09`
+ * §1.2), so they are sheets rather than furniture on the page. They ask *what*
+ * rather than *whether*, which is what lets them live in the document and stay
+ * themeable — only approval has to be native (§5.1). */
+
+dialog {
+  background: var(--raised);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  color: var(--text);
+  font: inherit;
+  max-width: 320px;
+  padding: 0;
+  width: calc(100vw - 24px);
+}
+
+dialog::backdrop { background: var(--veil); }
+
+/* The sheet's own inputs and note. `.maker` supplies the field styling this
+   reuses; what it does not supply is a width that behaves in a 320px dialog,
+   which is §5.1's first rule — nothing here sizes from its content. */
+.ask .maker-note { margin-top: 8px; }
+
+.ask { padding: var(--gap); }
+
+.ask h2 {
+  font-size: 13px;
+  margin: 0 0 10px;
+}
+
+.ask menu {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+  margin: 14px 0 0;
+  padding: 0;
+}
+
+.ask menu button {
+  background: var(--accent);
+  border: 0;
+  border-radius: var(--radius);
+  color: var(--on-accent);
+  cursor: pointer;
+  font: inherit;
+  padding: 7px 14px;
+  width: auto;
+}
+
+.ask menu button.quiet {
+  background: transparent;
+  border: 1px solid var(--line);
+  color: var(--dim);
+}
+
+/* ---- a conversation window -----------------------------------------------
+ *
+ * `design/09` §1.6: one person and one implied channel. Small, because that is
+ * all a conversation has — a window sized for a channel rail and a roster would
+ * be claiming to hold things this does not. */
+
+.conversation-body { margin: 0; }
+
+.conversation {
+  display: grid;
+  grid-template-rows: auto auto 1fr auto auto;
+  height: 100vh;
+}
+
+.conversation-head {
+  border-bottom: 1px solid var(--line);
+  padding: 12px var(--gap) 10px;
+}
+
+.conversation-head h1 {
+  font-size: 14px;
+  margin: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* The identity beside the name, which spec 07 §8 makes an obligation rather
+   than a nicety: the uniqueness key does not fold confusables, so a name alone
+   cannot tell two lookalikes apart. */
+.conversation-where {
+  color: var(--dim);
+  font-family: var(--mono);
+  font-size: 10px;
+  margin: 3px 0 0;
+}
+
+/* D39's limit, said where it is true (`09` §1.9) — not styled as an error,
+   because nothing has gone wrong: the loan ended when the shared membership
+   did, which is what borrowing rather than designating means. */
+.conversation-stopped {
+  background: var(--pinned);
+  border-bottom: 1px solid var(--line);
+  color: var(--warn);
+  font-size: 11px;
+  line-height: 1.5;
+  margin: 0;
+  padding: 8px var(--gap);
+}
+
+.conversation-messages {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-height: 0;
+  overflow-y: auto;
+  padding: var(--gap);
+}
+
+/* A short conversation sits at the bottom, beside the composer, rather than
+   stranded at the top of an empty window with the box it is being typed into a
+   screen away. An auto margin on the first row rather than `justify-content:
+   flex-end`, which in some engines makes the overflow above unreachable —
+   scrolling back is the one thing this container must not lose. */
+.said:first-child { margin-top: auto; }
+
+.said {
+  align-items: baseline;
+  display: flex;
+  gap: 8px;
+  justify-content: flex-start;
+}
+
+.said.mine { justify-content: flex-end; }
+
+.said-body {
+  background: var(--raised);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  margin: 0;
+  /* Long enough to read, short enough that a line does not run the window's
+     whole width — and sized from 0 rather than from content, which is §5.1's
+     first rule and matters in a 320px window. */
+  max-width: 78%;
+  min-width: 0;
+  overflow-wrap: break-word;
+  padding: 6px 9px;
+}
+
+.said.mine .said-body { background: var(--sunken); }
+
+/* Withdrawn is not deleted (`01` §6). It stops conformant clients drawing a
+   message and retracts nothing anybody already has, so it reads as absence
+   rather than as removal. */
+.said-body.withdrawn { color: var(--dim); font-style: italic; }
+
+.said-when {
+  color: var(--dim);
+  flex: none;
+  font-family: var(--mono);
+  font-size: 10px;
+}
+
+.conversation-composer {
+  border-top: 1px solid var(--line);
+  display: flex;
+  gap: 8px;
+  padding: var(--gap);
+}
+
+.conversation-composer input {
+  background: var(--ground);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  color: var(--text);
+  /* From 0 rather than auto: a flex item carrying a percentage or content width
+     beside a button is what turned a 260px sidebar into columns of one letter
+     (§5.1), and this window is narrower. */
+  flex: 1 1 0;
+  font: inherit;
+  min-width: 0;
+  padding: 8px 10px;
+}
+
+.conversation-composer input:focus { border-color: var(--accent); outline: none; }
+
+.conversation-composer button {
+  background: var(--accent);
+  border: 0;
+  border-radius: var(--radius);
+  color: var(--on-accent);
+  cursor: pointer;
+  flex: none;
+  font: inherit;
+  padding: 8px 14px;
+}
+
+.conversation-error {
+  color: var(--bad);
+  font-size: 11px;
+  margin: 0;
+  padding: 0 var(--gap) var(--gap);
+}
+
+/* The identity beside a name in the workspace window's conversation rows, for
+   spec 07 §8's reason. */
+.workspace-id {
+  color: var(--dim);
+  font-family: var(--mono);
+  font-size: 10px;
+  margin-left: 6px;
+}
+
+.workspace-list .forget.accept { color: var(--accent); }
+.workspace-list .forget.accept:hover { border-color: var(--accent); color: var(--accent); }
+
+/* Two controls on a row rather than one, so the space reserved for them is
+   wider — §5.1's rule about a control beside text that may shrink. */
+.workspace-row:has(.accept) .workspace-open { padding-right: 116px; }
+.workspace-row:has(.accept) .workspace-note { padding-right: 116px; }
+.workspace-list .forget.accept { right: 62px; }
+
+/* ---- what this window has to say about itself ----------------------------
+ *
+ * The network window's own line, which used to be the picker's and did double
+ * duty for two screens that are now two windows. A banner rather than a grid
+ * item: `.app` is a two-column grid of full height, so a child in the flow
+ * would take a cell and push the rail into the next one — the layout would
+ * rearrange itself to deliver a sentence. */
+
+.app-error {
+  background: var(--raised);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.35);
+  color: var(--bad);
+  font-size: 11px;
+  left: 50%;
+  line-height: 1.5;
+  margin: 0;
+  max-width: 520px;
+  padding: 9px 12px;
+  position: fixed;
+  top: 10px;
+  transform: translateX(-50%);
+  width: max-content;
+  z-index: 30;
+}
+
+/* Not everything this line carries is a failure. A request sent is a plain
+   statement of what the other side will see, and colouring it like a refusal
+   would make the flow read as broken every time it worked (`09` §1.8). */
+.app-error.told { color: var(--dim); }
+
+/* A roster row somebody can act on says so on approach. The cursor is the whole
+   affordance: §1.7 puts the entry point here precisely because the row is
+   already the pair a request needs, and a row that grew a button would be
+   permanent furniture for a rare act (§1.2). */
+.person.askable { cursor: pointer; }
+.person.askable:hover { background: var(--hover); }

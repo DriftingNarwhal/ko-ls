@@ -24,6 +24,453 @@ Kept because this project keeps re-learning the same lessons and paying for them
 
 ---
 
+- **2026-09-11** — **Slice 3, and three defects that were all one mistake.**
+
+  Conversation windows, starting one from a roster, accepting and declining. The code went in
+  without much argument; what the day was actually about is what launching it found, because
+  the suite could not see any of it and all three had the same shape — **a window drawn once
+  and then trusted**.
+
+  The workspace window had no poll and no subscription. A network founded in it reported *not
+  keyed in yet* for as long as the window stayed open: the epoch key is written a beat after
+  the node starts, the row had already been drawn, and nothing asked again. I watched that for
+  twenty seconds before believing it, then checked the disk — `epochs/` held the key and
+  `rotation` matched it, so the state was right and the picture was old. The same gap ran
+  straight through the feature being built: `09` §1.8 says a verified request appears in this
+  list, and it would have appeared on whatever draw happened next, which might be tomorrow.
+  Both mechanisms rather than either — the events the node already emits for what it announces,
+  and a five-second poll for what nothing announces, which is most of §1.3's row contents.
+
+  The other two were in `resume`, a startup path older than the workspace window that had not
+  been re-read since D40 made a window a *view*. It marked a network as **in view** while
+  nothing showed it, so the list drew the row as open and offered *leave* where it meant
+  *forget* — for a network nobody had opened. And it gave up unless there was **exactly one**
+  network, a single-network relic from before the list existed, which quietly meant a member
+  with two networks unlocked and served **neither** until they clicked one. That one reaches
+  other people: `09` §2 makes every joined network warm because a machine that serves nothing
+  stops holding up replica duty it accepted, and it is the reason a conversation nobody has
+  open can be reached at all.
+
+  **Neither of those was a wrong line of code.** Each was a correct line whose meaning changed
+  underneath it, which is the failure mode of a leftover rather than of a mistake, and reading
+  the function would have caught both — the same lesson as *check the layer before building*,
+  one layer further along: check the layer you changed the meaning of.
+
+  **The visual check needed a conversation to look at, and there was none.** `dm::start`
+  refuses yourself, so a single instance cannot produce one, and this container has no window
+  manager to drive two. So the window was pointed at the conversation document with canned
+  answers behind it, for one launch, with the files copied aside first and restored after —
+  which is how the bottom-alignment bug turned up: a short conversation drew at the top with
+  the composer a screen below. An auto top margin on the first row rather than
+  `justify-content: flex-end`, which in some engines makes the overflow above unreachable.
+
+  **And two checks in `drive.mjs` had never run.** They sat after the `process.exit` that ends
+  the second pass — left there when the storage panel moved documents — and one of them was
+  failing, because the stub it needed had been copied across without its body. A check that
+  cannot run is worse than no check: it reads as coverage. Now 172 checks over three documents.
+
+- **2026-09-11** — **Single instance, hand-rolled, and the plugin's source is why.**
+
+  The hole slice 2 left: a tray icon can be built and never displayed, so the application can
+  outlive its windows unreachably. §1.1 already specified the second door — a second launch
+  raises the windows that already exist — and this is it.
+
+  **The plugin was read rather than trusted.** `tauri-plugin-single-instance` uses a named
+  mutex and `WM_COPYDATA` on Windows and **D-Bus on Linux**, and its Linux setup is
+  `Builder::session().unwrap()` — which panics where there is no session bus. That is this
+  container, and any minimal session, and it correlates with the very case the door exists to
+  cover: a desktop with no tray host. A mechanism that fails where the problem it solves lives
+  is not a solution to it. Licence and boundaries were fine — Apache/MIT, and raising a window
+  signs nothing, so nothing about `kols-api` or the sandbox path objected. The objection was
+  concrete rather than principled, which is worth separating.
+
+  So it is the **node claim's shape one level up**: a directory, an owner token, a heartbeat, a
+  staleness window. Platform-neutral, no dependency, and it keeps `05` §1's "no plugins here"
+  true — which matters because the capability file's shortness is what makes it auditable.
+
+  **A heartbeat is not evidence that anybody is answering.** The first version read the beat
+  and exited if it was fresh, and killing a process showed what that costs: the last beat stays
+  fresh for the rest of the staleness window, so a relaunch inside those seconds exited as a
+  second instance with nobody to raise. That presents as *an application that will not start* —
+  the worst failure available here, because the member's remedy is to try again and trying
+  again is the gesture that keeps failing.
+
+  The protocol is therefore an exchange: a launch **asks** and waits for the ask to be taken. A
+  live holder consumes the marker on its next beat; a dead one never does, and the launch
+  becomes the application. Verified with two real processes both ways — a second launch exits
+  in under a second having raised the first, and a launch after a `kill` becomes the
+  application with one window.
+
+  **And the mirror of the same bug on the way out**: an exit does not drop a running task, so
+  the claim had to be released where the nodes are stopped rather than left to its staleness
+  window, or quitting and relaunching within a few seconds would look like the same failure.
+
+  My own test failed when the protocol got stricter, which is the test having encoded the
+  weaker one. Rewritten with a stand-in holder that actually answers, plus a new one for the
+  heartbeat nobody stands behind.
+
+- **2026-09-11** — **Slice 2: the tray, and the assumption underneath it that does not hold.**
+
+  A tray icon, an explicit quit that stops every node and awaits them, a workspace window that
+  hides rather than closing, and the one-time notice saying so. `05` §1.1's shutdown path moves
+  off window-close onto that quit — amended rather than deleted, since atomic writes are still
+  owed to crashes and a deliberate stop is now the one case that *can* release claims and relay
+  slots properly.
+
+  **The lock was written stronger than it needed to be, and building it showed which half
+  mattered.** §1.12 said *hide all of them*. What the requirement actually is: nothing a locked
+  installation should not show stays on screen. The network window plainly is that — it is a
+  network's messages — and is closed rather than hidden, because a hidden window holds drawn
+  state behind a lock that did not clear it. The workspace window is not: showing the lock
+  screen, it names no network and lists nothing. Hiding it as well would make the tray the only
+  way back from a lock, which is worse for no gain. The section is amended to the weaker, true
+  statement.
+
+  **And the tray is a desktop service rather than a window**, which the design had quietly
+  assumed away. A Linux session with no tray host has none. So the builder's failure is not
+  fatal and is not ignored either: where a tray cannot be built, closing the last window ends
+  the application — the behaviour before this slice, and the honest one, since the alternative
+  is a process a member cannot reach, cannot quit, and was told was fine. The notice is not
+  shown there either, because it would be describing a tray that is not there.
+
+  **The residual is the interesting part and is recorded rather than glossed.** A tray icon can
+  be built *successfully* and never displayed — this container does exactly that, having no
+  session bus, which is how it was found: the log said `Unable to get the session bus` while
+  `build()` returned `Ok`. So the check catches a hard failure and cannot catch a silent one.
+  The second door that would close it is already specified in §1.1 — **a second launch raises
+  the windows that already exist** — which turns *relaunch it* into a way back. It is not
+  built, so the promise has one platform-shaped hole and the way out of the hole is to quit
+  from a window rather than closing it.
+
+  Worth noting what found this: not review, and not the suite. The application was launched and
+  its stderr read. The same shape as `v0.13.0`'s crash and slice 1's two defects — three times
+  in two days that running it has been the only thing that worked.
+
+- **2026-09-11** — **Running slice 1 found two defects that nothing else would have.**
+
+  The window was built, the suite was green and the front-end driver was green, and then it
+  was launched. Both of these were in the first ten seconds of using it.
+
+  **The workspace document had no styles at all.** New markup with new class names, and the
+  stylesheet's `.picker*` rules — sixteen of them — were now dead. It would have rendered as
+  raw HTML, which is a worse answer to *not very aesthetically pleasant* than the thing being
+  replaced. The picker's rules are now the workspace window's, rewritten for a 300px column:
+  the row is the button and the leave control is taken **out of flow**, which is §5.1's second
+  sizing rule applied where it bites hardest, since a control sharing a flex row with a name
+  that may shrink makes the name's width a font question.
+
+  **`class="sheet"` collided with an existing full-screen overlay.** `.sheet` is
+  `position: fixed; inset: 0; display: flex` for the door and invite sheets, so the create
+  dialog rendered as a column of single words down the left of the window. Renamed. Worth
+  recording as the cost of reusing a stylesheet across a new document rather than as a typo:
+  the second document inherits every name the first one took.
+
+  **And Enter cancelled.** `<menu><button>cancel</button><button>create</button></menu>` — the
+  first submit button in a form is what Enter activates, so typing a network name and pressing
+  Return threw it away and closed the sheet. It produced no error and left no trace; the only
+  reason it was found is that the driving script pressed Return and the network did not appear.
+  Cancel is `type="button"` now, so the primary action is the only thing that submits.
+
+  **What the launch did confirm**, and at the strength it holds: the workspace window opens at
+  360x760 and is legible; an account is made and the copy is offered straight after, which is
+  `02` §6.3's ordering; the create sheet renders and creates; the row draws with its open
+  marker, its leave control and *not keyed in yet*; and **the network window opens titled
+  `the workshop — 2fc7d5cc`**, which is D36 working for the first time since it was decided.
+
+  **What it did not confirm is the reuse rule**, which is slice 1's central promise. Two
+  networks in one window, the title clearing and changing with the content — unobserved. This
+  container has no window manager, so `windowactivate` fails and clicks land wherever the
+  pointer focus happens to be; further puppetry stopped earning its keep. It rests on the code
+  path, the label being in the capability file, and the driver asserting the shell is the one
+  asked. A person switching between two networks is what would actually settle it.
+
+- **2026-09-11** — **Slice 1: the window model, and the trap it was sequenced to flush out first.**
+
+  Two documents where there was one. `workspace.html` is declared at launch and
+  `index.html` is created at runtime per network and reused as the member switches, which is
+  what makes changing networks a click rather than backing out of one.
+
+  **The capability file was the first change, deliberately.** It read `"windows": ["main"]`,
+  and a capability is scoped to labels — so a new window whose label no capability names gets
+  an empty allow-list, `listen` is refused, and no node event ever reaches it *silently*. That
+  is the failure this shell already paid four apparent bugs and three polls for. Doing it
+  before any second window existed meant the failure never had a chance to happen, and the
+  existing test caught the rename the moment it landed, which is the guard doing exactly its
+  job.
+
+  **D36's title was never implemented.** It said `ko-ls` or `ko-ls (3)` — no network, no
+  identity — and §6.5 had gated it on theming, which is unbuilt. D40 makes it load-bearing for
+  a different reason, so it exists now and it is composed **by the shell**: the document
+  supplies a count and never a name. A document that could write the network into the title
+  could make one network wear another's, which is the whole of what D36 is for; a document
+  lying about its own unread count is harmless. The reuse case clears the title before it
+  redraws, because reuse turns that spoof into a temporal one.
+
+  **Two things this slice found that were not in the plan.**
+
+  The shell's first draft told a reused window which network it was drawing with `eval`,
+  interpolating the network id into a script — in an application that spends a CSP keeping
+  other people's code out of its documents. It emits an event instead, which is how every
+  other push already reaches the interface.
+
+  And `Workspace::containing` was written as "the parent directory", which is right for a
+  store the workspace laid out and actively wrong otherwise: a `--home` pointing straight at
+  one store is a supported shape, so the parent is whatever directory it happens to sit in —
+  `/tmp` during a test run — and every unrelated store beside it would have been read as this
+  installation's networks. It asks whether `path_for` would have placed the store there, which
+  is exact. There is a test, because the loose version looks correct.
+
+  **The front-end gate caught a real regression, which is the best thing that happened here.**
+  Moving *create a network* to the workspace window left D29's shared-relay warning behind —
+  and `09` §3 is explicit that creating a network with a relay is the **more common** of the
+  two designations and the first one most people ever make. `drive.mjs` failed on it. It is
+  ported, and the driver now runs two passes, one per document, because a gate that only
+  covered the old document would have stopped covering half the interface.
+
+  **One thing dragged more scope than expected, and it was the design being right rather than
+  wrong.** The account gate had to move to the workspace window — it is the launch window —
+  and `02` §6.3 binds the export offer to making an account. At a first run there are no
+  networks, so there is no network window for the export to live in: `09` §1.13's *mine* group
+  was asserting itself a slice earlier than planned. *this device* and *appearance* moved with
+  it, which is where §1.13 puts them anyway.
+
+  **What a launch proves, at the strength it holds.** The workspace window opens, at 360×760,
+  titled. That is all it proves. The network window's creation, its title and the switch
+  between two networks need a person — this is the shape that cost `v0.13.0` a crash, and the
+  suite cannot see it for the same reason it could not then.
+
+- **2026-09-11** — **The workspace became a window, and §7's oldest question kept its answer.**
+
+  A second pass over the same section, after the user described what is actually wrong with the
+  current interface: you have to back out of a network entirely to change networks, and join and
+  create have permanent space on a page. They floated a dropdown and then an old instant-messenger
+  buddy list, and said they would not mind several ko-ls windows open at once.
+
+  **The buddy list is the right shape, and four questions settled the rest.** One network window
+  reused as you switch, with a second on request rather than automatically; conversations in
+  their own small windows; the application staying alive in the tray when its last window closes;
+  and unlocking opening the workspace window alone.
+
+  **It replaced what had been designed a few hours earlier in the same section.** That pass put a
+  persistent rail inside the window, which was a reasonable reading of the documents and the
+  wrong answer to a complaint the documents did not contain. Worth recording rather than quietly
+  overwriting: the content decisions survived intact — what a row may claim, cold's staleness,
+  no directory, no self-reordering, the invisible decline — and only the container changed. A
+  design pass that has to be redone is cheaper when the reasoning was separable from the shape.
+
+  **§7's first question keeps its answer, which is the part worth noticing.** It asked whether a
+  fourth thing ever earns permanent space in the frame, and three field tests said no. It still
+  says no — the workspace did not get a column, it left the frame. Overturning three field tests
+  would have needed a better argument than "there is more to show now".
+
+  Three consequences are load-bearing rather than decoration, and each comes from a decision
+  already taken elsewhere:
+
+  **A window is a view.** Closing a network's window must not set it aside or stop its node, or
+  the defect `v0.13.0` was cut to fix comes straight back wearing a feature's clothes. So the
+  application keeps running until somebody quits, which `00` §6 already implied by deciding that
+  going offline is a separate act from locking, and which `05` §5.1 requires by having this
+  machine hold replica duty for other people. `05` §1.1's "closing the window is the shutdown
+  path" is amended rather than deleted: atomic writes are still owed to crashes and power cuts,
+  and the deliberate Quit is now the one stop that *can* run a shutdown path properly.
+
+  **Reuse reinvents D36's spoof in time rather than space.** Click a network, the content
+  redraws, the title lags, and the message goes to the one you were looking at a moment ago. §1's
+  existing clear-before-draw rule already covered the screen; the native title is now part of
+  what is cleared, so a window mid-switch names neither network rather than one over the other's
+  messages.
+
+  **A tray menu would read the workspace out around the lock.** `02` §6.3 says the lock stops
+  somebody at the keyboard seeing which networks this installation belongs to, and a tray listing
+  them does exactly that without a password. While locked the tray offers unlock and quit and
+  nothing else.
+
+- **2026-09-11** — **The direct-message surface, and network management with it, because they are one surface.**
+
+  Designed rather than built: `design/09` §1.1–§1.9. The brief was the DM surface; it took in
+  network selection and management too, at the user's direction, and the merge is right for a
+  reason better than convenience — **a conversation is a network** (D10), so a list of your
+  conversations and a list of your networks are the same list, and building them apart would
+  have been the interface disagreeing with the model.
+
+  **What made it designable was a line drawn the day before.** `05` §3.1 had just separated
+  acts that are about *one network* from acts that are about the *workspace above them*, to
+  decide where the DM flow lived. That line turns out to answer "what belongs in network
+  management" exactly: the switcher carries create, join, start a conversation, leave and set
+  aside — which is precisely the workspace-act set — and the same rule is the test for whatever
+  gets proposed for it next. A surface defined by a rule rather than by a layout is one that
+  can refuse things later.
+
+  **§7's first question closes, after three noes.** It asked whether a fourth thing ever earns
+  permanent space in the frame. It does, once. The argument is not that conversations need
+  somewhere to go: it is that D10 made the workspace big — a dozen servers is a list you open
+  rarely and thirty contacts is a list you live in — so a modal in front of it is a modal in
+  front of every message. Worth recording that the answer changed because a *decision from
+  another document* changed the size of the thing, not because somebody looked at Discord
+  again.
+
+  **§7's third closes too, and answering it turned up a rule nobody had written.** §2 made cold
+  *polled* rather than off. So a cold network's unread count is as old as its last poll, and a
+  `0` on that row asserts the absence of news this machine never went and asked for — §4.1's
+  rule about presence, at the scale of a whole network, and easier to get wrong here because a
+  number looks authoritative where a missing word does not. The row says when it last looked.
+
+  Three more that were decided rather than inherited. **There is no directory and there cannot
+  be one**, so a name-shaped search box is not merely unbuilt — names are per network and not
+  identifiers (spec 07 §1.7), so a box taking one is a phishing surface whose attacker's half
+  is typing; the flow is pick a network, then a member, which is the shape of Core §1.2.
+  **The list may not reorder itself on activity**, because a row moving between the look and
+  the click is how a message is written into the wrong network — the failure D36 keeps a theme
+  from causing, arriving through motion instead of styling. And **a decline is invisible**: the
+  carrier acknowledged delivery and there is no application-level answer, so the person
+  declining is told the sender will not learn it, and the sender's row says *delivered* and
+  never *waiting*, since nobody can tell a decline from somebody who has not looked.
+
+  One thing recorded as an exception rather than done quietly: the set-aside control sits on the
+  row although §4.2's grouping would file it under *this machine, here*. Same argument §4.1
+  already makes for the presence control — settings is a place you go to finish something and
+  leave, and this is changed in the moment you are looking at the whole list. Two sections
+  disagreeing about where a control goes is how a third ends up guessing.
+
+- **2026-09-10** — **The daemon half of direct messages, and two things it found that were not on the list.**
+
+  Offer, deliver, receive. The loop sends what is deliverable on an interval and stops on the
+  carrier's acknowledgement; the receive arm decodes, checks the identity link binds the right
+  pair, checks the sender is a current member, and only then keeps the request and raises the
+  event.
+
+  **D39's borrowed relay had never been called.** `borrowable_relay` landed with the decision
+  on 09-10 and nothing in the client invoked it — so a conversation's node reserved no
+  circuit, had no dialable address, and could not have put one in an invite. The first step of
+  the flow was missing its own precondition, and the decision looked built because the
+  function existed. It is wired now, recomputed at every start and **never cached**: every
+  other relay path writes what it learned into the store so a node can dial before it has
+  synced, and a cached loan would outlive the membership that justified it with nothing left
+  to ask again.
+
+  **The carrier could not tell a sender its payload had landed.** Core §5.1 says what an
+  acknowledgement *means* — delivery-level only, never agreement — which reads as a complete
+  description and was not one: the response arrived, libp2p handed it over, and the event loop
+  had no arm for it. §5.1 also forbids the carrier queueing, so the retry is the sender's, and
+  a sender with no ack has only two shapes available and both are wrong — re-send forever, or
+  forget after one attempt and lose the request. Fixed upstream as Core v1.5's fourth
+  obligation, with a live two-node test.
+
+  **Fourth time, and the spec now says so rather than leaving it to be rediscovered.** §1.2's
+  ownership proof had no serialized form; §5.6's invite had no bytes outside the join request;
+  both were found by something finally trying to *send* one. The sentence added to §5.1 is
+  that a mechanism specified from the receiving end is specified halfway — worth expecting
+  when E13 lands, since address exchange is another send-shaped thing this carrier will carry.
+
+  **And one hazard introduced and caught in the same sitting.** `Workspace::containing` first
+  answered "the parent directory", which is right for a store the workspace laid out and
+  actively dangerous otherwise: a `--home` pointing straight at one store is a shape this
+  terminal has always supported, so the parent is whatever directory it happens to sit in —
+  `/tmp` during a test run — and every unrelated store beside it would have been read as this
+  installation's networks. The question that settles it is whether `path_for` would have
+  placed the store exactly there, which is a pure function of the parent and the network id.
+  There is a test on it, because the loose version looks correct.
+
+  What is not built: accepting and declining, and the live two-daemon path — the terminal's
+  `--home` names one store rather than a workspace, so a `two_nodes`-style test cannot reach
+  this flow. The checks and the payload are tested against two stores instead and the wire is
+  tested upstream, which is the same split `design/05` §8 already argues for provider
+  discovery: test where the property is.
+
+- **2026-09-10** — **Direct messages are not boundary commands, decided before the flow was built.**
+
+  `design/05` §3 had carried three of them as `Command`s since before there was an executor —
+  `StartDirectMessage { with, in_network }`, `AcceptDirectMessage`, `DeclineDirectMessage` —
+  with *creates a network* written beside the first as though it were a footnote. It is the
+  whole difficulty.
+
+  **Three things point the same way, and the third is the one that decides it.** Starting a
+  conversation creates a network and accepting one joins a network, which are the two acts §3
+  already places outside the command vocabulary alongside `init` and `attach`. And there is
+  nothing for the gate to do: creating a network needs no capability, and sending on Core
+  §5.1's carrier needs only membership of the shared network, which the carrier meters and
+  the *receiver* checks. A command whose gate is empty and whose target is the workspace is
+  not what this boundary is shaped for.
+
+  §5.1 had already stated the principle — the boundary is per network, and a fact or an act
+  about the workspace above them sits outside it, with creating a network as the named
+  example. §3's grammar was written first and §5.1 is the considered statement, so the
+  grammar was the thing that was wrong. **Found by trying to type the signature**: the
+  executor holds one `Store` and no workspace and no node, and every attempt to give it one
+  was an attempt to argue with §5.1.
+
+  **What crosses `kols-api` is the inbound event alone**, which is genuinely per network: the
+  request arrives on the shared network's node, from a member of that network.
+
+  Two corrections to the grammar came out of the same pass. **`in_network` is dropped** — the
+  shared network is the one whose node carries the request, so a caller supplying it could
+  name a network the sender is not in, which is the objection §3's first property already
+  makes to carrying a channel's category on a command. And **`link_verified` is dropped from
+  the event**, because spec 07 §6.2 requires the link verified *before the request is shown to
+  anybody*: a flag could only ever be `true`, and a field that is always true invites an
+  interface to render an unverified request with a badge, which is the disclosure §6.2 is
+  written against. Emitting the event *is* the claim.
+
+  **What this gives up is written down rather than discovered.** The sandbox path prompts on
+  `Sensitivity`, so a flow outside the boundary gets no consent decorator and a hosted app
+  cannot reach it — the same limit create-and-join already has, so it widens one hole rather
+  than opening one, and §7's list of what the sandbox gives up is where it belongs.
+
+  Built with it: the pending state on both sides, `dm::start`, and the event. Nothing emits
+  the event yet, and §3's claim that every variant has a producer is corrected in place rather
+  than left standing — that sentence is what made the list trustworthy.
+
+- **2026-09-10** — **The two-machine test passed, on one network and on two.**
+
+  Two machines, same network and separate networks. Everything more or less functioning; the
+  tester came away with a short list of things to change and no defects. So the gap `STATUS.md`
+  named around `v0.13.1` — *not tested: anything between two clients* — is closed, and the
+  change both releases are about is the one that needed it.
+
+  **Recorded at the strength it holds**, because this paragraph has been read as more than it
+  was twice in three days. A session that works is evidence the ordinary paths work between
+  two real machines on two real networks. It is not a measurement of the three failure modes
+  `05` §8 names by name — contention between many nodes, delivery to a network nobody is
+  looking at, claims released on close — and nobody watched a claim expire. Those want
+  watching for on purpose rather than inferring from a good evening.
+
+- **2026-09-10** — **O26 does not reproduce, and the thing its attribution was pointing at was real anyway.**
+
+  The entry below is last night's. Measured again today, in the three shapes that matter:
+  **green alone five times running** — which is the shape it failed in five times running —
+  **green across all twelve of `two_nodes` at full width**, and **green across all twelve
+  starved** under `taskset -c 0,1`. The machine was checked clean first, for the reason
+  `CONTRIBUTING.md` gives.
+
+  So the trigger was machine state that did not survive the session. That is what last night
+  already suspected and could not name, and it still cannot: orphans, ports, scratch, disk and
+  the fd limit were all clean then, and re-checking them today says nothing about a machine
+  that has since restarted. **Recorded as unexplained rather than as fixed**, because a
+  state-dependent fault and a fault that has gone away are indistinguishable on a green day —
+  which is exactly the reasoning the `v0.13.1` entry below applies to a window that opens.
+
+  **What did get fixed is a client defect on that path, found by reading rather than by the
+  reproduction.** Both sites that ask to be keyed in were gated on `ready(..).is_ok()` —
+  advertise into the ledger, *then* publish every author log — used as a proxy for *am I a
+  member yet*. It is strictly stronger than that question: anything transient in the publish
+  half made every tick skip the ask for as long as it lasted. **That is the same permanent
+  strand the retry schedule was added to remove**, arrived at through the precondition instead
+  of the cadence — and E14 exists because a member who cannot ask again is stranded rather
+  than delayed. The ask now asks replayed state directly (`design/05` §4); advertising and
+  publishing happen every tick in `adopt_local_changes` regardless and no longer decide it.
+
+  **And the log line was diagnosing rather than reporting**, which is the part worth carrying.
+  Whichever half of `ready` failed, startup said *not a member of this network yet* — so a
+  publishing fault presented as a membership fault, and last night's attribution went looking
+  at membership because the software told it to. It reports the actual error now. A wrong
+  diagnosis in a log line is worse than no line, because it is believed and it is cheap: the
+  bisection it cost ran to four commits across two repositories.
+
+  Worth noting what this does **not** claim. It is not proven to be what failed last night —
+  nothing reproduces, so nothing can be proven against it. It is a defect that was there, on
+  the named path, with the failure mode described; the honest statement is that the register
+  had one true half and one invented one, and only the true half was actionable.
+
 - **2026-09-10** — **A joiner test started failing deterministically, and it is not from tonight.**
 
   `a_joiner_is_admitted_keyed_and_reads_what_was_written_before_they_arrived`: the joiner dials

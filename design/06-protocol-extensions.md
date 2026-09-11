@@ -1,6 +1,10 @@
 # Required Protocol Extensions
 
-**Document status:** v2.6 — **E10 landed, in generalised form.** §10 asked for `/chat/dm-invite/1.0.0` and got Core §5.1's `/intranet/direct/1.0.0`, a carrier taking a namespace, a kind and an opaque payload — the third chat-shaped request to become a platform-shaped mechanism after E2 and E9, which is now recorded as a pattern to expect rather than a surprise to re-derive. Three of the four acceptance criteria are the carrier's; the identity-link check is `kols-core`'s, because only it knows what the payload is. Two findings came with it: the forgery that matters is a valid proof about the *wrong pair*, not a broken signature, and `CommonOwnershipProof` had no serialized form at all — Core §1.2 called it "shared voluntarily" while providing no way to share it, which is the gap §5.6 already records for invites. **Only E13 is left before direct messages work.** Previously v2.5 — **E15 landed** as Core v1.2: §1.1–§1.3 admit independent per-network seeds beside the derived model, and §1.2 states unlinkability, reproducibility and voluntary common ownership as requirements on the *result* rather than as consequences of the derivation. It took one amendment §15 had not asked for — the harness spec tested the mechanism rather than the properties, so the conformance suite would have failed a conformant client, which is a specification permitting two models and a test permitting one. Previously v2.4 — §12 records that E12's first client half is built: a conversation-profile network can be created and its node is constructed without discovery, the accessor that landed upstream beside it, and the obligation this puts on E10 — a joiner cannot know the profile before it syncs, so the DM flow must supply it. Previously v2.3 — **E16 landed**, as Core §2.5.1, and it came with a second rule the proposal had not seen: an entry needing no capability must carry no fork-choice weight, so a departure is excluded from branch length alongside device certificates. §16 also corrects the capability it named: the entry is gated on `manage-membership`, not `revoke-node`, which is what the epoch rotation needs. What the client owes is unchanged and is O22. Previously v2.2 — **E16 added**: there is no way to leave a network, because every membership change is gated on `revoke-node` and the one member who knows they are leaving is the one who cannot say so; §16 also settles the rejoin question the client was carrying as open, which turns out to be answered already for `forget` and settled since for the leave that would have kept the seed — the client is deliberately not growing one, and §16 says why the protocol should permit it anyway. Previously v2.1 — §13 records that D29 turned E13 from a friction item into the mechanism, and §12 records that `Discovery::Off` is a privacy requirement rather than a saving; both were being carried in a status file. Previously v2.0 — **E14 landed**, as leaf replacement rather than the re-delivery this document asked for;  E1 and E3 withdrawn, **E9, E2, E5, E4, E11 and E12 landed**; E12 narrowed to its protocol half on landing, E13 added from `09`, E14 added from a bug, **E15 added from a divergence this document should have been carrying already**. §2's branch-length and profile-enforcement claims corrected to what landed
+**Document status:** v2.7 — §12 records that **E12's obligation on E10 is discharged**: the join
+path takes a network profile rather than inferring one from a store whose log has not arrived.
+It came with a half nobody had written down — the profile is needed on every later launch too,
+and replay cannot answer any sooner then than it could at join — so a store caches what it was
+told and `serve` reads replay first, cache second, `server` last. Previously v2.6 — **E10 landed, in generalised form.** §10 asked for `/chat/dm-invite/1.0.0` and got Core §5.1's `/intranet/direct/1.0.0`, a carrier taking a namespace, a kind and an opaque payload — the third chat-shaped request to become a platform-shaped mechanism after E2 and E9, which is now recorded as a pattern to expect rather than a surprise to re-derive. Three of the four acceptance criteria are the carrier's; the identity-link check is `kols-core`'s, because only it knows what the payload is. Two findings came with it: the forgery that matters is a valid proof about the *wrong pair*, not a broken signature, and `CommonOwnershipProof` had no serialized form at all — Core §1.2 called it "shared voluntarily" while providing no way to share it, which is the gap §5.6 already records for invites. **Only E13 is left before direct messages work.** Previously v2.5 — **E15 landed** as Core v1.2: §1.1–§1.3 admit independent per-network seeds beside the derived model, and §1.2 states unlinkability, reproducibility and voluntary common ownership as requirements on the *result* rather than as consequences of the derivation. It took one amendment §15 had not asked for — the harness spec tested the mechanism rather than the properties, so the conformance suite would have failed a conformant client, which is a specification permitting two models and a test permitting one. Previously v2.4 — §12 records that E12's first client half is built: a conversation-profile network can be created and its node is constructed without discovery, the accessor that landed upstream beside it, and the obligation this puts on E10 — a joiner cannot know the profile before it syncs, so the DM flow must supply it. Previously v2.3 — **E16 landed**, as Core §2.5.1, and it came with a second rule the proposal had not seen: an entry needing no capability must carry no fork-choice weight, so a departure is excluded from branch length alongside device certificates. §16 also corrects the capability it named: the entry is gated on `manage-membership`, not `revoke-node`, which is what the epoch rotation needs. What the client owes is unchanged and is O22. Previously v2.2 — **E16 added**: there is no way to leave a network, because every membership change is gated on `revoke-node` and the one member who knows they are leaving is the one who cannot say so; §16 also settles the rejoin question the client was carrying as open, which turns out to be answered already for `forget` and settled since for the leave that would have kept the seed — the client is deliberately not growing one, and §16 says why the protocol should permit it anyway. Previously v2.1 — §13 records that D29 turned E13 from a friction item into the mechanism, and §12 records that `Discovery::Off` is a privacy requirement rather than a saving; both were being carried in a status file. Previously v2.0 — **E14 landed**, as leaf replacement rather than the re-delivery this document asked for;  E1 and E3 withdrawn, **E9, E2, E5, E4, E11 and E12 landed**; E12 narrowed to its protocol half on landing, E13 added from `09`, E14 added from a bug, **E15 added from a divergence this document should have been carrying already**. §2's branch-length and profile-enforcement claims corrected to what landed
 **Depends on:** all preceding documents
 **Consumed by:** work in `distributed-intranet`
 
@@ -505,9 +509,34 @@ requires decoding to verify both signatures, and requires a recipient to check w
 named.
 
 **What is still owed is the flow rather than the mechanism**, and it is not this item: the
-commands that create a conversation, deliver a request and accept one are O1's, and they wait
-on E13 for connectivity across NAT. E10 is what makes them possible; §13 is what makes them
-work.
+acts that create a conversation, deliver a request and accept one are the client's
+(`design/05` §3.1), and they wait on E13 for connectivity across NAT. E10 is what makes them
+possible; §13 is what makes them work.
+
+### One more half of it was missing, and building the flow found it
+
+**The carrier received the acknowledgement and dropped it — fixed 2026-09-10, in the
+protocol repo, as Core §5.1's fourth obligation.** §5.1 already said what an acknowledgement
+*means* — delivery-level only, never agreement — which read as a complete description and was
+not one: the response arrived, libp2p handed it to the event loop, and there was no arm for
+it. So a sender could not tell a delivered payload from one that vanished.
+
+That is not a cosmetic gap for this flow, because §5.1 also forbids the carrier queueing
+anything: **the retry is the sender's**, and a sender with no acknowledgement has only two
+shapes available, both wrong — re-send forever, or forget after one attempt and lose the
+request. The client needs the ack to know when to stop offering.
+
+**Fourth time, and the pattern is now stated in the spec rather than rediscovered.** Core
+§1.2's ownership proof had no serialized form; Core §5.6's invite had no bytes outside the
+join request; both were found by something finally trying to *send* one. This is the same
+shape one layer along, and §5.1 now says it: a mechanism specified from the receiving end is
+specified halfway. Worth expecting when E13 lands, since address exchange is another
+send-shaped thing this carrier will carry.
+
+**No new extension number.** The spec required an acknowledgement already; what changed is
+that an implementation now surfaces it, plus the sentence making that an obligation rather
+than an inference. Landed as spec text, implementation and a live two-node test together,
+which is S2's rule.
 
 ---
 
@@ -635,6 +664,16 @@ reads as `server` and gets discovery. That is right for a server and wrong for a
 whose first moments would be spent in a routing table. It costs nothing today, since nothing can
 join a conversation until the DM flow exists, and the flow that accepts a DM request knows what
 it accepted: **E10 must supply the profile to the join path** rather than let it be inferred.
+
+**That obligation is discharged, 2026-09-11.** `join::redeem` takes the profile as an argument
+rather than inferring one, `dm::accept` passes `conversation`, and every other caller passes
+`server` — so a joiner's node is built with the behaviour set its network actually wants
+instead of the one an unsynced store implies. Building it turned up that the same gap had a
+second half nobody had written down: **the profile is also what the node needs on every later
+launch**, and replay cannot supply it either while the log is still arriving. A store now
+caches what it was told at join (`Store::set_profile`), and `serve` reads *replayed policy,
+then the cache, then `server`* in that order — replay first because it is the authority the
+moment it has anything to say, and the cache never overriding it.
 
 **Note on the wake path, recorded because it was nearly specified as its own mechanism.** No
 wake-up message is needed. Being dialable is what a reservation provides, and the dial *is* the

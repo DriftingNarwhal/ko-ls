@@ -1799,6 +1799,46 @@ impl Store {
         Ok(())
     }
 
+    /// Records what kind of network this is, before its log can say so.
+    ///
+    /// # Why this is cached at all, which is the relay cache's argument exactly
+    ///
+    /// The profile lives in replayed policy (spec 07 §1.2), and a node's
+    /// behaviour set is fixed when it is *built* (Core §5.1.1) — so the answer
+    /// is needed before there is a log to read it from. That is the same
+    /// ordering [`set_relays`](Self::set_relays) exists for: reading policy
+    /// requires a synced log, syncing requires a connection, and the thing you
+    /// need before either is the thing being cached.
+    ///
+    /// **It matters in one direction.** An absent profile reads as `server`,
+    /// which permits channel entries rather than retroactively refusing history
+    /// (spec 07 §1.2) and is the safe reading for a server. For a conversation
+    /// it is the wrong one and costs something specific: a node built with
+    /// discovery on puts a conversation into a routing table, which is the
+    /// correlation D29 exists to prevent (`design/09` §3). So the flow that
+    /// accepts a conversation writes this, because it is the one party that
+    /// knows what it accepted — E12's obligation on E10, and the window
+    /// `design/09` §2 records.
+    pub fn set_profile(&self, profile: kols_core::NetworkProfile) -> Result<(), StoreError> {
+        let word = match profile {
+            kols_core::NetworkProfile::Conversation => "conversation",
+            kols_core::NetworkProfile::Server => "server",
+        };
+        write_atomically(&self.root, self.root.join("profile"), word.as_bytes())
+    }
+
+    /// What kind of network this node last knew this to be, if it was told.
+    ///
+    /// `None` rather than a default, so a caller has to decide what absence
+    /// means where it is asked rather than inheriting somebody else's answer.
+    pub fn cached_profile(&self) -> Option<kols_core::NetworkProfile> {
+        match fs::read_to_string(self.root.join("profile")).ok()?.trim() {
+            "conversation" => Some(kols_core::NetworkProfile::Conversation),
+            "server" => Some(kols_core::NetworkProfile::Server),
+            _ => None,
+        }
+    }
+
     /// The relays this node last knew the network to designate.
     pub fn relays(&self) -> Vec<String> {
         fs::read_to_string(self.root.join("relays"))
@@ -2287,6 +2327,133 @@ impl Store {
             Err(err) if err.kind() == io::ErrorKind::NotFound => Ok(()),
             Err(err) => Err(StoreError::Io(err)),
         }
+    }
+
+    /// Records that this member wants a conversation with somebody here.
+    ///
+    /// # Why this is a want rather than a send
+    ///
+    /// Delivering the request needs a node, and an executor holds none
+    /// (`design/05` §3.1) — and it needs *two*: the shared network's, to hand
+    /// the payload over, and the conversation's, because an invite must carry an
+    /// address and only a running node knows one (`02` §6.1). So the act records
+    /// what is wanted and the daemon honours it once the conversation's node has
+    /// written its addresses down, exactly as [`want_history`](Self::want_history)
+    /// does for a page nobody is waiting on.
+    ///
+    /// # Keyed on who, so a second ask replaces the first
+    ///
+    /// A request is a standing ask rather than a message, and two of them from
+    /// one person mean the same thing — so this is keyed on the recipient and
+    /// there is no queue to grow. Re-asking is how a member retries somebody who
+    /// was unreachable, which `03` §4.3 makes the sender's job.
+    ///
+    /// **Kept in the shared network's store**, which is the one that knows both
+    /// the person and the route. spec 07 §6.2 permits exactly the two parties to
+    /// hold a request and nobody else, and nothing about it ever enters a log.
+    pub fn offer_conversation(
+        &self,
+        to: &PerNetworkIdentityId,
+        conversation: &NetworkId,
+    ) -> Result<(), StoreError> {
+        let dir = self.root.join("conversations").join("offered");
+        fs::create_dir_all(&dir)?;
+        write_atomically(
+            &self.root,
+            dir.join(hex_id(to)),
+            conversation.as_bytes(),
+        )
+    }
+
+    /// Conversations this member has offered and this node has not delivered.
+    pub fn offered_conversations(&self) -> Vec<(PerNetworkIdentityId, NetworkId)> {
+        let Ok(entries) = fs::read_dir(self.root.join("conversations").join("offered")) else {
+            return Vec::new();
+        };
+        entries
+            .filter_map(Result::ok)
+            .inspect(|_| self.did(1, 1, 0))
+            .filter_map(|entry| {
+                let name = entry.file_name().into_string().ok()?;
+                let to = id_from_hex(&name)?;
+                let raw: [u8; 32] = fs::read(entry.path()).ok()?.try_into().ok()?;
+                Some((to, NetworkId::from_bytes(raw)))
+            })
+            .collect()
+    }
+
+    /// Forgets an offer, once it has been delivered or withdrawn.
+    ///
+    /// **Delivered means the carrier acknowledged it, never that anybody
+    /// agreed.** spec 07 §6.2 is explicit that acceptance is a person's act and
+    /// a delivery acknowledgement is not it, so forgetting the offer here says
+    /// only that this node has stopped retrying.
+    pub fn forget_offer(&self, to: &PerNetworkIdentityId) -> Result<(), StoreError> {
+        remove_if_present(
+            self.root
+                .join("conversations")
+                .join("offered")
+                .join(hex_id(to)),
+        )
+    }
+
+    /// Keeps a conversation request somebody sent this member.
+    ///
+    /// The payload is the whole verified [`kols_core::DmInvite`], because the
+    /// answer is a person's and a person is not there at the instant it arrives
+    /// — so it has to survive a restart, and on acceptance the invite inside it
+    /// is what does the joining.
+    ///
+    /// **Only ever called for a request that verified.** The link check and the
+    /// membership check both happen before this (spec 07 §6.2), so a request on
+    /// disk is one that may be shown; a caller storing an unchecked payload
+    /// would make this the place an unverified request gets rendered from.
+    pub fn record_request(
+        &self,
+        from: &PerNetworkIdentityId,
+        payload: &[u8],
+    ) -> Result<(), StoreError> {
+        let dir = self.root.join("conversations").join("asked");
+        fs::create_dir_all(&dir)?;
+        write_atomically(&self.root, dir.join(hex_id(from)), payload)
+    }
+
+    /// Conversation requests waiting on an answer from this member.
+    pub fn requests(&self) -> Vec<(PerNetworkIdentityId, Vec<u8>)> {
+        let Ok(entries) = fs::read_dir(self.root.join("conversations").join("asked")) else {
+            return Vec::new();
+        };
+        entries
+            .filter_map(Result::ok)
+            .inspect(|_| self.did(1, 1, 0))
+            .filter_map(|entry| {
+                let name = entry.file_name().into_string().ok()?;
+                let from = id_from_hex(&name)?;
+                Some((from, fs::read(entry.path()).ok()?))
+            })
+            .collect()
+    }
+
+    /// One request, by who sent it.
+    pub fn request_from(&self, from: &PerNetworkIdentityId) -> Option<Vec<u8>> {
+        self.did(0, 1, 0);
+        fs::read(
+            self.root
+                .join("conversations")
+                .join("asked")
+                .join(hex_id(from)),
+        )
+        .ok()
+    }
+
+    /// Forgets a request, once it is accepted or declined.
+    pub fn forget_request(&self, from: &PerNetworkIdentityId) -> Result<(), StoreError> {
+        remove_if_present(
+            self.root
+                .join("conversations")
+                .join("asked")
+                .join(hex_id(from)),
+        )
     }
 
     /// Marks a segment as one a member actually asked to have here.
@@ -2852,6 +3019,35 @@ fn append_to(path: impl AsRef<Path>, bytes: &[u8]) -> Result<(), StoreError> {
 /// caller down the rebuild path they would have taken anyway.
 fn length_of(path: impl AsRef<Path>) -> u64 {
     fs::metadata(path).map(|meta| meta.len()).unwrap_or(0)
+}
+
+/// The 64 hex characters an identity is filed under.
+///
+/// One spelling, used by both the write and the read, because a directory whose
+/// names two functions disagree about is a directory that silently holds two
+/// entries for one person.
+fn hex_id(identity: &PerNetworkIdentityId) -> String {
+    to_hex(identity.verifying_key().as_bytes())
+}
+
+/// The inverse, refusing anything that is not an identity.
+fn id_from_hex(name: &str) -> Option<PerNetworkIdentityId> {
+    let bytes: [u8; 32] = intranet_crypto::from_hex(name)?.try_into().ok()?;
+    let key = intranet_crypto::VerifyingKey::from_bytes(bytes).ok()?;
+    Some(PerNetworkIdentityId::from_verifying_key(key))
+}
+
+/// Removes a file, treating an absent one as already done.
+///
+/// Every caller here is forgetting something, and forgetting twice is the
+/// ordinary case rather than an error: a retry that raced a delivery, a request
+/// answered from two surfaces. `NotFound` is the state being asked for.
+fn remove_if_present(path: impl AsRef<Path>) -> Result<(), StoreError> {
+    match fs::remove_file(path.as_ref()) {
+        Ok(()) => Ok(()),
+        Err(err) if err.kind() == io::ErrorKind::NotFound => Ok(()),
+        Err(err) => Err(StoreError::Io(err)),
+    }
 }
 
 fn write_atomically(root: &Path, path: impl AsRef<Path>, bytes: &[u8]) -> Result<(), StoreError> {

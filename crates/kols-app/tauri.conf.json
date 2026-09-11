@@ -9,10 +9,12 @@
   "app": {
     "windows": [
       {
-        "label": "main",
+        "label": "workspace",
+        "url": "workspace.html",
         "title": "ko-ls",
-        "width": 1100,
-        "height": 720,
+        "width": 360,
+        "height": 760,
+        "minWidth": 280,
         "resizable": true,
         "dragDropEnabled": false
       }

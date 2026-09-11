@@ -1,6 +1,6 @@
 # Confidentiality: Channel Keying, Private Channels and Direct Messages
 
-**Document status:** v1.1 — §3.5 is new and carries the durability constraint the storage work turned up: a node holds only what it can read, so a private channel is replicated by its roster and nobody else — and placement must therefore rank over the roster rather than over the ledger, or the effective replica set becomes *roster ∩ top-k* and can be empty. An obligation on whoever builds §3, written before the work rather than discovered after it. Previously v1.0 — design reviewed. Only the network tier is implemented; channel and session tiers are P2/P3
+**Document status:** v1.2 — §4.6 points at `09` §1.1, which settled on 2026-09-11 what the direct-message surface actually is: the workspace as a **window** listing every network and every conversation, a network drawn in a second window, and each conversation in a small window of its own (D40) — since a conversation *is* a network and the member is holding both. What stays this document's is the presentation split §4.1's table fixes — a server is a place, a contact is a person — and the pointer is here because §4.6 is where a reader looks for the surface and it described one sentence of it. Previously v1.1 — §3.5 is new and carries the durability constraint the storage work turned up: a node holds only what it can read, so a private channel is replicated by its roster and nobody else — and placement must therefore rank over the roster rather than over the ledger, or the effective replica set becomes *roster ∩ top-k* and can be empty. An obligation on whoever builds §3, written before the work rather than discovered after it. Previously v1.0 — design reviewed. Only the network tier is implemented; channel and session tiers are P2/P3
 **Depends on:** Core Protocol Spec §3 (epoch keying), Storage Spec §5 (envelope encryption), Search Spec §3, Real-Time Spec §3.5
 **Consumed by:** `01-messaging-model`, `04-realtime`, `05-client-architecture`
 
@@ -373,6 +373,12 @@ correlate your identity in a DM network with your identity in the server you met
 as Core §1.2 intends, including its limit: an observer positioned to see both — a peer in both
 networks, or a relay carrying both — can still correlate by address, which §1.2 places out of
 scope rather than solving. The convenience is entirely client-side; so is the exposure.
+
+**`09` §1.1 owns what that surface actually is**, and settled it on 2026-09-11: **the workspace is a
+window** listing every network and every conversation, with a network drawn in a second window
+and each conversation in a small one of its own (D40). The two are one surface because a
+conversation *is* a network and the member is holding both. What this section fixes is the *presentation* split it carries —
+a server is a place, a contact is a person — and §4.1's table above is where that came from.
 
 This is why the DM surface is presented as a **friends list and an instant-messaging
 pane**, not as a channel list: it behaves like an IM service, one conversation per

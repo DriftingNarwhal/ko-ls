@@ -240,6 +240,9 @@ enum Command {
     /// Work with this network's relays.
     #[command(subcommand)]
     Relay(RelayCommand),
+    /// Start and inspect conversations — spec 07 §6.2.
+    #[command(subcommand)]
+    Conversation(ConversationCommand),
     /// Admit an identity to this network.
     Admit {
         /// The joiner's identity in this network, as hex.
@@ -277,6 +280,28 @@ enum RelayCommand {
         /// The multiaddrs, replacing the current set outright.
         relays: Vec<String>,
     },
+}
+
+/// Conversations — spec 07 §6.2, `design/05` §3.1.
+///
+/// **Not `kols-api` commands, and that is the decision rather than an
+/// omission.** Starting one creates a network and accepting one joins a network,
+/// which are workspace acts; the boundary is per network. `design/05` §3.1 has
+/// the argument. So these reach `kols_node::dm` the way `init` and `attach`
+/// reach the workspace, and the window will reach the same module.
+#[derive(Subcommand)]
+enum ConversationCommand {
+    /// Offer a conversation to somebody in this network.
+    Start {
+        /// Their identity in *this* network, as hex.
+        ///
+        /// Not a display name: a name is not an identifier (spec 07 §1.7) and
+        /// resolving one here would make a conversation reachable by typing a
+        /// name somebody else can claim.
+        identity: String,
+    },
+    /// Show conversations offered and requests waiting on an answer.
+    List,
 }
 
 #[derive(Subcommand)]
@@ -348,6 +373,10 @@ fn main() -> std::process::ExitCode {
         Command::Join { invite, timeout } => kols_node::join::run(root, &invite, timeout),
         Command::Waiting => waiting(root),
         Command::Relay(RelayCommand::List) => list_relays(root),
+        Command::Conversation(ConversationCommand::Start { identity }) => {
+            start_conversation(root, &identity)
+        }
+        Command::Conversation(ConversationCommand::List) => list_conversations(root),
         // Showing is a read of local state and never a command: routing it
         // through the executor would take the append lock and replay the log to
         // answer a question about a file on this disk.
@@ -550,6 +579,8 @@ fn submit(root: std::path::PathBuf, command: Command) -> Result<(), String> {
         | Command::Join { .. }
         // Installation-wide, so it never reaches a network's executor.
         | Command::Storage { .. }
+        // Workspace acts rather than per-network ones — `design/05` §3.1.
+        | Command::Conversation(_)
         | Command::Serve { .. } => unreachable!("handled outside the boundary"),
     };
 
@@ -1224,3 +1255,62 @@ fn attach(root: std::path::PathBuf, network_hex: &str, name: &str) -> Result<(),
 }
 
 
+
+/// Offers a conversation to a member of this network — spec 07 §6.2.
+///
+/// Not a `kols-api` command, for the reason creating a network is not
+/// (`design/05` §3.1): the boundary is per network and this makes a second one.
+fn start_conversation(root: std::path::PathBuf, identity: &str) -> Result<(), String> {
+    let with = kols_node::parse_identity(identity)?;
+    let workspace = kols_node::workspace::Workspace::at(root.clone());
+    let shared = kols_node::store::Store::open(root).map_err(|e| e.to_string())?;
+    let started = kols_node::dm::start(&workspace, &shared, &with, None)?;
+
+    println!(
+        "conversation {}",
+        &to_hex(started.conversation.as_bytes())[..16]
+    );
+    println!("  offered to {}", &identity[..8.min(identity.len())]);
+    // **Said rather than left to be inferred from silence.** An offer is a want
+    // the daemon honours, and it cannot be honoured until the conversation's own
+    // node has an address to put in an invite — so "nothing has happened yet" is
+    // the correct state on the way out of this command, not a failure.
+    if started.deliverable {
+        println!("  it has an address, so `kols serve` will hand it over");
+    } else {
+        println!("  waiting for this conversation's own node to record an address —");
+        println!("  `kols serve` on it is what does that, and what then delivers the offer");
+    }
+    Ok(())
+}
+
+/// Shows what this network has offered and what it has been asked.
+fn list_conversations(root: std::path::PathBuf) -> Result<(), String> {
+    let shared = kols_node::store::Store::open(root).map_err(|e| e.to_string())?;
+
+    let offered = shared.offered_conversations();
+    let asked = shared.requests();
+    if offered.is_empty() && asked.is_empty() {
+        println!("no conversations offered from here, and none waiting on an answer");
+        return Ok(());
+    }
+
+    for (to, conversation) in &offered {
+        println!(
+            "offered   to {} — conversation {}",
+            &to_hex(to.verifying_key().as_bytes())[..8],
+            &to_hex(conversation.as_bytes())[..16]
+        );
+    }
+    // Every one of these verified before it was written down: the identity link
+    // binds this sender to the invite's issuer, and the sender is a current
+    // member (spec 07 §6.2). An unverified request never reaches the disk, so
+    // there is nothing here to qualify.
+    for (from, _) in &asked {
+        println!(
+            "requested by {} — accept or decline it",
+            &to_hex(from.verifying_key().as_bytes())[..8]
+        );
+    }
+    Ok(())
+}

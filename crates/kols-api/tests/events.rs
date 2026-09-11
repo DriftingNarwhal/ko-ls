@@ -294,6 +294,7 @@ fn every_event() -> Vec<Event> {
             mine: Vec::new(),
             others: 0,
         },
+        Event::DirectMessageRequest { from: who },
     ]
 }
 
@@ -322,6 +323,7 @@ fn name_of(event: &Event) -> &'static str {
         Event::Relay { .. } => "Relay",
         Event::Degraded { .. } => "Degraded",
         Event::GovernanceReorg { .. } => "GovernanceReorg",
+        Event::DirectMessageRequest { .. } => "DirectMessageRequest",
     }
 }
 
@@ -342,7 +344,7 @@ fn every_event_has_a_sample() {
     }
     assert_eq!(
         seen.len(),
-        10,
+        11,
         "every_event samples {} of Event's variants — update this count, the \
          list, and `design/05` §3 when the boundary grows",
         seen.len()

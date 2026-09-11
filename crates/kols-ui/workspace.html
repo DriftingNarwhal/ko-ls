@@ -1,0 +1,335 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>ko-ls</title>
+    <link rel="stylesheet" href="style.css" />
+  </head>
+  <body class="workspace-body">
+    <!-- The workspace window — `design/09` §1.1–§1.2, D40.
+         Everything this installation belongs to, in one narrow window that sits
+         beside a network rather than in front of it. A network is drawn in a
+         window of its own, so nothing here has to be backed out of to reach
+         another one.
+
+         Every element a theme may restyle lives under `data-kols`, so a theme
+         can reach a part by what it is rather than by guessing at class names. -->
+
+    <!-- Before anything else, exactly as the single window did it. `design/02`
+         §6.3: a node runs only once somebody has logged in, because starting one
+         first would need the seeds unwrappable without the password. Two forms
+         in one screen, because a first run and a login are different questions. -->
+    <section class="lock" id="lock" data-kols="lock" hidden>
+      <div class="lock-inner">
+        <h1>ko-ls</h1>
+
+        <form id="first-run" data-kols="first-run" hidden>
+          <h2>protect this installation</h2>
+          <p class="lock-note" id="first-run-note"></p>
+          <label for="first-run-name">a name for this account</label>
+          <input id="first-run-name" data-kols="first-run-name" autocomplete="username"
+                 placeholder="local to this machine" required />
+          <label for="first-run-password">a password</label>
+          <input id="first-run-password" data-kols="first-run-password" type="password"
+                 autocomplete="new-password" required />
+          <label for="first-run-again">and again</label>
+          <input id="first-run-again" data-kols="first-run-again" type="password"
+                 autocomplete="new-password" required />
+          <p class="lock-warning" data-kols="no-recovery">
+            There is no way to reset this. Nothing here is stored anywhere but on
+            this machine, and no one can recover it for you — losing this password
+            loses every identity on this disk.
+          </p>
+          <button type="submit" data-kols="first-run-go">protect it</button>
+          <p class="lock-error" id="first-run-error" data-kols="first-run-error" hidden></p>
+        </form>
+
+        <form id="login" data-kols="login" hidden>
+          <h2 id="login-greeting"></h2>
+          <label for="login-password">password</label>
+          <input id="login-password" data-kols="login-password" type="password"
+                 autocomplete="current-password" required />
+          <button type="submit" data-kols="login-go">unlock</button>
+          <p class="lock-error" id="login-error" data-kols="login-error" hidden></p>
+          <p class="lock-note" data-kols="lock-note">
+            Locking puts away everything you were reading and does not stop your
+            node — it keeps serving what it holds and keeps answering for you.
+            Quitting is how you stop it.
+          </p>
+        </form>
+      </div>
+    </section>
+
+    <main class="workspace" id="workspace" data-kols="workspace" hidden>
+      <header class="workspace-head" data-kols="workspace-head">
+        <h1>ko-ls</h1>
+      </header>
+
+      <!-- Two groups rather than two windows (`09` §1.4): a conversation *is* a
+           network, and splitting them would ask a member to manage as two things
+           what the software manages as one. They are labelled because the
+           difference decides what is possible — a conversation has no channels,
+           no roles, no invites and no waiting room. -->
+      <!-- **One scrolling region, two labelled groups.** Both lists grow, and a
+           window that gave the slack to one of them left the other pinned to the
+           bottom edge with a hand's width of nothing between — two lists of
+           places to be, drawn as though they were unrelated. -->
+      <div class="workspace-scroll" data-kols="workspace-scroll">
+      <section class="group" data-kols="networks-group">
+        <h2 class="group-head">networks</h2>
+        <ul class="workspace-list" id="networks" data-kols="networks"></ul>
+        <p class="group-empty" id="networks-empty" data-kols="networks-empty" hidden>
+          Nothing joined yet. An invite is the usual way in.
+        </p>
+      </section>
+
+      <section class="group" data-kols="conversations-group">
+        <h2 class="group-head">conversations</h2>
+        <ul class="workspace-list" id="conversations" data-kols="conversations"></ul>
+        <p class="group-empty" id="conversations-empty" data-kols="conversations-empty" hidden>
+          Nobody yet. You can only start one with somebody you already share a
+          network with — open a network and pick them from its members.
+        </p>
+      </section>
+      </div>
+
+      <footer class="workspace-foot" data-kols="workspace-foot">
+        <!-- Actions rather than furniture (`09` §1.2). These used to occupy the
+             page permanently; they are things somebody does rarely, deliberately,
+             and then leaves, so they open a sheet and close again. -->
+        <button id="join-open" data-kols="join-open">join with an invite</button>
+        <button id="create-open" data-kols="create-open" class="quiet">make a network</button>
+        <button id="open-settings" data-kols="open-settings" class="quiet">settings</button>
+        <p class="workspace-error" id="workspace-error" data-kols="workspace-error" hidden></p>
+      </footer>
+    </main>
+
+
+    <!-- Said once, the first time a window is closed — `design/09` §1.11.
+         The application keeps running and keeps serving what other members are
+         holding it to, so somebody who closed every window and believed they
+         had shut it down would have had that decided for them. It carries the
+         way out, because this is the moment somebody may want it. -->
+    <dialog id="still-running" data-kols="still-running">
+      <div class="ask">
+        <h2>ko-ls is still running</h2>
+        <p class="maker-note">
+          Closing a window puts it away; it does not stop your node. It keeps
+          serving what it holds for the other members of your networks, and keeps
+          answering for you — which is what a network expects of a member who has
+          joined it.
+        </p>
+        <p class="maker-note">
+          Find it in the tray to open this window again. To actually stop —
+          release your relay slots, let go of what you are holding for others —
+          quit.
+        </p>
+        <menu>
+          <button type="button" id="still-quit" class="quiet">quit ko-ls</button>
+          <button type="button" id="still-hide">put it away</button>
+        </menu>
+      </div>
+    </dialog>
+
+    <!-- Settings for the installation rather than for a network — `design/09`
+         §1.13. A screen rather than a layer, for §4.2's reason: a veil claims
+         this is a detour and the real thing is underneath, and half of what
+         settings holds is not a preference.
+
+         Only *mine* is here. Anything belonging to one network is in that
+         network's own window, behind the heading that says what a click
+         costs. -->
+    <section class="settings" id="settings" data-kols="settings" hidden>
+      <div class="settings-sheet">
+        <header class="settings-head">
+          <h2>settings</h2>
+          <button type="button" id="close-settings" title="close">done</button>
+        </header>
+        <div class="settings-body">
+          <nav class="settings-nav" data-kols="settings-nav">
+            <h3>mine</h3>
+            <p class="settings-nav-note">local, private, undoable</p>
+            <button type="button" class="settings-tab" data-tab="appearance">appearance</button>
+            <button type="button" class="settings-tab" data-tab="device">this device</button>
+          </nav>
+          <div class="settings-panels">
+          <section class="settings-panel" data-panel="appearance" data-kols="appearance" hidden>
+            <h3>appearance</h3>
+            <p class="dim">
+              This client is themeable by you, in the spirit of a personal page
+              rather than a colour picker — a theme may restyle anything in this
+              window, layout and hiding included.
+            </p>
+            <p class="dim">
+              <strong>Not built yet, and the order is deliberate.</strong> A theme
+              can hide the control that would undo it, so reset has to work
+              without the theme's cooperation before themes exist at all: a
+              native menu item, and a launch flag that applies no theme. Two
+              doors, because they survive different failures.
+            </p>
+            <p class="dim">
+              Themes are CSS and never HTML, and this window loads no remote
+              origin of any kind — which is what makes a theme you were handed
+              safe to run rather than merely unlikely to misbehave.
+            </p>
+          </section>
+          <section class="settings-panel" data-panel="device" data-kols="device" hidden>
+            <h3>this device</h3>
+            <p class="dim">
+              Anything nothing else needs to know — local to this installation,
+              across every network on it.
+            </p>
+
+            <!-- Here rather than beside a network's settings, because the account
+                 is one for the whole installation: `design/00` D33 defers
+                 per-network credentials rather than rejecting them. -->
+            <!-- Shown once, right after the account is made. Offered rather than
+                 forced: a first run that will not proceed until a file has been
+                 saved somewhere is a flow people learn to defeat, and this
+                 protects against losing the machine rather than the next five
+                 minutes. -->
+            <p class="lock-warning" id="export-nudge" data-kols="export-nudge" hidden>
+              Your identities are protected on this machine now. Make a copy you
+              can move as well — it is the only thing that survives this disk.
+            </p>
+            <h4 id="account-who" data-kols="account-who"></h4>
+            <p class="dim">
+              Every identity on this disk is wrapped under this password. It is
+              local to this machine and no network ever sees it.
+            </p>
+            <button type="button" id="lock-now" data-kols="lock-now">lock this window</button>
+
+            <!-- Portability rather than recovery. The seed is the member and
+                 lives on one disk: the password protects it from somebody who
+                 takes the laptop, and nothing protects it from the laptop
+                 dying. -->
+            <h4>a copy you can move</h4>
+            <p class="dim">
+              Every identity here, in one file you keep. It is what lets you carry
+              this account to another machine — or come back to it after this one
+              is gone. Without it, a dead disk means starting again as somebody
+              else: your networks would not know you, and nothing here or anywhere
+              could tell them otherwise.
+            </p>
+            <form id="export-form" class="settings-form">
+              <label for="export-path">where to write it</label>
+              <input id="export-path" data-kols="export-path" placeholder="/path/to/ko-ls-backup" />
+              <label for="export-pass">a passphrase for the file</label>
+              <input id="export-pass" data-kols="export-pass" type="password"
+                     autocomplete="new-password" />
+              <button type="submit" data-kols="export-go">write it</button>
+            </form>
+            <p class="dim">
+              <strong>Not your login password, deliberately.</strong> This file
+              leaves the machine, so the machine's protection does not travel with
+              it — and one secret that lost both your login and the copy kept in
+              case you lose your login would be no copy at all.
+            </p>
+            <p class="settings-error" id="export-error" data-kols="export-error" hidden></p>
+            <p class="dim" id="export-done" data-kols="export-done" hidden></p>
+
+            <h4>restore from a copy</h4>
+            <form id="import-form" class="settings-form">
+              <label for="import-path">the file</label>
+              <input id="import-path" data-kols="import-path" placeholder="/path/to/ko-ls-backup" />
+              <label for="import-pass">its passphrase</label>
+              <input id="import-pass" data-kols="import-pass" type="password"
+                     autocomplete="current-password" />
+              <button type="submit" data-kols="import-go">restore</button>
+            </form>
+            <p class="dim">
+              A network already on this machine is left exactly as it is — this
+              never replaces an identity you already hold.
+            </p>
+            <p class="settings-error" id="import-error" data-kols="import-error" hidden></p>
+            <p class="dim" id="import-done" data-kols="import-done" hidden></p>
+            <p class="dim">
+              <strong>Locking does not stop your node.</strong> It keeps serving
+              what it holds, keeps its relay reservation and keeps answering for
+              you — because <em>nobody at my keyboard can act as me</em> and
+              <em>I want to disappear from the network</em> are different requests,
+              and locking makes only the first. Quitting makes the second.
+            </p>
+
+            <form id="ceiling-form" class="settings-form">
+              <label for="ceiling-gb">most disk this application may use, GB</label>
+              <input id="ceiling-gb" type="number" min="1" step="1" />
+              <button type="submit">save</button>
+            </form>
+            <p class="settings-error" id="ceiling-error" hidden></p>
+            <p class="dim" id="ceiling-usage"></p>
+            <p class="dim">
+              <strong>This is the one that stops a disk filling up</strong>, and it
+              binds before any single network's offer does. It covers everything
+              kept here — what you fetched to read and what you hold for other
+              members alike.
+            </p>
+            <p class="dim">
+              Set per installation rather than per network, because a disk does
+              not know how many networks are on it. That matters more than it
+              sounds: a direct message is its own network, so this is the only
+              number that answers <em>how much is this costing me</em> once you
+              have more than a couple.
+            </p>
+            <p class="dim">
+              At the ceiling, no network here takes on new content for other
+              members until there is room. Your own reading is never what gives
+              way.
+            </p>
+          </section>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Asking *what*, not asking *whether* — so these live in the document and
+         are themeable (`09` §5.1). Only approval has to be native. -->
+    <dialog id="join-sheet" data-kols="join-sheet">
+      <form method="dialog" class="ask maker" id="joiner">
+        <h2>join with an invite</h2>
+        <label for="invite">invite</label>
+        <input id="invite" type="text" autocomplete="off" placeholder="intranet-chat://join/…" />
+        <p class="maker-note">
+          Paste what you were given. It carries the network, who invited you, and
+          an address to reach them at.
+        </p>
+        <p class="lock-error" id="join-error" data-kols="join-error" hidden></p>
+        <!-- **Cancel is not a submit button, and that is not a detail.** In a
+             form the first submit button is what Enter activates, so a cancel
+             sitting first means typing an invite and pressing Enter throws it
+             away — which is what this did until it was run. The primary action
+             is the only thing that submits. -->
+        <menu>
+          <button type="button" id="join-cancel" class="quiet">cancel</button>
+          <button value="go" id="join-go">join</button>
+        </menu>
+      </form>
+    </dialog>
+
+    <dialog id="create-sheet" data-kols="create-sheet">
+      <form method="dialog" class="ask maker" id="maker">
+        <h2>make a network</h2>
+        <label for="new-name">name</label>
+        <input id="new-name" type="text" autocomplete="off" placeholder="the workshop" />
+
+        <label for="new-relay">relay <span class="optional">can wait</span></label>
+        <input id="new-relay" type="text" autocomplete="off"
+               placeholder="/ip4/198.51.100.7/tcp/4001/p2p/12D3Koo…" />
+        <p class="maker-note">
+          Two people behind home routers cannot reach each other directly, so a
+          network needs a relay before it can invite anybody. Leave this empty and
+          the network is yours alone until you set one under
+          <strong>settings → network</strong> — which is also where to find the
+          network id a relay needs in order to start.
+        </p>
+        <p class="lock-error" id="create-error" data-kols="create-error" hidden></p>
+        <menu>
+          <button type="button" id="create-cancel" class="quiet">cancel</button>
+          <button value="go" id="create-go">create</button>
+        </menu>
+      </form>
+    </dialog>
+
+    <script src="workspace.js"></script>
+  </body>
+</html>

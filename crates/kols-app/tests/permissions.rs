@@ -11,10 +11,28 @@
 
 use tauri::ipc::Origin;
 
-/// The window `capabilities/default.json` grants these to.
-const WINDOW: &str = "main";
+/// The window declared in the configuration and opened at launch.
+const WORKSPACE: &str = "workspace";
 
-/// Every `plugin:` command `app.js` reaches for, by name.
+/// The window a network is drawn in, created at runtime — `design/09` §1.5.
+///
+/// **Created rather than declared, which is exactly why it is listed here.** A
+/// capability is scoped to labels, so a window whose label no capability names
+/// gets an empty allow-list — the silent denial above, per window rather than
+/// per application. A runtime window has no entry in `tauri.conf.json` for
+/// anybody to notice is missing, so this test is the only thing that would.
+const NETWORK: &str = "network";
+
+/// A conversation window, one per conversation — `design/09` §1.6.
+const CONVERSATION: &str = "conversation-aabbccdd";
+
+/// A second network window, which `design/09` §1.5 allows on request.
+///
+/// Covered by the `network-*` pattern ahead of the window existing, so that
+/// building it is not a second encounter with this.
+const SECOND_NETWORK: &str = "network-2";
+
+/// Every `plugin:` command the interface reaches for, by name.
 const NEEDED: &[&str] = &[
     "plugin:event|listen",
     "plugin:event|unlisten",
@@ -41,8 +59,9 @@ fn the_webview_may_call_what_the_interface_calls_and_may_drag() {
         .collect();
     assert_eq!(
         labels,
-        [WINDOW],
-        "capabilities/default.json names the window `{WINDOW}`"
+        [WORKSPACE],
+        "the configuration declares one window at launch, and `09` §1.13 makes it \
+         the workspace — the network window is created when a network is opened"
     );
 
     // **Tauri's native drag-and-drop handler is on by default and swallows HTML5
@@ -69,18 +88,48 @@ fn the_webview_may_call_what_the_interface_calls_and_may_drag() {
 
     let authority = context.runtime_authority_mut();
 
-    let refused: Vec<&str> = NEEDED
-        .iter()
-        .copied()
-        .filter(|command| {
-            authority
-                .resolve_access(command, WINDOW, WINDOW, &Origin::Local)
-                .is_none()
-        })
-        .collect();
+    // **Every label this application creates, not just the declared one.** The
+    // network window is built at runtime and the second one is not built yet;
+    // both are checked, because the failure they would produce is the one this
+    // whole file exists for and it produces no output.
+    for window in [WORKSPACE, NETWORK, SECOND_NETWORK, CONVERSATION] {
+        let refused: Vec<&str> = NEEDED
+            .iter()
+            .copied()
+            .filter(|command| {
+                authority
+                    .resolve_access(command, window, window, &Origin::Local)
+                    .is_none()
+            })
+            .collect();
 
+        assert!(
+            refused.is_empty(),
+            "the ACL refuses {refused:?} for the `{window}` window — the interface calls \
+             these there and would be silently denied"
+        );
+    }
+}
+
+/// A label no capability names gets nothing, which is the property being relied on.
+///
+/// The example used to be `conversation`, which stopped being an unnamed label
+/// the moment conversation windows existed — so it is a label this application
+/// will never create. A negative test whose subject quietly becomes real is a
+/// negative test that passes for the wrong reason.
+///
+/// Asserted rather than assumed, because the list above is only protection if
+/// an unlisted label genuinely fails — a pattern that matched everything would
+/// make that test pass for the wrong reason and hide the next missing label.
+#[test]
+fn a_window_no_capability_names_is_refused_everything() {
+    let mut context: tauri::Context<tauri::Wry> = tauri::generate_context!();
+    let authority = context.runtime_authority_mut();
     assert!(
-        refused.is_empty(),
-        "the ACL refuses {refused:?} — the interface calls these and would be silently denied"
+        NEEDED.iter().all(|command| authority
+            .resolve_access(command, "not-a-window", "not-a-window", &Origin::Local)
+            .is_none()),
+        "an unnamed label resolves, so the capability list is not what is granting \
+         access and a missing label would not be caught"
     );
 }

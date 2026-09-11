@@ -67,7 +67,16 @@ pub fn run(root: PathBuf, uri: &str, timeout_secs: u64) -> Result<(), String> {
         .map_err(|err| format!("could not start a runtime: {err}"))?;
 
     println!("redeeming an invite to {}", invite.network.short());
-    let landed = runtime.block_on(redeem(root, invite, timeout_secs, true))?;
+    // A terminal redeems an invite to a server: a conversation is created by
+    // the direct-message flow and by nothing else (`design/09` §2), so there is
+    // no hand-typed path that should be claiming to be one.
+    let landed = runtime.block_on(redeem(
+        root,
+        invite,
+        timeout_secs,
+        true,
+        kols_core::NetworkProfile::Server,
+    ))?;
 
     println!();
     match landed {
@@ -120,6 +129,7 @@ pub async fn redeem(
     invite: intranet_invite::Invite,
     timeout_secs: u64,
     chatty: bool,
+    profile: kols_core::NetworkProfile,
 ) -> Result<Landed, String> {
     // The identity is derived from the network id the invite names, so it can
     // only exist once the invite has been read. This is the same work `attach`
@@ -146,7 +156,24 @@ pub async fn redeem(
         println!("  issued by {}", invite.issuer.short());
     }
 
-    let mut node = MemberNode::new(&identity).map_err(|err| format!("could not start: {err}"))?;
+    // **Told rather than inferred — E12's obligation on E10.** A joiner cannot
+    // learn the profile before it syncs: an invite carries only connection
+    // bootstrap (Core §5.7) and the profile lives in a log this store has not
+    // got. An absent profile reads as `server`, which is right for a server and
+    // wrong for a conversation in a way that costs something specific — a node
+    // built with discovery on puts a conversation into a routing table, which
+    // is the correlation D29 exists to prevent. The flow that accepted is the
+    // one party that knows what it accepted, so it says.
+    //
+    // Written down as well as used, so that every later start of this node
+    // reaches the same answer before *it* has synced (`Store::set_profile`).
+    let _ = store.set_profile(profile);
+    let discovery = match profile {
+        kols_core::NetworkProfile::Conversation => intranet_transport::Discovery::Off,
+        kols_core::NetworkProfile::Server => intranet_transport::Discovery::Full,
+    };
+    let mut node = MemberNode::with_discovery(&identity, discovery)
+        .map_err(|err| format!("could not start: {err}"))?;
     node.listen_on(
         "/ip4/0.0.0.0/tcp/0"
             .parse()

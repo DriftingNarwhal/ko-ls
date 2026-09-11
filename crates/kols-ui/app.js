@@ -130,89 +130,7 @@ const RESTART_QUIET_MILLIS = 8000;
 /// had to make load-bearing (`design/09` §5.1's last paragraph).
 function show(view) {
   document.querySelector(".app").hidden = view !== "app";
-  el("picker").hidden = view !== "picker";
   el("settings").hidden = view !== "settings";
-  el("lock").hidden = view !== "lock";
-}
-
-async function drawPicker() {
-  const networks = await invoke("networks");
-  const list = el("picker-list");
-  list.replaceChildren();
-
-  for (const network of networks) {
-    const item = document.createElement("li");
-    const button = document.createElement("button");
-    button.textContent = network.label || network.id.slice(0, 12);
-    button.addEventListener("click", () => openNetwork(network.id));
-
-    const note = document.createElement("span");
-    note.className = "picker-note";
-    // Not "broken": a network you have joined and not yet been keyed into is a
-    // normal place to be, and saying so is better than an empty channel list.
-    note.textContent = network.keyed ? "" : "not keyed in yet";
-
-    // **Forget still destroys, and now it announces first.** Core §2.5.1 gave a
-    // member an entry they may write for themselves, so the departure is signed
-    // and handed to the running node before the store goes — the order is
-    // fixed, because that entry is signed by the seed this deletes.
-    //
-    // Only the *open* network has a node to announce through, which is what
-    // decides which warning is shown. Telling somebody the network will be
-    // informed when no node is running would be the exact lie `design/02` §6.5
-    // is written against, so the two cases say different things.
-    const forget = document.createElement("button");
-    forget.className = "forget";
-    forget.textContent = network.open ? "leave" : "forget";
-    forget.title = network.open
-      ? "tell this network you are leaving, then remove this installation's copy"
-      : "remove this installation's copy — with no node running, the network is not told";
-    forget.addEventListener("click", async (event) => {
-        event.stopPropagation();
-        // Native, because this asks whether to destroy something rather than
-        // what to call it (`design/09` §5.1) — and because the seed is the one
-        // thing here with no recovery path.
-        const gone =
-          "\n\nThis deletes the seed, which is your identity here. You cannot come " +
-          "back as the same member — a later join would arrive as a stranger, and the " +
-          "log would still name the member you were.";
-        const told = network.open
-          ? "\n\nThis network is open, so it is told: your departure is written and " +
-            "published before anything is deleted. Members who are connected right now " +
-            "hear it; anybody offline learns of it from them."
-          : "\n\nThis network is not open, so **it is not told** — no node is running to " +
-            "publish anything, and to every other member you stay a member who is simply " +
-            "never connected. Open it first if you would rather it knew.";
-        const loss = network.keyed
-          ? gone + told
-          : "\n\nYou were never keyed into this one, so there is nothing to lose but the " +
-            "attempt.";
-        if (!confirm(`${network.open ? "Leave" : "Forget"} ${network.label || network.id.slice(0, 12)}?${loss}`)) return;
-        try {
-          const outcome = await invoke("forget_network", { network: network.id });
-          // The open one is gone with its node, so whatever is on screen behind
-          // the picker belongs to a network that no longer exists.
-          if (network.open) clearNetworkView();
-          await drawPicker();
-          said(outcome);
-        } catch (err) {
-          fail(err);
-        }
-    });
-
-    item.append(button, note, forget);
-    list.append(item);
-  }
-
-  el("picker-list-wrap").hidden = networks.length === 0;
-  show("picker");
-  // No network open, so nothing is unread here: the count in the title belonged
-  // to the one being left.
-  try {
-    await frame?.setTitle("ko-ls");
-  } catch {
-    // See `announce`.
-  }
 }
 
 /// Whether a node event belongs to the network this window is showing.
@@ -232,24 +150,26 @@ function mine(payload) {
   return state.network.startsWith(from) || from.startsWith(state.network);
 }
 
-async function openNetwork(id) {
-  try {
-    await invoke("open_network", { network: id });
-    state.network = id;
-    state.current = null;
-    await start();
-  } catch (err) {
-    fail(err);
-  }
+function fail(err) {
+  const line = el("app-error");
+  if (!line) return;
+  line.hidden = false;
+  line.classList.remove("told");
+  line.textContent = String(err && err.message ? err.message : err);
 }
 
-function fail(err) {
-  el("picker-error").hidden = false;
-  // Cleared rather than assumed absent: `said` above dims this same line to
-  // report a departure that worked, and a refusal arriving after one would
-  // otherwise be drawn as though it had also gone well.
-  el("picker-error").classList.remove("told");
-  el("picker-error").textContent = String(err);
+/// The same line, for something that is not a failure.
+///
+/// Kept apart from `fail` because most of what this line now carries is not a
+/// refusal — a request sent is a statement about what the other side will see,
+/// and drawing it in the colour of a failure would make the flow look broken
+/// every time it worked.
+function told(message) {
+  const line = el("app-error");
+  if (!line) return;
+  line.hidden = false;
+  line.classList.add("told");
+  line.textContent = message;
 }
 
 /// Whether this network is readable yet.
@@ -616,6 +536,20 @@ async function drawPeople() {
       row.append(said);
     }
     row.append(id);
+
+    // **The roster is where a conversation starts** — `design/09` §1.7. A
+    // request binds one identity in one network (spec 07 §6.2) and a roster row
+    // is already exactly that pair, which is why there is no name box anywhere
+    // in this client and could not be: names are per network, are not unique
+    // and are not identifiers (§1.7), and a global "add by name" field would be
+    // a phishing surface whose attacker's half is typing.
+    if (!person.you) {
+      const ask = (event) => offerConversation(event, person);
+      row.addEventListener("click", ask);
+      row.addEventListener("contextmenu", ask);
+      row.classList.add("askable");
+    }
+
     list.append(row);
   }
 
@@ -675,6 +609,39 @@ async function setPresence(choice) {
   }
   state.peopleSignature = null;
   await drawPeople();
+}
+
+/// Offers to start a conversation with one member of this network.
+///
+/// A menu rather than a click that acts, because a roster row is a place
+/// somebody points at while reading rather than a button — and the act on the
+/// other side of it creates a network and sends a request.
+function offerConversation(event, person) {
+  popMenu(event, [
+    [
+      `message ${person.name ?? person.short}`,
+      async () => {
+        try {
+          await invoke("start_conversation", {
+            network: state.me.network,
+            with: person.identity,
+          });
+          // **Never "waiting for an answer".** Nothing is sent when somebody
+          // declines (spec 07 §6.2), so this side cannot tell a decline from
+          // somebody who has not looked yet, and saying otherwise would invent
+          // the difference (`09` §1.8). And the conversation lives in the other
+          // window, so this says where it went.
+          told(
+            `Asked ${person.name ?? person.short}. They will see it when you ` +
+              `are both online; there is no answer to wait for, because a ` +
+              `decline is never sent. It is in the ko-ls window.`,
+          );
+        } catch (err) {
+          fail(err);
+        }
+      },
+    ],
+  ]);
 }
 
 /// Opens or closes the roster.
@@ -2079,7 +2046,12 @@ async function announce() {
   if (!frame) return;
   const total = unreadTotal();
   try {
-    await frame.setTitle(total > 0 ? `ko-ls (${total})` : "ko-ls");
+    // **A number, never a name.** The shell composes this window's title from
+    // replayed state (D36, `design/09` §1.3) — a document that could write the
+    // *network* into the title could make one network wear another's name,
+    // which is the failure D36 exists to prevent. A document lying about its
+    // own unread count is harmless by comparison.
+    await invoke("set_unread", { unread: total });
     if (total > 0 && !(await frame.isFocused())) {
       // Informational rather than critical: on macOS the critical form bounces
       // the dock icon until the application is activated, which is a demand
@@ -2320,75 +2292,10 @@ el("new-channel").addEventListener("click", async () => {
   }
 });
 
-el("maker").addEventListener("submit", async (event) => {
-  event.preventDefault();
-  const name = el("new-name").value.trim();
-  const relay = el("new-relay").value.trim();
-  if (!name) return;
-  // Creating a network with a relay is a designation like any other, and it is
-  // the first one most people make — so the warning has to reach here too, or it
-  // would cover the rarer half of the act it exists for.
-  if (!(await agreedToShareRelay("shared_relays_for_new_network", relay))) return;
-  try {
-    await invoke("create_network", { name, relay });
-    el("new-name").value = "";
-    el("new-relay").value = "";
-    state.current = null;
-    await start();
-  } catch (err) {
-    fail(err);
-  }
-});
-
-el("joiner").addEventListener("submit", async (event) => {
-  event.preventDefault();
-  const invite = el("invite").value.trim();
-  if (!invite) return;
-
-  const button = event.target.querySelector("button");
-  button.disabled = true;
-  button.textContent = "joining…";
-  try {
-    const landed = await invoke("join_network", { invite });
-    el("invite").value = "";
-    state.current = null;
-    if (landed.admitted) {
-      await start();
-      return;
-    }
-    if (!landed.answered) {
-      // **Not a refusal, and it must not read as one (O21).** The request went
-      // out and nothing came back. Under auto-admit a network answers by
-      // writing a governance entry, so the entry can exist while the reply that
-      // would have reported it does not — and an invite is use-limited, so
-      // telling somebody this failed is how they spend it on a retry and lock
-      // themselves out of a network that already holds them.
-      //
-      // The node is running, so the sync that settles it is already under way.
-      fail(
-        `No answer yet — which is not the same as a refusal, so do not redeem ` +
-          `the invite again. The network may already have admitted you; this ` +
-          `node is syncing now and will say so if it did. Your identity here ` +
-          `is:\n\n  ${landed.identity}`,
-      );
-      await start();
-      return;
-    }
-    // Waiting is a successful join, not a failure: an invite to a network that
-    // screens its members buys a connection and an identity and nothing else,
-    // until somebody admits you. Saying so beats an empty channel list.
-    fail(
-      `You are in. This network screens its members, so you are waiting to be ` +
-        `admitted — ask a member to run:\n\n  kols admit ${landed.identity}`,
-    );
-    await start();
-  } catch (err) {
-    fail(err);
-  } finally {
-    button.disabled = false;
-    button.textContent = "join";
-  }
-});
+// Creating and joining a network moved to the workspace window with the list
+// they belong beside (`design/09` §1.1, D40). They are workspace acts rather
+// than per-network ones — `05` §3.1's line — so a document that draws one
+// network is the wrong place for them.
 
 // The way back out of a folder, and the only one once every channel is in one.
 //
@@ -2403,7 +2310,11 @@ el("joiner").addEventListener("submit", async (event) => {
 // drag that reached open space.
 wireDrop(document.querySelector(".channels"), null, true);
 
-el("switcher").addEventListener("click", drawPicker);
+// The way back to the list, which is a window rather than a screen over this
+// one (`design/09` §1.1). Raising it is the shell's to do: a document asking to
+// be shown a window it does not own is a document with an opinion about window
+// management.
+el("switcher").addEventListener("click", () => void invoke("show_workspace"));
 
 /// Shows one settings panel and marks its tab.
 ///
@@ -2446,7 +2357,6 @@ async function drawSettings() {
   if (state.settingsTab === "permissions") await drawRoles();
   if (state.settingsTab === "contribution") await drawContribution();
   if (state.settingsTab === "device") {
-    await drawCeiling();
     await drawAccount();
   }
 }
@@ -2457,15 +2367,6 @@ async function drawSettings() {
 /// disk in, and reported alongside the network count: "1.2 GB" reads very
 /// differently at one network and at thirty, and once direct messages land every
 /// conversation is one.
-async function drawCeiling() {
-  const limit = await invoke("storage_ceiling");
-  const gb = (bytes) => bytes / (1024 * 1024 * 1024);
-  el("ceiling-gb").value = String(Math.max(1, Math.round(gb(limit.ceiling))));
-  el("ceiling-usage").textContent =
-    `Using ${(gb(limit.used)).toFixed(2)} GB of ${gb(limit.ceiling).toFixed(0)} GB, ` +
-    `across ${limit.networks} network${limit.networks === 1 ? "" : "s"}.`;
-}
-
 /// What this machine offers this network — Core §4.3.
 ///
 /// Shown in megabytes because that is the unit a person has an opinion in; the
@@ -2802,18 +2703,6 @@ el("contribution-form").addEventListener("submit", async (event) => {
       relayWilling: !el("contribution-relay-row").hidden && el("contribution-relay").checked,
     });
     await drawContribution();
-  });
-});
-
-el("ceiling-form").addEventListener("submit", async (event) => {
-  event.preventDefault();
-  // Floored at one gigabyte rather than zero. A ceiling of nothing would stop
-  // the application keeping anything at all, including what somebody is reading
-  // — which is not a contribution setting and must not behave like one.
-  const gb = Math.max(1, Math.floor(Number(el("ceiling-gb").value) || 0));
-  await settingsAct("ceiling-error", async () => {
-    await invoke("set_storage_ceiling", { bytes: gb * 1024 * 1024 * 1024 });
-    await drawCeiling();
   });
 });
 
@@ -3462,219 +3351,27 @@ function clearNetworkView() {
   state.settle = null;
 }
 
-/// Says what forgetting actually did, which is two facts rather than one.
+// Locking moved to the workspace window with the account (`design/09` §1.12,
+// §1.13). The shell closes this window on a lock, so there is nothing here to
+// return to a lock screen — and a second lock screen would be a second gate.
+
+/// Draws whatever network the shell has open in this window.
 ///
-/// **The store is always gone; the network is not always told**, and reporting
-/// the first as though it covered the second is the failure `design/02` §6.5
-/// names. So this says which happened, and where it says "published" it counts
-/// the members that were connected — who could have heard, never who did. There
-/// is no acknowledgement in gossip to report, and inventing confidence here
-/// would be worse than the silence it replaced.
-function said(outcome) {
-  const line = el("picker-error");
-  line.hidden = false;
-  if (!outcome || !outcome.announced || outcome.reached === 0) {
-    line.classList.remove("told");
-    line.textContent =
-      (outcome && outcome.reason) || "The store is gone. The network was not told.";
-    return;
-  }
-  const who =
-    outcome.reached === 1 ? "1 connected member" : `${outcome.reached} connected members`;
-  line.classList.add("told");
-  line.textContent =
-    `Left, and the departure went out to ${who}. Anybody offline learns of it from them.`;
-}
-
-/// Who this installation belongs to, on the settings screen.
-async function drawAccount() {
-  const account = await invoke("account_state");
-  el("account-who").textContent = account.username
-    ? `signed in as ${account.username}`
-    : "this installation";
-  el("export-nudge").hidden = !state.justProtected;
-}
-
-/// The screen before every other one — `design/02` §6.3.
-///
-/// Two questions rather than one, because they need different answers on screen:
-/// **no account** is a first run, and **a locked one** is a login. The account is
-/// forced rather than offered, since one somebody can click past is a preference
-/// and not the release gate `00` §5 calls it.
-///
-/// Returns whether the installation is open. Everything downstream depends on
-/// that: with the seeds wrapped there is no identity to derive and therefore no
-/// network to open, so this runs before anything asks for one.
-async function gate() {
-  const account = await invoke("account_state");
-  if (account.unlocked) return true;
-
-  show("lock");
-  el("first-run").hidden = account.exists;
-  el("login").hidden = !account.exists;
-
-  if (account.exists) {
-    el("login-greeting").textContent = account.username
-      ? `welcome back, ${account.username}`
-      : "unlock this installation";
-    el("login-password").focus();
-  } else {
-    // **Says what it is about to protect**, rather than asking for a password
-    // with no reason given. An installation that predates the keyring has seeds
-    // on disk in the clear, and that is the fact worth putting on screen.
-    el("first-run-note").textContent =
-      account.unprotected > 0
-        ? `${account.unprotected === 1 ? "One network" : `${account.unprotected} networks`} on ` +
-          "this machine still hold their identity unencrypted on disk. A password " +
-          "wraps them, and nothing else here changes."
-        : "A password wraps every identity this machine holds. It is local to this " +
-          "machine and no network ever sees it.";
-    el("first-run-name").focus();
-  }
-  return false;
-}
-
-function lockError(id, err) {
-  const line = el(id);
-  line.hidden = false;
-  line.textContent = String(err && err.message ? err.message : err);
-}
-
-el("first-run").addEventListener("submit", async (event) => {
-  event.preventDefault();
-  el("first-run-error").hidden = true;
-  const password = el("first-run-password").value;
-  // Checked here rather than trusted, because there is no reset behind it: a
-  // mistyped password on this form is every identity on the disk.
-  if (password !== el("first-run-again").value) {
-    lockError("first-run-error", "those two passwords are not the same");
-    return;
-  }
-  if (!password) {
-    lockError("first-run-error", "a password is required");
-    return;
-  }
-  try {
-    await invoke("create_account", {
-      username: el("first-run-name").value.trim() || "me",
-      password,
-    });
-    el("first-run-password").value = "";
-    el("first-run-again").value = "";
-    // Offered next, and not in the way: the copy protects against losing the
-    // machine rather than against the next five minutes, and a first run that
-    // refused to proceed without one is a flow people learn to defeat.
-    state.justProtected = true;
-    await start();
-    show("settings");
-    state.settingsTab = "device";
-    await drawSettings();
-  } catch (err) {
-    lockError("first-run-error", err);
-  }
-});
-
-el("login").addEventListener("submit", async (event) => {
-  event.preventDefault();
-  el("login-error").hidden = true;
-  try {
-    await invoke("unlock", { password: el("login-password").value });
-    el("login-password").value = "";
-    await start();
-  } catch (err) {
-    lockError("login-error", err);
-  }
-});
-
-/// Locks the interface. The node keeps running, deliberately.
-async function lockNow() {
-  await invoke("lock");
-  // Stop the timers that would otherwise keep asking a locked store questions
-  // and drawing the answers into a hidden screen.
-  if (state.channelPoll) clearInterval(state.channelPoll);
-  if (state.relayPoll) clearInterval(state.relayPoll);
-  if (state.doorPoll) clearInterval(state.doorPoll);
-  state.current = null;
-  state.loaded = null;
-  el("messages").replaceChildren();
-  await gate();
-}
-
-/// Says something on one of the settings panels' outcome lines.
-function settingsSays(id, text, bad = false) {
-  const line = el(id);
-  line.hidden = false;
-  line.textContent = text;
-  return bad;
-}
-
-el("export-form").addEventListener("submit", async (event) => {
-  event.preventDefault();
-  el("export-error").hidden = true;
-  el("export-done").hidden = true;
-  try {
-    const count = await invoke("export_bundle", {
-      passphrase: el("export-pass").value,
-      path: el("export-path").value.trim(),
-    });
-    // The passphrase does not stay in the field. It is the only thing standing
-    // between anybody who picks the file up and every identity in it.
-    el("export-pass").value = "";
-    settingsSays(
-      "export-done",
-      `Written. ${count === 1 ? "One network" : `${count} networks`} are in that file — ` +
-        "keep it somewhere that is not this machine, and keep the passphrase somewhere " +
-        "that is not the file.",
-    );
-  } catch (err) {
-    settingsSays("export-error", String(err && err.message ? err.message : err));
-  }
-});
-
-el("import-form").addEventListener("submit", async (event) => {
-  event.preventDefault();
-  el("import-error").hidden = true;
-  el("import-done").hidden = true;
-  try {
-    const done = await invoke("import_bundle", {
-      passphrase: el("import-pass").value,
-      path: el("import-path").value.trim(),
-    });
-    el("import-pass").value = "";
-    // All three are said. A restore that only reported what it added would be
-    // silent about the network it deliberately left alone, which is the one
-    // somebody is most likely to be asking about.
-    const said = [];
-    if (done.added.length) said.push(`restored ${done.added.join(", ")}`);
-    if (done.skipped.length) {
-      said.push(`already here, left alone: ${done.skipped.join(", ")}`);
-    }
-    if (done.refused.length) said.push(`could not restore: ${done.refused.join("; ")}`);
-    settingsSays("import-done", said.length ? said.join(" · ") : "that file held no networks");
-    if (done.added.length) await refreshReplayed();
-  } catch (err) {
-    settingsSays("import-error", String(err && err.message ? err.message : err));
-  }
-});
-
-el("lock-now").addEventListener("click", () => void lockNow());
-
+/// **There is no gate here and no picker.** The workspace window owns both
+/// (`design/09` §1.1): it holds the account, and it is what opens this window —
+/// only ever from an unlocked installation, and the shell closes this one when
+/// somebody locks. A second account gate would be a second security posture,
+/// which is the thing `02` §6.3 refuses for the terminal and refuses here for
+/// the same reason.
 async function start() {
-  if (!(await gate())) return;
-  // Whichever network is there, once there is a key to open it with. This used
-  // to happen before the window existed and is now too early by construction.
-  try {
-    await invoke("resume");
-  } catch {
-    // Nothing to resume is not a failure; the picker asks.
-  }
   let me;
   try {
     me = await invoke("me");
-  } catch {
-    // No network open. The first thing this client asks is which one, and with
-    // none it asks whether to make one.
-    await drawPicker();
+  } catch (err) {
+    // Nothing open. Reachable only if this window outlived the network it was
+    // drawing — forgotten from the workspace window, say — so it says that
+    // rather than offering a choice that belongs in the other window.
+    fail("This network is no longer open. Pick one in the ko-ls window.");
     return;
   }
 
@@ -3693,6 +3390,17 @@ async function start() {
   const channels = state.channels;
   if (channels.length > 0) await openChannel(channels[0].id, { arriving: true });
 }
+
+/// The shell reuses this window as the member switches (`design/09` §1.5), so
+/// it says which network it is now drawing rather than the window being
+/// rebuilt. The title is already cleared and reset around this by the shell —
+/// the two must change together, or a reused window is D36's spoof in time.
+listen("kols://network", async (event) => {
+  state.network = typeof event.payload === "string" ? event.payload : null;
+  state.current = null;
+  clearNetworkView();
+  await start();
+});
 
 watch();
 start();

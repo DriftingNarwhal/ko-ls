@@ -186,6 +186,14 @@ pub fn run(
 /// matters when a ceiling is crossed.
 const CENSUS_PER_TICK: usize = 4;
 
+/// How long to wait before offering an undelivered conversation request again.
+///
+/// Slower than the tick and faster than the key retry. A request costs a signed
+/// payload and a dial rather than a governance entry, so it is cheaper to repeat
+/// than asking for a key — and the recipient of one is a single person who may
+/// simply not be online, which is the case this interval exists to wait out.
+const OFFER_RETRY: std::time::Duration = std::time::Duration::from_secs(15);
+
 /// How long an unkeyed node waits before saying so.
 ///
 /// Well past a normal answer on any link, because this reports a stall rather
@@ -241,9 +249,21 @@ pub async fn serve(
     // and an invite carries only connection bootstrap (Core §5.7). Closing it is
     // E10's, which knows what it accepted — recorded in `design/09` §2 rather
     // than left here.
+    // Replayed policy first, then what this node was told when it joined, then
+    // the safe reading for a server. The middle step is what closes the window
+    // the comment above describes: a joiner cannot learn the profile before it
+    // syncs, so the flow that accepted the conversation wrote it down
+    // (`Store::set_profile`) and this is where that is spent.
     let discovery = store
         .state()
         .map(|state| crate::discovery_for(&state.policy))
+        .ok()
+        .or_else(|| {
+            store.cached_profile().map(|profile| match profile {
+                kols_core::NetworkProfile::Conversation => intranet_transport::Discovery::Off,
+                kols_core::NetworkProfile::Server => intranet_transport::Discovery::Full,
+            })
+        })
         .unwrap_or(intranet_transport::Discovery::Full);
     let mut node = MemberNode::with_discovery(&identity, discovery)
         .map_err(|err| format!("could not start: {err}"))?;
@@ -315,6 +335,9 @@ pub async fn serve(
     let mut keyed = store.epoch_key().is_ok();
     // When this node started waiting for a key, so a stall can say so.
     let mut unkeyed_since: Option<Instant> = None;
+    // Set on every attempt rather than on success, so an unreachable
+    // recipient is retried on the interval rather than on every tick.
+    let mut last_offered: Option<Instant> = None;
     // Reported on change rather than on every tick — see the duty pass below.
     let mut last_under_replicated = 0usize;
     // Likewise for the ceiling: a standing condition announced every two seconds
@@ -391,9 +414,16 @@ pub async fn serve(
         Err(err) => crate::say!(report, "  restored  nothing kept for other members ({err})"),
     }
 
+    // **The failure says why rather than naming a cause it has not established.**
+    // `ready` is two things — advertising into the ledger and publishing this
+    // node's own logs — and only the first fails for non-membership. This line
+    // used to read "not a member of this network yet" whichever half failed, so
+    // a store error while publishing presented as a membership problem, which
+    // is a diagnosis rather than an observation and sent O26's attribution
+    // after the wrong half for a session.
     match ready(&store, &mut node, &identity, seal_bytes) {
         Ok(published) => crate::say!(report, "  published {published} segment(s) from this node"),
-        Err(_) => crate::say!(report, "  not a member of this network yet — syncing will settle it"),
+        Err(err) => crate::say!(report, "  not publishing yet — {err}"),
     }
 
     // A circuit on one of the network's relays, before anything else needs an
@@ -407,6 +437,7 @@ pub async fn serve(
     // pointing at a port with no listener. Nothing else surfaces that. So the
     // listen above has already happened, and this waits for the grant before
     // treating the circuit as usable.
+    let mut borrowed = false;
     let designated = {
         let replayed = store
             .state()
@@ -415,7 +446,28 @@ pub async fn serve(
         if replayed.is_empty() {
             // Nothing replayed yet — a node that has never synced still has to
             // reach a relay to sync at all, which is what the cache is for.
-            store.relays()
+            let cached = store.relays();
+            if cached.is_empty() {
+                // **A conversation borrows one — D39, and this is where that
+                // stops being a function nobody calls.** A conversation network
+                // designates no relay and must not: designation is replayed
+                // state that outlives the shared membership justifying it, and
+                // nothing in a two-person network could ever un-designate it.
+                //
+                // So the permission is recomputed here, on every start, by
+                // replaying the shared network's log and requiring that *both*
+                // parties are still members (`workspace::borrowable_relay`).
+                // Without this the conversation's node reserves no circuit, has
+                // no dialable address, and its invite cannot carry one — which
+                // is the whole flow.
+                let lent = crate::workspace::Workspace::containing(&store)
+                    .and_then(|workspace| workspace.borrowable_relay(&store))
+                    .unwrap_or_default();
+                borrowed = !lent.is_empty();
+                lent
+            } else {
+                cached
+            }
         } else {
             // Refreshed, so a relay deployed since this node last ran is
             // dialable next time before it has synced.
@@ -423,6 +475,21 @@ pub async fn serve(
             replayed
         }
     };
+
+    // **A borrowed relay is never cached, and that is the whole of borrowing.**
+    // Every other path above writes what it learned into `set_relays`, because a
+    // node has to reach a relay before it can replay the policy naming one. This
+    // one must not: the cache is what this installation knows and would survive
+    // the membership that justified the loan, at which point the conversation
+    // would go on dialling a relay it is no longer entitled to and nothing would
+    // recompute. The cost is re-asking at every start, which is one replay of a
+    // log already on this disk.
+    if borrowed {
+        crate::say!(
+            report,
+            "  relay     borrowed from the network this conversation was arranged in — not designated, and re-checked every start"
+        );
+    }
 
     let mut failures: Vec<String> = Vec::new();
     let reserved = reserve_any_reporting(&mut node, &designated, sink, &mut failures).await;
@@ -876,9 +943,23 @@ pub async fn serve(
                 // replaces this node's leaf rather than minting a second one,
                 // which is what used to fork the log against the entry that
                 // admitted them.
+                //
+                // **And gated on the question that governs it, which is not
+                // whether `ready` succeeded.** This asked behind
+                // `ready(..).is_ok()`, using it as a proxy for *am I a member
+                // yet* — and it is a strictly stronger condition than that: it
+                // also requires publishing every author log to succeed. So a
+                // store error on the publish half, or anything else transient
+                // in it, stopped the ask on every tick for as long as it lasted,
+                // which is the *same* permanent strand the schedule above was
+                // written to remove, reached through the precondition instead of
+                // through the cadence. Membership is a replay question (`00`
+                // §2's third principle), so it is asked of replayed state
+                // directly; advertising and publishing happen every tick in
+                // `adopt_local_changes` regardless and no longer decide this.
                 if !keyed
                     && last_asked.is_none_or(|at: Instant| at.elapsed() >= KEY_REQUEST_RETRY)
-                    && ready(&store, &mut node, &identity, seal_bytes).is_ok()
+                    && admitted(&store, &identity.id())
                 {
                     for peer in connected.iter().copied() {
                         if let Some(from) = peer_identity(peer, &store)?
@@ -928,6 +1009,56 @@ pub async fn serve(
                     node.sync_ledger_with(peer);
                     node.sync_pointers_with(peer);
                 }
+
+                // Conversation requests this member has offered — spec 07 §6.2.
+                //
+                // **On a schedule rather than once, and the offer is what
+                // persists.** An offer records a want (`dm::start`) and cannot
+                // be sent until two things are true that nothing here can wait
+                // for: the conversation's own node has written an address down,
+                // and the recipient is reachable. Both are ordinary and both
+                // arrive late, so this asks the disk every interval and sends
+                // whatever is ready. The offer is forgotten on the carrier's
+                // acknowledgement, so a delivered request stops costing
+                // anything and an undelivered one keeps trying, which is what
+                // `03` §4.3 makes the sender's job.
+                if last_offered.is_none_or(|at: Instant| at.elapsed() >= OFFER_RETRY) {
+                    last_offered = Some(Instant::now());
+                    if let Some(workspace) = crate::workspace::Workspace::containing(&store) {
+                        match crate::dm::deliverable(&workspace, &store, crate::chat::now_millis()) {
+                            Ok(ready) => {
+                                for request in ready {
+                                    // Unreachable is the ordinary case rather
+                                    // than a fault: this is a two-person network
+                                    // being arranged, and the other person is
+                                    // frequently not there. The retry above is
+                                    // the answer, and saying so every interval
+                                    // would train somebody to ignore it.
+                                    if node
+                                        .send_direct(
+                                            request.to,
+                                            &identity,
+                                            kols_core::DM_NAMESPACE,
+                                            kols_core::DM_KIND,
+                                            request.payload,
+                                        )
+                                        .is_ok()
+                                    {
+                                        crate::say!(
+                                            report,
+                                            "offered a conversation to {}",
+                                            request.to.short()
+                                        );
+                                    }
+                                }
+                            }
+                            Err(err) => sink(&[Event::Degraded {
+                                reason: format!("could not build a conversation request: {err}"),
+                            }]),
+                        }
+                    }
+                }
+
                 request_foreign_segments(&store, &mut node, &identity, &mut fetched, &backfill, history_budget(disk.room_for_history(), asked_for_history(&store)))?;
                 sink(&absorb_segments(
                     &store,
@@ -1101,24 +1232,30 @@ pub async fn serve(
                     if ready(&store, &mut node, &identity, seal_bytes).is_ok() {
                         node.sync_ledger_with(peer);
                         node.sync_pointers_with(peer);
-                        // A member with no key can fetch every byte of this
-                        // network's content and open none of it, so asking for
-                        // one is the first thing worth doing after admission.
-                        if !keyed
-                            && last_asked
-                                .is_none_or(|at: Instant| at.elapsed() >= KEY_REQUEST_RETRY)
-                            && let Some(from) = peer_identity(peer, &store)?
-                        {
-                            match node.request_epoch_key(from, &identity) {
-                                Ok(_) => {
-                                    crate::say!(report, "asked {} to key us in", from.short());
-                                    unkeyed_since.get_or_insert_with(Instant::now);
-                                    last_asked = Some(Instant::now());
-                                }
-                                Err(err) => sink(&[Event::Degraded {
-                                    reason: format!("could not ask for a key: {err}"),
-                                }]),
+                    }
+                    // A member with no key can fetch every byte of this
+                    // network's content and open none of it, so asking for
+                    // one is the first thing worth doing after admission.
+                    //
+                    // **Outside the block above, deliberately.** The two
+                    // syncs are worth doing only if this node's advertisement
+                    // landed; the ask is worth doing whether it did or not,
+                    // and nesting it there made publishing a precondition of
+                    // being keyed in. Same reason as the scheduled ask above.
+                    if !keyed
+                        && admitted(&store, &identity.id())
+                        && last_asked.is_none_or(|at: Instant| at.elapsed() >= KEY_REQUEST_RETRY)
+                        && let Some(from) = peer_identity(peer, &store)?
+                    {
+                        match node.request_epoch_key(from, &identity) {
+                            Ok(_) => {
+                                crate::say!(report, "asked {} to key us in", from.short());
+                                unkeyed_since.get_or_insert_with(Instant::now);
+                                last_asked = Some(Instant::now());
                             }
+                            Err(err) => sink(&[Event::Degraded {
+                                reason: format!("could not ask for a key: {err}"),
+                            }]),
                         }
                     }
                 }
@@ -1304,6 +1441,47 @@ pub async fn serve(
                 {
                     sink(&[Event::Degraded {
                         reason: format!("could not keep a chunk across restarts: {err}"),
+                    }]);
+                }
+            }
+
+            // Somebody wants to start a conversation — spec 07 §6.2.
+            //
+            // The namespace and kind are checked before anything else because
+            // Core §5.1's carrier is generic: another consumer's payload may
+            // legitimately arrive here, and decoding one as a `chat` request
+            // would be this node inventing a meaning for somebody else's bytes.
+            NodeEvent::DirectReceived { message }
+                if message.namespace == kols_core::DM_NAMESPACE
+                    && message.kind == kols_core::DM_KIND =>
+            {
+                match crate::dm::receive(&store, &message.sender, &message.payload) {
+                    crate::dm::Arrived::Request { from } => {
+                        sink(&[Event::DirectMessageRequest { from }]);
+                    }
+                    // Local, and never answered to the sender: the carrier has
+                    // already acknowledged at the delivery level, and an
+                    // application-level *no* that distinguished itself would
+                    // turn every refusal into a disclosure (spec 07 §6.2).
+                    crate::dm::Arrived::Refused { from, why } => crate::say!(
+                        report,
+                        "refused a conversation request from {}: {why}",
+                        from.short()
+                    ),
+                }
+            }
+
+            // A conversation request reached the other end — Core §5.1's
+            // acknowledgement, which is delivery-level and says nothing about
+            // anybody agreeing. So the offer stops being retried and nothing
+            // else happens: whether they accept is theirs, and arrives later as
+            // a join or not at all.
+            NodeEvent::DirectDelivered { to, ack } => {
+                if matches!(ack, intranet_transport::direct::DirectAck::Received)
+                    && let Err(err) = store.forget_offer(&to)
+                {
+                    sink(&[Event::Degraded {
+                        reason: format!("a conversation request was delivered and this node could not stop retrying it: {err}"),
                     }]);
                 }
             }
@@ -2137,6 +2315,16 @@ fn render(events: &[Event]) {
             // it was settled, in the startup block with the rest of the header.
             // This event exists for consumers that had no equivalent.
             Event::Relay { .. } => {}
+            // Named rather than counted, because the answer is a person's and
+            // the person needs to know who is asking (spec 07 §6.2). Reaching
+            // here at all means the identity link verified and named the right
+            // pair, and that the sender is a current member — an unverified
+            // request is never surfaced, so there is nothing here to qualify.
+            Event::DirectMessageRequest { from } => println!(
+                "{} wants to start a conversation — kols conversation accept {}",
+                &intranet_crypto::to_hex(from.verifying_key().as_bytes())[..8],
+                intranet_crypto::to_hex(from.verifying_key().as_bytes())
+            ),
         }
     }
 }
@@ -2922,6 +3110,23 @@ fn persist_keyring(store: &Store, node: &MemberNode) -> Result<(), String> {
     store
         .set_epoch_keys(&keys, current)
         .map_err(|e| e.to_string())
+}
+
+/// Whether replayed state admits this node to the network at all.
+///
+/// The precondition on asking to be keyed in, and the reason it is asked here
+/// rather than inferred from whether some write succeeded: membership is a
+/// computation over the governance log (`00` §2's third principle), so the node
+/// that wants to know replays and answers, exactly as `advertise` does
+/// internally. A node not yet admitted has nobody to ask — the request would be
+/// refused — and one that *is* admitted must keep asking however the rest of its
+/// tick went.
+///
+/// `is_member` is membership of any group, matching what the ledger requires of
+/// an advertisement, so this does not decide differently from the check it
+/// replaced in the case that check was there for.
+fn admitted(store: &Store, identity: &intranet_identity::PerNetworkIdentityId) -> bool {
+    replayable(store).is_some_and(|state| state.is_member(identity))
 }
 
 /// Whether this identity founded the network, and so should mint its first key.

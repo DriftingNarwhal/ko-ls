@@ -86,6 +86,52 @@ impl Workspace {
         Self { root }
     }
 
+    /// This installation's store for a network, if it holds one.
+    ///
+    /// By search rather than by [`path_for`](Self::path_for), because what is
+    /// authoritative is the network a store *says* it is: a directory name is a
+    /// convention this module keeps and a store restored from a bundle, or moved
+    /// by hand, is still that network's. The cost is a listing, on paths that
+    /// are not the two-second tick.
+    pub fn store_for(&self, network: &NetworkId) -> Option<Store> {
+        self.list()
+            .into_iter()
+            .filter_map(|known| Store::open(known.path).ok())
+            .find(|store| store.network() == network)
+    }
+
+    /// The workspace a store belongs to, if it belongs to one.
+    ///
+    /// [`path_for`](Self::path_for) puts every store in a directory named for
+    /// its network id directly under the workspace, so the answer is the
+    /// parent — and this lives here rather than at a caller because that layout
+    /// is this module's to know. A daemon deriving it for itself would be a
+    /// second place that has an opinion about where stores go.
+    ///
+    /// **The test is exact rather than "the parent is a directory"**, and the
+    /// loose version is a real hazard rather than a tidier spelling. A `--home`
+    /// pointing straight at one store is a shape this terminal has always
+    /// supported ([`list`](Self::list) reads it as a workspace of one), and for
+    /// such a store the parent is whatever directory the member happened to put
+    /// it in — `/tmp`, or a home directory. Answering with a workspace rooted
+    /// there would sweep in every unrelated store beside it and call them this
+    /// installation's networks.
+    ///
+    /// So this asks the only question that settles it: **would `path_for` have
+    /// put this store exactly here?** That is a pure function of the parent and
+    /// the network id, so the answer is yes only for a store this workspace
+    /// actually laid out.
+    ///
+    /// `None` therefore means *no workspace*, which is the honest answer for a
+    /// single-store home — `create_conversation` refuses to add to one in as
+    /// many words, so a node running there has no sibling networks by
+    /// construction and nothing to look for.
+    pub fn containing(store: &Store) -> Option<Self> {
+        let root = store.root();
+        let candidate = Self::at(root.parent()?.to_path_buf());
+        (candidate.path_for(store.network()) == root).then_some(candidate)
+    }
+
     /// The default workspace: `$KOLS_HOME`, else `~/.kols`.
     pub fn default_root() -> PathBuf {
         Store::default_root()
@@ -122,6 +168,119 @@ impl Workspace {
     pub fn set_ceiling(&self, bytes: u64) -> Result<(), String> {
         std::fs::create_dir_all(&self.root).map_err(|err| err.to_string())?;
         std::fs::write(self.root.join("ceiling"), bytes.to_string()).map_err(|err| err.to_string())
+    }
+
+    /// Takes this installation's application claim, or asks the holder to show itself.
+    ///
+    /// # What this is for, and what it is not
+    ///
+    /// `design/09` §1.1: a second launch must **raise the windows that already
+    /// exist** rather than starting a second application. The member did not
+    /// ask to run two copies, they asked to see the application — and since
+    /// §1.11 lets it outlive its windows, launching it again is the ordinary
+    /// way back when a tray icon is not where somebody expects one. That is the
+    /// second door §1.11's residual case needs.
+    ///
+    /// **It is about which process owns the windows, not about correctness.**
+    /// The thing that must never happen twice is a node for one network, and
+    /// [`Store::hold_node`] already enforces that per store with its own claim.
+    /// This one is a nicety in comparison, which is why losing it stops nothing.
+    ///
+    /// # Why a claim rather than a lock, a port, or a bus
+    ///
+    /// The same shape as the node claim, deliberately: a directory, an owner
+    /// token and a heartbeat, with a staleness window a crash is waited out
+    /// through. It is platform-neutral and needs nothing from the desktop —
+    /// which is the whole argument against the obvious alternative, since the
+    /// usual plugin for this registers a D-Bus name on Linux and **panics where
+    /// there is no session bus**. A container has none; so does a minimal
+    /// session. A mechanism that fails exactly where the problem it solves
+    /// lives is not a solution to it.
+    ///
+    /// # It does not wait, and the node claim does
+    ///
+    /// [`Store::hold_node`] waits a stale claim out, because restarting a node
+    /// is ordinary and refusing instantly would make the common case look like
+    /// a failure. Here the opposite is true: somebody has just double-clicked
+    /// an icon, and an application that sat for eight seconds before deciding
+    /// whether to be itself is worse than either answer. So this reads once.
+    pub fn hold_application(&self) -> Launch {
+        let path = self.root.join("running");
+        let beat = path.join("heartbeat");
+
+        // **A heartbeat is not evidence that anybody is answering, and this is
+        // the whole of why the protocol is an exchange rather than a read.**
+        // A process killed — a crash, a signal, a session ending — leaves its
+        // last heartbeat behind, fresh for the rest of the staleness window.
+        // Deciding on that alone means a relaunch inside those seconds exits as
+        // a second instance with nobody to raise, which presents as an
+        // application that will not start: the worst failure available here,
+        // because the member's remedy is to try again and their gesture is
+        // exactly the one that keeps failing.
+        //
+        // So this *asks* and waits for the ask to be taken. A live holder
+        // consumes the marker on its next beat; a dead one never does, and
+        // this process becomes the application instead. Found by killing one
+        // and relaunching, which is the ordinary shape of the problem rather
+        // than an exotic one.
+        if claim_is_fresh(&beat, APPLICATION_CLAIM_STALE) {
+            let raise = path.join("raise");
+            if std::fs::write(&raise, b"").is_ok() {
+                let deadline = std::time::Instant::now() + ANSWER_WINDOW;
+                while std::time::Instant::now() < deadline {
+                    if !raise.exists() {
+                        // Taken, so somebody is there and has been asked to
+                        // come forward. Nothing else to do and nothing to say:
+                        // from where the member is standing the application
+                        // came to the front, which is what they asked for.
+                        return Launch::Second;
+                    }
+                    std::thread::sleep(std::time::Duration::from_millis(50));
+                }
+                // Nobody took it. Whatever wrote that heartbeat is not running.
+                let _ = std::fs::remove_file(&raise);
+            }
+        }
+
+        if std::fs::create_dir_all(&path).is_err() {
+            // A workspace that cannot be written to is not a reason to refuse
+            // to start: the member has bigger problems and every other write
+            // will report them in its own words.
+            return Launch::First(AppClaim { path, token: 0 });
+        }
+        // Anything left by a launch that raced a quit. Cleared on taking the
+        // claim rather than acted on, since showing a window nobody asked this
+        // process for is the one outcome here that would look like a fault.
+        let _ = std::fs::remove_file(path.join("raise"));
+
+        let token = claim_token();
+        let claim = AppClaim { path, token };
+        claim.write_owner();
+        let _ = claim.beat();
+        Launch::First(claim)
+    }
+
+    /// Whether this installation has been told that closing a window is not quitting.
+    ///
+    /// `design/09` §1.11. The application keeps running when its last window
+    /// closes, because a window is a view and stopping a node because somebody
+    /// looked away is the defect `v0.13.0` was cut to fix — but somebody who
+    /// closed every window may reasonably believe they shut it down, so it is
+    /// said **once**, and once means once per installation rather than once per
+    /// launch. A notice on every close is one nobody reads; a notice every
+    /// morning is the same notice.
+    ///
+    /// This is §5.1's storage principle applied to a different resource: a
+    /// member who was told and did nothing has made a choice, and one who was
+    /// never told had it made for them.
+    pub fn told_closing_is_not_quitting(&self) -> bool {
+        self.root.join("told-about-tray").is_file()
+    }
+
+    /// Remembers that it has been said, so it is not said again.
+    pub fn remember_closing_is_not_quitting(&self) -> Result<(), String> {
+        std::fs::create_dir_all(&self.root).map_err(|err| err.to_string())?;
+        std::fs::write(self.root.join("told-about-tray"), b"").map_err(|err| err.to_string())
     }
 
     /// What every network here is costing this disk, together.
@@ -208,11 +367,7 @@ impl Workspace {
         let (shared, peer) = conversation.origin()?;
         // The shared network has to still be on this disk, still be replayable,
         // and still hold both of us.
-        let store = self
-            .list()
-            .into_iter()
-            .filter_map(|known| Store::open(known.path).ok())
-            .find(|store| *store.network() == shared)?;
+        let store = self.store_for(&shared)?;
 
         let state = store.state().ok()?;
         let mine = store.identity().ok()?.id();
@@ -667,5 +822,147 @@ fn describe(store: &Store) -> Known {
         label: store.label().unwrap_or_default(),
         path: store.root().to_path_buf(),
         keyed: store.epoch_key().is_ok(),
+    }
+}
+
+
+/// How long a launch waits for the holder to take its ask before concluding
+/// there is no holder.
+///
+/// Two of the holder's beats plus slack. This is only ever paid by a *second*
+/// launch, where the member is watching for a window to come forward and will
+/// usually see it in about a second — and by a first launch after a crash,
+/// where the alternative is not starting at all.
+const ANSWER_WINDOW: std::time::Duration = std::time::Duration::from_millis(2_500);
+
+/// How long an application claim survives without a heartbeat.
+///
+/// The same six seconds the node claim uses, for the same reason and with the
+/// same trade: long enough that a busy moment does not let a second copy start,
+/// short enough that relaunching after a crash is a pause rather than a
+/// question somebody has to ask. The application beats every second, so this is
+/// several missed beats rather than one.
+const APPLICATION_CLAIM_STALE: i64 = 6_000;
+
+/// What a launch found.
+pub enum Launch {
+    /// This process is the application. Hold the claim for as long as it runs.
+    First(AppClaim),
+    /// Another process already is, and has been asked to show itself.
+    ///
+    /// The caller should exit without opening anything. It must not report
+    /// this as a refusal: from where the member is standing, the application
+    /// came to the front, which is what they asked for.
+    Second,
+}
+
+/// This installation's claim on being *the* running application.
+pub struct AppClaim {
+    path: PathBuf,
+    token: u64,
+}
+
+impl AppClaim {
+    /// Says the holder is still running, and whether the claim is still theirs.
+    ///
+    /// **Losing it stops nothing**, which is the difference from the node
+    /// claim. There, two processes on one MLS group silently decide a network's
+    /// key and the only safe answer is to stop; here the worst case is two sets
+    /// of windows, and closing somebody's windows under them would be a larger
+    /// harm than the one being prevented. So a lost claim means only that this
+    /// process stops answering for the installation — the holder is the one
+    /// that should be raised, and it is not this one.
+    #[must_use]
+    pub fn beat(&self) -> bool {
+        if self.owner_on_disk() != Some(self.token) {
+            return false;
+        }
+        write_atomically_in(&self.path, "heartbeat", now_millis().to_string().as_bytes());
+        true
+    }
+
+    /// Whether another launch asked this process to show itself, clearing the ask.
+    ///
+    /// Consumed rather than read, so one launch raises the window once.
+    #[must_use]
+    pub fn asked_to_show(&self) -> bool {
+        std::fs::remove_file(self.path.join("raise")).is_ok()
+    }
+
+    /// The workspace this claim belongs to.
+    pub fn root(&self) -> &Path {
+        // `path` is `<workspace>/running`, so the workspace is its parent. A
+        // claim with no parent is not reachable: `hold_application` builds the
+        // path by joining onto a root it holds.
+        self.path.parent().unwrap_or(&self.path)
+    }
+
+    fn write_owner(&self) {
+        write_atomically_in(&self.path, "owner", self.token.to_string().as_bytes());
+    }
+
+    fn owner_on_disk(&self) -> Option<u64> {
+        std::fs::read_to_string(self.path.join("owner"))
+            .ok()
+            .and_then(|text| text.trim().parse::<u64>().ok())
+    }
+}
+
+impl Drop for AppClaim {
+    /// Releases the claim, unless somebody else has taken it over.
+    ///
+    /// The ownership check is the node claim's, for its reason: without it a
+    /// process that lost the claim while suspended would delete its
+    /// *successor's* heartbeat on the way out, leaving an installation that
+    /// reads as unclaimed while an application is running against it.
+    fn drop(&mut self) {
+        if self.owner_on_disk() != Some(self.token) {
+            return;
+        }
+        let _ = std::fs::remove_file(self.path.join("heartbeat"));
+        let _ = std::fs::remove_file(self.path.join("owner"));
+        let _ = std::fs::remove_file(self.path.join("raise"));
+        let _ = std::fs::remove_dir(&self.path);
+    }
+}
+
+/// Whether a heartbeat is recent enough to mean somebody is still there.
+fn claim_is_fresh(beat: &Path, stale_after: i64) -> bool {
+    std::fs::read_to_string(beat)
+        .ok()
+        .and_then(|text| text.trim().parse::<i64>().ok())
+        .is_some_and(|when| now_millis().saturating_sub(when) < stale_after)
+}
+
+/// A value distinguishing this holder from any other.
+///
+/// Not a pid, for the reason the node claim gives: pids are reused, so a stale
+/// one can name a live process that is somebody else.
+fn claim_token() -> u64 {
+    use std::hash::{BuildHasher, Hasher};
+    let mut hasher = std::collections::hash_map::RandomState::new().build_hasher();
+    hasher.write_i64(now_millis());
+    hasher.write_usize(std::process::id() as usize);
+    hasher.finish()
+}
+
+fn now_millis() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|since| since.as_millis() as i64)
+        .unwrap_or_default()
+}
+
+/// Writes a file in `dir` through a temporary and a rename.
+///
+/// A half-written heartbeat does not parse, an unparseable one reads as
+/// **stale**, and a stale claim is one another launch may take over while this
+/// process is still running. The window would be one beat wide and
+/// self-healing, and it is the one direction of failure this file must not
+/// have.
+fn write_atomically_in(dir: &Path, name: &str, bytes: &[u8]) {
+    let scratch = dir.join(format!(".{name}.tmp"));
+    if std::fs::write(&scratch, bytes).is_ok() {
+        let _ = std::fs::rename(&scratch, dir.join(name));
     }
 }

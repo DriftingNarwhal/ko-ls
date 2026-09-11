@@ -935,3 +935,36 @@ mod tests {
         assert_eq!(Message::of(&rendered(), &no_names(), &identity(9)).at, "01:02:03");
     }
 }
+
+/// A conversation, at whatever stage it has reached — `design/09` §1.4.
+///
+/// One shape for three states rather than three shapes, because they are one
+/// thing to the member: somebody they are talking to, or are about to be. A
+/// conversation *is* a network (D10), so the only thing that separates them is
+/// how far the flow has got.
+#[derive(Debug, Serialize)]
+pub struct Conversation {
+    /// The conversation network, as hex — empty for a request not yet accepted.
+    ///
+    /// Empty rather than absent because there genuinely is no network on this
+    /// disk yet: the invite names one, and accepting is what joins it.
+    pub network: String,
+    /// The other person, as a hex identity in the network they were met in.
+    pub who: String,
+    /// Which network that was, as hex.
+    ///
+    /// Carried because a conversation is arranged somewhere, and `09` §1.8 owes
+    /// a member *where they were met* — a name alone is not an identity, and
+    /// the network it was claimed in is part of what makes it mean anything.
+    pub shared: String,
+    /// `asked`, `offered` or `joined`.
+    ///
+    /// **`offered` never becomes `answered`**, and that is the honest limit
+    /// rather than a missing state: nothing is sent when somebody declines
+    /// (spec 07 §6.2), so a sender cannot tell a decline from somebody who has
+    /// not looked. A row that said *waiting for an answer* would be inventing
+    /// the difference (`09` §1.8).
+    pub state: String,
+    /// What to show, which is a display name and never an identifier.
+    pub label: String,
+}

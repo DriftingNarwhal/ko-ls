@@ -426,7 +426,13 @@ fn the_window_takes_the_same_path_as_the_terminal_to_join() {
         .build()
         .expect("a runtime");
     let landed = runtime
-        .block_on(kols_node::join::redeem(path.clone(), credential, 30, false))
+        .block_on(kols_node::join::redeem(
+            path.clone(),
+            credential,
+            30,
+            false,
+            kols_core::NetworkProfile::Server,
+        ))
         .expect("joins");
 
     // Explicit intake, so waiting is the expected landing and is a success.

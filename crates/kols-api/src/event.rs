@@ -190,6 +190,31 @@ pub enum Event {
         /// reactions from a person.
         others: usize,
     },
+    /// Somebody in this network wants to start a conversation — spec 07 §6.2.
+    ///
+    /// The one half of the direct-message flow that crosses this boundary, and
+    /// it crosses it because it is genuinely per network: the request arrives on
+    /// *this* network's node, from a member of *this* network, and it is this
+    /// network's business. Starting a conversation and accepting one both create
+    /// or join a network, which is a workspace act and sits outside — `design/05`
+    /// §3.1 has the reasoning.
+    ///
+    /// # There is deliberately no `link_verified` flag
+    ///
+    /// `design/05` §3's grammar carried one, and spec 07 §6.2 forbids what it
+    /// would be for: a reader **MUST** verify the identity link *before showing
+    /// the request to anybody*. So a request whose link does not verify is never
+    /// surfaced at all, and a flag on this event could only ever be `true` —
+    /// which is a field that reads as a question a consumer may answer for
+    /// itself, invites an interface to render an unverified request with a
+    /// warning badge, and would be exactly the disclosure §6.2 is written
+    /// against. Emitting this event **is** the claim that the proof verified and
+    /// named the right pair (`kols_core::DmInvite::verify_from`), and that the
+    /// sender is a current member.
+    DirectMessageRequest {
+        /// Who asked, as the carrier bound them to the connection.
+        from: PerNetworkIdentityId,
+    },
 }
 
 /// One action reconciliation undid.

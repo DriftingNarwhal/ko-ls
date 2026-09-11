@@ -1,6 +1,17 @@
 # Interface
 
-**Document status:** v0.29 — §2's policy is corrected in the direction that matters: **everything joined is warm unless the member sets it aside**, and **cold is polled rather than switched off**. The first pass ran one server plus every conversation, which makes eleven of a member's twelve networks silently unreachable — and read cold as "no node, ever", when the table has always given it a wake latency of the poll interval. That second error reaches other people: a network with no node serves nothing, so a machine quietly stops holding up replica duty it had taken. §7's fourth question is closed by removing it — warm is the default and *set aside* is explicit, so there is no recency rule to infer. Previously v0.28 — §2's **liveness tiers are built** (`kols_node::nodes`), which had been unwritten policy since that section was drafted and was the thing actually blocking direct messages: the shell ran one node, for the network in view, so a conversation nobody had open could neither receive a message nor be reached to deliver one. Hot and warm are both running nodes — the distinction §2 drew was against a held connection, not against a process — and a conversation is warm whenever the application runs. A server out of view is cold rather than warm, which is the conservative half of §7's fourth question and leaves it open. Previously v0.27 — §3 records D39: a conversation **borrows** the shared network's relay and never designates it, on a permission recomputed each time and requiring both parties to still be members. The section described the fallback without saying what it does to the conversation's own policy, and the obvious reading — designate it — writes state that outlives its reason with nothing able to remove it. The cost is now stated as the limit it is, along with what the interface owes when a conversation goes quiet for that reason rather than because nobody is talking. Previously v0.26 — §3 takes the statement it was owed and never got: this client does not dial what mDNS finds, because a node that did would make two of a member's identities correlatable by anyone watching the LAN — D29's concern with no relay involved. `00` §6 owns the decision; §3 is where the interface set carries D29, so its absence here left the argument half-stated. Also corrects §3's claim that `Discovery::Off` for a conversation is still owed by the client: it was built on 2026-09-08. Previously v0.25 — §4.4 gains the requirement that decides whether the rest is worth having: the two-second tick may not grow **at all**, which is the storage ceiling's argument about the other resource. Paging made a page cost a page and left the tick linear, and *measured flat* turned out not to be *bounded* — five things on that path answered "has anything changed" by examining everything. One primitive replaces all five, a file whose length is the signal, and the guarantee is now a count of work asserted equal at two hundred records and at three thousand rather than a duration that looked flat. Previously v0.24 — §4.4 is built: paging, the three top-of-list states, the cursor, and per-channel history. Building it settled three more — a ceiling belongs where untrusted input arrives rather than in the store, restoring the scroll position is a fix that predates paging, and the first-sight rule splits on the previously-drawn tail rather than on the gesture alone, or a message arriving during a reach is filed as seen and never marked. Previously v0.23 — §4.4 is new and settles what `05` §5 built and left switched off: paging. Two kinds of *older* that must never share a control, a loaded range that only grows, a cursor that is the merge-order key rather than a clock reading — the `Hlc` the command has carried since it was written silently drops a message when a page boundary falls between two records sharing a reading — and §4.3's own first-sight rule applied one level down, so scrolling back marks nothing. It also takes a fix it cannot inherit: `history_incomplete` is node-wide and would contradict the local boundary sitting above it, so a segment records its channel. Previously v0.22 — §2's behaviour set is built and the section stops claiming the liveness tiers are: a node is constructed `Discovery::Off` for a conversation and `Discovery::Full` for a server, read from replayed policy, and hot/warm/cold remains unwritten policy. It also records the one window E10 has to close — a joiner cannot know the profile before it syncs, so the DM flow must supply it. Previously v0.21 — §3's shared-relay notice is built, and the section records what building it settled: a relay is compared by peer id and never by address, since one relay answers at several and a string comparison reports no overlap in exactly the case D29 is about; there are two designations rather than one, the second being the network-creation form; and joining is deliberately not covered, because a joiner adopts what an invite carried rather than choosing it. Previously v0.20 — §4.1's presence is built, and the section is rewritten around what that cost: two marks that may never stand in for each other, an absence case that stays deliberately silent, and invisible as *publishes nothing* rather than *publishes "invisible"*. The control sits in the roster rather than settings, which is an argued exception to §4.2's grouping. Previously v0.19 — §4.2 gains the rule a stale contribution panel cost: copy that describes an unbuilt mechanism rots into a false claim about what the software does, and is guarded by a check that reads the live document rather than by remembering to revisit it. Previously v0.18 — §4.2 gains a third settings group, *this machine, here*, for contribution: local and revocable like *mine*, and broadcast, which the *mine* heading explicitly says its contents are not. Previously v0.17 — §1 gains the third landing a join can have: the request reached the issuer and nothing came back, which is not a refusal and used to be reported as one — costing somebody a use-limited invite on a retry into a network that already held them. Membership now comes from replay rather than from what the handshake said, and the interface tells *not admitted* apart from *admitted and not yet keyed*. Previously v0.16 — §3 revises what the client does about a relay shared between two networks: it warns and never refuses, since a refusal is unenforceable anyway and would block a member legitimately relaying on their own LAN for two of their own networks. Previously v0.15 — §2 records that the picker's *forget* becomes *leave* on the open network, since publishing a departure needs a running node and only the open one has one; and that what it reports afterwards is how many members could have heard rather than how many did. Previously v0.14 — §5.1 records what the first working drag found: a drag needs a target for every destination rather than for every thing, and two of four were unreachable — the end of a list, and the top level once every channel was in a folder. Previously v0.13 — §5.1 gains the rule reordering cost: a capability whose only route is one nobody can verify has no route. Drag-and-drop never worked because Tauri's native drag handler took it first, and channels keep move up and move down beside the fixed drag. Previously v0.12 — the row handle is removed at the tester's request, one way to a menu being enough; §5.1 keeps the two sizing rules it cost, which were never about it. Previously v0.11 — §5.1 gains the rule the sidebar bug actually needed: draw an icon rather than typing one, and take a control beside shrinkable text out of flow, because correct arithmetic is not the same as no arithmetic. Previously v0.10 — §4.3 gains the two ways a mark ends, and that it never marks your own; §5.1 gains the flex sizing rule that turned a sidebar into columns of one letter on Windows and not on macOS. Previously v0.9 — §4.1 says where the roster went and what the one number left on screen is for; §4.2 records settings becoming a screen rather than a layer, and the rule that decides which surface a thing gets; §4.3 is new and separates *where something arrived* from *what you have not seen*, which cannot be derived from it because a message is ordered by its author's clock rather than by its arrival. §7.1 and §7.3 narrowed rather than closed. Previously v0.8 — §4.2's Network section takes admission mode, the abuse limits and the retention windows, and says the three things a number on screen does not carry. Previously v0.7 — §4.2's settings sections are built, and it says what shape they took and which of them is a panel over a feature that does not exist yet; §5 gains the line between asking *whether* and asking *what*, which is what decides whether a dialog may live in the document a theme can reach. Previously v0.6 — §4.1 says plainly that presence is unbuilt, why it is last, and what the window shows instead; that was being carried in a status file. Previously v0.5 — §4.2 fixes what settings is and how it is divided, §6.4 and §6.5 settle reset and the two things that must leave the document before a theme can reach them (D36, D37). Theming remains designed and unbuilt. Previously v0.4 — D29 (a relay is never shared between networks) and what it does and does not mean for §3's direct-message bootstrap;  an interface now exists and is a first pass, not a settled one: it
+**Document status:** v0.32 — §§1.6–1.8 are **built**: conversation windows, starting one from a
+roster, and answering a request that arrived. Three things building it settled. Per-message
+delivery state is **not** built and is owed, because `03` §4.5's three states need evidence the
+shell does not collect — a window drawing two ticks it had not earned would be making the exact
+claim §1.8 refuses to make about a decline. A conversation window knows which conversation it is
+from **its address**, which is what lets several exist at once where the shell's single "open
+network" cannot answer. And the workspace window was **drawn once and then went stale** — no
+poll, no subscription — so a network founded in it said *not keyed in yet* indefinitely and an
+arriving request appeared on whatever draw happened next; it now takes events for what the node
+announces and a five-second poll for what nothing does. Two further defects came from a startup
+path older than this section: it marked a network as *in view* with no window showing it, and it
+served nothing at all unless there was exactly one network. Previously v0.31 — §1 gains §§1.1–1.14: **the workspace is a window**, a network is drawn in a second window reused as you switch, and each conversation gets a small window of its own. This is where direct messages live and where networks are chosen and managed, and the two are one surface because a conversation *is* a network (D10). The rule deciding what goes where is `05` §3.1's rather than a layout — an act about one network belongs to that network's window, an act about the set of them to the workspace's — which is also the test for whatever is proposed next, and which turns out to sort §4.2's settings groups by window as well as by what a click costs. §7's first question therefore keeps its answer rather than overturning it: nothing new earns permanent space *in the frame*. §7's third closes with §1.3, which turned up an honesty rule nobody had written down — a **cold** network is polled, so a zero on its row means *nothing as of the last poll* and the row says when it looked. Also settled: create and join become sheets rather than permanent furniture; reuse must clear the native title with the content or D36's spoof returns as a temporal one; a window is a view, so closing one neither sets a network aside nor stops its node, and the application keeps running until somebody quits — said once, the first time, rather than never or every time; the lock reaches every window and the tray may show nothing a locked screen would not; there is no directory and a name-shaped search box would be a phishing surface; the list may not reorder itself, because a row moving under a pointer is how a message reaches the wrong network; a decline is invisible to the sender and both sides are told so; and D39's *this machine has nowhere to meet them* is finally said where somebody reads it. Recorded as D40. Previously v0.30 — §4.1's opening paragraph is corrected to the vocabulary presence was actually built with, `here | idle | busy | invisible`. It had gone on quoting `01` §9's pre-build states — `online | idle | dnd | invisible` — four lines above its own rule that `online` is a word this interface may not use, and `01` §9 had recorded the correction on 2026-09-08 while this section, rewritten around the same work, kept the sentence it had just made false. The same paragraph's *never stored* is narrowed to the beats, since the invisible **choice** is deliberately persisted and that now says so where somebody reads it. Previously v0.29 — §2's policy is corrected in the direction that matters: **everything joined is warm unless the member sets it aside**, and **cold is polled rather than switched off**. The first pass ran one server plus every conversation, which makes eleven of a member's twelve networks silently unreachable — and read cold as "no node, ever", when the table has always given it a wake latency of the poll interval. That second error reaches other people: a network with no node serves nothing, so a machine quietly stops holding up replica duty it had taken. §7's fourth question is closed by removing it — warm is the default and *set aside* is explicit, so there is no recency rule to infer. Previously v0.28 — §2's **liveness tiers are built** (`kols_node::nodes`), which had been unwritten policy since that section was drafted and was the thing actually blocking direct messages: the shell ran one node, for the network in view, so a conversation nobody had open could neither receive a message nor be reached to deliver one. Hot and warm are both running nodes — the distinction §2 drew was against a held connection, not against a process — and a conversation is warm whenever the application runs. A server out of view is cold rather than warm, which is the conservative half of §7's fourth question and leaves it open. Previously v0.27 — §3 records D39: a conversation **borrows** the shared network's relay and never designates it, on a permission recomputed each time and requiring both parties to still be members. The section described the fallback without saying what it does to the conversation's own policy, and the obvious reading — designate it — writes state that outlives its reason with nothing able to remove it. The cost is now stated as the limit it is, along with what the interface owes when a conversation goes quiet for that reason rather than because nobody is talking. Previously v0.26 — §3 takes the statement it was owed and never got: this client does not dial what mDNS finds, because a node that did would make two of a member's identities correlatable by anyone watching the LAN — D29's concern with no relay involved. `00` §6 owns the decision; §3 is where the interface set carries D29, so its absence here left the argument half-stated. Also corrects §3's claim that `Discovery::Off` for a conversation is still owed by the client: it was built on 2026-09-08. Previously v0.25 — §4.4 gains the requirement that decides whether the rest is worth having: the two-second tick may not grow **at all**, which is the storage ceiling's argument about the other resource. Paging made a page cost a page and left the tick linear, and *measured flat* turned out not to be *bounded* — five things on that path answered "has anything changed" by examining everything. One primitive replaces all five, a file whose length is the signal, and the guarantee is now a count of work asserted equal at two hundred records and at three thousand rather than a duration that looked flat. Previously v0.24 — §4.4 is built: paging, the three top-of-list states, the cursor, and per-channel history. Building it settled three more — a ceiling belongs where untrusted input arrives rather than in the store, restoring the scroll position is a fix that predates paging, and the first-sight rule splits on the previously-drawn tail rather than on the gesture alone, or a message arriving during a reach is filed as seen and never marked. Previously v0.23 — §4.4 is new and settles what `05` §5 built and left switched off: paging. Two kinds of *older* that must never share a control, a loaded range that only grows, a cursor that is the merge-order key rather than a clock reading — the `Hlc` the command has carried since it was written silently drops a message when a page boundary falls between two records sharing a reading — and §4.3's own first-sight rule applied one level down, so scrolling back marks nothing. It also takes a fix it cannot inherit: `history_incomplete` is node-wide and would contradict the local boundary sitting above it, so a segment records its channel. Previously v0.22 — §2's behaviour set is built and the section stops claiming the liveness tiers are: a node is constructed `Discovery::Off` for a conversation and `Discovery::Full` for a server, read from replayed policy, and hot/warm/cold remains unwritten policy. It also records the one window E10 has to close — a joiner cannot know the profile before it syncs, so the DM flow must supply it. Previously v0.21 — §3's shared-relay notice is built, and the section records what building it settled: a relay is compared by peer id and never by address, since one relay answers at several and a string comparison reports no overlap in exactly the case D29 is about; there are two designations rather than one, the second being the network-creation form; and joining is deliberately not covered, because a joiner adopts what an invite carried rather than choosing it. Previously v0.20 — §4.1's presence is built, and the section is rewritten around what that cost: two marks that may never stand in for each other, an absence case that stays deliberately silent, and invisible as *publishes nothing* rather than *publishes "invisible"*. The control sits in the roster rather than settings, which is an argued exception to §4.2's grouping. Previously v0.19 — §4.2 gains the rule a stale contribution panel cost: copy that describes an unbuilt mechanism rots into a false claim about what the software does, and is guarded by a check that reads the live document rather than by remembering to revisit it. Previously v0.18 — §4.2 gains a third settings group, *this machine, here*, for contribution: local and revocable like *mine*, and broadcast, which the *mine* heading explicitly says its contents are not. Previously v0.17 — §1 gains the third landing a join can have: the request reached the issuer and nothing came back, which is not a refusal and used to be reported as one — costing somebody a use-limited invite on a retry into a network that already held them. Membership now comes from replay rather than from what the handshake said, and the interface tells *not admitted* apart from *admitted and not yet keyed*. Previously v0.16 — §3 revises what the client does about a relay shared between two networks: it warns and never refuses, since a refusal is unenforceable anyway and would block a member legitimately relaying on their own LAN for two of their own networks. Previously v0.15 — §2 records that the picker's *forget* becomes *leave* on the open network, since publishing a departure needs a running node and only the open one has one; and that what it reports afterwards is how many members could have heard rather than how many did. Previously v0.14 — §5.1 records what the first working drag found: a drag needs a target for every destination rather than for every thing, and two of four were unreachable — the end of a list, and the top level once every channel was in a folder. Previously v0.13 — §5.1 gains the rule reordering cost: a capability whose only route is one nobody can verify has no route. Drag-and-drop never worked because Tauri's native drag handler took it first, and channels keep move up and move down beside the fixed drag. Previously v0.12 — the row handle is removed at the tester's request, one way to a menu being enough; §5.1 keeps the two sizing rules it cost, which were never about it. Previously v0.11 — §5.1 gains the rule the sidebar bug actually needed: draw an icon rather than typing one, and take a control beside shrinkable text out of flow, because correct arithmetic is not the same as no arithmetic. Previously v0.10 — §4.3 gains the two ways a mark ends, and that it never marks your own; §5.1 gains the flex sizing rule that turned a sidebar into columns of one letter on Windows and not on macOS. Previously v0.9 — §4.1 says where the roster went and what the one number left on screen is for; §4.2 records settings becoming a screen rather than a layer, and the rule that decides which surface a thing gets; §4.3 is new and separates *where something arrived* from *what you have not seen*, which cannot be derived from it because a message is ordered by its author's clock rather than by its arrival. §7.1 and §7.3 narrowed rather than closed. Previously v0.8 — §4.2's Network section takes admission mode, the abuse limits and the retention windows, and says the three things a number on screen does not carry. Previously v0.7 — §4.2's settings sections are built, and it says what shape they took and which of them is a panel over a feature that does not exist yet; §5 gains the line between asking *whether* and asking *what*, which is what decides whether a dialog may live in the document a theme can reach. Previously v0.6 — §4.1 says plainly that presence is unbuilt, why it is last, and what the window shows instead; that was being carried in a status file. Previously v0.5 — §4.2 fixes what settings is and how it is divided, §6.4 and §6.5 settle reset and the two things that must leave the document before a theme can reach them (D36, D37). Theming remains designed and unbuilt. Previously v0.4 — D29 (a relay is never shared between networks) and what it does and does not mean for §3's direct-message bootstrap;  an interface now exists and is a first pass, not a settled one: it
 creates and joins networks, runs a node, renders a channel, brings the next member in, and gates
 its chrome on permission. §1's workspace, **both halves of §5**, all three of §4's questions and
 most of §7's second are built; §2's tiering and §6's theming are not, and §7's
@@ -142,6 +153,440 @@ canonical statement the rest of the set defers to** (`00` §1, `03` §4.2/§4.6/
 Unlinkability holds at the *identity* layer. Two of a user's identities connecting from one IP address remain
 correlatable by any peer that is in both networks, and by any relay that sees both. The
 protocol never claimed otherwise, and the interface must not imply it did.
+
+### 1.1 Three windows, and the rule that decides which
+
+**Decided 2026-09-11.** The workspace is a **window of its own**, and a network is drawn in a
+second window beside it rather than underneath it. Conversations get a third, smaller kind.
+
+**§7's first question keeps its answer, which is worth saying plainly: nothing new earns
+permanent space in the frame.** Three field tests said no, and this does not overturn them —
+it gets out of the frame entirely. The channel rail, the roster dropdown, the door as a sheet
+and settings as a screen all stand exactly as they were.
+
+What decides the split is the line `05` §3.1 drew for a different reason: some acts are about
+**one network** and cross `kols-api`, and some are about the **workspace above them** and
+cannot. That line turns out to be a window boundary.
+
+| Window | Holds | Acts |
+|---|---|---|
+| **Workspace** | Every network and conversation this installation belongs to; pending requests | Create, join, start a conversation, leave or forget, set aside, and the installation-wide settings |
+| **Network** | One `server` network: channels, messages, roster, its own settings | Everything that crosses `kols-api` for that network |
+| **Conversation** | One `conversation` network: the person and the messages | Posting, and leaving |
+
+**This is the test for anything proposed later**, which is the point of having a rule rather
+than a layout: if an act needs a network to be open, it belongs to that network's window. If it
+is about the set of them, or about this installation, it belongs to the workspace's.
+
+**One process, several windows, and that is forced rather than chosen.** `05` §4's store claim
+permits exactly one process to run a node for a network, because the MLS group is live state
+and two processes would each advance it without seeing the other. So a second launch of the
+executable must **raise the windows that already exist** rather than reporting a conflict: the
+member did not ask to run two copies, they asked to see the application, and a refusal dialog
+answers a question nobody posed.
+
+**Built 2026-09-11, as a claim rather than a lock, and the protocol is an exchange rather than
+a read.** It is the node claim's shape one level up — a directory, an owner token, a heartbeat,
+a staleness window — so it needs nothing from the desktop, which is the argument against the
+obvious alternative: the usual plugin for this registers a D-Bus name on Linux and *panics*
+where there is no session bus, which is precisely where the tray this backs up is also absent.
+
+**A heartbeat is not evidence that anybody is answering**, and that is the part worth carrying.
+A process killed leaves its last beat behind, fresh for the rest of the staleness window — so a
+launch deciding on the beat alone would exit as a second instance with nobody to raise, which
+presents as *an application that will not start*. That is the worst failure available here,
+because the member's remedy is to try again and trying again is the gesture that keeps failing.
+So a launch **asks and waits for the ask to be taken**: a live holder consumes it on its next
+beat, a dead one never does, and the launch becomes the application instead. Found by killing
+one and relaunching, not by review.
+
+**And the claim is released wherever the nodes are stopped**, for the mirror of the same
+reason: an exit does not drop a running task, so a claim left to its staleness window would
+make quitting and relaunching within a few seconds look like an application that will not
+start.
+
+### 1.2 The workspace window
+
+**A buddy list, not a dashboard**, and the proportion is part of the design rather than a
+styling note: it is narrow and tall, it belongs at the edge of a screen next to something else,
+and it must be usable at around 300 px wide. §5.1's sizing rules are not optional here —
+a percentage width inside a flex row, or an icon typed as a character, are exactly what turned
+a 260 px sidebar into columns of one letter, and this window is narrower than that one.
+
+It holds two groups, **networks** and **conversations**, and §1.4 says why they are grouped
+rather than merged. It is where somebody starts, and with nothing joined it is the whole of
+what the application shows — the picker from §1 above is this window with an empty list, rather
+than a separate screen that disappears once you join something. One surface, learned once.
+
+**Creating and joining are actions here, and they open sheets.** They had permanent space on a
+page and should not have: they are things somebody does rarely, deliberately, and then leaves.
+§5.1 already draws the line they fall on — asking *what* (a name, an invite string, a relay) is
+data entry, lives in the document and is themeable; only asking *whether* is native. So a
+button opens a sheet, the sheet takes the one thing it needs, and it closes.
+
+**Joining is offered before creating**, for the reason §1 above gives: somebody opening this
+client for the first time is usually holding an invite and is not founding anything.
+
+### 1.3 What a row may say, and the claim cold makes easy to get wrong
+
+A row carries three things, each already settled elsewhere in this document:
+
+- **Unread**, on §4.3's terms — arrival-driven, weight for a glance and a number when you look,
+  never derived from a read position.
+- **Whether this node holds a connection to anybody there**, which is §4.1's dot at network
+  scale. It is *not* presence: it says this machine is talking to somebody, which is the state
+  that renders identically to "nobody is saying anything" and is the one worth knowing.
+- **Its tier** (§2), because §1.10 makes setting a network aside an explicit choice, and a
+  choice a member cannot see is one they cannot revise.
+
+**And a fourth claim it must not make.** §2 makes a cold network *polled* rather than switched
+off, so a cold row's count is as old as its last poll — up to the interval, ten minutes by
+default. **A zero there means "nothing as of the last time this machine asked", not
+"nothing".** So a cold row says when it last looked.
+
+This is §4.1's rule about presence applied to a whole network, and it is easier to get wrong
+here because a number reads as authoritative where a missing word does not: rendering `0`
+beside a cold network asserts the absence of news nobody went and asked for.
+
+**This closes §7's third question, and part of the answer is what does not move.** Activity on
+a network nobody is looking at is noticeable because its row carries a count. **A network
+window's title keeps carrying only its own network**: D36 made the title the one piece of
+native chrome that says which network you are in, and a cross-network total in it blunts
+exactly that. The **workspace window's** title may carry a total, because that window is about
+the set and names no network. An attention request fires from the window the activity belongs
+to when it is open, and from the workspace window when it is not.
+
+### 1.4 Two groups, one list, and the split is not this document's
+
+In the model a conversation **is** a network (D10). This interface must not pretend otherwise:
+one workspace, one installation-wide storage ceiling (`05` §5.1), one claim per store, one
+liveness policy.
+
+In the surface they read differently, and `03` §4.1's own table already decided how — a
+`server` is *a server in the server list*, a `conversation` is *a contact in the friends list*.
+A server is a place you go; a conversation is a person you talk to.
+
+So: **two groups in one window, never two windows.** Two would ask a member to manage as two
+things what the software manages as one — two places to look for why the disk is full, two
+places a network can be set aside from. The groups are labelled, because the difference decides
+what is even possible: a conversation has no channels, no roles, no invites and no waiting
+room, and somebody expecting those should learn it from a heading rather than from an absence.
+
+### 1.5 The network window is reused, and reuse needs two rules
+
+Clicking a network draws it in the network window that is already open. **A second one is
+available and never automatic** — a menu item and a modifier-click — because a member with a
+dozen networks did not ask for a dozen windows, and switching that costs a window is the
+cumbersome thing wearing a different coat.
+
+Two rules make reuse safe, and both exist because of D36 rather than tidiness.
+
+**A network already open raises its window rather than redrawing another.** Otherwise clicking
+around leaves the same network in two windows, and two windows showing one conversation is how
+a member loses track of which is current.
+
+**The title and the content change together, or reuse has reinvented the spoof.** D36 keeps the
+network out of themeable chrome because a message written into the wrong network is this
+application's worst ordinary failure, and a reused window introduces a *temporal* version of
+exactly that: click, content redraws, title lags, you type into what you were looking at a
+moment ago. §1 above already requires the screen to be cleared before it is drawn rather than
+overwritten; **the native title is part of what is cleared.** A window mid-switch shows neither
+network rather than one network's name over another's messages.
+
+### 1.6 Conversations open their own small windows
+
+A conversation window is **compact and deliberately unlike a network window**: no channel rail,
+no roster dropdown, no settings screen. That is honesty rather than minimalism — a
+`conversation` network has exactly one implied channel and no roles (spec 07 §1.2), so a
+server-shaped frame would draw furniture that is always empty and imply controls that cannot
+exist.
+
+What it does carry is what a conversation actually has:
+
+- The person, named per §1.8's rule, with enough identity beside the name to tell two
+  lookalikes apart (spec 07 §8).
+- **Delivery state per message** — `03` §4.5's three honest states, *sent*, *delivered* and
+  *read*, which must stay three: delivered is provable because the recipient became a holder,
+  and read is what their client says and is theirs to withhold.
+- §1.9's sentence when the conversation has nowhere to meet.
+
+**Several at once is expected**, which is the shape's whole advantage; they are small, they are
+opened from the workspace window, and closing one closes a view and nothing else.
+
+**A group conversation uses the same window with a roster**, because past two people "who is
+here" becomes a question again. It is the only thing that grows.
+
+**Built 2026-09-11 — `conversation.html`, and the one thing on that list it does not have.**
+The window carries the person with their identity beside the name, the messages, a composer and
+§1.9's sentence. **Per-message delivery state is not built**, and the honest version of that is
+that `03` §4.5's three states need something the shell has no record of: *delivered* is
+provable only because the recipient became a holder, which nothing currently asks, and *read*
+is a claim their client makes and may withhold. A window that drew two ticks it had not earned
+would be making exactly the claim §1.8 spends its length refusing to make about a decline. It
+is owed.
+
+What the window knows about itself comes from **its address** rather than from asking the
+shell, which is what makes several at once work: the shell's "open network" is one network, and
+these are many. So each window is created at `conversation.html?network=<id>` with a label of
+its own — and that label has to be in the capability file, which is the trap this shell has
+already paid for once (`kols-app/capabilities/default.json` names `conversation-*`).
+
+**One layout rule earned here, the same shape as §5.1's.** A short conversation drew itself at
+the top of the window with the composer a screen below it — correct flex, wrong reading, since
+what somebody is looking at is the last thing said and the box they are about to type into. An
+auto top margin on the first row rather than `justify-content: flex-end`, which in some engines
+makes the overflow above unreachable: scrolling back is the one thing that container may not
+lose.
+
+### 1.7 Starting a conversation: there is no directory, and the flow says so
+
+**You may only start one with somebody you already share a network with**, and the request names
+their identity *in that network* — spec 07 §6.2's proof binds exactly that pair, and
+`dm::start` refuses anybody who is not a current member. So the flow is **pick a network, then
+pick a member of it**, and that is the shape of Core §1.2 rather than a limitation of this
+screen.
+
+Which makes the **member roster** (§4.1) an entry point as good as the workspace window: from a
+roster you are already looking at one person in one network, which is precisely the two things
+a request needs.
+
+**A box that takes a name is not offered and could not be.** Names are per network, are not
+unique, and are not identifiers (spec 07 §1.7); there is no cross-network directory and there
+will not be one (Core §0). A global "add a friend by name" field would be a phishing surface
+whose attacker's half is typing — the same reasoning D36 applies to a theme that makes one
+network resemble another, arriving through a text field instead.
+
+**Group conversations** are `03` §4.4's: select two or more contacts, start, and behind it a
+`conversation`-profile network with every participant a Founder. Two things the interface owes
+a member, because the expectation runs the other way in every messenger they have used:
+
+- **Adding somebody to a pairwise conversation is not possible**, so it is not offered. The
+  roster of a two-person conversation *is* the conversation.
+- **A group started from an existing conversation begins empty.** It is a different network, so
+  there is no history to bring. Said before the act rather than discovered after it.
+
+**Built 2026-09-11, and the roster is the only entry point.** A row opens a small menu offering
+*message <name>*, which sends the identity — never the name — with the network it was read in.
+Your own row offers nothing, because `dm::start` refuses yourself and a control that cannot
+work is worse than no control. **Group conversations are not built.**
+
+What the asker is told afterwards is the half of §1.8 that belongs on this side, and it is
+deliberately not drawn as a failure: *they will see it when you are both online; there is no
+answer to wait for, because a decline is never sent.* The line it goes on had to stop being an
+error line to say that — a request sent is the flow working, and colouring it like a refusal
+would make it read as broken every time it succeeded.
+
+### 1.8 A request that arrives, and the two things neither side can see
+
+A verified request appears in the workspace window's conversations group as a pending row,
+**whether or not the network it arrived through is open** — it came through a shared network and
+is about a new one, and a member should not have to guess which network somebody reached them
+in.
+
+**There is no unverified state to render**, and its absence is worth stating because it looks
+like an omission. spec 07 §6.2 requires the identity link checked *before the request is shown
+to anybody*, so a request that did not verify never reaches the disk (`dm::receive`) and never
+reaches this list. A *verified* badge would be the interface taking credit for a property it
+cannot fail to have; an *unverified* one would label a row that cannot exist.
+
+**A row shows who asked and where they were met**: their display name in the shared network,
+beside enough of their identity to tell two lookalikes apart. spec 07 §3.9.1 deliberately does
+not fold confusables and §8 makes rendering identity beside a name an obligation — a contact
+list is the exact place an impostor name pays off, because it is where somebody decides who
+they are talking to.
+
+**Declining is local, and each side is told what the other cannot see.** Nothing is sent: the
+carrier acknowledged delivery when the payload arrived (Core §5.1) and there is no
+application-level answer, deliberately, since a refusal that distinguished itself would turn
+every decline into a disclosure (spec 07 §6.2). So:
+
+- The person declining is told **the sender will not learn this**, because somebody who
+  believes a decline is both private and visible has it exactly backwards.
+- The person who asked sees **delivered**, and never *waiting for an answer*. A sender cannot
+  tell a decline from somebody who has not looked, and a row saying *pending* forever would
+  invent the difference.
+
+**Built 2026-09-11**, as three states in one list — somebody who asked, somebody who was asked,
+and somebody being talked to. Accepting joins the conversation's network and opens its window in
+one gesture; declining asks first, and what it asks is the thing only this side can know. A row
+nobody has answered yet cannot be opened, because until it is accepted there is no network on
+this side for a window to draw.
+
+**And the defect worth recording is that this window was drawn once and then went stale.** It
+had no poll and no subscription: a network founded in it reported *not keyed in yet* for as long
+as it stayed open, because the epoch key is written a beat after the node starts and nothing
+asked again. A request arriving was the same failure with worse consequences — this section says
+a verified request appears in this list, and it appeared on whatever draw happened next, which
+might be tomorrow. Fixed with both mechanisms rather than either: the events the node already
+emits for what it announces, and a five-second poll for what nothing announces, which is most of
+§1.3's row contents. The poll skips its redraw when the answer has not changed, because
+rebuilding a row takes it out from under a pointer already on its way to it.
+
+**Two more came out of the same launch**, both from a startup path that predates the workspace
+window and had not been re-read since. It **marked a network as in view** with nothing showing
+it — so the list drew a row as open and offered *leave* where it meant *forget*, for a network
+nobody had opened — and it gave up unless there was **exactly one** network, which quietly meant
+a member with two of them unlocked and served neither until they clicked one. §2 makes every
+joined network warm whether or not anybody is looking at it, which is the whole reason a
+conversation nobody has open can still be reached.
+
+### 1.9 A conversation can stop working, and silence is the wrong way to say so
+
+D39 borrows a conversation's rendezvous from the network it was arranged in, recomputed every
+time and never stored, so **a conversation between two people who no longer share a network,
+and who cannot reach each other directly, stops working.** §3 states that as the feature's limit
+and says the interface owes the sentence; this is where it is owed.
+
+The row and the window both say it, because **a conversation that has silently stopped
+connecting and one where nobody is talking render identically**, and only the first is worth
+knowing about. What it says is what is true — *this machine has nowhere to meet them: you no
+longer share a network* — rather than *offline*, which §4.1 forbids for a person and which is no
+more knowable about a pair.
+
+Old messages stay readable throughout, and the interface must not imply otherwise: they are
+content on both machines already.
+
+### 1.10 Order is local, the list may not reorder itself, and setting aside lives here
+
+**A member may order the workspace window however they like, and that order is written nowhere
+and reaches nobody** — the same shape as the local channel-order override (spec 07 §1.6), for
+the same reason: how somebody arranges their own client is not the network's business. The
+default is the order things were joined, which is stable and which nothing can dispute.
+
+**What the list must never do is reorder itself in response to activity.** The reason is
+specific rather than a preference about motion: networks are the privacy boundary D29 exists to
+protect, and the failure that matters here is a message written into the wrong one. A list that
+reshuffles between the look and the click causes exactly that — the failure D36 keeps a *theme*
+from causing, arriving through movement instead of styling. Unread is shown by weight and a
+count; it never moves a row.
+
+**Setting a network aside is a control on the row.** §2 makes warm the default for everything
+joined and *set aside* an explicit per-network choice, which left a control this document had
+not placed. It belongs where a member is looking at the whole set, because that is the only
+place the trade is visible: a network set aside stops costing a connection and starts costing
+latency.
+
+**That is an argued exception to §4.2's grouping, and the same one §4.1 makes for presence.** By
+that section's rule a tier is local, revocable and observable by other members, so it would file
+under *this machine, here*. It sits on the row anyway, for §4.1's reason: settings is a place you
+go to finish something and leave, and this is changed in the moment — and the moment is while
+you are looking at the list deciding which of these you still care about. Recorded as an
+exception rather than done quietly, because two sections disagreeing about where a control goes
+is how a third ends up guessing.
+
+What the control says is what §2 decided: set aside means **polled, not off**. A member choosing
+it is choosing slower, not absent, and their machine goes on holding up the replica duty it took
+(`05` §5.1). Saying *off* would describe a state this client deliberately does not have.
+
+### 1.11 Closing a window is not leaving, and not going offline
+
+**A window is a view.** Closing a network's window does not set it aside, does not stop its
+node and does not change anything another member can observe. Coupling the two would reintroduce
+precisely the defect `v0.13.0` was cut to fix — a network going quiet because somebody looked
+away — and it would do it while looking like a feature.
+
+**So the application keeps running when its last window closes, and quitting is a separate,
+explicit act.** `00` §6 already decided the shape of this for logging out: *nobody at my keyboard
+can act as me* and *I want to disappear from the network* are different requests, and quitting
+the application is how somebody makes the second. Closing a window is neither. And `05` §5.1 has
+this machine holding replica duty for other members, so a close that quit would silently drop
+duty a member had taken on.
+
+**What this costs is discoverability, and the cost is paid rather than ignored.** Somebody who
+closes every window may reasonably believe they have shut the application down. So the **first**
+time it happens, the application says it is still running, where it is, and how to quit — once,
+not on every close, because a notice that appears every time is one nobody reads, and once per
+*installation* rather than per launch, because a notice every morning is the same notice. It
+carries the way out beside it, since the moment somebody learns closing is not quitting is the
+moment they may want to quit. This is §5.1's storage principle applied to a different resource:
+a member who was told and did nothing has made a choice, and one who was never told had it made
+for them.
+
+**All of it depends on the tray existing, and that is not a given — found by building it.** A
+tray is a desktop service rather than a window: a Linux session with no tray host, or a GNOME
+without the extension, has none. So **where a tray icon cannot be built, closing the last
+window ends the application**, which is the behaviour before this section and is the honest
+one — the alternative is a process a member cannot reach, cannot quit, and was told was fine.
+The notice is not shown there either, because it would be describing a tray that is not there.
+
+**The residual case is covered by §1.1's second door, built 2026-09-11.** A tray icon can be
+*built successfully and never displayed* — the reference container does exactly that, having
+no session bus — so the check above catches a hard failure and cannot catch a silent one.
+What closes it is that **a second launch raises the windows that already exist**, which makes
+relaunching the application a way back that needs no tray at all. So the two doors survive
+different failures, which is D37's reasoning about theme reset applied to a different
+mechanism: the tray is the ordinary path, and launching it again is the one that works when
+the desktop has no tray to put an icon in.
+
+**`05` §1.1 needs amending rather than discarding.** It says closing the window *is* the shutdown
+path, and that stops being true here — but everything it required stays required and the
+justification gets broader rather than narrower. Durable writes must still be atomic, because a
+quit, a crash, an operating system ending the session and a power cut are all still ways a
+process stops between a truncate and a fill. What changes is that the ordinary way to stop is now
+a deliberate Quit, which is the one case that *can* run a shutdown path: stopping every node and
+awaiting it, so claims and relay reservations are released rather than left to expire.
+
+### 1.12 The lock reaches every window, and the tray must not leak around it
+
+`02` §6.3 gates the interface on an account and hides the window on lock. With several windows
+that becomes two requirements rather than one:
+
+- **The network window is closed, and the workspace window shows the lock screen.** §1.12 said
+  *hides all of them* until 2026-09-11, and building it showed that to be a step stronger than
+  the requirement and worse to use. The requirement is that nothing a locked installation
+  should not show stays on screen — which the network window plainly is, since it is a
+  network's messages. The workspace window is not: once it is showing the lock screen it names
+  no network and lists nothing. Hiding it too would make the tray the only way back from a
+  lock, which is a worse first encounter for no gain. Unlocking therefore arrives where a
+  launch arrives, at the list (§1.13), because it is already there.
+- **The network window is closed rather than hidden**, and that distinction is the security
+  half: a hidden window holds a network's drawn state behind a lock that did not clear it.
+- **The tray must show nothing a locked screen would not.** A tray menu listing this
+  installation's networks would be a way to read which networks somebody belongs to without
+  their password, which is one of the three things §6.3 says the lock protects. So while locked
+  the tray offers exactly two things: unlock, and quit.
+
+Neither changes what the lock is worth. §6.3's honest limits stand unaltered — a running node
+holds live MLS state and epoch keys in memory by necessity, so this defends against somebody at
+the keyboard and not against somebody reading the process.
+
+### 1.13 Launch, and where settings ended up
+
+**Unlocking opens the workspace window and nothing else.** One predictable starting point, and it
+is the surface that says what happened while the member was away: unread per network, and
+requests waiting for an answer. The cost is one click into a network somebody opens every day,
+and it is accepted rather than optimised away — restoring windows automatically would mean the
+application deciding what is on screen, and doing it from state that may have gone stale.
+
+**§4.2's settings division survives this and gains an answer it did not have**, which is a good
+sign for the rule in §1.1. Its three groups already sort by what a click costs; they now also
+sort by window, and the same line does both:
+
+- ***Mine*** — appearance, this device, and the installation-wide storage ceiling (`05` §5.1):
+  the **workspace window**, because none of it is about one network.
+- ***The network's*** — identity, the network's name, relays, admission, limits, retention,
+  permissions: that **network's window**, because every one of them writes an entry that network
+  replays.
+- ***This machine, here*** — what this machine contributes to one network (`02` §6.4): that
+  **network's window** too, since the offer is per network even though the ceiling above it is
+  not.
+
+### 1.14 What these windows are not
+
+Naming the line matters, because a window listing everything you belong to is the tempting place
+to put everything about them.
+
+The workspace window carries **workspace acts and machine-side facts**: create, join, start a
+conversation, leave or forget, set aside, and what is true of a network from *this* machine —
+unread, reachability, tier. **Anything that writes a governance entry stays in that network's own
+window**, behind §4.2's heading that says what a click costs, because that division is about the
+cost of an act and not about where the act is convenient to reach. A network's name, its relays,
+its admission mode, its limits and its roles are replayed by every member forever, and none of
+them becomes cheaper by being reachable from a list.
+
+§7's eighth question — a governance surface for roles, membership, moderation and the waiting
+room — is untouched and stays open. This section makes it *more* answerable by saying plainly
+which window it would live in when somebody designs it: the network's.
 
 ---
 
@@ -399,6 +844,15 @@ case where hole-punching failed. Worth keeping the fallback for, since the alter
 symmetric-NAT users have no direct messages at all, and worth stating rather than leaving inside
 the earlier flag.
 
+**Built 2026-09-10, and it had been a decision with nothing calling it.** `borrowable_relay`
+existed from the day D39 landed and no code path invoked it, so a conversation's node
+reserved no circuit and had no address to be reached at — which is the first thing the
+direct-message flow needs, since an invite must carry one. The loan is now recomputed at
+every start and **never cached**: every other relay path in this client writes what it
+learned into the store so a node can dial before it has synced, and this one deliberately
+does not, because a cached loan would outlive the membership that justified it and nothing
+would ask again.
+
 **The relay is borrowed rather than designated, decided 2026-09-10 — D39.** This section
 described the fallback without saying what it does to the conversation's own policy, and the
 obvious reading is the wrong one. A conversation must **not** write the shared network's relay
@@ -456,10 +910,18 @@ The first two are local state off governance replay and cost nothing.
 ### 4.1 Presence, and Not Lying About It
 
 `01` §9 already specifies the mechanism: an ephemeral gossip topic, 30-second heartbeats,
-coarse states `online | idle | dnd | invisible`, never stored and dropped on restart.
-`invisible` is a real setting rather than a courtesy, because presence here is visible to
+coarse states `here | idle | busy | invisible`, with the beats never stored and dropped on
+restart. `invisible` is a real setting rather than a courtesy, because presence here is visible to
 every member of a network. At scale it is subscribed **per channel in view** rather than
 network-wide.
+
+*This paragraph said `online | idle | dnd | invisible` until 2026-09-10, which is the
+vocabulary `01` §9 carried before presence was built and this section's own rule below
+forbids: `online` is the word that cannot be justified for the absence case and is no better
+for the present one, since there is no server to be on a line to. `busy` replaced `dnd` for
+the same reason a name should say what it means. Worth noting how it survived — the rest of
+§4.1 was rewritten around what building it settled, and its first paragraph was left quoting
+the specification it had just corrected, four lines above the rule it broke.*
 
 **What the interface must get right is the absence case.** With no server, "offline" and
 "I have not heard from them" are the same observation. Discord can assert offline
@@ -498,6 +960,12 @@ every member that this node is running and hiding, which is most of what the set
 only implementation that means what it says. The window states that where the choice is made,
 because the failure worth preventing is somebody believing they are hidden while a beat goes
 out. It is the one setting whose correctness a member cannot check for themselves.
+
+**And it is the one presence state that survives a restart**, which is the exception to the
+first paragraph's *dropped on restart* rather than a contradiction of it: the beats are
+ephemeral, the *choice* is not. A member who chose to be hidden and then closed the
+application must not reappear on the roster because their node came back, since that is
+precisely the moment they are not there to notice.
 
 **Freshness is judged by when this node heard, never by the time the beat carries.** Clocks
 disagree, and the timestamp is signed by the sender — so a member whose clock reads next year
@@ -649,6 +1117,12 @@ standing while the cap it denied was enforcing itself on their disk. A claim abo
 software does is the one kind of copy that rots, and the fix is a guard rather than diligence:
 `drive.mjs` now reads the live panel and fails if it says the cap is unenforced.
 
+**These three groups now also say which window** (§1.13), and the same line does both jobs:
+*mine* and the installation-wide ceiling are the workspace window's, and everything belonging
+to one network — including what this machine contributes to it — is that network's. A division
+by what a click costs turning out to also divide by window is a sign the rule underneath it is
+the right one.
+
 **What may join later** is bounded by the same reading. Anything whose change is local and
 private goes under *mine*; anything local that other members can see goes under *this machine,
 here*; anything that writes to the log goes under *the network's*; and anything that does none
@@ -699,7 +1173,10 @@ Three properties it commits to:
   writing it to the log would publish a reading habit to every member. §7.7 is what to revisit:
   read state becomes shared when multi-device lands, and this is per device until it does.
 
-**Outside the window there are two signals and deliberately no third.** The title carries the
+**Outside the window there are two signals and deliberately no third.** §1.3 extends both to
+several windows — a network window's title carries its own network and never a cross-network
+total, since D36 made that title the one piece of chrome saying where you are. Within one
+window, which is what this section is about: the title carries the
 total, because it is the only one still true a minute later and the only one a taskbar shows;
 an attention request fires while the window is unfocused, because it is the only one that
 arrives while somebody is doing something else. No sound, and no operating-system toast — a
@@ -1190,24 +1667,28 @@ not a capability.
 
 ## 7. Open Questions
 
-1. **Navigation shape.** §4 fixes what must be answerable; the arrangement that answers it
-   is not decided. Explicitly not assumed to be Discord's three columns — and the first field
-   test moved it *further* from three, not closer: the rail now carries the network and its
-   channels and nothing else, with the roster a dropdown at the top right (§4.1), the door a
-   sheet behind a counted button, and settings a screen of its own (§4.2). What is left open
-   is whether a fourth thing ever earns permanent space in the frame, and the answer so far
-   has been no.
+1. ~~**Navigation shape.**~~ **Answered 2026-09-11 by §1.1, and the answer keeps the one this
+   question already had.** What it actually held was whether a fourth thing ever earns permanent
+   space in the frame, and three field tests said no. It still says no: the workspace did not
+   get a column, it got a **window**, and the channel rail, the roster dropdown, the door as a
+   sheet and settings as a screen are all untouched. What decides the split is not a layout but
+   `05` §3.1's line — an act about one network belongs to that network's window, an act about
+   the set of them belongs to the workspace's — which is also the test for whatever gets
+   proposed next.
 2. **The invite flow's remaining choices.** Built: an `approve-node` holder mints an invite,
    copies one string, watches the waiting room and admits from it, and a joiner who lands in
    the waiting room is told that is a success rather than shown an empty network. Still
    defaulted rather than decided: **use-count and expiry**, currently one join and
    twenty-four hours with nothing in the interface to change them — a founder inviting six
    people has to mint six times, which is a decision nobody made.
-3. **How a warm network surfaces activity.** A message arriving on a network that is not in
-   view has to be noticeable without every warm network demanding attention. §4.3 answers this
-   *within* the open network — per-channel counts, a total in the title, an attention request
-   while unfocused — and none of it crosses networks, which is where the hard half is: the
-   window switcher has one title and §2's warm tier may hold several networks at once.
+3. ~~**How a warm network surfaces activity.**~~ **Answered 2026-09-11 by §1.3.** The
+   per-network count lives on the workspace window's row; a network window's title keeps carrying only its own
+   open network, because D36 made it the one piece of native chrome saying which network you
+   are in and a cross-network total blunts that; and the attention request stays per-window
+   and names nothing, since it comes from an operating system with no opinion about networks.
+   Answering it added an honesty rule this question had not anticipated: §2's **cold** tier is
+   polled, so a cold row's count is as old as its last poll and the row says when it looked —
+   a `0` there otherwise asserts the absence of news nobody went and asked for.
 4. ~~**What "recent" means for warm tier membership.**~~ **Closed 2026-09-10 by removing the question rather than answering it.** Warm is now the default for everything joined, and *set aside* is an explicit per-network choice — so there is no recency rule to write and no set the client has inferred. §2 carries the reasoning.
 5. **Attachment and media presentation**, including whether a theme may restyle inline media.
 6. **Search surface** — `05` §3 has the command; where results live is undecided. What a result

@@ -1935,3 +1935,522 @@ fn reconciling_from_a_synchronous_caller_does_not_panic() {
     );
     let _ = nodes.stop_all();
 }
+
+// --- Starting a conversation (spec 07 §6.2, `design/05` §3.1) ---------------
+
+#[test]
+fn starting_a_conversation_makes_a_network_records_its_origin_and_offers_it() {
+    let dir = Dir::new("dm-start");
+    let workspace = Workspace::at(dir.0.clone());
+    let shared = workspace
+        .create("the workshop", vec![format!("/dns4/relay.example/tcp/443/p2p/{RELAY}")])
+        .expect("creates");
+    let founder = shared.identity().expect("identity");
+    let peer = intranet_identity::MasterSeed::from_entropy([91u8; 32])
+        .identity_for(shared.network())
+        .expect("identity")
+        .id();
+    admit_to(&shared, &founder, &peer);
+
+    let started = kols_node::dm::start(&workspace, &shared, &peer, None).expect("starts");
+
+    // A separate network, which is the whole of `design/03` §4's decision.
+    assert_ne!(
+        &started.conversation,
+        shared.network(),
+        "a conversation is its own network, never a channel in the shared one"
+    );
+
+    // **Not deliverable yet, and that is the ordinary state rather than a
+    // failure.** An invite must carry an address and only a running node knows
+    // one (`02` §6.1); no node has run for this network yet.
+    assert!(
+        !started.deliverable,
+        "nothing can be sent until the conversation's own node has an address"
+    );
+
+    let conversation = workspace
+        .list()
+        .into_iter()
+        .filter_map(|known| Store::open(known.path).ok())
+        .find(|store| *store.network() == started.conversation)
+        .expect("the conversation is on the disk");
+
+    // D39: the origin is what makes the rendezvous borrowable, recomputed each
+    // time rather than designated once.
+    let (origin_network, origin_peer) = conversation.origin().expect("origin recorded");
+    assert_eq!(&origin_network, shared.network());
+    assert_eq!(origin_peer, peer);
+    assert!(
+        workspace.borrowable_relay(&conversation).is_some(),
+        "both are still members, so the shared network's relay is borrowable"
+    );
+
+    // The want the daemon will honour, in the shared network's store — which is
+    // the one that knows both the person and the route (spec 07 §6.2).
+    let offered = shared.offered_conversations();
+    assert_eq!(offered, vec![(peer, started.conversation)]);
+}
+
+#[test]
+fn a_second_offer_to_one_person_replaces_the_first_rather_than_queueing() {
+    // A request is a standing ask rather than a message, so two of them from one
+    // person mean the same thing — and re-asking is how a member retries
+    // somebody who was unreachable (`03` §4.3 makes retrying the sender's job).
+    let dir = Dir::new("dm-reoffer");
+    let workspace = Workspace::at(dir.0.clone());
+    let shared = workspace.create("the workshop", Vec::new()).expect("creates");
+    let founder = shared.identity().expect("identity");
+    let peer = intranet_identity::MasterSeed::from_entropy([92u8; 32])
+        .identity_for(shared.network())
+        .expect("identity")
+        .id();
+    admit_to(&shared, &founder, &peer);
+
+    let first = kols_node::dm::start(&workspace, &shared, &peer, None).expect("starts");
+    let second = kols_node::dm::start(&workspace, &shared, &peer, None).expect("starts again");
+
+    assert_ne!(
+        first.conversation, second.conversation,
+        "a second conversation is a second network — `03` §4.4 already has that shape, and \
+         refusing it here would be a product rule nothing asked for"
+    );
+    let offered = shared.offered_conversations();
+    assert_eq!(
+        offered,
+        vec![(peer, second.conversation)],
+        "one offer per person, the newer one — not a queue"
+    );
+}
+
+#[test]
+fn a_conversation_is_refused_with_a_stranger_and_with_yourself() {
+    let dir = Dir::new("dm-refusals");
+    let workspace = Workspace::at(dir.0.clone());
+    let shared = workspace.create("the workshop", Vec::new()).expect("creates");
+    let mine = shared.identity().expect("identity").id();
+
+    // A stranger: the recipient is obliged to refuse a sender who is not a
+    // current member (spec 07 §6.2), so this end refuses first rather than
+    // minting a network nothing will ever use.
+    let stranger = intranet_identity::MasterSeed::from_entropy([93u8; 32])
+        .identity_for(shared.network())
+        .expect("identity")
+        .id();
+    let refused = kols_node::dm::start(&workspace, &shared, &stranger, None)
+        .expect_err("not a member of this network");
+    assert!(refused.contains("not a member"), "{refused}");
+
+    let myself =
+        kols_node::dm::start(&workspace, &shared, &mine, None).expect_err("not with yourself");
+    assert!(myself.contains("somebody else"), "{myself}");
+
+    // Neither refusal left a network behind.
+    assert_eq!(
+        workspace.list().len(),
+        1,
+        "a refused start creates nothing — only the shared network is on the disk"
+    );
+}
+
+#[test]
+fn a_store_that_is_its_own_home_belongs_to_no_workspace() {
+    // **The hazard this is guarding, stated because the loose version looks
+    // right.** A `--home` pointing straight at one store is a shape the terminal
+    // has always supported, and answering "the workspace is its parent" for one
+    // would root a workspace in whatever directory it happens to sit in — `/tmp`
+    // during a test run, a home directory in the field — and sweep every
+    // unrelated store beside it into this installation's networks.
+    let dir = Dir::new("containing-single");
+    let lone = Workspace::at(dir.0.clone());
+    let store = lone.create("on its own", Vec::new()).expect("creates");
+
+    // The store this workspace laid out *is* found from its own path, because
+    // `path_for` would have put it exactly there.
+    let found = Workspace::containing(&store).expect("laid out by a workspace");
+    assert_eq!(found.root(), lone.root());
+
+    // A store opened as its own home is not: the directory above it is not a
+    // workspace, whatever else is in it.
+    let alone = Store::open(store.root().to_path_buf()).expect("opens");
+    let as_home = Workspace::at(store.root().to_path_buf());
+    assert_eq!(as_home.list().len(), 1, "a workspace of one, which is the supported shape");
+    assert!(
+        Workspace::containing(&alone).is_some_and(|w| w.root() == lone.root()),
+        "found by layout rather than by nesting, so the answer does not change \
+         with how the store was opened"
+    );
+
+    // And the decisive case: a store sitting somewhere `path_for` would never
+    // have put it belongs to no workspace at all.
+    let stray = dir.0.join("not-a-network-id-directory");
+    std::fs::create_dir_all(&stray).expect("makes it");
+    for name in ["seed", "network"] {
+        let from = store.root().join(name);
+        if from.exists() {
+            std::fs::copy(&from, stray.join(name)).expect("copies");
+        }
+    }
+    if let Ok(moved) = Store::open(stray) {
+        assert!(
+            Workspace::containing(&moved).is_none(),
+            "a store `path_for` would not have placed here has no workspace, so nothing \
+             goes looking through its neighbours"
+        );
+    }
+}
+
+// --- Delivering and receiving a conversation request -----------------------
+//
+// # Where the wire is tested, and why it is not here
+//
+// Core §5.1's carrier is tested upstream over two live nodes
+// (`intranet-transport/tests/direct_delivery.rs`), including the acknowledgement
+// this work added. What is left for this side is what the carrier deliberately
+// cannot do: build the payload, and make the two checks spec 07 §6.2 says no
+// platform can make for it. Those are properties of two stores and a payload, so
+// they are tested against two stores and a payload — the same reasoning
+// `design/05` §8 gives for testing provider discovery where the topology is
+// rather than where the containers are.
+//
+// **Still owed: the live two-daemon path.** The terminal's `--home` names one
+// store rather than a workspace, so a `two_nodes`-style test cannot reach this
+// flow yet, and that is recorded rather than worked around.
+
+/// Attaches a workspace to an existing network, in the layout `path_for` uses.
+///
+/// The terminal's `attach` writes a store straight at `--home`, which is its
+/// single-store shape; a workspace needs the store where `path_for` would put
+/// it, or nothing above will find it.
+fn attach_in(
+    workspace: &Workspace,
+    network: &intranet_identity::NetworkId,
+    label: &str,
+) -> Store {
+    let store = Store::create(
+        workspace.path_for(network),
+        *network,
+        kols_node::random_32().expect("entropy"),
+    )
+    .expect("attaches");
+    store.set_label(label).expect("labels");
+    store
+}
+
+/// Alice and Bob, both members of one network, each with their own workspace.
+fn two_sides(name: &str) -> (Dir, Dir, Workspace, Store, Workspace, Store) {
+    let alice_dir = Dir::new(&format!("{name}-alice"));
+    let bob_dir = Dir::new(&format!("{name}-bob"));
+    let alice_ws = Workspace::at(alice_dir.0.clone());
+    let bob_ws = Workspace::at(bob_dir.0.clone());
+
+    let alice = alice_ws.create("the workshop", Vec::new()).expect("creates");
+    let founder = alice.identity().expect("identity");
+
+    // Bob's identity in that network exists before anybody has heard of him,
+    // because it is derived from the network id and his own seed (Core §1.2) —
+    // which is what lets him be admitted by name.
+    let bob = attach_in(&bob_ws, alice.network(), "the workshop");
+    let bob_id = bob.identity().expect("identity").id();
+    admit_to(&alice, &founder, &bob_id);
+
+    // Bob replays the same log, so his store agrees about who is a member.
+    for hash in alice.log().expect("log").canonical_chain() {
+        if let Some(entry) = alice.log().expect("log").get(&hash) {
+            bob.append_entry(entry).expect("adopts");
+        }
+    }
+    (alice_dir, bob_dir, alice_ws, alice, bob_ws, bob)
+}
+
+#[test]
+fn a_request_built_on_one_side_verifies_on_the_other() {
+    let (_a, _b, alice_ws, alice, _bob_ws, bob) = two_sides("dm-round-trip");
+    let bob_id = bob.identity().expect("identity").id();
+
+    let started = kols_node::dm::start(&alice_ws, &alice, &bob_id, None).expect("starts");
+
+    // Nothing to deliver yet: the conversation's node has recorded no address,
+    // so there is nothing for an invite to carry. This is the ordinary state
+    // rather than a failure, and it is why the offer is a want.
+    assert!(
+        kols_node::dm::deliverable(&alice_ws, &alice, 1_000).expect("builds").is_empty(),
+        "an offer with no address is not deliverable"
+    );
+
+    // What `kols serve` does for the conversation once it runs.
+    let conversation = alice_ws.store_for(&started.conversation).expect("on the disk");
+    conversation
+        .set_addresses(&["/ip4/127.0.0.1/tcp/4001".to_owned()])
+        .expect("records an address");
+
+    let ready = kols_node::dm::deliverable(&alice_ws, &alice, 1_000).expect("builds");
+    assert_eq!(ready.len(), 1, "now there is something to send");
+    assert_eq!(ready[0].to, bob_id);
+
+    // The other side, doing what the daemon does on `DirectReceived`.
+    let alice_id = alice.identity().expect("identity").id();
+    match kols_node::dm::receive(&bob, &alice_id, &ready[0].payload) {
+        kols_node::dm::Arrived::Request { from } => assert_eq!(from, alice_id),
+        other => panic!("a well-formed request from a member should be kept: {other:?}"),
+    }
+
+    // Kept, because the answer is a person's and a person is not there at the
+    // instant it arrives (spec 07 §6.2).
+    let waiting = bob.requests();
+    assert_eq!(waiting.len(), 1);
+    assert_eq!(waiting[0].0, alice_id);
+
+    // And the invite inside it names a *different* network, which is the whole
+    // of `design/03` §4's decision.
+    let request = kols_core::DmInvite::decode(&waiting[0].1).expect("decodes");
+    assert_eq!(&request.invite().network, &started.conversation);
+    assert_ne!(&request.invite().network, alice.network());
+}
+
+#[test]
+fn a_proof_about_somebody_else_is_refused_however_genuine_its_signatures() {
+    // **The forgery that matters** (Core §1.2, spec 07 §6.2). A proof carrying
+    // two real signatures over a true statement about a *different* pair
+    // verifies perfectly and says nothing about who is asking — so verifying the
+    // signatures is necessary and nowhere near sufficient.
+    let (_a, _b, alice_ws, alice, _bob_ws, bob) = two_sides("dm-wrong-pair");
+    let bob_id = bob.identity().expect("identity").id();
+
+    // Carol builds an entirely honest request of her own.
+    let carol_dir = Dir::new("dm-wrong-pair-carol");
+    let carol_ws = Workspace::at(carol_dir.0.clone());
+    let carol_shared = attach_in(&carol_ws, alice.network(), "the workshop");
+    for hash in alice.log().expect("log").canonical_chain() {
+        if let Some(entry) = alice.log().expect("log").get(&hash) {
+            let _ = carol_shared.append_entry(entry);
+        }
+    }
+    let carol_id = carol_shared.identity().expect("identity").id();
+    // Admitted too, or Bob refuses her for being a stranger and the control
+    // below would pass for the wrong reason — which is the failure this test is
+    // about, arriving from the other direction.
+    admit_to(&alice, &alice.identity().expect("identity"), &carol_id);
+    for hash in alice.log().expect("log").canonical_chain() {
+        if let Some(entry) = alice.log().expect("log").get(&hash) {
+            let _ = bob.append_entry(entry);
+            let _ = carol_shared.append_entry(entry);
+        }
+    }
+    kols_node::dm::start(&carol_ws, &carol_shared, &bob_id, None).expect("starts");
+    let conversation = carol_ws
+        .store_for(&carol_shared.offered_conversations()[0].1)
+        .expect("on the disk");
+    conversation
+        .set_addresses(&["/ip4/127.0.0.1/tcp/4002".to_owned()])
+        .expect("records an address");
+    let carols = kols_node::dm::deliverable(&carol_ws, &carol_shared, 1_000).expect("builds");
+
+    // Alice replays Carol's request as her own. Every signature in it is
+    // genuine; the pair it names is not the pair Bob is talking to.
+    let alice_id = alice.identity().expect("identity").id();
+    let _ = alice_ws;
+    match kols_node::dm::receive(&bob, &alice_id, &carols[0].payload) {
+        kols_node::dm::Arrived::Refused { from, why } => {
+            assert_eq!(from, alice_id);
+            assert!(why.contains("identity link"), "{why}");
+        }
+        other => panic!("a proof about another pair must not pass: {other:?}"),
+    }
+    assert!(
+        bob.requests().is_empty(),
+        "nothing unverified reaches the disk, because the disk is what an interface renders"
+    );
+
+    // Carol's own request, from Carol, is fine — so the refusal above is about
+    // the pair and not about the payload being malformed.
+    assert!(matches!(
+        kols_node::dm::receive(&bob, &carol_id, &carols[0].payload),
+        kols_node::dm::Arrived::Request { .. }
+    ));
+}
+
+#[test]
+fn a_request_from_somebody_who_is_not_a_member_is_refused() {
+    // Core §5.1 says plainly that the carrier cannot check this — it holds no
+    // governance state for the purpose — and spec 07 §6.2 is the section that
+    // owes it. Answered by replay, so a sender revoked since composing the
+    // request is refused now rather than as of then.
+    let (_a, _b, alice_ws, alice, _bob_ws, bob) = two_sides("dm-non-member");
+    let bob_id = bob.identity().expect("identity").id();
+
+    kols_node::dm::start(&alice_ws, &alice, &bob_id, None).expect("starts");
+    let conversation = alice_ws
+        .store_for(&alice.offered_conversations()[0].1)
+        .expect("on the disk");
+    conversation
+        .set_addresses(&["/ip4/127.0.0.1/tcp/4003".to_owned()])
+        .expect("records an address");
+    let ready = kols_node::dm::deliverable(&alice_ws, &alice, 1_000).expect("builds");
+
+    // A store that never learned Alice was admitted — which is what a node that
+    // has not synced, or one that has seen her removed, looks like.
+    let stranger_dir = Dir::new("dm-non-member-stranger");
+    let stranger_ws = Workspace::at(stranger_dir.0.clone());
+    let unsynced = attach_in(&stranger_ws, alice.network(), "the workshop");
+
+    let alice_id = alice.identity().expect("identity").id();
+    match kols_node::dm::receive(&unsynced, &alice_id, &ready[0].payload) {
+        kols_node::dm::Arrived::Refused { why, .. } => {
+            assert!(why.contains("not a current member") || why.contains("replay"), "{why}");
+        }
+        other => panic!("a sender this node cannot see as a member must be refused: {other:?}"),
+    }
+}
+
+#[test]
+fn a_payload_that_is_not_a_conversation_request_is_refused_rather_than_guessed_at() {
+    let (_a, _b, _alice_ws, alice, _bob_ws, bob) = two_sides("dm-garbage");
+    let alice_id = alice.identity().expect("identity").id();
+    match kols_node::dm::receive(&bob, &alice_id, b"not a request at all") {
+        kols_node::dm::Arrived::Refused { why, .. } => assert!(why.contains("decode"), "{why}"),
+        other => panic!("{other:?}"),
+    }
+}
+
+#[test]
+fn being_told_that_closing_is_not_quitting_is_remembered_across_launches() {
+    // `design/09` §1.11. Once means once per installation: a notice on every
+    // close is one nobody reads, and one every morning is the same notice.
+    let dir = Dir::new("told-about-tray");
+    let workspace = Workspace::at(dir.0.clone());
+    assert!(!workspace.told_closing_is_not_quitting(), "nothing said yet");
+    workspace.remember_closing_is_not_quitting().expect("remembers");
+    assert!(workspace.told_closing_is_not_quitting());
+    // A second workspace over the same root is a second launch.
+    assert!(Workspace::at(dir.0.clone()).told_closing_is_not_quitting(), "and it survives");
+}
+
+// --- One application per installation (`design/09` §1.1) -------------------
+
+#[test]
+fn a_second_launch_asks_the_first_to_show_itself_rather_than_starting() {
+    use kols_node::workspace::Launch;
+
+    let dir = Dir::new("one-application");
+    let workspace = Workspace::at(dir.0.clone());
+
+    let Launch::First(first) = workspace.hold_application() else {
+        panic!("the first launch is the application");
+    };
+    assert!(first.beat(), "and it holds its own claim");
+    assert!(!first.asked_to_show(), "nobody has asked it to do anything yet");
+
+    // **The holder has to actually answer**, which is the protocol rather than
+    // a detail of the test: a launch concludes somebody is there by watching
+    // its ask be taken, never by reading a heartbeat. So this stands in for the
+    // beat that would consume it in a running application.
+    let answering = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(true));
+    let stop = answering.clone();
+    let watched = dir.0.join("running").join("raise");
+    let holder = std::thread::spawn(move || {
+        while stop.load(std::sync::atomic::Ordering::Relaxed) {
+            let _ = std::fs::remove_file(&watched);
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+    });
+
+    let second = Workspace::at(first.root().to_path_buf());
+    assert!(
+        matches!(second.hold_application(), Launch::Second),
+        "a second launch does not become a second application"
+    );
+
+    answering.store(false, std::sync::atomic::Ordering::Relaxed);
+    holder.join().expect("the stand-in stops");
+}
+
+#[test]
+fn a_heartbeat_nobody_answers_is_not_a_running_application() {
+    use kols_node::workspace::Launch;
+
+    // **The case that made the protocol an exchange.** A process killed leaves
+    // its last heartbeat behind, fresh for the rest of the staleness window —
+    // so a launch inside those seconds would exit as a second instance with
+    // nobody to raise, which presents as an application that will not start.
+    // The member's remedy is to try again, and trying again is the gesture that
+    // keeps failing.
+    //
+    // Found by killing one and relaunching rather than by review.
+    let dir = Dir::new("heartbeat-without-a-holder");
+    let workspace = Workspace::at(dir.0.clone());
+    std::fs::create_dir_all(dir.0.join("running")).expect("the claim directory");
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("a clock")
+        .as_millis() as i64;
+    // As fresh as a heartbeat gets, and with nothing behind it.
+    std::fs::write(dir.0.join("running").join("heartbeat"), now.to_string()).expect("a beat");
+    std::fs::write(dir.0.join("running").join("owner"), "12345").expect("a token");
+
+    assert!(
+        matches!(workspace.hold_application(), Launch::First(_)),
+        "a heartbeat nobody stands behind does not make this a second launch"
+    );
+    assert!(
+        !dir.0.join("running").join("raise").exists(),
+        "and the unanswered ask is cleared rather than left for the next launch to find"
+    );
+}
+
+#[test]
+fn a_claim_left_by_a_crash_is_taken_over_rather_than_waited_on_forever() {
+    use kols_node::workspace::Launch;
+
+    // A crash leaves the claim behind: `Drop` does not run, and the heartbeat
+    // stops. The next launch has to become the application rather than
+    // reporting that one is already running — which would make a crash
+    // permanent.
+    let dir = Dir::new("stale-application");
+    let workspace = Workspace::at(dir.0.clone());
+    std::fs::create_dir_all(dir.0.join("running")).expect("the claim directory");
+    // Older than the staleness window, which is what a stopped heartbeat looks
+    // like however the process stopped.
+    let long_ago = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("a clock")
+        .as_millis() as i64
+        - 60_000;
+    std::fs::write(dir.0.join("running").join("heartbeat"), long_ago.to_string())
+        .expect("a stale beat");
+    std::fs::write(dir.0.join("running").join("owner"), "12345").expect("somebody else's token");
+
+    assert!(
+        matches!(workspace.hold_application(), Launch::First(_)),
+        "a stale claim is taken over"
+    );
+}
+
+#[test]
+fn the_holder_stops_answering_once_another_process_has_taken_the_claim() {
+    use kols_node::workspace::Launch;
+
+    // The suspend case: this process slept past the staleness window, another
+    // launch legitimately became the application, and this one wakes up. It
+    // must stop answering for the installation — raising *its* window would
+    // put the wrong one in front of somebody — but it deliberately does not
+    // stop, because the correctness claim is the node's and closing a member's
+    // windows under them is a larger harm than two window sets.
+    let dir = Dir::new("application-taken-over");
+    let workspace = Workspace::at(dir.0.clone());
+    let Launch::First(first) = workspace.hold_application() else {
+        panic!("the first launch is the application");
+    };
+
+    // Somebody else's token, as a takeover would leave it.
+    std::fs::write(dir.0.join("running").join("owner"), "999").expect("a new owner");
+    assert!(!first.beat(), "the claim is no longer this process's");
+
+    // And on the way out it leaves the successor's claim alone, which is the
+    // failure the node claim's `Drop` check exists to prevent.
+    drop(first);
+    assert!(
+        dir.0.join("running").join("owner").is_file(),
+        "the successor's claim survives the loser's drop"
+    );
+}

@@ -223,19 +223,18 @@ Event    = Records { channel, records, arrival }
          | MemberPresence { identity, state }                — `01` §9, `09` §4.1
          | Relay { reserved, designated, failures } | Degraded { reason }
          | GovernanceReorg { mine: [VoidedAction], others }  — §4, Core §2.7.1 pt 5
+         | DirectMessageRequest { from }                     — spec 07 §6.2, §3.1
 
 Designed here and not built:
 
 Command  | Search { scope, query }
          | JoinVoice { channel_id } | LeaveVoice | SetMute | SetDeafen
          | StartStage | PromoteSpeaker
-         | StartDirectMessage { with: identity, in_network }   — creates a network, `03` §4.3
-         | AcceptDirectMessage | DeclineDirectMessage
+         — direct messages are deliberately *not* here: §3.1
 
 Event    | ChannelState | PermissionsChanged
          | VoiceState { participants, topology, transport: Delivery }
          | KeyStatus { channel_id, have_key: bool }
-         | DirectMessageRequest { from: identity, link_verified: bool }
          | SyncProgress
 ```
 
@@ -397,11 +396,16 @@ anything is signed. Neither is *enforcement*: nobody can write into another auth
 readers refuse an over-rate record whatever the writer believed. This is the author's client
 telling them first, which is the division `01` §10.2 draws.
 
-**The event vocabulary was written from the engine rather than ahead of it.** Ten variants
-exist and each has something producing it — §4's loop had been reporting all of them in words
-for weeks. Two categories are deliberately excluded: this node's transport, because a
+**The event vocabulary was written from the engine rather than ahead of it.** Eleven variants
+exist and each has something producing it — §4's loop had been reporting most of them in
+words for weeks. Two categories are deliberately excluded: this node's transport, because a
 sandboxed build gets no ambient host access (App Hosting §3.2), and the startup report,
 because that is what the node *is* rather than something that happened.
+
+*`DirectMessageRequest` was the one exception for part of a day, added ahead of its producer
+so the compile-time guards (§8) would already name it everywhere it had to be named. Its
+producer is the receive arm of §3.1's flow, which decodes, verifies the identity link,
+checks membership and only then emits.*
 
 **The event half of this list then drifted three times, and the reason is that only the
 command half is checked mechanically.** This paragraph counted six when six existed; `Relay`
@@ -415,10 +419,110 @@ compile time, and nothing does that for an `Event`. **The lesson is not that the
 wrong. It is that one half of a boundary has a guard and the other half does not**, and the
 half without one has now drifted every time it changed. §8 carries the guard as owed.
 
-**What is still designed rather than built.** The commands for direct messages, search, voice
-and stage, each of which has a line above and no code behind it. `00` §5 sequences them by
-phase. Note also that events currently reach a terminal and no projection-holding client —
-which is a missing consumer rather than a missing contract.
+**What is still designed rather than built.** The commands for search, voice and stage, each
+of which has a line above and no code behind it. `00` §5 sequences them by phase. Note also
+that events currently reach a terminal and no projection-holding client — which is a missing
+consumer rather than a missing contract.
+
+### 3.1 Direct messages are not boundary commands, and the grammar above was wrong
+
+**Decided 2026-09-10, before the flow was built, because building it first would have
+decided it by accident.** The list above carried three of them —
+`StartDirectMessage { with, in_network }`, `AcceptDirectMessage`, `DeclineDirectMessage` —
+with *creates a network* written beside the first as though that were a footnote. It is the
+whole difficulty, and it contradicts a principle §5.1 states plainly: **this boundary is per
+network, and a fact or an act about the workspace above them sits outside it.** §5.1 names
+creating a network as the example. §3's grammar was written first; §5.1 is the considered
+statement, and it wins.
+
+Three things about the flow force the same answer, and the third is the one that settles it:
+
+- **Starting a conversation creates a network.** A workspace act, exactly as `init` and
+  `attach` are — which §3's own opening already places outside the command vocabulary,
+  "because the first two create the state a command needs before there is any". A
+  conversation is that case: there is no store for the executor to be open on until the act
+  is done.
+- **Accepting one joins a network**, which is the same act from the other side.
+- **There is nothing for the gate to do.** Creating a network needs no capability, and
+  sending on Core §5.1's carrier needs only membership of the shared network, which the
+  carrier meters and the *receiver* checks (spec 07 §6.2). So `authorize` would have no
+  question to answer for any of the three — and a command whose gate is empty and whose
+  target is the workspace is not a command this boundary is shaped for. `SetContribution` is
+  the near miss worth comparing: its gate is empty too, and it stays because it is genuinely
+  per network.
+
+**So the flow lives in a workspace-level module and both front ends reach it there**, the
+way they already reach network creation (`09` §1: one path, two front ends). What crosses
+`kols-api` is the half that genuinely is per network: **`Event::DirectMessageRequest`**,
+which arrives on the shared network's node and is that network's business.
+
+**What this gives up, stated rather than discovered later.** The sandbox path (§7) prompts
+on `Sensitivity`, so a flow outside the boundary gets no consent decorator — a hosted app
+could not reach it at all today, which is a *narrower* posture than prompting and not a
+weaker one, but it does mean the sandboxed build cannot offer direct messages until this
+layer has a consent story. That is the same limit create-and-join already has, so this adds
+no hole; it widens one that was already there, and §7's list of what the sandbox gives up is
+where it belongs.
+
+**And two corrections to the grammar itself**, both from the boundary's own rules:
+
+- **`in_network` is dropped.** The shared network is the one whose node carries the request,
+  so a caller supplying it could name a network the sender is not in — the same objection
+  §3's first property makes to carrying a channel's category on a command, where "whoever
+  supplies the category chooses which grant applies". It is looked up, not passed.
+- **A request is addressed by *who sent it*, not by an opaque handle.** There is at most one
+  pending request per (shared network, sender) — a second from the same person replaces the
+  first rather than queueing, since a request is a standing ask and two of them mean the same
+  thing.
+
+**Where the pending state lives, and why it is stored at all.** spec 07 §6.2 permits exactly
+the two parties to store it and nobody else, and both need to: the sender because delivery
+requires the recipient reachable and retrying is the sender's (`03` §4.3), the receiver
+because the answer is a person's and a person is not there at the instant it arrives. So each
+side keeps it in the **shared** network's store — which is the store that knows both the
+sender and the route — and nothing about a request ever enters a log.
+
+#### Built 2026-09-10: the daemon half
+
+`kols_node::dm` and the two arms in the loop. Four things it settled or turned up:
+
+- **D39's borrowed relay stopped being a function nobody called.** `borrowable_relay` had
+  existed since the decision landed and nothing invoked it, so a conversation's node
+  reserved no circuit, had no dialable address, and could not have put one in an invite —
+  the flow's first step was missing its own precondition. `serve` now recomputes the loan at
+  every start, and **never caches it**: every other relay path writes what it learned into
+  the store, and this one must not, because a cache would outlive the membership that
+  justified the loan and nothing would ask again.
+- **`Workspace::containing` has to be exact, and the obvious version is a hazard.** A
+  `--home` pointing straight at one store is a shape the terminal has always supported, so
+  "the workspace is the parent directory" would root a workspace in whatever directory the
+  store happens to sit in — `/tmp` during a test run — and sweep every unrelated store
+  beside it into this installation's networks. The question that settles it is whether
+  `path_for` would have placed the store exactly there, which is a pure function of the
+  parent and the network id.
+- **The delivery rules are deliberately not `CreateInvite`'s.** That path refuses without a
+  designated relay and without a circuit, because a server's invite goes to a stranger. A
+  conversation designates no relay *by decision*, and refusing here would turn D39's stated
+  limit into an earlier and less honest failure. What is required is one address.
+- **The carrier could not tell a sender its payload had landed**, which is a protocol gap
+  this work found and fixed upstream — `design/06` §10 records it. Without the
+  acknowledgement the offer has no stopping condition, and Core §5.1 forbids the carrier
+  queueing, so the retry had nowhere honest to live.
+
+**What is not built: accepting and declining**, and the live two-daemon path. The terminal's
+`--home` names one store rather than a workspace, so a `two_nodes`-style test cannot reach
+this flow yet; the checks and the payload are tested against two stores instead, and the
+wire is tested upstream over two live nodes. That split is recorded in the test file rather
+than left as a gap somebody has to notice.
+
+**The sender needs an address it does not have yet, and that is the one ordering constraint.**
+An invite must carry an address, and only a running node knows one (`02` §6.1) — so a
+conversation's invite cannot be minted until the conversation's *own* node has run and written
+its addresses down. The supervisor starts one because the network is joined and therefore warm
+(`09` §2), and the daemon mints and sends on a later tick. That makes starting a conversation
+the same shape as everything else here that needs a node: **the act records a want and the
+daemon honours it**, exactly as `FetchHistory` does (§5.1), rather than blocking a caller on a
+peer.
 
 ---
 
@@ -503,6 +607,30 @@ Two protocol behaviours the client is specifically obliged to act on rather than
 source selection as not having volunteered, so the capability ledger must be populated
 before a fetch can use a source the DHT found. Layering is governance, then ledger, then
 fetch — a fetch that finds nothing on a fresh node is usually this, not a bug.
+
+**But keying is not behind that layering, and putting it there stranded joiners.** The ask
+for an epoch key (`06` §14) is gated on **membership**, which is a replay question — §2's
+third principle, asked of the log and answered locally. It is deliberately *not* gated on
+whether this node's advertisement landed or its own logs published, and the distinction cost
+a session to find. Both ask sites used `ready(..).is_ok()` — advertise, then publish every
+author log — as a convenient proxy for *am I a member yet*. It is a strictly stronger
+condition: a store error, a full disk or anything else transient in the publish half made
+every tick skip the ask, for as long as it lasted. **That is the same permanent strand the
+retry schedule exists to prevent**, reached through the precondition rather than through the
+cadence, and Core §3.5.1 is explicit that a member who cannot ask again is stranded rather
+than delayed.
+
+Two consequences worth stating separately, because only the first is about keying:
+
+- **A stronger precondition than the question is not a safer one.** The ask's own failure
+  mode is a refusal from a peer, which is cheap and recoverable; suppressing it is neither.
+  Where a condition is a proxy, the layering above is the exception that earns its proxy —
+  a fetch genuinely cannot use an unranked source — and this one did not.
+- **A message must not name a cause it has not established.** The startup line said *not a
+  member of this network yet* whichever half of `ready` failed, so a publishing fault
+  presented as a membership fault. It reports the error now. A diagnosis dressed as an
+  observation is worse than silence, because it is believed: O26's attribution spent a
+  session on membership because the software said so.
 
 ---
 
