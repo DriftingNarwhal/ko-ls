@@ -2454,3 +2454,67 @@ fn the_holder_stops_answering_once_another_process_has_taken_the_claim() {
         "the successor's claim survives the loser's drop"
     );
 }
+
+#[test]
+fn a_conversation_can_be_spoken_in_without_anybody_defining_a_channel() {
+    // **The failure a real pair hit the moment a request was accepted: neither
+    // party could say anything.**
+    //
+    // A conversation's channel is *derived* from the network id (spec 07 §3.6) —
+    // one channel, nothing to name, nothing to record — and a
+    // `ChannelDefinition` entry in such a network is invalid (`design/03` §4.1).
+    // So replay can never produce it, and the channel map was simply empty.
+    //
+    // Authorizing a `SendMessage` begins by resolving the channel to a
+    // placement, so every message was refused with *no channel* — which reads
+    // as a channel that is missing rather than one nobody inserted. The whole
+    // flow worked up to the point of speaking: started, offered, delivered,
+    // accepted, opened, and mute.
+    let dir = Dir::new("conversation-channel");
+    let workspace = Workspace::at(dir.0.clone());
+    let conversation = workspace.create_conversation("sam").expect("creates");
+
+    let state = conversation.state().expect("replays");
+    let (channels, refused) =
+        kols_node::network::channels(&conversation, &state).expect("channels replay");
+    assert!(
+        refused.is_empty(),
+        "nothing in a fresh conversation should be refused: {refused:?}"
+    );
+
+    let implied = kols_core::conversation_channel_id(conversation.network());
+    assert!(
+        channels.contains_key(&implied),
+        "the one channel a conversation has must resolve, or nobody can speak in it"
+    );
+
+    // And through the boundary, which is where the refusal actually came from:
+    // authorizing a `SendMessage` resolves the channel to a placement first.
+    //
+    // **Asserted as "not refused for the channel" rather than as success**,
+    // because a store this test can build is not yet keyed — an epoch key comes
+    // from a running node's MLS group — so the send fails later, at sealing.
+    // That is the honest boundary of what a workspace test can see, and it is
+    // still exactly the regression: the refusal was `no channel`, and the
+    // channel is what this no longer stops at.
+    let root = conversation.root().to_path_buf();
+    drop(conversation);
+    let executor = kols_node::executor::Executor::open(root).expect("opens");
+    let refusal = executor
+        .submit(kols_api::Command::SendMessage {
+            channel: implied,
+            body: "first thing either of us said".to_owned(),
+            reply_to: None,
+            attachments: Vec::new(),
+        })
+        .expect_err("an unkeyed store cannot seal, so this cannot succeed here")
+        .to_string();
+    assert!(
+        !refusal.contains("no channel"),
+        "a conversation's derived channel must authorize, and this refused it: {refusal}"
+    );
+    assert!(
+        refusal.contains("epoch key"),
+        "the only thing left to stop it should be the missing key: {refusal}"
+    );
+}

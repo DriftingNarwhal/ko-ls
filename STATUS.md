@@ -335,7 +335,7 @@ over the same `kols-api` boundary, owed no feature parity and no end-user docume
   contribute, presence, storage, history, and channel
   create/list/rename/topic/slowmode/archive.
 
-**Gates green, re-run 2026-09-11:** 436 passed and 0 failed here (4 ignored, all measurements),
+**Gates green, re-run 2026-09-11:** 437 passed and 0 failed here (4 ignored, all measurements),
 709 passed and 0 failed in `../distributed-intranet`, clippy clean in both, and
 `crates/kols-ui/drive.mjs`'s 172 checks green by hand, over all three documents with no uncaught
 errors. Two of those checks had never run: they sat after the `process.exit` that ends the
@@ -375,6 +375,25 @@ the source rather than behaviour under test (`kols-app/tests/window_creation.rs`
 reverting the fix and watching it fail), and `CONTRIBUTING.md` now carries the question it
 answers: could this assertion be true here and false where it ships. `design/05` §1 has it as
 the third shell trap, and the first that is a platform rather than a default.
+
+**`v0.13.4` was tested on two machines, and the window model is confirmed**, 2026-09-11: the
+§1.5 reuse rule with two networks — the central promise nothing here could check — and §1.11's
+Dock door on macOS. A DM request was started from a roster, delivered and accepted. Offline
+catch-up works in both the *application closed* and the *machine asleep* cases, which is the
+fetch fix below doing its job.
+
+**Three defects came with it, all in the conversation surface.** A conversation's channel is
+derived (spec 07 §3.6), so replay can never produce it and the channel map was **empty** —
+every message refused as *no channel*, which is a conversation that opens and cannot be spoken
+in. A conversation appeared in the **networks** group for the member who started it, because
+`09` §1.4's split read a profile *cache* that only a joiner writes. And §1.7's notice that a
+request has no answer to wait for never dismissed itself, so a sentence about something working
+sat on screen like a fault. All three fixed; `09` §1.8 has them.
+
+**Still open: messages written before `v0.13.4` have not reconciled.** Fresh ones do, in both
+directions and in both offline cases, so the mechanism works — something about that specific
+backlog does not, and reading has not found it. The next step is data from the machines rather
+than another hypothesis.
 
 **Two machines found three things `v0.13.3` did not fix, 2026-09-11**, and only the first was
 about the relay.

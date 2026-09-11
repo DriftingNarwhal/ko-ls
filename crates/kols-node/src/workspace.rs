@@ -46,6 +46,12 @@ pub struct Known {
     /// between being admitted and being keyed in, which the interface should
     /// show as waiting rather than as broken.
     pub keyed: bool,
+    /// What it is: a server, or one conversation.
+    ///
+    /// Carried here because the two belong in different groups of the workspace
+    /// window (`design/09` §1.4) and a caller listing networks would otherwise
+    /// have to open every store again to find out.
+    pub profile: kols_core::NetworkProfile,
 }
 
 /// A relay one of this member's other networks already designates.
@@ -822,6 +828,7 @@ fn describe(store: &Store) -> Known {
         label: store.label().unwrap_or_default(),
         path: store.root().to_path_buf(),
         keyed: store.epoch_key().is_ok(),
+        profile: crate::profile_of(store),
     }
 }
 

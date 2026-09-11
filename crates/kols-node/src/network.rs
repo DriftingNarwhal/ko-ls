@@ -174,6 +174,47 @@ pub fn channels(
     let mut channels: BTreeMap<ChannelId, Channel> = BTreeMap::new();
     let mut refused = Vec::new();
 
+    // **A conversation's channel is derived, and it has to be *here* or it does
+    // not exist.** spec 07 §3.6: a `conversation`-profile network has exactly
+    // one channel, computed from the network id, with nothing to name and
+    // nothing to record — and a `ChannelDefinition` entry in such a network is
+    // invalid (`design/03` §4.1), so the fold below can never produce it.
+    //
+    // Which meant this map was **empty** for every conversation, and every
+    // command that resolves a channel to a placement was refused: authorizing a
+    // `SendMessage` starts by asking replay where the channel sits, and replay
+    // did not know. A conversation could be started, offered, accepted and
+    // opened, and then neither party could say anything in it — reported as
+    // *no channel*, which reads as a missing channel rather than as a channel
+    // nobody inserted.
+    //
+    // Placed at the network level with no category, which is what it is: the
+    // network *is* the conversation, so the grants every member receives at
+    // genesis — `chat:post:*`, `chat:read:*` — are the ones that resolve
+    // against it. Seeded before the fold so that nothing can shadow it.
+    if profile == kols_core::NetworkProfile::Conversation {
+        let id = kols_core::conversation_channel_id(store.network());
+        channels.insert(
+            id,
+            Channel {
+                id,
+                // Not shown anywhere: a conversation window draws a person, and
+                // deliberately has no channel rail (`design/09` §1.6). The name
+                // exists because every other channel has one.
+                name: "conversation".to_owned(),
+                category: None,
+                kind: ChannelKind::Text,
+                // Every member may read it, and in a conversation every member
+                // is one of the two people in it.
+                privacy: Privacy::Public,
+                topic: String::new(),
+                slowmode: 0,
+                archived: false,
+                position: Some(0),
+            },
+        );
+    }
+
     for hash in log.canonical_chain() {
         let Some(entry) = log.get(&hash) else { continue };
         let EntryBody::AppEntry { namespace, .. } = &entry.body else {

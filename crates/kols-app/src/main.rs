@@ -685,7 +685,10 @@ fn conversations(app: tauri::State<'_, App>) -> Result<Vec<dto::Conversation>, S
     // And the ones that exist: a conversation network on this disk, named by
     // where it was arranged rather than by its own id.
     for store in &stores {
-        if store.cached_profile() != Some(kols_core::NetworkProfile::Conversation) {
+        // Replayed policy first, then the cache — `kols_node::profile_of`. The
+        // cache alone is only ever written by a joiner, so a conversation was
+        // invisible here to the member who started it.
+        if kols_node::profile_of(store) != kols_core::NetworkProfile::Conversation {
             continue;
         }
         let (shared, who) = match store.origin() {
@@ -2090,6 +2093,16 @@ fn networks(app: tauri::State<'_, App>) -> Result<Vec<dto::Network>, String> {
         .workspace
         .list()
         .into_iter()
+        // **Conversations are not networks in this list**, even though they are
+        // networks (D10). `09` §1.4 puts them in their own group precisely
+        // because the difference decides what is possible inside one, and this
+        // list is the group for the other kind.
+        //
+        // Without the filter a conversation appeared in *both* groups, and on
+        // the machine that started it only in this one — because the group
+        // below keyed off a profile cache that only a joiner ever writes. So
+        // the member who began a conversation found it filed as a server.
+        .filter(|known| known.profile != kols_core::NetworkProfile::Conversation)
         .map(|known| dto::Network::of(&known, open.as_deref()))
         .collect())
 }

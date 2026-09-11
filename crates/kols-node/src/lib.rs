@@ -94,6 +94,30 @@ pub fn discovery_for(policy: &intranet_governance::NetworkPolicy) -> intranet_tr
     }
 }
 
+/// What a network on this disk *is* — server or conversation.
+///
+/// # Replay first, then the cache, and never the cache alone
+///
+/// The declaration lives in replayed policy (spec 07 §1.2), which is the
+/// authority and is what a founder has from the moment it writes genesis. The
+/// cache exists for the other case: a joiner's node has to be built before its
+/// log has arrived, so [`Store::set_profile`] records what the DM flow told it
+/// (`design/06` §12).
+///
+/// **Reading only the cache was a real bug.** `create_conversation` writes the
+/// profile into genesis and no cache file, so a conversation looked like a
+/// *conversation* to the member who accepted one and like an ordinary *network*
+/// to the member who started it — listed in the wrong group of the workspace
+/// window, which is where a member would go looking for it.
+pub fn profile_of(store: &store::Store) -> kols_core::NetworkProfile {
+    if let Ok(state) = store.state() {
+        return kols_core::ChatPolicy::of(&state.policy).profile();
+    }
+    store
+        .cached_profile()
+        .unwrap_or(kols_core::NetworkProfile::Server)
+}
+
 /// Sends one line to a [`Report`], with `format!`'s syntax.
 ///
 /// A macro rather than a call so a multi-line message stays a multi-line

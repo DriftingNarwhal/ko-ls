@@ -1,6 +1,6 @@
 # Interface
 
-**Document status:** v0.34 — §1.11 gains the door macOS actually uses: the **Dock icon**.
+**Document status:** v0.35 — the first field test of §§1.6–1.8 found three things. A conversation's channel is **derived, and had to be inserted or it did not exist**: replay can never produce it, so the channel map was empty and every message in a conversation was refused as *no channel* — accepted, opened, and mute. A conversation appeared in the **networks** group to the member who started one, because §1.4's split keyed off a profile cache only a joiner writes; it reads replayed policy first now. And §1.7's statement about a request having no answer to wait for **never went away**, which turned a sentence about something that worked into a problem that had not. Confirmed working in the same test: the §1.5 reuse rule with two networks — the central promise nothing here could check — and §1.11's Dock door on macOS. Previously v0.34 — §1.11 gains the door macOS actually uses: the **Dock icon**.
 `applicationShouldHandleReopen` was unhandled, so on macOS a member who closed the window had
 the menu bar extra and nothing else, and the gesture everybody tries first did nothing — the
 same shape as `v0.13.2`'s defect, a documented way back that does not open. Raised only when
@@ -424,6 +424,22 @@ every decline into a disclosure (spec 07 §6.2). So:
 - The person who asked sees **delivered**, and never *waiting for an answer*. A sender cannot
   tell a decline from somebody who has not looked, and a row saying *pending* forever would
   invent the difference.
+
+**Field-tested 2026-09-11, and it was mute.** The flow worked to the last step — started from
+a roster, delivered, accepted, a window opened on both sides — and then neither party could say
+anything, reported as *no channel*. A conversation's channel is derived from the network id
+(spec 07 §3.6) and a `ChannelDefinition` in such a network is invalid, so replay can never
+produce it and the channel map was **empty**; authorizing a message resolves the channel to a
+placement first, so every message was refused. The implied channel is inserted where the
+profile is already read, at the network level with no category, which is what it is: the
+network *is* the conversation, so the grants every member gets at genesis are the ones that
+resolve against it.
+
+**And it was filed in the wrong group** for the member who started it. §1.4's split reads the
+network's profile, and the code read a *cache* of it — written only by a joiner, since a
+founder has the declaration in its own genesis. So one conversation was a conversation to one
+party and a server to the other. Replayed policy first, then the cache (`profile_of`), and the
+networks group excludes conversations rather than listing everything on disk.
 
 **Built 2026-09-11**, as three states in one list — somebody who asked, somebody who was asked,
 and somebody being talked to. Accepting joins the conversation's network and opens its window in

@@ -21,6 +21,12 @@ const frame = (() => {
 })();
 
 const el = (id) => document.getElementById(id);
+/// How long a statement stays on screen before it dismisses itself.
+///
+/// Long enough to read two sentences without hurrying, short enough that it is
+/// gone before it becomes furniture.
+const TOLD_MILLIS = 15000;
+
 const state = {
   channels: [],
   // The sidebar as the network orders it — spec 07 §1.6, computed in the core
@@ -153,6 +159,9 @@ function mine(payload) {
 function fail(err) {
   const line = el("app-error");
   if (!line) return;
+  // A pending dismissal belongs to the statement it was scheduled for, not to
+  // whatever is on the line now.
+  clearTimeout(toldFor);
   line.hidden = false;
   line.classList.remove("told");
   line.textContent = String(err && err.message ? err.message : err);
@@ -164,12 +173,26 @@ function fail(err) {
 /// refusal — a request sent is a statement about what the other side will see,
 /// and drawing it in the colour of a failure would make the flow look broken
 /// every time it worked.
+let toldFor = null;
+
 function told(message) {
   const line = el("app-error");
   if (!line) return;
   line.hidden = false;
   line.classList.add("told");
   line.textContent = message;
+  // **It has to go away, and it did not.** A refusal is a state and stays until
+  // something changes it; a statement is read once and then it is in the way.
+  // This one sat over the roster until the window was closed, which made a
+  // sentence about a request that had gone fine look like a problem that had
+  // not.
+  clearTimeout(toldFor);
+  toldFor = setTimeout(() => {
+    if (line.classList.contains("told")) {
+      line.hidden = true;
+      line.textContent = "";
+    }
+  }, TOLD_MILLIS);
 }
 
 /// Whether this network is readable yet.
@@ -3403,6 +3426,14 @@ listen("kols://network", async (event) => {
   state.current = null;
   clearNetworkView();
   await start();
+});
+
+// Clicking it puts it away, for the impatient and for a refusal that has been
+// read and understood.
+el("app-error")?.addEventListener("click", () => {
+  const line = el("app-error");
+  line.hidden = true;
+  line.textContent = "";
 });
 
 watch();
