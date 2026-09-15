@@ -597,6 +597,10 @@ pub async fn serve(
         })
         .collect();
 
+    // The last set of chunks reported as unproducible, so the same answer is not
+    // repeated every couple of seconds.
+    let mut unreachable_history: Option<std::collections::BTreeSet<intranet_storage::Cid>> = None;
+
     let mut relay_backoff = RELAY_RECHECK;
     let mut ask_relay_after = if reserved_at_startup {
         None
@@ -1348,7 +1352,10 @@ pub async fn serve(
                 request_foreign_segments(&store, &mut node, &identity, &mut fetched, &backfill, history_budget(disk.room_for_history(), asked_for_history(&store)))?;
             }
 
-            NodeEvent::FetchComplete { received, .. } => {
+            NodeEvent::FetchComplete {
+                received,
+                unavailable,
+            } => {
                 sink(&absorb_segments(
                     &store,
                     &mut node,
@@ -1369,7 +1376,39 @@ pub async fn serve(
                 // couple of seconds anyway, so a holder that becomes reachable
                 // is found on the next ordinary pass rather than by spinning
                 // between them.
+                // **History nobody will produce, said out loud.** This number
+                // was computed and discarded, and it is the whole answer to the
+                // failure that is hardest to see from inside the application:
+                // messages that exist, that this node knows the address of, and
+                // that no reachable member will hand over. Nothing on screen
+                // distinguishes that from a quiet channel — there is no gap to
+                // draw, because a node cannot draw what it has never held.
+                //
+                // Reported when the set *changes* rather than on every pass: a
+                // fetch is re-planned every couple of seconds, and a banner
+                // rewritten that often is furniture rather than news.
+                if !unavailable.is_empty() {
+                    let now: std::collections::BTreeSet<_> =
+                        unavailable.iter().copied().collect();
+                    if unreachable_history.as_ref() != Some(&now) {
+                        crate::say!(
+                            report,
+                            "  history   {} piece(s) no reachable member will produce",
+                            now.len()
+                        );
+                        sink(&[Event::Degraded {
+                            reason: format!(
+                                "{} piece(s) of history nobody this node can reach will hand                                  over. Not lost — whoever wrote them still holds them — and                                  they arrive when that member is reachable and serving. Until                                  then this channel is showing less than exists, with nothing                                  to mark where",
+                                now.len()
+                            ),
+                        }]);
+                        unreachable_history = Some(now);
+                    }
+                }
                 if !received.is_empty() {
+                    // Something arrived, so whatever could not be had before is
+                    // worth reporting again if it fails again.
+                    unreachable_history = None;
                     request_foreign_segments(&store, &mut node, &identity, &mut fetched, &backfill, history_budget(disk.room_for_history(), asked_for_history(&store)))?;
                 }
             }

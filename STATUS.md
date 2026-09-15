@@ -348,7 +348,7 @@ was a run of bad luck rather than a property. The one failure arrived directly a
 governance change and was attributed by measurement rather than by reading; how, and why the
 comparison is worth running even when you are sure, is in `CONTRIBUTING.md`.
 
-**`v0.13.4` is the release the rows above describe**, cut 2026-09-11: direct messages and the
+**`v0.13.4`**, cut 2026-09-11: direct messages and the
 window model they live in — the workspace as a window of its own, a network window reused as
 the member switches, a small window per conversation, a tray, and a second launch that raises
 what is already running. `design/09` §§1.1–1.14 is the design and D40 the decision.
@@ -376,6 +376,10 @@ reverting the fix and watching it fail), and `CONTRIBUTING.md` now carries the q
 answers: could this assertion be true here and false where it ships. `design/05` §1 has it as
 the third shell trap, and the first that is a platform rather than a default.
 
+**`v0.13.5` is the release the rows above describe**, cut 2026-09-15: the three conversation
+defects the first field test found, and the unproducible-history report that should explain the
+fourth.
+
 **`v0.13.4` was tested on two machines, and the window model is confirmed**, 2026-09-11: the
 §1.5 reuse rule with two networks — the central promise nothing here could check — and §1.11's
 Dock door on macOS. A DM request was started from a roster, delivered and accepted. Offline
@@ -392,8 +396,15 @@ sat on screen like a fault. All three fixed; `09` §1.8 has them.
 
 **Still open: messages written before `v0.13.4` have not reconciled.** Fresh ones do, in both
 directions and in both offline cases, so the mechanism works — something about that specific
-backlog does not, and reading has not found it. The next step is data from the machines rather
-than another hypothesis.
+backlog does not. Two candidates were ruled out from the field rather than by reading: there is
+**no *more history* notice**, so the node believes it holds the whole channel, and **no refused
+records**, which the channel view already surfaces. Both point the same way: the node never held
+that author's segment at all, and a node cannot mark a gap in history it has never seen.
+
+`v0.13.5` reports the one number that decides it. `FetchComplete` carries `unavailable` —
+"chunks no known holder would produce" — and nothing in this client had ever read it, so
+history that exists, is addressed, and that no reachable member will hand over was
+indistinguishable from a quiet channel. It now says so, in the window, when the set changes.
 
 **Two machines found three things `v0.13.3` did not fix, 2026-09-11**, and only the first was
 about the relay.
