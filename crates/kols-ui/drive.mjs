@@ -1141,6 +1141,23 @@ say("accepting joins and then opens the conversation",
       wsCalls.indexOf("open_conversation") > wsCalls.indexOf("accept_conversation"),
     JSON.stringify(wsCalls));
 
+// **A way out**, which a joined conversation had none of: a member could start
+// one, accept one and talk in one, and then keep it for ever.
+const joined = [...wsEl("conversations").querySelectorAll("li")].find((r) =>
+  r.textContent.includes("mallory"));
+say("a joined conversation offers a way out",
+    joined.querySelector(".forget")?.textContent === "leave",
+    [...joined.querySelectorAll(".forget")].map((b) => b.textContent).join(","));
+
+wsAnswering = false;
+wsConfirmed.length = 0;
+wsCalls.length = 0;
+joined.querySelector(".forget").dispatchEvent(new wsWindow.MouseEvent("click", { bubbles: true }));
+await settled();
+say("and leaving says what it costs before it does it",
+    /cannot rejoin/.test(wsConfirmed[0] ?? "") && !wsCalls.includes("forget_network"),
+    (wsConfirmed[0] ?? "").slice(0, 60));
+
 // A row nobody has answered yet cannot be opened: there is no network on this
 // side until it is accepted, so a window for it would have nothing to draw.
 const pending = [...wsEl("conversations").querySelectorAll("li")].find((r) =>

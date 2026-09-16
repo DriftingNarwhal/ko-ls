@@ -160,6 +160,7 @@ async function drawConversations() {
 
     item.append(open, conversationNote(it));
     if (it.state === "asked") item.append(...answerButtons(it));
+    if (it.state === "joined") item.append(leaveConversation(it));
     list.append(item);
   }
   el("conversations-empty").hidden = found.length > 0;
@@ -181,6 +182,55 @@ function conversationNote(it) {
     note.textContent = "";
   }
   return note;
+}
+
+/// The way out of a conversation, which there was no way out of.
+///
+/// A joined conversation had no control at all: a member could start one,
+/// accept one and talk in one, and then keep it for ever. Reported from the
+/// field, and it is the same omission as any other — `09` §1.4 lists
+/// conversations beside networks, and a network has had *leave* since the list
+/// existed.
+///
+/// It is `forget_network` underneath, because a conversation **is** a network
+/// (D10) and leaving one is the same act: publish the departure while a node is
+/// running, then delete this installation's copy. What differs is only what has
+/// to be said about it, since a network of two behaves differently from a
+/// network of forty when one member walks out.
+function leaveConversation(it) {
+  const leave = document.createElement("button");
+  leave.className = "forget";
+  leave.textContent = "leave";
+  leave.title = "tell them you are leaving, then remove this side of the conversation";
+  leave.addEventListener("click", async (event) => {
+    event.stopPropagation();
+    const who = it.label || (it.who ? it.who.slice(0, 8) : "this conversation");
+    // Native, for `09` §5.1's reason: this asks whether to destroy something.
+    //
+    // **Said at its real strength.** A conversation is a network of two, so
+    // there is no remaining membership to carry the history — their copy stays
+    // theirs and yours goes. And `03` §4.4 makes a later conversation a
+    // *different* network, so this is not a door you come back through.
+    if (
+      !confirm(
+        `Leave the conversation with ${who}?\n\nThis deletes your side of it — ` +
+          `the messages and the identity you used here. ${who} keeps their copy, and ` +
+          `stops receiving anything new from you.\n\nYou cannot rejoin this one. ` +
+          `Starting another conversation with ${who} creates a different one, with ` +
+          `no history.`,
+      )
+    ) {
+      return;
+    }
+    try {
+      const outcome = await invoke("forget_network", { network: it.network });
+      await draw();
+      said(outcome);
+    } catch (err) {
+      fail(err);
+    }
+  });
+  return leave;
 }
 
 /// Accept and decline, which are a person's act and not the carrier's.

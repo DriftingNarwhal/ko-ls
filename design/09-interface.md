@@ -1,6 +1,16 @@
 # Interface
 
-**Document status:** v0.35 — the first field test of §§1.6–1.8 found three things. A conversation's channel is **derived, and had to be inserted or it did not exist**: replay can never produce it, so the channel map was empty and every message in a conversation was refused as *no channel* — accepted, opened, and mute. A conversation appeared in the **networks** group to the member who started one, because §1.4's split keyed off a profile cache only a joiner writes; it reads replayed policy first now. And §1.7's statement about a request having no answer to wait for **never went away**, which turned a sentence about something that worked into a problem that had not. Confirmed working in the same test: the §1.5 reuse rule with two networks — the central promise nothing here could check — and §1.11's Dock door on macOS. Previously v0.34 — §1.11 gains the door macOS actually uses: the **Dock icon**.
+**Document status:** v0.36 — the second field test: conversations work end to end across two
+networks, and three more things. **A joined conversation had no way out** — startable,
+acceptable, speakable-in, and permanent — which is the same omission as any network row without
+*leave*. **A fact about the node and a fact about the channel shared one line**: degradations
+wrote into the channel's refused-records element, so each overwrote the other and neither said
+what it was about; worse, a channel redraw every two seconds *erased* node notices, which is
+why a report added one release earlier was never seen. Node notices now have their own line and
+dismiss themselves. And **two notices claimed things that were not true**: a hole punch that
+did not land was reported as *no direct connection* to a pair who were connected and visibly
+exchanging messages, and a standing relay failure was reported on every redial rather than
+once. Previously v0.35 — the first field test of §§1.6–1.8 found three things. A conversation's channel is **derived, and had to be inserted or it did not exist**: replay can never produce it, so the channel map was empty and every message in a conversation was refused as *no channel* — accepted, opened, and mute. A conversation appeared in the **networks** group to the member who started one, because §1.4's split keyed off a profile cache only a joiner writes; it reads replayed policy first now. And §1.7's statement about a request having no answer to wait for **never went away**, which turned a sentence about something that worked into a problem that had not. Confirmed working in the same test: the §1.5 reuse rule with two networks — the central promise nothing here could check — and §1.11's Dock door on macOS. Previously v0.34 — §1.11 gains the door macOS actually uses: the **Dock icon**.
 `applicationShouldHandleReopen` was unhandled, so on macOS a member who closed the window had
 the menu bar extra and nothing else, and the gesture everybody tries first did nothing — the
 same shape as `v0.13.2`'s defect, a documented way back that does not open. Raised only when
@@ -465,7 +475,19 @@ a member with two of them unlocked and served neither until they clicked one. §
 joined network warm whether or not anybody is looking at it, which is the whole reason a
 conversation nobody has open can still be reached.
 
-### 1.9 A conversation can stop working, and silence is the wrong way to say so
+**A conversation needs a way out, and had none** — found in the second field test. It could be
+started, accepted, opened and spoken in, and then it was permanent. `09` §1.4 lists
+conversations beside networks and a network row has carried *leave* since the list existed; the
+omission was simply that the conversation row grew accept and decline and never grew this.
+
+It is the same act underneath, because a conversation **is** a network (D10): publish the
+departure while a node is running, then delete this installation's copy. What differs is what
+has to be said, and a network of two is not a network of forty — there is no remaining
+membership to hold the history, so their copy stays theirs and yours goes, and `03` §4.4 makes
+a later conversation a *different* network. So the confirmation says both: this is not a door
+you come back through, and starting another begins empty.
+
+### 1.9 A conversation can stop working, and silence is the wrong way to say so### 1.9 A conversation can stop working, and silence is the wrong way to say so
 
 D39 borrows a conversation's rendezvous from the network it was arranged in, recomputed every
 time and never stored, so **a conversation between two people who no longer share a network,
@@ -1516,6 +1538,22 @@ without `approve-node` is shown no door, and a member without `chat:create-chann
 There is no second permission model in the front end to drift from the first.
 
 ### 5.1 Asking *whether* is native; asking *what* is not
+
+**A fact about the node and a fact about the channel may not share a line.** Degradations — a
+relay that cannot be dialled, history nobody will serve — were written into the same element as
+a channel's own *refused records*, and the consequences were both directions of wrong. Each
+overwrote the other, so a node's notice appeared to be about whatever channel was on screen;
+and because drawing a channel with nothing refused *hides* that element, the two-second poll
+**erased** node notices. A report added specifically to explain a field failure was therefore
+never seen by the person testing it — the instrument fired into an element that was being wiped
+before it could be read.
+
+So they are two lines with two lifetimes. A refusal of something somebody just did is a state
+and stays until it is resolved; a notice the node makes about itself is read once and dismisses
+itself, and a channel's refused records belong to the channel. **A notice that outlives the
+condition it describes is a lie with a timestamp**, which is the same fault as the *no answer to
+wait for* statement that would not leave, and as a *no direct connection* banner shown to a pair
+who were connected and exchanging messages.
 
 §6.5 requires that anything asking a member to **authorise** something be a native dialog,
 outside the document a theme can reach — a theme may hide, move, cover or shrink any element,

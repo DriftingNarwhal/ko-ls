@@ -24,6 +24,54 @@ Kept because this project keeps re-learning the same lessons and paying for them
 
 ---
 
+- **2026-09-16** — **Four notices, and three of them were wrong about the software they were
+  describing.**
+
+  Conversations work end to end across two networks — the flow this whole arc was for. What the
+  same session found was a run of failures in *telling the member things*, which is worth
+  keeping together because they are one mistake in four costumes.
+
+  **A notice that outlives its condition is a lie with a timestamp.** A hole punch that did not
+  land within its deadline was reported as *no direct connection* — to a pair who were
+  connected and visibly exchanging messages. The tester's reasoning was exactly right: either
+  the message is wrong, or traffic is crossing a relay, which §5.2 forbids. It was the message.
+  A punch is a fact about one circuit; reachability is a fact about *now*, and the two were the
+  same sentence. It asks again before saying anything.
+
+  **A standing condition reported per attempt becomes furniture.** The redial loop retries an
+  unreachable designated relay every interval, and each failure was a fresh notice — so one
+  dead relay produced a sentence that came back all evening. Said once per reason now. This is
+  the third time in this arc that a retry loop turned a condition into a nuisance, after the
+  reservation backoff and the fetch spin.
+
+  **The relay was the source of that dead address, and it was announcing it to everybody.** A
+  container's `fe80::` link-local got promoted alongside the real public address, entered every
+  reservation reply, became a circuit address each client advertised, and rode into invites. The
+  member seeing the failure had no capability to change the relay set, so no way to stop it.
+  Core v1.7 §5.4 forbids announcing an address no remote peer could dial. Private addresses stay
+  — a relay on a member's LAN is genuinely reachable.
+
+  **And the instrument added last release was firing into an element that was being wiped.**
+  `v0.13.5` reported "N pieces of history nobody will hand over", which was supposed to settle
+  the unreconciled backlog. The tester never saw it. Degradations were written into the
+  channel's *refused records* line, and drawing a channel with nothing refused **hides** that
+  line — every two seconds. So the report existed, fired, and was erased before it could be
+  read. Two facts with two lifetimes sharing one element, which `09` §5.1 now forbids.
+
+  That last one is the lesson of the day: I added a diagnostic to answer a field question and
+  did not check that it could reach a screen. The failure mode is not "no instrument" but
+  "an instrument nobody can read", which looks identical from the outside and is more expensive,
+  because it spends a release.
+
+  Also: a joined conversation had no way to leave it. Startable, acceptable, speakable-in,
+  permanent. The row grew accept and decline and never grew the control every network row has
+  had since the list existed.
+
+  One test written and thrown away: a relay bound to a wildcard address asserting nothing
+  link-local was promoted. It passed against the unfixed code, because this container has no
+  link-local interface — a test that cannot fail, reading as coverage of exactly what it is
+  blind to. Replaced with a unit test over the predicate.
+
 - **2026-09-11** — **Two members who both wrote while apart, and a rule broken by the code
   that states it.**
 

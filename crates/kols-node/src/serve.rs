@@ -597,6 +597,10 @@ pub async fn serve(
         })
         .collect();
 
+    // Which relay failures have been said, so a standing one is said once.
+    let mut said_about_relay: std::collections::BTreeSet<(libp2p::PeerId, String)> =
+        std::collections::BTreeSet::new();
+
     // The last set of chunks reported as unproducible, so the same answer is not
     // repeated every couple of seconds.
     let mut unreachable_history: Option<std::collections::BTreeSet<intranet_storage::Cid>> = None;
@@ -1228,10 +1232,18 @@ pub async fn serve(
                 peer: Some(peer),
                 error,
             } if designated_peers.contains(&peer) => {
-                crate::say!(report, "  relay     {peer} — {error}");
-                sink(&[Event::Degraded {
-                    reason: format!("the relay {peer} could not be dialled: {error}"),
-                }]);
+                // **Once per reason, not once per attempt.** The redial loop
+                // retries every interval for as long as a designated relay is
+                // unreachable, so reporting each failure turns one standing
+                // condition into a notice that reappears for ever — which is
+                // how a member ends up reading the same sentence all evening
+                // about a relay their network has merely stopped using.
+                if said_about_relay.insert((peer, error.clone())) {
+                    crate::say!(report, "  relay     {peer} — {error}");
+                    sink(&[Event::Degraded {
+                        reason: format!("the relay {peer} could not be dialled: {error}"),
+                    }]);
+                }
                 continue;
             }
 
@@ -1240,6 +1252,24 @@ pub async fn serve(
                 sink(&[Event::Degraded {
                     reason: format!("connected directly to {peer}; the relay introduced you and is no longer carrying anything"),
                 }]);
+                continue;
+            }
+            // **Asked again before it is said.** A punch that did not land
+            // within the deadline is a fact about that circuit; whether the two
+            // members can reach each other is a fact about *now*, and they are
+            // not the same. A pair whose punch was slow, or whose second
+            // attempt landed, or who had an ordinary route all along, is
+            // connected — and was being told it was not, over a channel where
+            // messages were visibly arriving.
+            NodeEvent::HolePunchFailed { peer }
+                if node
+                    .tier_for(&peer)
+                    .is_some_and(|tier| !tier.relay_in_data_path()) =>
+            {
+                crate::say!(
+                    report,
+                    "  direct    a circuit to {peer} did not upgrade, and the pair is                      connected anyway"
+                );
                 continue;
             }
             NodeEvent::HolePunchFailed { peer } => {

@@ -335,9 +335,9 @@ over the same `kols-api` boundary, owed no feature parity and no end-user docume
   contribute, presence, storage, history, and channel
   create/list/rename/topic/slowmode/archive.
 
-**Gates green, re-run 2026-09-11:** 437 passed and 0 failed here (4 ignored, all measurements),
-709 passed and 0 failed in `../distributed-intranet`, clippy clean in both, and
-`crates/kols-ui/drive.mjs`'s 172 checks green by hand, over all three documents with no uncaught
+**Gates green, re-run 2026-09-16:** 437 passed and 0 failed here (4 ignored, all measurements),
+710 passed and 0 failed in `../distributed-intranet`, clippy clean in both, and
+`crates/kols-ui/drive.mjs`'s 174 checks green by hand, over all three documents with no uncaught
 errors. Two of those checks had never run: they sat after the `process.exit` that ends the
 second pass, which is what moving the storage panel between documents left behind — and one of
 them was failing, because the stub it needed moved without its body. The daemon suites
@@ -376,7 +376,30 @@ reverting the fix and watching it fail), and `CONTRIBUTING.md` now carries the q
 answers: could this assertion be true here and false where it ships. `design/05` §1 has it as
 the third shell trap, and the first that is a platform rather than a default.
 
-**`v0.13.5` is the release the rows above describe**, cut 2026-09-15: the three conversation
+**`v0.13.6` is the release the rows above describe**, cut 2026-09-16, from a second field test
+in which **conversations work end to end across two networks**. Four things came with it.
+
+A joined conversation had **no way out** — startable, acceptable, speakable-in, permanent —
+which is the same omission as a network row without *leave* (`09` §1.8).
+
+**Two notices said untrue things.** A hole punch that did not land inside its deadline was
+reported as *no direct connection* to a pair who were connected and visibly exchanging
+messages: the punch is a fact about one circuit and reachability is a fact about now, and the
+two were conflated. And a standing relay failure was reported on **every redial**, so one
+condition became a sentence that reappeared all evening. Both are now asked again before being
+said, and said once.
+
+**The relay was announcing an address nobody could dial.** A container's `fe80::` link-local
+entered every reservation reply, became a circuit address clients advertised, rode into invites,
+and produced a repeating handshake timeout naming a peer id the network had stopped using — on
+the machine with no capability to change the relay set. Core v1.7 §5.4 forbids it.
+
+**And the instrument added in `v0.13.5` could not be seen.** Degradations wrote into the
+channel's refused-records element, which a channel redraw *hides* every two seconds, so the
+unproducible-history report was erased before anybody could read it. `09` §5.1 now separates a
+fact about the node from a fact about the channel, and gives the node's line a lifetime.
+
+**`v0.13.5`**, cut 2026-09-15: the three conversation
 defects the first field test found, and the unproducible-history report that should explain the
 fourth.
 
@@ -401,7 +424,8 @@ backlog does not. Two candidates were ruled out from the field rather than by re
 records**, which the channel view already surfaces. Both point the same way: the node never held
 that author's segment at all, and a node cannot mark a gap in history it has never seen.
 
-`v0.13.5` reports the one number that decides it. `FetchComplete` carries `unavailable` —
+`v0.13.5` reported the one number that decides it — and `v0.13.6` is the release where it can
+actually be seen, since the notice was landing in an element the channel poll wipes. `FetchComplete` carries `unavailable` —
 "chunks no known holder would produce" — and nothing in this client had ever read it, so
 history that exists, is addressed, and that no reachable member will hand over was
 indistinguishable from a quiet channel. It now says so, in the window, when the set changes.

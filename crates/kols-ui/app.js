@@ -175,6 +175,32 @@ function fail(err) {
 /// every time it worked.
 let toldFor = null;
 
+/// A notice the node reports about itself, which is visible and then goes.
+///
+/// **Not the channel's line, which is what this used to share.** A degradation
+/// is about this node — a relay it cannot dial, history nobody will serve — and
+/// it was being written into the same element as a channel's *own* refused
+/// records. So each overwrote the other: opening a channel wiped the node's
+/// notice, and the node's notice claimed to be about the channel on screen.
+/// They are two facts with two lifetimes.
+function noted(message) {
+  const line = el("app-error");
+  if (!line) return;
+  line.hidden = false;
+  line.classList.remove("told");
+  line.textContent = message;
+  dismissLater(line);
+}
+
+/// Puts the line away after a while, so a statement does not become furniture.
+function dismissLater(line) {
+  clearTimeout(toldFor);
+  toldFor = setTimeout(() => {
+    line.hidden = true;
+    line.textContent = "";
+  }, TOLD_MILLIS);
+}
+
 function told(message) {
   const line = el("app-error");
   if (!line) return;
@@ -186,13 +212,7 @@ function told(message) {
   // This one sat over the roster until the window was closed, which made a
   // sentence about a request that had gone fine look like a problem that had
   // not.
-  clearTimeout(toldFor);
-  toldFor = setTimeout(() => {
-    if (line.classList.contains("told")) {
-      line.hidden = true;
-      line.textContent = "";
-    }
-  }, TOLD_MILLIS);
+  dismissLater(line);
 }
 
 /// Whether this network is readable yet.
@@ -3300,8 +3320,12 @@ async function watch() {
     // A node carrying on after something did not work. Shown where the user is
     // looking rather than swallowed: a node quietly failing at one thing looks
     // exactly like a node with nothing to do.
-    el("refused").hidden = false;
-    el("refused").textContent = String(event.payload);
+    //
+    // On the node's own line, and self-dismissing. It used to write into the
+    // channel's refused-records line, so the two overwrote each other and
+    // neither said what it was about — and a standing condition reported on a
+    // loop became a sentence that would not leave the screen.
+    noted(String(event.payload));
   });
 }
 
