@@ -1970,3 +1970,24 @@ dialog::backdrop { background: var(--veil); }
    permanent furniture for a rare act (§1.2). */
 .person.askable { cursor: pointer; }
 .person.askable:hover { background: var(--hover); }
+
+/* The control that takes a relay out of the designated set.
+ *
+ * Beside the address rather than under it: a relay row is a line of monospace
+ * that can be long, and a control on its own line would read as applying to the
+ * list rather than to the entry above it. */
+.relay-remove {
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--radius);
+  color: var(--dim);
+  cursor: pointer;
+  font: inherit;
+  font-family: var(--face);
+  font-size: 10px;
+  margin-left: 8px;
+  padding: 2px 6px;
+  vertical-align: middle;
+}
+
+.relay-remove:hover { border-color: var(--bad); color: var(--bad); }

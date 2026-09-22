@@ -306,6 +306,51 @@ function drawMe(me) {
   drawKeyState(me);
 }
 
+/// Takes one relay out of the designated set.
+///
+/// Submitted as the set that remains, because that is what the entry is: a
+/// designation names the whole set, so removing one is writing the others
+/// again. There is no *undesignate* verb and there should not be — two verbs
+/// over one piece of replayed state is how two members' clients disagree about
+/// what the state now says.
+function removeRelay(address, designated) {
+  const remove = document.createElement("button");
+  remove.className = "relay-remove";
+  remove.textContent = "remove";
+  remove.title = "stop this network designating this relay";
+  remove.addEventListener("click", async (event) => {
+    event.stopPropagation();
+    const remaining = designated.filter((other) => other !== address);
+    if (remaining.length === 0) {
+      // Refused rather than attempted: the command requires at least one, and
+      // saying why here beats a refusal that reads as a malfunction.
+      fail(
+        "This is the only relay this network designates, and a network with none " +
+          "can invite nobody who is behind a router. Designate another first, then " +
+          "remove this one.",
+      );
+      return;
+    }
+    // Native, because it asks whether to change something replayed by everybody
+    // (`09` §5.1, §6.5).
+    if (
+      !confirm(
+        `Stop designating this relay?\n\n${address}\n\nThis is written into the ` +
+          `network's log and replayed by every member, so they all stop using it too. ` +
+          `Anybody currently reaching each other through it will need another way — ` +
+          `${remaining.length} relay(s) remain designated.`,
+      )
+    ) {
+      return;
+    }
+    await act(async () => {
+      await invoke("set_relays", { relays: remaining.join(" ") });
+      await drawRelays();
+    });
+  });
+  return remove;
+}
+
 // What this network designates, and what this node made of it.
 //
 // Two lists rather than one, because they disagree in exactly the case that is
@@ -356,6 +401,15 @@ async function drawRelays({ act = false } = {}) {
     row.className = "mono";
     row.textContent = address;
     row.title = address;
+    // **A designated relay could be added and never removed**, which is how a
+    // network ends up naming one that no longer exists: the entry is replayed
+    // by every member forever, so every member dials it, every invite carries
+    // it, and the one member who could fix it had no control to do it with.
+    //
+    // Gated on the capability for the reason every control here is — the core
+    // re-checks regardless, and hiding it is for the member's sake rather than
+    // enforcement (`design/09` §2).
+    if (relays.may_set) row.append(removeRelay(address, relays.designated));
     list.append(row);
   }
   for (const address of relays.cached) {

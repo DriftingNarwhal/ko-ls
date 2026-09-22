@@ -80,7 +80,18 @@ const answers = {
   }),
   people: () => people,
   waiting: () => waiting,
-  relays: () => ({ designated: [], live: [], cached: [], standing: "none", detail: "" }),
+  // `dto::Relays`. This fixture had drifted to a shape the shell stopped
+  // returning — `live`, `standing` and `detail` do not exist, and `may_set`,
+  // `reported` and `failures` were missing — which is how a check can pass
+  // against a document reading fields that are always undefined.
+  relays: () => ({
+    designated: [],
+    cached: [],
+    may_set: true,
+    reported: false,
+    reserved: null,
+    failures: [],
+  }),
   networks: () => [],
   reorg: () => null,
   settings: () => [],
@@ -648,6 +659,60 @@ say("the contribution panel does not tell members the cap is unenforced",
       .test(contribution));
 say("and it says what offering more actually buys",
     /short of/i.test(contribution) && /whichever is smaller/i.test(contribution));
+
+// ── taking a relay back out of the designated set ─────────────────────
+//
+// **A designation could be added and never removed**, which is how a network
+// ends up naming a relay that no longer exists: replayed by every member, so
+// every member dials it and every invite carries it, and the one member who
+// could fix it had no control to do it with.
+sharedRelays = [];
+// The real shape, from `dto::Relays` — `may_set` is what gates the control.
+answers.relays = () => ({
+  designated: [
+    "/dns4/relay.example/tcp/443/p2p/12D3KooWAT1R2JjcZbnVUKLX8Xo1Qg5APTWMkpHarHY4Uo1YpGzT",
+    "/dns4/gone.example/tcp/1/p2p/12D3KooWQGtYfRyqCXj6gm3tfdwLEAgp4gXuWeJbEurmREgY6sUy",
+  ],
+  cached: [],
+  may_set: true,
+  reported: true,
+  reserved: null,
+  failures: [],
+});
+await window.drawRelays();
+const relayRows = [...el("relay-list").querySelectorAll("li")];
+say("each designated relay can be taken back out",
+    relayRows.length === 2 && relayRows.every((r) => r.querySelector(".relay-remove")),
+    `${relayRows.length} rows`);
+
+// Written as the set that remains, because a designation names the whole set.
+answering = true;
+confirmed.length = 0;
+calls.length = 0;
+relayRows[1].querySelector(".relay-remove").dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
+await settled();
+say("removing one writes the set that remains",
+    saved.length > 0 || calls.includes("set_relays"), JSON.stringify(calls));
+say("and it says the network is told before it does it",
+    /replayed by every member/.test(confirmed[0] ?? ""), (confirmed[0] ?? "").slice(0, 50));
+
+// The last one is refused rather than attempted: a network designating none can
+// invite nobody behind a router, and the command requires at least one.
+answers.relays = () => ({
+  designated: ["/dns4/relay.example/tcp/443/p2p/12D3KooWAT1R2JjcZbnVUKLX8Xo1Qg5APTWMkpHarHY4Uo1YpGzT"],
+  cached: [],
+  may_set: true,
+  reported: true,
+  reserved: null,
+  failures: [],
+});
+await window.drawRelays();
+calls.length = 0;
+el("relay-list").querySelector(".relay-remove").dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
+await settled();
+say("removing the only relay is refused, with the reason",
+    !calls.includes("set_relays") && /only relay/.test(el("app-error").textContent),
+    el("app-error").textContent.slice(0, 50));
 
 // ── a relay two of one member's networks would share — D29, O11 ────────
 // The client is the only party that can see this: the relay replays no log and

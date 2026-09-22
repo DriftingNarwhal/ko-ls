@@ -320,7 +320,10 @@ impl Nodes {
             .copied()
             .collect();
         for network in stopping {
-            self.stop(&network);
+            // Dropped rather than awaited: this is the tier reconciler lowering
+            // a node it is about to start again, not a caller that needs the
+            // claim released before it touches the store.
+            let _ = self.stop(&network);
         }
 
         for (network, (spec, tier)) in wanted {
@@ -338,11 +341,22 @@ impl Nodes {
         }
     }
 
-    /// Stops one network's node, releasing its claim.
-    pub fn stop(&mut self, network: &NetworkId) {
-        if let Some(run) = self.running.remove(network) {
-            run.handle.abort();
-        }
+    /// Stops one network's node, handing back the task so a caller can await it.
+    ///
+    /// **Aborting is a request, not a stop** — the same reason [`Self::stop_all`]
+    /// returns its tasks, and this had the bug that one documents. A claim is
+    /// released when the serving future is *dropped*, and `abort` only asks the
+    /// task to stop at its next await point, so a caller that carried on
+    /// immediately was acting against a node that was still holding the store.
+    ///
+    /// Which is not theoretical for one caller in particular: deleting a
+    /// network's store is exactly what must not happen while its node holds the
+    /// key group, and the workspace refuses it on precisely that ground.
+    #[must_use = "await the task, or the claim it holds is not released"]
+    pub fn stop(&mut self, network: &NetworkId) -> Option<tokio::task::JoinHandle<()>> {
+        let run = self.running.remove(network)?;
+        run.handle.abort();
+        Some(run.handle)
     }
 
     /// Stops everything, handing back the tasks so a caller can await them.

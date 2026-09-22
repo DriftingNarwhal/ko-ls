@@ -1507,7 +1507,9 @@ fn restart_one(
     network: intranet_identity::NetworkId,
 ) {
     if let Ok(mut nodes) = app.nodes.lock() {
-        nodes.stop(&network);
+        // Not awaited: the reconcile below starts it again, so the claim being
+        // released a moment later is the ordinary case rather than a hazard.
+        let _ = nodes.stop(&network);
     }
     reconcile_nodes(handle, app);
 }
@@ -2238,61 +2240,95 @@ async fn join_network(
 /// gossip acknowledges nothing and presenting that number as receipt would be
 /// the same lie one layer along.
 #[tauri::command]
-fn forget_network(
+async fn forget_network(
     handle: tauri::AppHandle,
-    app: tauri::State<'_, App>,
     network: String,
 ) -> Result<dto::Forgotten, String> {
-    let id = intranet_crypto::from_hex(network.trim())
-        .and_then(|bytes| <[u8; 32]>::try_from(bytes.as_slice()).ok())
-        .map(intranet_identity::NetworkId::from_bytes)
-        .ok_or("that is not a network id")?;
+    let id = kols_node::parse_network(&network)?;
 
-    let open_here = app
-        .open
-        .lock()
-        .map_err(|_| "the workspace lock is poisoned")?
-        .as_ref()
-        .is_some_and(|executor| *executor.store().network() == id);
-
-    if !open_here {
-        app.workspace.forget(&id)?;
-        return Ok(dto::Forgotten {
-            announced: false,
-            reached: 0,
-            reason: "this network was not open, so no node was running to tell it. Its \
-                     members still have you in their logs"
-                .to_owned(),
-        });
-    }
-
-    // Written before anything is torn down, and refused loudly if it cannot be:
-    // the last `revoke-node` holder is stopped here rather than left to delete
-    // their store and strand the network silently.
-    let reached = app.with(|executor| {
-        executor
-            .submit(Command::LeaveNetwork)
-            .map_err(|err| err.to_string())?;
-        Ok(executor.store().connected().len())
-    })?;
+    // **The departure is published for the network being left, whichever one
+    // that is.** This used to happen only when the network was the one drawn in
+    // the window, and everything else took a path that deleted the store
+    // without telling anybody — which stopped working altogether when every
+    // network gained a node of its own: the workspace refuses to delete a store
+    // whose node is running, and since `v0.13.0` that is all of them. Leaving
+    // was therefore impossible for anything but the network in view, and a
+    // conversation — always warm, never "in view" — could not be left at all.
+    //
+    // Scoped so that nothing holding the store crosses the await below.
+    let (announced, reached) = {
+        let app = handle.state::<App>();
+        match executor_for(&app, &network) {
+            Ok(executor) => match executor.submit(Command::LeaveNetwork) {
+                Ok(_) => (true, executor.store().connected().len()),
+                // Not fatal, and the reason matters to what is reported: a node
+                // that was never keyed in has nothing to revoke, and refusing
+                // to let it delete its own store would trap it there.
+                Err(_) => (false, 0),
+            },
+            Err(_) => (false, 0),
+        }
+    };
 
     // One tick of the node's two-second refresh is what carries the entry from
     // the store into the node's own log and out to its peers. Waited for rather
-    // than assumed, because the alternative is aborting the node between the
+    // than assumed, because the alternative is stopping the node between the
     // append and the adoption — which writes a departure into a store that is
     // about to be deleted and tells nobody at all.
-    std::thread::sleep(ANNOUNCE_GRACE);
+    if announced {
+        tokio::time::sleep(ANNOUNCE_GRACE).await;
+    }
 
-    stop_node(&handle);
-    *app.open
-        .lock()
-        .map_err(|_| "the workspace lock is poisoned")? = None;
+    // **This network's node, and only this one.** Stopping every node to leave
+    // one was the old shape, from when there was only ever one to stop.
+    let stopping = {
+        let app = handle.state::<App>();
+        let mut nodes = app.nodes.lock().map_err(|_| "the node lock is poisoned")?;
+        nodes.stop(&id)
+    };
+    if let Some(task) = stopping {
+        // Awaited, because the claim goes when the future is dropped and the
+        // whole point of stopping first is that the store is about to be
+        // deleted (`kols_node::nodes::Nodes::stop`).
+        let _ = tokio::time::timeout(SHUTDOWN_GRACE, task).await;
+    }
 
-    app.workspace.forget(&id)?;
+    {
+        let app = handle.state::<App>();
+        // A window drawing this network is drawing something that is about to
+        // stop existing, and the executor held for it names a store that will
+        // not be there. Both are let go before the delete rather than after.
+        let was_in_view = app
+            .open
+            .lock()
+            .map_err(|_| "the workspace lock is poisoned")?
+            .as_ref()
+            .is_some_and(|executor| *executor.store().network() == id);
+        if was_in_view {
+            *app.open.lock().map_err(|_| "the workspace lock is poisoned")? = None;
+            if let Ok(mut view) = app.in_view.lock() {
+                *view = None;
+            }
+            if let Some(window) = handle.get_webview_window(NETWORK_WINDOW) {
+                let _ = window.close();
+            }
+        }
+        // A conversation has a window of its own, which outlives nothing.
+        if let Some(window) = handle.get_webview_window(&conversation_label(&network)) {
+            let _ = window.close();
+        }
+
+        app.workspace.forget(&id)?;
+    }
+
     Ok(dto::Forgotten {
-        announced: true,
+        announced,
         reached,
-        reason: if reached == 0 {
+        reason: if !announced {
+            "no departure was published — this node could not write one, so its members \
+             still have you in their logs"
+                .to_owned()
+        } else if reached == 0 {
             "no member was connected, so the departure is written and nobody has heard \
              it. It cannot be sent again — the seed that signed it is gone"
                 .to_owned()
