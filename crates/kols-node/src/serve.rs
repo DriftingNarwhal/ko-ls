@@ -492,7 +492,10 @@ pub async fn serve(
     }
 
     let mut failures: Vec<String> = Vec::new();
-    let reserved = reserve_any_reporting(&mut node, &designated, sink, &mut failures).await;
+    let mut unreachable = Vec::new();
+    let reserved =
+        reserve_any_reporting(&mut node, &designated, sink, &mut failures, &mut unreachable).await;
+    note_relay_standing(&store, reserved.as_ref(), &unreachable);
     if designated.is_empty() {
         crate::say!(report, "  relay     none designated — this node is reachable only on its own addresses");
     }
@@ -674,7 +677,10 @@ pub async fn serve(
                     // Still looking every twenty seconds; just not asking yet.
                     continue;
                 }
-                let regained = reserve_any(&mut node, &designated, sink).await;
+                let mut unreachable = Vec::new();
+                let regained =
+                    reserve_any(&mut node, &designated, sink, &mut unreachable).await;
+                note_relay_standing(&store, regained.as_ref(), &unreachable);
                 if regained.is_some() {
                     relay_backoff = RELAY_RECHECK;
                     ask_relay_after = None;
@@ -2592,9 +2598,10 @@ async fn reserve_any(
     node: &mut MemberNode,
     designated: &[String],
     sink: &Sink,
+    unreachable: &mut Vec<String>,
 ) -> Option<String> {
     let mut discarded = Vec::new();
-    reserve_any_reporting(node, designated, sink, &mut discarded).await
+    reserve_any_reporting(node, designated, sink, &mut discarded, unreachable).await
 }
 
 /// As [`reserve_any`], collecting the reason each relay failed.
@@ -2603,6 +2610,10 @@ async fn reserve_any_reporting(
     designated: &[String],
     sink: &Sink,
     failures: &mut Vec<String>,
+    // **Addresses rather than a `&Store`**, because this awaits and a `Store`
+    // is not `Send` — the node it belongs to is spawned onto the runtime. The
+    // caller records what this collected, on the other side of the await.
+    unreachable: &mut Vec<String>,
 ) -> Option<String> {
     for relay in designated {
         let address: Multiaddr = match relay.parse() {
@@ -2650,6 +2661,7 @@ async fn reserve_any_reporting(
                 };
                 failures.push(reason.clone());
                 sink(&[Event::Degraded { reason }]);
+                unreachable.push(relay.clone());
             }
             Err(err) => {
                 let reason = format!(
@@ -2659,10 +2671,34 @@ async fn reserve_any_reporting(
                 );
                 failures.push(reason.clone());
                 sink(&[Event::Degraded { reason }]);
+                unreachable.push(relay.clone());
             }
         }
     }
     None
+}
+
+/// Writes down which designated relays answered and which did not.
+///
+/// **So that a member can be told how long it has been true.** A client may
+/// notice that a designated relay has been unreachable for a long time and
+/// offer to take it out; it may not do that by itself, because undesignating is
+/// a governance entry every member replays — so one member's bad afternoon
+/// would become the whole network's configuration, decided by the machine least
+/// able to reach anything. What a client can honestly report is how long *it*
+/// has been failing, which is a number nobody otherwise has.
+///
+/// Kept on disk rather than in memory, since a node restarts far more often
+/// than a relay dies and a count that resets every launch never reaches a
+/// number worth acting on.
+fn note_relay_standing(store: &Store, reserved: Option<&String>, unreachable: &[String]) {
+    if let Some(relay) = reserved {
+        let _ = store.relay_answered(relay);
+    }
+    let now = crate::chat::now_millis();
+    for relay in unreachable {
+        let _ = store.note_relay_unreachable(relay, now);
+    }
 }
 
 /// What one absorb pass took in.

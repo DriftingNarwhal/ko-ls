@@ -1331,9 +1331,27 @@ fn relays(app: tauri::State<'_, App>) -> Result<dto::Relays, String> {
         let store = executor.store();
         let identity = store.identity().map_err(|e| e.to_string())?;
         let state = store.state().map_err(|e| e.to_string())?;
+        // How long each designated relay has been unreachable *for this node*,
+        // which is the only version of that question a client can answer.
+        let now = kols_node::chat::now_millis();
+        let unreachable = state
+            .policy
+            .bootstrap_relays
+            .iter()
+            .filter_map(|address| {
+                let since = store.relay_unreachable_since(address)?;
+                let hours = u32::try_from((now - since).max(0) / 3_600_000).unwrap_or(u32::MAX);
+                Some(dto::StaleRelay {
+                    address: address.clone(),
+                    hours,
+                })
+            })
+            .collect();
+
         Ok(dto::Relays {
             designated: state.policy.bootstrap_relays.clone(),
             cached: store.relays(),
+            unreachable,
             may_set: state
                 .identity_holds(&identity.id(), &intranet_governance::Capability::DefinePolicy),
             reported: standing.is_some(),

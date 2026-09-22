@@ -21,6 +21,13 @@ const frame = (() => {
 })();
 
 const el = (id) => document.getElementById(id);
+/// How long a designated relay must have been unreachable before saying so.
+///
+/// Long enough that an ordinary outage — a redeploy, a restart, a laptop on a
+/// train — has passed, since the point is to distinguish *this relay is gone*
+/// from *this relay is having a morning*. Short enough to notice the same day.
+const STALE_RELAY_HOURS = 6;
+
 /// How long a statement stays on screen before it dismisses itself.
 ///
 /// Long enough to read two sentences without hurrying, short enough that it is
@@ -409,6 +416,25 @@ async function drawRelays({ act = false } = {}) {
     // Gated on the capability for the reason every control here is — the core
     // re-checks regardless, and hiding it is for the member's sake rather than
     // enforcement (`design/09` §2).
+    // **How long this node has been unable to reach it, where somebody can act
+    // on it.** Said rather than acted on: the client never undesignates a relay
+    // by itself, because that entry is replayed by every member — so the
+    // machine with the worst connectivity would be making policy for the
+    // network, on the strength of *I cannot reach it*, which is not the same
+    // claim as *it is gone*.
+    const stale = (relays.unreachable ?? []).find((it) => it.address === address);
+    if (stale && stale.hours >= STALE_RELAY_HOURS) {
+      const note = document.createElement("span");
+      note.className = "relay-stale";
+      note.textContent =
+        stale.hours >= 48
+          ? `nothing for ${Math.floor(stale.hours / 24)} days`
+          : `nothing for ${stale.hours}h`;
+      note.title =
+        "this node has not reached it since then. Other members may still be " +
+        "reaching it, so this is what your machine sees rather than a verdict";
+      row.append(note);
+    }
     if (relays.may_set) row.append(removeRelay(address, relays.designated));
     list.append(row);
   }

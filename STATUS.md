@@ -335,9 +335,9 @@ over the same `kols-api` boundary, owed no feature parity and no end-user docume
   contribute, presence, storage, history, and channel
   create/list/rename/topic/slowmode/archive.
 
-**Gates green, re-run 2026-09-16:** 437 passed and 0 failed here (4 ignored, all measurements),
+**Gates green, re-run 2026-09-22:** 437 passed and 0 failed here (4 ignored, all measurements),
 710 passed and 0 failed in `../distributed-intranet`, clippy clean in both, and
-`crates/kols-ui/drive.mjs`'s 174 checks green by hand, over all three documents with no uncaught
+`crates/kols-ui/drive.mjs`'s 181 checks green by hand, over all three documents with no uncaught
 errors. Two of those checks had never run: they sat after the `process.exit` that ends the
 second pass, which is what moving the storage panel between documents left behind — and one of
 them was failing, because the stub it needed moved without its body. The daemon suites
@@ -376,7 +376,24 @@ reverting the fix and watching it fail), and `CONTRIBUTING.md` now carries the q
 answers: could this assertion be true here and false where it ships. `design/05` §1 has it as
 the third shell trap, and the first that is a platform rather than a default.
 
-**`v0.13.6` is the release the rows above describe**, cut 2026-09-16, from a second field test
+**`v0.13.7` is the release the rows above describe**, cut 2026-09-22, from a third field test.
+
+**Leaving a network was impossible for everything but the one in the window**, which is how a
+conversation — always warm, never in view — could be started, accepted, spoken in and never
+left. `forget_network` had a path that deleted a store without telling anybody, and it hits the
+refusal to delete a store whose node is running: since `v0.13.0` that is all of them. It now
+publishes the departure for whichever network is being left, stops **that** node and awaits it,
+and lets go of the window before deleting. `Nodes::stop` hands its task back, which is the bug
+its own sibling documents.
+
+**And a relay could be designated and never taken back out.** Each one now has a remove, gated
+on the capability. The client deliberately does **not** remove one by itself: undesignating is
+replayed by every member, so a client acting on its own failure to reach a relay would let the
+machine with the worst connectivity make policy for the network. It reports how long it has
+been failing — counted on disk, since a node restarts far more often than a relay dies — beside
+the control a member uses to act on it (`09` §3).
+
+**`v0.13.6`**, cut 2026-09-16, from a second field test
 in which **conversations work end to end across two networks**. Four things came with it.
 
 A joined conversation had **no way out** — startable, acceptable, speakable-in, permanent —

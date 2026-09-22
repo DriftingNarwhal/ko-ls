@@ -685,6 +685,46 @@ say("each designated relay can be taken back out",
     relayRows.length === 2 && relayRows.every((r) => r.querySelector(".relay-remove")),
     `${relayRows.length} rows`);
 
+// **Said, never acted on.** A client that undesignated a relay it could not
+// reach would let the machine with the worst connectivity make policy for every
+// member, on the strength of a claim it cannot make: *I cannot reach it* is not
+// *it is gone*.
+answers.relays = () => ({
+  designated: [
+    "/dns4/relay.example/tcp/443/p2p/12D3KooWAT1R2JjcZbnVUKLX8Xo1Qg5APTWMkpHarHY4Uo1YpGzT",
+    "/dns4/gone.example/tcp/1/p2p/12D3KooWQGtYfRyqCXj6gm3tfdwLEAgp4gXuWeJbEurmREgY6sUy",
+  ],
+  cached: [],
+  may_set: true,
+  reported: true,
+  reserved: null,
+  failures: [],
+  unreachable: [{ address: "/dns4/gone.example/tcp/1/p2p/12D3KooWQGtYfRyqCXj6gm3tfdwLEAgp4gXuWeJbEurmREgY6sUy", hours: 30 }],
+});
+calls.length = 0;
+await window.drawRelays();
+const stale = [...el("relay-list").querySelectorAll("li")][1];
+say("a relay nothing has been heard from says how long",
+    /nothing for 30h/.test(stale.textContent), stale.textContent.slice(-40));
+say("and the client never undesignates it by itself",
+    !calls.includes("set_relays"), JSON.stringify(calls));
+
+// A short outage says nothing: the point is to tell a relay that is gone from
+// one that is having a morning.
+answers.relays = () => ({
+  designated: ["/dns4/relay.example/tcp/443/p2p/12D3KooWAT1R2JjcZbnVUKLX8Xo1Qg5APTWMkpHarHY4Uo1YpGzT"],
+  cached: [],
+  may_set: true,
+  reported: true,
+  reserved: null,
+  failures: [],
+  unreachable: [{ address: "/dns4/relay.example/tcp/443/p2p/12D3KooWAT1R2JjcZbnVUKLX8Xo1Qg5APTWMkpHarHY4Uo1YpGzT", hours: 1 }],
+});
+await window.drawRelays();
+say("an hour of not reaching one is not worth saying",
+    !el("relay-list").textContent.includes("nothing for"),
+    el("relay-list").textContent.slice(-40));
+
 // Written as the set that remains, because a designation names the whole set.
 answering = true;
 confirmed.length = 0;

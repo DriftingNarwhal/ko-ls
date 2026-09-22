@@ -24,6 +24,49 @@ Kept because this project keeps re-learning the same lessons and paying for them
 
 ---
 
+- **2026-09-22** — **Two controls that could be reached and not used, and one that should not
+  exist.**
+
+  A member tried to leave a conversation and was told a node was running for it. They closed
+  every window, which is the correct instinct and could never have worked: a window is a view
+  and the node keeps running by design.
+
+  `forget_network` had two paths — publish a departure and delete when the network was the one
+  drawn in the window, or delete straight away when it was not — and the second runs into the
+  workspace's refusal to delete a store whose node holds the key group. **Since `v0.13.0` that
+  is every network**, because every one of them has a node. So leaving had been impossible for
+  anything but the network in view for five releases, and nobody noticed until a conversation
+  gave it a control of its own: a conversation is always warm and never "in view", so it was the
+  first thing that could not be left at all.
+
+  Fixed by doing the thing properly per network: publish, stop *that* node and **await** it, let
+  go of the window and the executor, then delete. `Nodes::stop` had the bug its own sibling
+  documents in full — it aborted without handing back the task, and a claim is released when the
+  future is dropped, so every caller had been acting against a node that was still holding the
+  store.
+
+  **The relay had no management at all**, only designation. A stale entry therefore had every
+  member dialling a relay that no longer existed, carried it into every invite, and left the one
+  member holding the capability with nothing to fix it with. There is no *undesignate* verb and
+  should not be — a designation names the whole set, so removing one is writing the others again.
+
+  **And the interesting part is the feature I argued against building.** The obvious next step
+  is for a node to drop a relay it has not reached in days. It is wrong, and the reason is worth
+  keeping: undesignating is a governance entry every member replays, so a member on a hotel
+  network would remove a relay working perfectly for everybody else and the whole network would
+  replay it. The machine with the worst connectivity would be making policy. *I cannot reach it*
+  is not *it is gone*, and no client can tell those apart.
+
+  So the client notices and says how long, beside the control a person uses to act on it. Six
+  hours before it says anything, because the point is to distinguish a relay that is gone from a
+  relay having a morning. Counted on disk rather than in memory: a node restarts far more often
+  than a relay dies, and a count that resets every launch never reaches a number worth acting on.
+
+  A smaller thing worth writing down: the driver's `relays` fixture had drifted to a shape the
+  shell stopped returning — three fields that no longer exist, three that were missing. Checks
+  against a document reading fields that are always `undefined` pass for the wrong reason, which
+  is the same family as the test earlier this month that could not fail.
+
 - **2026-09-16** — **Four notices, and three of them were wrong about the software they were
   describing.**
 

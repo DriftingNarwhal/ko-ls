@@ -1799,6 +1799,43 @@ impl Store {
         Ok(())
     }
 
+        /// Notes that a designated relay has not answered, keeping the first time.
+    ///
+    /// # Why this is written down rather than counted in memory
+    ///
+    /// The question a member needs answered is *how long has this been true*,
+    /// and a node that restarts — which is every launch — would otherwise start
+    /// counting from zero and never reach a number worth acting on. A relay
+    /// that has answered nothing for a day looks exactly like one that has been
+    /// failing for thirty seconds, which is the difference between a network
+    /// blip and a relay that is gone.
+    ///
+    /// The earliest failure is kept, so this says when it *stopped* working
+    /// rather than when it was last asked.
+    pub fn note_relay_unreachable(&self, relay: &str, at_millis: i64) -> Result<(), StoreError> {
+        let path = self.root.join("unreachable").join(relay_file(relay));
+        if path.exists() {
+            return Ok(());
+        }
+        fs::create_dir_all(path.parent().expect("a parent"))?;
+        write_atomically(&self.root, path, at_millis.to_string().as_bytes())?;
+        Ok(())
+    }
+
+    /// Forgets that a relay was unreachable, because it answered.
+    pub fn relay_answered(&self, relay: &str) -> Result<(), StoreError> {
+        remove_if_present(self.root.join("unreachable").join(relay_file(relay)))
+    }
+
+    /// When a relay stopped answering this node, if it has.
+    pub fn relay_unreachable_since(&self, relay: &str) -> Option<i64> {
+        fs::read_to_string(self.root.join("unreachable").join(relay_file(relay)))
+            .ok()?
+            .trim()
+            .parse()
+            .ok()
+    }
+
     /// Records what kind of network this is, before its log can say so.
     ///
     /// # Why this is cached at all, which is the relay cache's argument exactly
@@ -3042,6 +3079,14 @@ fn id_from_hex(name: &str) -> Option<PerNetworkIdentityId> {
 /// Every caller here is forgetting something, and forgetting twice is the
 /// ordinary case rather than an error: a retry that raced a delivery, a request
 /// answered from two surfaces. `NotFound` is the state being asked for.
+/// A file name for a relay address, which is not one on any filesystem.
+///
+/// Hashed rather than escaped: a multiaddress carries slashes, and what is
+/// wanted is a stable name per address rather than a readable one.
+fn relay_file(relay: &str) -> String {
+    intranet_crypto::to_hex(intranet_crypto::hash_bytes(relay.as_bytes()).as_bytes())
+}
+
 fn remove_if_present(path: impl AsRef<Path>) -> Result<(), StoreError> {
     match fs::remove_file(path.as_ref()) {
         Ok(()) => Ok(()),

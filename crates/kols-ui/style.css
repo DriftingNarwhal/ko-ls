@@ -1991,3 +1991,15 @@ dialog::backdrop { background: var(--veil); }
 }
 
 .relay-remove:hover { border-color: var(--bad); color: var(--bad); }
+
+/* How long a designated relay has been unreachable from this machine.
+ *
+ * Warning-coloured rather than bad: other members may be reaching it perfectly
+ * well, and this is what one node sees rather than a verdict on the relay. */
+.relay-stale {
+  color: var(--warn);
+  font-family: var(--face);
+  font-size: 10px;
+  margin-left: 8px;
+  vertical-align: middle;
+}

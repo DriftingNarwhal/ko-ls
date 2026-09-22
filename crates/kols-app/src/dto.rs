@@ -376,6 +376,15 @@ impl Network {
     }
 }
 
+/// A designated relay this node has stopped being able to reach.
+#[derive(Debug, Serialize)]
+pub struct StaleRelay {
+    /// Its address, as designated.
+    pub address: String,
+    /// How long this node has been unable to reach it, in whole hours.
+    pub hours: u32,
+}
+
 /// Where a redeemed invite left this member.
 #[derive(Debug, Serialize)]
 pub struct Joined {
@@ -488,6 +497,16 @@ pub struct Member {
 /// which you have.
 #[derive(Debug, Serialize)]
 pub struct Relays {
+    /// Designated relays this node has not been able to reach, and for how
+    /// many hours it has been that way.
+    ///
+    /// **Reported, never acted on.** Undesignating is a governance entry every
+    /// member replays, so a client that removed a relay because it personally
+    /// could not reach one would let the machine with the worst connectivity
+    /// make policy for everybody — and *I cannot reach it* is not the same
+    /// claim as *it is gone*, which is the only one worth writing down. What
+    /// the client can honestly offer is the number and the control beside it.
+    pub unreachable: Vec<StaleRelay>,
     /// What replay says this network uses, in order.
     pub designated: Vec<String>,
     /// What this node wrote down locally and will dial before it has synced.

@@ -1,6 +1,14 @@
 # Interface
 
-**Document status:** v0.36 — the second field test: conversations work end to end across two
+**Document status:** v0.37 — §3 gains relay *management*, which a network had none of: a relay
+could be designated and never taken back out, so one that no longer existed was dialled by every
+member, carried in every invite, and fixable by nobody. Each designated relay now has a remove,
+gated on the capability and refusing the last one with the reason. **The client does not remove
+one by itself**, and the argument is worth keeping: undesignating is a governance entry every
+member replays, so a client acting on its own failure to reach a relay would let the machine
+with the worst connectivity make policy for the network — and *I cannot reach it* is not the
+claim *it is gone*. What it does instead is say how long it has been failing, beside the control
+that acts on it. Previously v0.36 — the second field test: conversations work end to end across two
 networks, and three more things. **A joined conversation had no way out** — startable,
 acceptable, speakable-in, and permanent — which is the same omission as any network row without
 *leave*. **A fact about the node and a fact about the channel shared one line**: degradations
@@ -788,6 +796,25 @@ discovered during it.
 ---
 
 ## 3. Direct Messages Must Not Require Setting Up a Relay
+
+**A relay could be designated and never undesignated, and that is how a network ends up naming
+one that is gone.** Added 2026-09-22, after a field test where a stale designation had every
+member dialling a relay that no longer answered, put it in every invite, and left the one
+member who held the capability with no control to remove it. There is no *undesignate* verb and
+there should not be — a designation names the whole set, so removing one is writing the others
+again, and two verbs over one piece of replayed state is how two members' clients come to
+disagree about what it says.
+
+**The client says how long, and never decides.** It is the obvious next step to have a node drop
+a relay it has not reached in days, and it is wrong: that entry is replayed by every member, so
+a member on a hotel network or behind a strict firewall would remove a relay working perfectly
+for everyone else, and everybody would replay it. The claim a client can make is *I have not
+reached this since Tuesday*; the claim that justifies an entry is *this relay is gone*, and no
+client can tell them apart. So the number is reported beside the control, to a member who holds
+the capability, and the decision stays a person's. Counted on disk, because a node restarts far
+more often than a relay dies and a count that resets each launch never reaches a number worth
+acting on.
+
 
 Two people starting a conversation cannot be asked to stand up infrastructure first. That
 friction would make the feature unusable, and the design has to answer it rather than assume
