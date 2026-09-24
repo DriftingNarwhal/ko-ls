@@ -23,44 +23,38 @@ mod channel;
 mod cursor;
 mod dm;
 mod hlc;
-mod log;
-mod permissions;
-mod policy;
-mod presence;
 mod ids;
 mod limits;
 mod live;
+mod log;
 mod names;
+mod permissions;
+mod policy;
+mod presence;
 mod record;
 mod segment;
 mod view;
 
 pub use channel::{
-    CHAT_NAMESPACE, ChannelChange, ChannelEntry, ChannelEntryBody, ChannelKind, ChannelRefusal,
-    MAX_CHANNEL_NAME_BYTES, MAX_CHANNEL_TOPIC_BYTES, MAX_ROTATION_REASON_BYTES, MembershipAction,
-    CategoryChange, EntrySubject, MAX_CATEGORY_NAME_BYTES, Privacy, SidebarCategory,
+    CHAT_NAMESPACE, CategoryChange, ChannelChange, ChannelEntry, ChannelEntryBody, ChannelKind,
+    ChannelRefusal, EntrySubject, MAX_CATEGORY_NAME_BYTES, MAX_CHANNEL_NAME_BYTES,
+    MAX_CHANNEL_TOPIC_BYTES, MAX_ROTATION_REASON_BYTES, MembershipAction, Privacy, SidebarCategory,
     SidebarChannel, SidebarRow, admit, sidebar_order,
 };
 pub use cursor::{Cursor, Window};
 pub use dm::{DM_KIND, DM_NAMESPACE, DmInvite};
 pub use hlc::Hlc;
-pub use live::{LivePayload, channel_content_key};
-pub use presence::{
-    BEAT_MILLIS, Beat, FRESH_MILLIS, Presence, PresenceBeat, SealedBeat, presence_key,
-};
-pub use names::{
-    MAX_NAME_BYTES, MAX_NAME_GRAPHEMES, NAME_CLAIM_DOMAIN, NAME_CLAIM_KIND, NAME_CLAIM_TAG,
-    NameClaim, NameRefusal, Names, name_key, replay_names,
-};
-pub use log::{AuthorLog, CHAT_LOG_CONTENT_TYPE, Published, publish_head_index};
 pub use ids::{
     ChannelId, MessageId, author_log_pointer, author_segment_pointer, category_id,
     channel_browse_collection, conversation_channel_id, gossip_topic, moderation_log_pointer,
     participant_index_collection, presence_topic, server_channel_id, thread_channel_id,
 };
-pub use record::{
-    Attachment, DEFAULT_MAX_BODY_BYTES, MAX_ATTACHMENT_NAME_BYTES, MAX_REACTION_KEY_BYTES,
-    Record, RecordBody, RecordClass,
+pub use limits::{RATE_WINDOW_MILLIS, ReaderLimits, Withheld, withheld};
+pub use live::{LivePayload, channel_content_key};
+pub use log::{AuthorLog, CHAT_LOG_CONTENT_TYPE, Published, publish_head_index};
+pub use names::{
+    MAX_NAME_BYTES, MAX_NAME_GRAPHEMES, NAME_CLAIM_DOMAIN, NAME_CLAIM_KIND, NAME_CLAIM_TAG,
+    NameClaim, NameRefusal, Names, name_key, replay_names,
 };
 pub use permissions::{
     Authority, CategoryId, LogAuthority, Placement, Scope, StateAuthority, holds, holds_in_scope,
@@ -70,8 +64,14 @@ pub use policy::{
     ChatPolicy, ChatSetting, MAX_NETWORK_NAME_BYTES, NetworkProfile, Retention, Unit, ZeroMeaning,
     conversation_genesis_values, defaults, keys,
 };
+pub use presence::{
+    BEAT_MILLIS, Beat, FRESH_MILLIS, Presence, PresenceBeat, SealedBeat, presence_key,
+};
+pub use record::{
+    Attachment, DEFAULT_MAX_BODY_BYTES, MAX_ATTACHMENT_NAME_BYTES, MAX_REACTION_KEY_BYTES, Record,
+    RecordBody, RecordClass,
+};
 pub use segment::{MAX_RECORDS_PER_SEGMENT, Segment, framed};
-pub use limits::{RATE_WINDOW_MILLIS, ReaderLimits, Withheld, withheld};
 pub use view::{ChannelView, Rejection, RenderedMessage};
 
 /// What can go wrong building or reading a record.

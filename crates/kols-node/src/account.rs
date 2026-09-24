@@ -190,7 +190,13 @@ impl Account {
             Err(err) => return Err(err.into()),
         };
         let stored = Stored::parse(&raw)?;
-        let key = derive(password, &stored.salt, stored.memory, stored.passes, stored.lanes)?;
+        let key = derive(
+            password,
+            &stored.salt,
+            stored.memory,
+            stored.passes,
+            stored.lanes,
+        )?;
         let account = Self { key };
         if account.check().as_bytes() != &stored.check {
             return Err(AccountError::WrongPassword);
@@ -267,9 +273,8 @@ impl Stored {
         if raw.len() < 1 + 12 + 16 + 32 + 4 {
             return Err(bad("too short"));
         }
-        let u32_at = |at: usize| {
-            u32::from_be_bytes([raw[at], raw[at + 1], raw[at + 2], raw[at + 3]])
-        };
+        let u32_at =
+            |at: usize| u32::from_be_bytes([raw[at], raw[at + 1], raw[at + 2], raw[at + 3]]);
         let memory = u32_at(1);
         let passes = u32_at(5);
         let lanes = u32_at(9);
@@ -301,11 +306,7 @@ fn derive(
 ) -> Result<[u8; 32], AccountError> {
     let params = argon2::Params::new(memory, passes, lanes, Some(32))
         .map_err(|err| AccountError::Kdf(err.to_string()))?;
-    let argon = argon2::Argon2::new(
-        argon2::Algorithm::Argon2id,
-        argon2::Version::V0x13,
-        params,
-    );
+    let argon = argon2::Argon2::new(argon2::Algorithm::Argon2id, argon2::Version::V0x13, params);
     let mut key = [0u8; 32];
     argon
         .hash_password_into(password.as_bytes(), salt, &mut key)
@@ -333,9 +334,8 @@ fn derive(
 /// presented as *that password does not unlock this installation* against a
 /// password that was right. One installation per machine hides this; a process
 /// that touches two does not.
-static UNLOCKED: std::sync::RwLock<
-    Option<std::collections::BTreeMap<PathBuf, Account>>,
-> = std::sync::RwLock::new(None);
+static UNLOCKED: std::sync::RwLock<Option<std::collections::BTreeMap<PathBuf, Account>>> =
+    std::sync::RwLock::new(None);
 
 /// The environment variable the terminal and the test suite unlock from.
 ///
@@ -434,8 +434,8 @@ mod tests {
 
     impl Dir {
         fn new(name: &str) -> Self {
-            let path = std::env::temp_dir()
-                .join(format!("kols-account-{name}-{}", std::process::id()));
+            let path =
+                std::env::temp_dir().join(format!("kols-account-{name}-{}", std::process::id()));
             let _ = fs::remove_dir_all(&path);
             fs::create_dir_all(&path).expect("a workspace");
             Self(path)
@@ -473,8 +473,15 @@ mod tests {
         let seed = [7u8; 32];
 
         let wrapped = account.wrap_seed(&network(1), &seed);
-        assert_ne!(&wrapped[..], &seed[..], "the seed must not be stored as itself");
-        assert_eq!(account.open_seed(&network(1), &wrapped).expect("opens"), seed);
+        assert_ne!(
+            &wrapped[..],
+            &seed[..],
+            "the seed must not be stored as itself"
+        );
+        assert_eq!(
+            account.open_seed(&network(1), &wrapped).expect("opens"),
+            seed
+        );
     }
 
     #[test]
@@ -504,7 +511,10 @@ mod tests {
     #[test]
     fn an_installation_with_no_account_says_so_rather_than_failing_obscurely() {
         let dir = Dir::new("none");
-        assert!(matches!(Account::unlock(&dir.0, "pw"), Err(AccountError::None)));
+        assert!(matches!(
+            Account::unlock(&dir.0, "pw"),
+            Err(AccountError::None)
+        ));
         assert!(!Account::exists(&dir.0));
     }
 

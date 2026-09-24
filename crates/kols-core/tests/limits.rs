@@ -148,10 +148,7 @@ fn a_reader_refuses_what_the_author_wrote_past_the_ceiling() {
     let withheld = view.withheld(&limits, START + 60_000);
     assert_eq!(withheld.refused.len(), 7);
     assert!(
-        withheld
-            .refused
-            .values()
-            .all(|r| *r == Rejection::TooFast),
+        withheld.refused.values().all(|r| *r == Rejection::TooFast),
         "refused for rate, not for anything else",
     );
 }
@@ -225,16 +222,14 @@ fn every_arrival_order_refuses_the_same_records() {
     let limits = strict();
 
     let mut records = burst(&alice, 12, 3_000);
-    records.extend(
-        (0..8u32).map(|i| {
-            Record::create(
-                &bob,
-                channel(),
-                Hlc::new(START + i64::from(i) * 4_000, 0),
-                message(&format!("b{i}")),
-            )
-        }),
-    );
+    records.extend((0..8u32).map(|i| {
+        Record::create(
+            &bob,
+            channel(),
+            Hlc::new(START + i64::from(i) * 4_000, 0),
+            message(&format!("b{i}")),
+        )
+    }));
 
     let baseline = view_of(records.clone(), &state, &limits);
     let expected = baseline.render(&limits, START + 120_000);

@@ -6,8 +6,7 @@
 
 use intranet_crypto::{Hash, Timestamp};
 use intranet_governance::{
-    Capability, ContentType, EntryBody, GroupId, LogEntry, MembershipAction,
-    NetworkPolicy,
+    Capability, ContentType, EntryBody, GroupId, LogEntry, MembershipAction, NetworkPolicy,
 };
 use intranet_identity::{MasterSeed, NetworkId, PerNetworkIdentity};
 use intranet_ledger::{BandwidthCap, CapabilityAdvertisement, ComputeClass};
@@ -80,7 +79,12 @@ fn genesis(founder: &PerNetworkIdentity) -> LogEntry {
     )
 }
 
-fn admit(founder: &PerNetworkIdentity, parent: Hash, joiner: &PerNetworkIdentity, at: i64) -> LogEntry {
+fn admit(
+    founder: &PerNetworkIdentity,
+    parent: Hash,
+    joiner: &PerNetworkIdentity,
+    at: i64,
+) -> LogEntry {
     LogEntry::create(
         founder,
         Some(parent),
@@ -96,7 +100,8 @@ fn admit(founder: &PerNetworkIdentity, parent: Hash, joiner: &PerNetworkIdentity
 async fn node(seed: u8) -> (MemberNode, Multiaddr) {
     let identity = identity(seed);
     let mut node = MemberNode::new(&identity).unwrap();
-    node.listen_on("/ip4/127.0.0.1/tcp/0".parse().unwrap()).unwrap();
+    node.listen_on("/ip4/127.0.0.1/tcp/0".parse().unwrap())
+        .unwrap();
     // Provider records go unanswered in client mode, which is the default until
     // a node has a confirmed external address — on loopback that never happens,
     // so every lookup would return nobody.
@@ -140,7 +145,12 @@ async fn drive(
 
 /// Two connected members who can each publish chat logs, with ledger entries
 /// in place so a fetch has a source it will actually rank.
-async fn pair() -> (MemberNode, PerNetworkIdentity, MemberNode, PerNetworkIdentity) {
+async fn pair() -> (
+    MemberNode,
+    PerNetworkIdentity,
+    MemberNode,
+    PerNetworkIdentity,
+) {
     let founder = identity(1);
     let peer = identity(2);
     let (mut a, _) = node(1).await;
@@ -266,7 +276,10 @@ async fn a_channel_crosses_the_wire_and_renders_identically() {
     }
     let published = published.unwrap();
     let outcome = publish_segment(&mut a, &published);
-    assert!(outcome.chunks.len() > 1, "the segment must span several chunks");
+    assert!(
+        outcome.chunks.len() > 1,
+        "the segment must span several chunks"
+    );
 
     // The reader learns the pointer through ordinary pointer sync, not by being
     // handed it — the DEK is the only thing passed out of band here, standing in
@@ -283,11 +296,16 @@ async fn a_channel_crosses_the_wire_and_renders_identically() {
 
     let pointer = known_pointer(&b, log.pointer_id()).unwrap().clone();
     pointer.verify().unwrap();
-    assert!(fetch(&mut b, &mut a, &peer, pointer.current_cid).await, "fetch timed out");
+    assert!(
+        fetch(&mut b, &mut a, &peer, pointer.current_cid).await,
+        "fetch timed out"
+    );
 
     let segment = fetch_segment(&b, pointer.current_cid, &Dek::from_bytes([5u8; 32]))
         .expect("segment reassembles");
-    segment.verify().expect("every record verifies after the round trip");
+    segment
+        .verify()
+        .expect("every record verifies after the round trip");
     assert!(segment.ordering_is_valid());
 
     // The point of the exercise: both nodes render the same history, one from

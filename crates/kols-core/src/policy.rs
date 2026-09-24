@@ -221,8 +221,10 @@ impl<'a> ChatPolicy<'a> {
 
     /// How far ahead of local time a record may claim to be.
     pub fn max_future_skew_millis(&self) -> i64 {
-        self.policy
-            .app_policy_int(keys::MAX_FUTURE_SKEW_MILLIS, defaults::MAX_FUTURE_SKEW_MILLIS)
+        self.policy.app_policy_int(
+            keys::MAX_FUTURE_SKEW_MILLIS,
+            defaults::MAX_FUTURE_SKEW_MILLIS,
+        )
     }
 
     /// The largest slowmode a channel manager may set, in seconds.

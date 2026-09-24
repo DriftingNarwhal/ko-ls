@@ -153,7 +153,9 @@ fn unchanged_chunks_keep_their_identifiers() {
             &author,
             channel,
             Hlc::new(1_700_000_000_000, i),
-            message(&format!("message {i} with enough text to move the chunker along"),),
+            message(&format!(
+                "message {i} with enough text to move the chunker along"
+            )),
         );
         before = log
             .append(&author, record, &state)
@@ -370,21 +372,37 @@ fn a_version_collision_loses_no_records() {
     let left_published = left
         .append(
             &author,
-            Record::create(&author, channel, Hlc::new(100, 0), message("from the laptop")),
+            Record::create(
+                &author,
+                channel,
+                Hlc::new(100, 0),
+                message("from the laptop"),
+            ),
             &state,
         )
         .expect("appends");
     let right_published = right
         .append(
             &author,
-            Record::create(&author, channel, Hlc::new(101, 0), message("from the phone")),
+            Record::create(
+                &author,
+                channel,
+                Hlc::new(101, 0),
+                message("from the phone"),
+            ),
             &state,
         )
         .expect("appends");
 
     // Same pointer, same version, different content: a genuine collision.
-    assert_eq!(left_published.pointer.pointer_id, right_published.pointer.pointer_id);
-    assert_eq!(left_published.pointer.version, right_published.pointer.version);
+    assert_eq!(
+        left_published.pointer.pointer_id,
+        right_published.pointer.pointer_id
+    );
+    assert_eq!(
+        left_published.pointer.version,
+        right_published.pointer.version
+    );
 
     let winner = MutablePointer::resolve(&left_published.pointer, &right_published.pointer);
     let winner_is_left = winner == &left_published.pointer;
@@ -517,7 +535,12 @@ fn a_rebase_is_idempotent_when_there_is_nothing_to_merge() {
     let state = state(&author);
     let channel = server_channel_id(&network(), &[9u8; 32]);
 
-    let mut log = AuthorLog::open(&author, channel, Dek::from_bytes([5u8; 32]), ChunkSpec::default());
+    let mut log = AuthorLog::open(
+        &author,
+        channel,
+        Dek::from_bytes([5u8; 32]),
+        ChunkSpec::default(),
+    );
     let published = log
         .append(
             &author,

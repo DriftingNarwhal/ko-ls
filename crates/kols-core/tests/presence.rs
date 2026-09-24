@@ -58,7 +58,13 @@ fn a_beat_round_trips_and_names_the_member_who_signed_it() {
 #[test]
 fn a_beat_is_unreadable_without_the_networks_key() {
     let me = identity(1);
-    let sealed = PresenceBeat::seal(&me, Beat::Here, 1_000, &epoch(1), Hash::from_bytes([4u8; 32]));
+    let sealed = PresenceBeat::seal(
+        &me,
+        Beat::Here,
+        1_000,
+        &epoch(1),
+        Hash::from_bytes([4u8; 32]),
+    );
     assert!(
         sealed.open(&epoch(2)).is_err(),
         "a different epoch key must not open a beat"
@@ -118,7 +124,11 @@ fn an_invisible_member_has_nothing_to_broadcast() {
             name
         );
     }
-    assert_eq!(Presence::from_name("offline"), None, "there is no such state");
+    assert_eq!(
+        Presence::from_name("offline"),
+        None,
+        "there is no such state"
+    );
     assert_eq!(Presence::from_name("online"), None);
 }
 

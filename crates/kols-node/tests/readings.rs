@@ -110,8 +110,10 @@ fn the_index_answers_exactly_what_a_full_scan_would() {
         cached.count_within(kols_core::RecordClass::Message, newest, 60_000),
         records
             .iter()
-            .filter(|record| record.body.class() == kols_core::RecordClass::Message
-                && record.hlc.wall_millis > since)
+            .filter(
+                |record| record.body.class() == kols_core::RecordClass::Message
+                    && record.hlc.wall_millis > since
+            )
             .count(),
         "and the count inside the window, which is what the ceiling asks"
     );
@@ -182,11 +184,20 @@ fn the_next_reading_is_greater_than_the_last_however_the_clock_behaves() {
     use kols_node::chat::next_hlc;
 
     // Ordinary: the clock has moved on.
-    assert_eq!(next_hlc(Some(Hlc::new(1_000, 4)), 2_000), Hlc::new(2_000, 0));
+    assert_eq!(
+        next_hlc(Some(Hlc::new(1_000, 4)), 2_000),
+        Hlc::new(2_000, 0)
+    );
     // Same millisecond: the counter carries it.
-    assert_eq!(next_hlc(Some(Hlc::new(2_000, 4)), 2_000), Hlc::new(2_000, 5));
+    assert_eq!(
+        next_hlc(Some(Hlc::new(2_000, 4)), 2_000),
+        Hlc::new(2_000, 5)
+    );
     // Backwards: a clock that went back must not produce a reading that did.
-    assert_eq!(next_hlc(Some(Hlc::new(9_000, 1)), 2_000), Hlc::new(9_000, 2));
+    assert_eq!(
+        next_hlc(Some(Hlc::new(9_000, 1)), 2_000),
+        Hlc::new(9_000, 2)
+    );
     // Nothing written here yet.
     assert_eq!(next_hlc(None, 2_000), Hlc::new(2_000, 0));
 }
@@ -234,9 +245,17 @@ fn a_restart_forgets_that_a_log_was_announced_but_not_that_it_was_published() {
     let (_dir, executor, channel) = posted("markers", 2);
     let store = executor.store();
 
-    let reading = store.own_readings(&channel).expect("reads").last.expect("wrote");
-    store.set_published_through(&channel, reading).expect("marks");
-    store.set_last_announced(&channel, 1_700_000_000_000).expect("marks");
+    let reading = store
+        .own_readings(&channel)
+        .expect("reads")
+        .last
+        .expect("wrote");
+    store
+        .set_published_through(&channel, reading)
+        .expect("marks");
+    store
+        .set_last_announced(&channel, 1_700_000_000_000)
+        .expect("marks");
 
     assert_eq!(store.published_through(&channel), Some(reading));
     assert_eq!(store.last_announced(&channel), Some(1_700_000_000_000));

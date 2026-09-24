@@ -382,7 +382,11 @@ impl Workspace {
         }
 
         let relays = store.relays();
-        if relays.is_empty() { None } else { Some(relays) }
+        if relays.is_empty() {
+            None
+        } else {
+            Some(relays)
+        }
     }
 
     /// Which of `relays` another of this member's networks already designates.
@@ -419,7 +423,11 @@ impl Workspace {
     /// replaying another network's log. The cache is what this installation
     /// actually knows, and replaying a log this member may not have synced would
     /// answer a question about a network when the question is about a disk.
-    pub fn shared_relays(&self, network: Option<&NetworkId>, relays: &[String]) -> Vec<SharedRelay> {
+    pub fn shared_relays(
+        &self,
+        network: Option<&NetworkId>,
+        relays: &[String],
+    ) -> Vec<SharedRelay> {
         let mine = network.map(|id| to_hex(id.as_bytes()));
         let others: Vec<(Known, Vec<String>)> = self
             .list()
@@ -441,7 +449,11 @@ impl Workspace {
                 continue;
             };
             for (known, held) in &others {
-                if held.iter().filter_map(|a| relay_host(a)).any(|it| it == host) {
+                if held
+                    .iter()
+                    .filter_map(|a| relay_host(a))
+                    .any(|it| it == host)
+                {
                     shared.push(SharedRelay {
                         relay: address.clone(),
                         label: known.label.clone(),
@@ -505,7 +517,13 @@ impl Workspace {
         // make a second store and a second identity, and present as two members
         // who are two strangers.
         let id = NetworkId::from_bytes(crate::random_32()?);
-        self.build(self.path_for(&id), id, label, relays, NetworkProfile::Server)
+        self.build(
+            self.path_for(&id),
+            id,
+            label,
+            relays,
+            NetworkProfile::Server,
+        )
     }
 
     /// Creates a `conversation`-profile network — `design/03` §4.1, spec 07 §1.2.
@@ -621,9 +639,7 @@ impl Workspace {
         };
         roots
             .iter()
-            .filter(|root| {
-                std::fs::metadata(root.join("seed")).is_ok_and(|meta| meta.len() == 32)
-            })
+            .filter(|root| std::fs::metadata(root.join("seed")).is_ok_and(|meta| meta.len() == 32))
             .count()
     }
 
@@ -769,7 +785,13 @@ impl Workspace {
         let store = Store::create(path, id, entropy).map_err(|e| e.to_string())?;
         let founder = store.identity().map_err(|e| e.to_string())?;
         store
-            .append_entry(&network::genesis(&founder, id, relays.clone(), label, profile))
+            .append_entry(&network::genesis(
+                &founder,
+                id,
+                relays.clone(),
+                label,
+                profile,
+            ))
             .map_err(|e| e.to_string())?;
         store.set_label(label).map_err(|e| e.to_string())?;
         store.set_relays(&relays).map_err(|e| e.to_string())?;
@@ -831,7 +853,6 @@ fn describe(store: &Store) -> Known {
         profile: crate::profile_of(store),
     }
 }
-
 
 /// How long a launch waits for the holder to take its ask before concluding
 /// there is no holder.

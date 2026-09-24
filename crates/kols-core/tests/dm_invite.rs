@@ -85,8 +85,7 @@ fn a_proof_about_the_senders_own_other_identities_does_not_pass() {
     // only verified signatures would accept it.
     let mallory_here = person(9, &SHARED);
     let mallory_elsewhere = person(9, &NetworkId::from_bytes([7u8; 32]));
-    let genuine_but_irrelevant =
-        CommonOwnershipProof::create(&mallory_here, &mallory_elsewhere);
+    let genuine_but_irrelevant = CommonOwnershipProof::create(&mallory_here, &mallory_elsewhere);
     assert!(
         genuine_but_irrelevant.verify().is_ok(),
         "the proof itself is real — that is the point"

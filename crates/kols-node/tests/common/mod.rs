@@ -270,7 +270,11 @@ pub fn serve_tuned(
         .stderr(Stdio::from(errors))
         .spawn()
         .expect("serve starts");
-    Daemon { child, log, read: 0 }
+    Daemon {
+        child,
+        log,
+        read: 0,
+    }
 }
 
 pub fn field(output: &str, prefix: &str) -> String {

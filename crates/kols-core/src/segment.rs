@@ -119,9 +119,8 @@ impl Segment {
                 .map_err(|_| CoreError::BadSignature)?,
         );
         let sequence = dec.u64()?;
-        let previous = dec.option(|d| {
-            Ok::<_, CoreError>(Cid::from_hash(Hash::from_bytes(d.fixed::<32>()?)))
-        })?;
+        let previous =
+            dec.option(|d| Ok::<_, CoreError>(Cid::from_hash(Hash::from_bytes(d.fixed::<32>()?))))?;
         // Runs to end of input rather than to a count — see `canonical_bytes`.
         let mut records = Vec::new();
         while dec.remaining() > 0 {
@@ -186,12 +185,13 @@ impl Segment {
 
         let mut per_device: std::collections::BTreeMap<_, crate::Hlc> =
             std::collections::BTreeMap::new();
-        let per_device_strict = self.records.iter().all(|record| {
-            match per_device.insert(record.device, record.hlc) {
-                Some(previous) => previous < record.hlc,
-                None => true,
-            }
-        });
+        let per_device_strict =
+            self.records.iter().all(
+                |record| match per_device.insert(record.device, record.hlc) {
+                    Some(previous) => previous < record.hlc,
+                    None => true,
+                },
+            );
 
         ascending && per_device_strict
     }

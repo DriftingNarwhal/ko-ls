@@ -216,7 +216,9 @@ pub fn channels(
     }
 
     for hash in log.canonical_chain() {
-        let Some(entry) = log.get(&hash) else { continue };
+        let Some(entry) = log.get(&hash) else {
+            continue;
+        };
         let EntryBody::AppEntry { namespace, .. } = &entry.body else {
             continue;
         };
@@ -226,7 +228,9 @@ pub fn channels(
 
         // The category a channel is already known to sit in, which is what lets
         // a category-scoped grant authorize a later entry against it.
-        let known = channel_of(&entry.body).and_then(|id| channels.get(&id)).and_then(|c| c.category);
+        let known = channel_of(&entry.body)
+            .and_then(|id| channels.get(&id))
+            .and_then(|c| c.category);
         let read = ChannelEntry::read(&entry.body, profile, known.as_ref());
         let channel_entry = match read {
             Ok(entry) => entry,
@@ -345,7 +349,9 @@ pub fn categories(
     let mut refused = Vec::new();
 
     for hash in log.canonical_chain() {
-        let Some(entry) = log.get(&hash) else { continue };
+        let Some(entry) = log.get(&hash) else {
+            continue;
+        };
         let EntryBody::AppEntry { namespace, .. } = &entry.body else {
             continue;
         };
@@ -417,12 +423,9 @@ pub fn resolve<'a>(
     needle: &str,
 ) -> Option<&'a Channel> {
     let needle = needle.strip_prefix('#').unwrap_or(needle);
-    channels
-        .values()
-        .find(|c| c.name == needle)
-        .or_else(|| {
-            channels
-                .values()
-                .find(|c| intranet_crypto::to_hex(c.id.as_bytes()).starts_with(needle))
-        })
+    channels.values().find(|c| c.name == needle).or_else(|| {
+        channels
+            .values()
+            .find(|c| intranet_crypto::to_hex(c.id.as_bytes()).starts_with(needle))
+    })
 }

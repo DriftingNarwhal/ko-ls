@@ -19,7 +19,7 @@
 //! time and held every byte.
 
 mod common;
-use common::{field, ok, patience, serve, serve_sealing, Home};
+use common::{Home, field, ok, patience, serve, serve_sealing};
 use std::time::Duration;
 
 /// Held for the whole of each test in this file, so only one runs at a time.
@@ -45,7 +45,9 @@ use std::time::Duration;
 static ONE_AT_A_TIME: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 fn exclusively() -> std::sync::MutexGuard<'static, ()> {
-    ONE_AT_A_TIME.lock().unwrap_or_else(|held| held.into_inner())
+    ONE_AT_A_TIME
+        .lock()
+        .unwrap_or_else(|held| held.into_inner())
 }
 
 /// Alice founds and stays up throughout. Bob writes and leaves. Carol arrives
@@ -66,7 +68,10 @@ fn a_member_reads_what_an_offline_member_wrote_because_a_third_kept_it() {
     let mut alice_node = serve(&alice, 45301, None);
     let listening = alice_node.wait_for("listening", patience(Duration::from_secs(20)));
     let alice_address = field(&listening, "listening ");
-    ok(&alice, &["channel", "create", "general", "--topic", "shared"]);
+    ok(
+        &alice,
+        &["channel", "create", "general", "--topic", "shared"],
+    );
     alice_node.wait_for("picked up", patience(Duration::from_secs(20)));
 
     // Bob joins, writes, and is picked up by Alice — who now holds his segment
@@ -155,7 +160,10 @@ fn the_same_relay_works_when_nothing_arrived_live() {
     let mut alice_node = serve_sealing(&alice, 45311, None, None, false);
     let listening = alice_node.wait_for("listening", patience(Duration::from_secs(20)));
     let alice_address = field(&listening, "listening ");
-    ok(&alice, &["channel", "create", "general", "--topic", "shared"]);
+    ok(
+        &alice,
+        &["channel", "create", "general", "--topic", "shared"],
+    );
     alice_node.wait_for("picked up", patience(Duration::from_secs(20)));
 
     let mut bob_node = serve_sealing(&bob, 45312, Some(&alice_address), None, false);
@@ -202,7 +210,10 @@ fn a_restarted_keeper_still_serves_what_it_kept() {
     let mut alice_node = serve(&alice, 45331, None);
     let listening = alice_node.wait_for("listening", patience(Duration::from_secs(20)));
     let alice_address = field(&listening, "listening ");
-    ok(&alice, &["channel", "create", "general", "--topic", "shared"]);
+    ok(
+        &alice,
+        &["channel", "create", "general", "--topic", "shared"],
+    );
     alice_node.wait_for("picked up", patience(Duration::from_secs(20)));
 
     let mut bob_node = serve(&bob, 45332, Some(&alice_address));

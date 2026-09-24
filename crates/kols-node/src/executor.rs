@@ -55,8 +55,8 @@ use intranet_governance::{EntryBody, GroupId, LogEntry, MembershipAction};
 use intranet_identity::PerNetworkIdentityId;
 use kols_api::{Actor, Authorized, Command, Outcome, PlacementMap, Refusal, authorize, placement};
 use kols_core::{
-    ChannelEntry, ChannelEntryBody, ChannelId, ChannelKind, ChannelView, MessageId, NameClaim,
-    LogAuthority, Names, Placement, Record, RecordBody, StateAuthority,
+    ChannelEntry, ChannelEntryBody, ChannelId, ChannelKind, ChannelView, LogAuthority, MessageId,
+    NameClaim, Names, Placement, Record, RecordBody, StateAuthority,
 };
 use std::path::PathBuf;
 
@@ -195,12 +195,24 @@ impl Executor {
                 body,
             } => {
                 self.require_own_message(&channel, &target, &identity.id())?;
-                self.write(channel, RecordBody::Edit { target, body }, identity, state, channels)
+                self.write(
+                    channel,
+                    RecordBody::Edit { target, body },
+                    identity,
+                    state,
+                    channels,
+                )
             }
 
             Command::DeleteMessage { channel, target } => {
                 self.require_own_message(&channel, &target, &identity.id())?;
-                self.write(channel, RecordBody::Tombstone { target }, identity, state, channels)
+                self.write(
+                    channel,
+                    RecordBody::Tombstone { target },
+                    identity,
+                    state,
+                    channels,
+                )
             }
 
             Command::React {
@@ -224,7 +236,13 @@ impl Executor {
                 channel,
                 target,
                 remove,
-            } => self.write(channel, RecordBody::Pin { target, remove }, identity, state, channels),
+            } => self.write(
+                channel,
+                RecordBody::Pin { target, remove },
+                identity,
+                state,
+                channels,
+            ),
 
             Command::CreateChannel {
                 name,
@@ -313,7 +331,10 @@ impl Executor {
                 // Said rather than silently shipped: without a circuit the
                 // invite carries only addresses that work on this LAN, and the
                 // failure lands on the joiner as a timeout they cannot diagnose.
-                if !addresses.iter().any(|address| address.contains("p2p-circuit")) {
+                if !addresses
+                    .iter()
+                    .any(|address| address.contains("p2p-circuit"))
+                {
                     return Err(ExecuteError::Rejected(
                         "this node holds no relay circuit, so an invite would carry only \
                          addresses reachable from this network. Check `kols serve`'s output \
@@ -348,10 +369,9 @@ impl Executor {
                 policy.bootstrap_relays = relays.clone();
 
                 let _lock = self.store.lock()?;
-                let head = self
-                    .store
-                    .head()?
-                    .ok_or_else(|| ExecuteError::Rejected("this network has no genesis".to_owned()))?;
+                let head = self.store.head()?.ok_or_else(|| {
+                    ExecuteError::Rejected("this network has no genesis".to_owned())
+                })?;
                 let entry = LogEntry::create(
                     identity,
                     Some(head),
@@ -521,8 +541,7 @@ impl Executor {
         // otherwise pick up a revised one. Removing the key is the honest way to
         // say "whatever this application ships".
         let mut policy = state.policy.clone();
-        let already = policy
-            .app_policy_int(key, setting.default_value());
+        let already = policy.app_policy_int(key, setting.default_value());
         if value == setting.default_value() {
             policy.app_policy.remove(key);
         } else {
@@ -790,10 +809,10 @@ impl Executor {
         index: &PlacementMap,
         channels: &ChannelMap,
     ) -> Result<Outcome, ExecuteError> {
-        let placement = index
-            .get(&channel)
-            .copied()
-            .unwrap_or(Placement { channel, category: None });
+        let placement = index.get(&channel).copied().unwrap_or(Placement {
+            channel,
+            category: None,
+        });
         // **The log, not just the state — this is the rendering path.** A
         // redaction is judged as of the governance head its author cited
         // (`design/01` §6), which is a question about a point in the chain and
@@ -1057,7 +1076,8 @@ impl Executor {
         // log, and fork-choice then voids one of them.
         let _lock = self.store.lock()?;
         let head = self.store.head()?;
-        let log_entry = LogEntry::create(identity, head, Timestamp::from_millis(now_millis()), body);
+        let log_entry =
+            LogEntry::create(identity, head, Timestamp::from_millis(now_millis()), body);
         self.store.append_entry(&log_entry)?;
         Ok(())
     }
@@ -1101,8 +1121,7 @@ impl Executor {
             .collect();
         if groups.is_empty() {
             return Err(ExecuteError::Rejected(
-                "you are not a member of this network, so there is nothing to leave"
-                    .to_owned(),
+                "you are not a member of this network, so there is nothing to leave".to_owned(),
             ));
         }
 
@@ -1208,7 +1227,9 @@ impl Executor {
         let kept_elsewhere = state.groups.iter().any(|(id, found)| {
             id != group
                 && found.contains(leaving)
-                && found.capabilities.grants(&intranet_governance::Capability::RevokeNode)
+                && found
+                    .capabilities
+                    .grants(&intranet_governance::Capability::RevokeNode)
         });
         Ok(!kept_elsewhere)
     }
@@ -1394,7 +1415,10 @@ impl Executor {
     /// answer to a question replay already answers, and the two disagree
     /// exactly when it matters. `design/05` §5's projection is where this stops
     /// being recomputed.
-    pub fn names(&self, state: &intranet_governance::GovernanceState) -> Result<Names, ExecuteError> {
+    pub fn names(
+        &self,
+        state: &intranet_governance::GovernanceState,
+    ) -> Result<Names, ExecuteError> {
         let log = self.store.log()?;
         // Folded once per log, like the channel and category maps beside it.
         // This walked the whole canonical chain on **every command**, which is
@@ -1410,7 +1434,8 @@ impl Executor {
             .filter_map(|hash| log.get(hash))
             .collect();
         let folded = std::sync::Arc::new(kols_core::replay_names(entries, state));
-        self.store.keep_names(generation, std::sync::Arc::clone(&folded));
+        self.store
+            .keep_names(generation, std::sync::Arc::clone(&folded));
         Ok((*folded).clone())
     }
 

@@ -21,7 +21,9 @@ use intranet_governance::{
     LogEntry, MembershipAction, NetworkPolicy, PolicyValue, Tier,
 };
 use intranet_identity::{MasterSeed, NetworkId, PerNetworkIdentity};
-use kols_api::{Actor, Authorized, Command, PlacementMap, Refusal, Sensitivity, authorize, placement};
+use kols_api::{
+    Actor, Authorized, Command, PlacementMap, Refusal, Sensitivity, authorize, placement,
+};
 use kols_core::{
     Attachment, CategoryId, ChannelChange, ChannelId, MessageId, Placement, Privacy, StateAuthority,
 };
@@ -668,11 +670,17 @@ fn a_grant_is_named_the_way_resolution_reads_it() {
         (kols_core::Scope::Network, "chat:post:*".to_owned()),
         (
             kols_core::Scope::Category(category()),
-            format!("chat:post:cat:{}", intranet_crypto::to_hex(category().as_bytes())),
+            format!(
+                "chat:post:cat:{}",
+                intranet_crypto::to_hex(category().as_bytes())
+            ),
         ),
         (
             kols_core::Scope::Channel(channel(2)),
-            format!("chat:post:{}", intranet_crypto::to_hex(channel(2).as_bytes())),
+            format!(
+                "chat:post:{}",
+                intranet_crypto::to_hex(channel(2).as_bytes())
+            ),
         ),
     ] {
         assert_eq!(scope.name("post"), expected);
@@ -1028,9 +1036,7 @@ fn sensitivity_agrees_with_the_capability_vocabulary() {
                 // a signed heartbeat. Neither governs anything, and neither is
                 // `Local`, because in both cases something leaves this node on
                 // the member's behalf.
-                Command::SetContribution { .. } | Command::SetPresence { .. } => {
-                    Sensitivity::Signs
-                }
+                Command::SetContribution { .. } | Command::SetPresence { .. } => Sensitivity::Signs,
                 _ => Sensitivity::Governs,
             };
             assert_eq!(
@@ -1143,7 +1149,10 @@ fn a_name_already_held_is_refused_at_the_boundary() {
     let state = network_granting(&member, [extension("chat:set-name:*")]);
 
     let mut names = kols_core::Names::new();
-    names.apply(other.id(), &kols_core::NameClaim::new("ada").expect("valid"));
+    names.apply(
+        other.id(),
+        &kols_core::NameClaim::new("ada").expect("valid"),
+    );
 
     let authority = StateAuthority { state: &state };
     let index = index();
@@ -1162,7 +1171,10 @@ fn a_name_already_held_is_refused_at_the_boundary() {
         &actor,
     );
     assert!(
-        matches!(taken, Err(Refusal::Name(kols_core::NameRefusal::Taken { .. }))),
+        matches!(
+            taken,
+            Err(Refusal::Name(kols_core::NameRefusal::Taken { .. }))
+        ),
         "a held name was claimable"
     );
 
@@ -1232,7 +1244,9 @@ fn a_category_scoped_grant_cannot_create_a_category() {
     let cat = intranet_crypto::to_hex(category().as_bytes());
     let state = network_granting(
         &member,
-        [Capability::extension(format!("chat:manage-channel:cat:{cat}"))],
+        [Capability::extension(format!(
+            "chat:manage-channel:cat:{cat}"
+        ))],
     );
     assert!(matches!(
         check(&state, &member, create_category()),
@@ -1261,7 +1275,9 @@ fn updating_a_category_accepts_its_own_scope() {
     let cat = intranet_crypto::to_hex(category().as_bytes());
     let state = network_granting(
         &member,
-        [Capability::extension(format!("chat:manage-channel:cat:{cat}"))],
+        [Capability::extension(format!(
+            "chat:manage-channel:cat:{cat}"
+        ))],
     );
     assert!(
         check(

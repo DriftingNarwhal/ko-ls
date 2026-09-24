@@ -206,10 +206,7 @@ fn a_member_holding_nothing_relevant_is_refused_before_publishing() {
     // capability its author lacks is one every node rejects, so producing it puts
     // a permanently dead entry in the log and tells the author nothing.
     let member = person(4);
-    let (log, _) = network_granting(
-        &member,
-        [Capability::extension("chat:post:*".to_owned())],
-    );
+    let (log, _) = network_granting(&member, [Capability::extension("chat:post:*".to_owned())]);
     let state = replay(&log).expect("replays");
 
     let entry = definition(server_channel_id(&NET, &[11u8; 32]), None);
@@ -264,10 +261,8 @@ fn an_entry_declaring_the_wrong_capability_is_refused_by_the_reader_after_the_lo
     // do — and the entry is accepted into the log. Only a reader that understands
     // `chat` knows a definition needed `chat:create-channel`.
     let member = person(7);
-    let (mut log, head) = network_granting(
-        &member,
-        [Capability::extension("chat:post:*".to_owned())],
-    );
+    let (mut log, head) =
+        network_granting(&member, [Capability::extension("chat:post:*".to_owned())]);
 
     let entry = definition(server_channel_id(&NET, &[13u8; 32]), None);
     let forged = EntryBody::AppEntry {
@@ -308,8 +303,7 @@ fn a_conversation_network_accepts_the_entry_and_every_reader_still_refuses_it() 
         .to_app_entry(&state, &member.id(), None)
         .expect("declares something they hold");
 
-    publish(&mut log, head, &member, body.clone())
-        .expect("the protocol has no basis to refuse it");
+    publish(&mut log, head, &member, body.clone()).expect("the protocol has no basis to refuse it");
 
     assert_eq!(
         ChannelEntry::read(&body, NetworkProfile::Conversation, None),

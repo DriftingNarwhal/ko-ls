@@ -104,7 +104,10 @@ pub fn holds(
     verb: &str,
     placement: &Placement,
 ) -> bool {
-    if state.identity_holds(identity, &Scope::Channel(placement.channel).capability(verb)) {
+    if state.identity_holds(
+        identity,
+        &Scope::Channel(placement.channel).capability(verb),
+    ) {
         return true;
     }
     holds_in_scope(state, identity, verb, placement.category.as_ref())
@@ -143,7 +146,9 @@ pub fn holds_in_scope(
 /// reports no error — the failure mode a typo in a free-text field produces, and
 /// the reason the interface names verbs rather than accepting them.
 pub fn is_verb(verb: &str) -> bool {
-    crate::capabilities::VERBS.iter().any(|(name, _)| *name == verb)
+    crate::capabilities::VERBS
+        .iter()
+        .any(|(name, _)| *name == verb)
 }
 
 /// What a reader needs to answer about the identities behind records.

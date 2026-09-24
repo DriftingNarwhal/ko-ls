@@ -236,14 +236,23 @@ impl WindowArg {
     /// arrives from the interface, so it is ordinary input, and "show me this
     /// channel" always has a correct answer.
     pub fn resolve(self) -> kols_core::Window {
-        let oldest = self.oldest.as_deref().and_then(kols_core::Cursor::from_token);
+        let oldest = self
+            .oldest
+            .as_deref()
+            .and_then(kols_core::Cursor::from_token);
         // Clamped **here**, because this is where input from the window arrives
         // and the store is not the place to second-guess what a caller asked
         // for. A ceiling applied further down silently truncated the terminal's
         // deliberate whole-channel read.
         kols_core::Window {
-            newest: self.newest.as_deref().and_then(kols_core::Cursor::from_token),
-            back: self.back.unwrap_or(Self::PAGE).min(kols_node::store::MAX_REACH),
+            newest: self
+                .newest
+                .as_deref()
+                .and_then(kols_core::Cursor::from_token),
+            back: self
+                .back
+                .unwrap_or(Self::PAGE)
+                .min(kols_node::store::MAX_REACH),
             forward: self.forward.unwrap_or(0).min(kols_node::store::MAX_REACH),
             oldest,
         }
@@ -920,7 +929,10 @@ mod tests {
         // second, quieter place for it to go wrong.
         let mut message = rendered();
         message.body = "<script>alert(1)</script> & \"quotes\"".to_owned();
-        assert_eq!(Message::of(&message, &no_names(), &identity(9)).body, message.body);
+        assert_eq!(
+            Message::of(&message, &no_names(), &identity(9)).body,
+            message.body
+        );
     }
 
     #[test]
@@ -951,7 +963,10 @@ mod tests {
     #[test]
     fn a_clock_reading_renders_as_a_wall_time() {
         // 3,723,000 ms is 01:02:03 past the hour.
-        assert_eq!(Message::of(&rendered(), &no_names(), &identity(9)).at, "01:02:03");
+        assert_eq!(
+            Message::of(&rendered(), &no_names(), &identity(9)).at,
+            "01:02:03"
+        );
     }
 }
 

@@ -5,10 +5,10 @@
 //! with no directory to consult and nothing to keep fresh. Each derivation is
 //! domain-separated, so no two can collide even given identical inputs.
 
+use crate::CategoryId;
 use intranet_crypto::{Enc, Hash, hash_bytes, to_hex};
 use intranet_governance::PointerId;
 use intranet_identity::{NetworkId, PerNetworkIdentityId};
-use crate::CategoryId;
 
 const CHANNEL_DOMAIN: &str = "intranet.chat-channel-id.v1";
 const CATEGORY_DOMAIN: &str = "intranet.chat-category-id.v1";

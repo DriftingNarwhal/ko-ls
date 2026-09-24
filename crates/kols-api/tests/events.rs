@@ -20,7 +20,6 @@ use intranet_governance::{
 use intranet_identity::{MasterSeed, NetworkId, PerNetworkIdentity};
 use kols_api::{Arrival, Event};
 use kols_core::{
-
     ChannelId, ChannelView, Hlc, Placement, Record, RecordBody, RenderedMessage, StateAuthority,
 };
 /// Limits that refuse nothing, for tests about something other than §4.3.
@@ -172,7 +171,12 @@ fn a_record_that_arrives_live_and_again_in_a_segment_is_one_message() {
         &authority,
     );
 
-    assert_eq!(rendered.len(), 1, "one record became {} messages", rendered.len());
+    assert_eq!(
+        rendered.len(),
+        1,
+        "one record became {} messages",
+        rendered.len()
+    );
     assert_eq!(rendered[0].body, "said once");
 }
 

@@ -18,12 +18,12 @@
 //! rather than the seed itself — the derivation is reproducible and the key
 //! material never crosses a `Debug` or a serializer.
 
+use crate::readings::OwnReadings;
+use crate::secret;
 use intranet_crypto::{Hash, to_hex};
 use intranet_governance::{GovernanceLog, GovernanceState, LogEntry, PointerId, wire};
 use intranet_identity::{MasterSeed, NetworkId, PerNetworkIdentity, PerNetworkIdentityId};
 use intranet_storage::{Cid, Dek, EpochKey};
-use crate::readings::OwnReadings;
-use crate::secret;
 use kols_core::{ChannelId, Cursor, Hlc, Record, Window};
 use std::fs;
 use std::io;
@@ -295,7 +295,11 @@ impl Store {
     /// Refuses to overwrite an existing network. The seed is the one thing here
     /// that no amount of syncing can rebuild, so clobbering it silently would be
     /// the single most destructive thing this program could do.
-    pub fn create(root: PathBuf, network: NetworkId, entropy: [u8; 32]) -> Result<Self, StoreError> {
+    pub fn create(
+        root: PathBuf,
+        network: NetworkId,
+        entropy: [u8; 32],
+    ) -> Result<Self, StoreError> {
         if root.join("network").exists() {
             return Err(StoreError::AlreadyInitialised(root));
         }
@@ -607,9 +611,11 @@ impl Store {
                     .iter()
                     .filter_map(|hash| log.get(hash))
                     .collect();
-                GovernanceState::replay(chain).map(std::sync::Arc::new).map_err(|err| {
-                    StoreError::Corrupt(format!("replay refused the stored log: {err}"))
-                })
+                GovernanceState::replay(chain)
+                    .map(std::sync::Arc::new)
+                    .map_err(|err| {
+                        StoreError::Corrupt(format!("replay refused the stored log: {err}"))
+                    })
             }
         }
     }
@@ -642,10 +648,7 @@ impl Store {
         if let Some(cached) = held.as_ref()
             && cached.tally == tally
         {
-            return Ok((
-                std::sync::Arc::clone(&cached.log),
-                cached.state.clone(),
-            ));
+            return Ok((std::sync::Arc::clone(&cached.log), cached.state.clone()));
         }
 
         // Something moved, so the directory is read — off the settled path, and
@@ -665,9 +668,7 @@ impl Store {
         // paying. A cache built from a shorter log is extended; anything else
         // (a first read, or a directory that somehow shrank) is built whole.
         let (mut log, from) = match held.as_ref() {
-            Some(cached) if cached.count < files.len() => {
-                ((*cached.log).clone(), cached.count)
-            }
+            Some(cached) if cached.count < files.len() => ((*cached.log).clone(), cached.count),
             _ => (GovernanceLog::new(), 0),
         };
         for path in &files[from..] {
@@ -698,7 +699,10 @@ impl Store {
                 .ok()
                 .map(std::sync::Arc::new),
             None => GovernanceState::replay(
-                chain.iter().filter_map(|hash| log.get(hash)).collect::<Vec<_>>(),
+                chain
+                    .iter()
+                    .filter_map(|hash| log.get(hash))
+                    .collect::<Vec<_>>(),
             )
             .ok()
             .map(std::sync::Arc::new),
@@ -737,7 +741,9 @@ impl Store {
             .derived
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
-        (held.generation == generation).then(|| held.channels.clone()).flatten()
+        (held.generation == generation)
+            .then(|| held.channels.clone())
+            .flatten()
     }
 
     /// Keeps the channel fold, discarding anything from an older log.
@@ -768,7 +774,9 @@ impl Store {
             .derived
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
-        (held.generation == generation).then(|| held.categories.clone()).flatten()
+        (held.generation == generation)
+            .then(|| held.categories.clone())
+            .flatten()
     }
 
     /// Keeps the category fold, discarding anything from an older log.
@@ -796,7 +804,9 @@ impl Store {
             .derived
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
-        (held.generation == generation).then(|| held.names.clone()).flatten()
+        (held.generation == generation)
+            .then(|| held.names.clone())
+            .flatten()
     }
 
     /// Keeps the display-name fold, discarding anything from an older log.
@@ -970,10 +980,7 @@ impl Store {
     /// content. What that buys is the ordinary case: a channel whose records the
     /// index has already folded is recognised as unchanged for the cost of one
     /// directory listing.
-    fn record_ids(
-        &self,
-        channel: &ChannelId,
-    ) -> Result<Vec<kols_core::MessageId>, StoreError> {
+    fn record_ids(&self, channel: &ChannelId) -> Result<Vec<kols_core::MessageId>, StoreError> {
         let dir = self.channel_dir(channel).join("records");
         if !dir.exists() {
             return Ok(Vec::new());
@@ -1062,7 +1069,11 @@ impl Store {
             None => projection.before(channel, None, back.max(1)).ok()?,
             Some(oldest) => {
                 let mut earlier = projection.before(channel, Some(oldest), back).ok()?;
-                earlier.extend(projection.between(channel, oldest, window.newest, usize::MAX).ok()?);
+                earlier.extend(
+                    projection
+                        .between(channel, oldest, window.newest, usize::MAX)
+                        .ok()?,
+                );
                 if window.newest.is_some() {
                     earlier.extend(projection.after(channel, window.newest, forward).ok()?);
                 }
@@ -1079,7 +1090,11 @@ impl Store {
         // exactly the size of what remains, and "full" would then claim there is
         // more forever.
         let older = oldest
-            .map(|c| projection.before(channel, Some(c), 1).map(|r| !r.is_empty()))
+            .map(|c| {
+                projection
+                    .before(channel, Some(c), 1)
+                    .map(|r| !r.is_empty())
+            })
             .transpose()
             .ok()?
             .unwrap_or(false);
@@ -1102,7 +1117,11 @@ impl Store {
                 let _ = projection.forget(channel);
                 return None;
             };
-            if let Some(why) = projection.verdict(id).ok().flatten().and_then(kols_store::Verdict::rejection)
+            if let Some(why) = projection
+                .verdict(id)
+                .ok()
+                .flatten()
+                .and_then(kols_store::Verdict::rejection)
             {
                 refused.insert(*id, why);
             }
@@ -1190,7 +1209,11 @@ impl Store {
         // directory, then a `COUNT(*)`. All three answer "has anything changed"
         // by examining everything, which is the shape `design/09` §4.4 says the
         // two-second tick may not have.
-        let state = projection.folded_state(channel).ok().flatten().unwrap_or_default();
+        let state = projection
+            .folded_state(channel)
+            .ok()
+            .flatten()
+            .unwrap_or_default();
         let announced = self.arrivals(channel);
         if !stale && announced == state.consumed {
             return Ok(());
@@ -1267,7 +1290,11 @@ impl Store {
         let folded = kols_store::Folded {
             // Taken from the log again after a rebuild, since rebuilding it may
             // have changed its length.
-            consumed: if stale { self.arrivals(channel) } else { announced },
+            consumed: if stale {
+                self.arrivals(channel)
+            } else {
+                announced
+            },
             records: base.records + folded_in,
             authors: base.authors + added,
         };
@@ -1387,13 +1414,25 @@ impl Store {
     pub fn set_last_announced(&self, channel: &ChannelId, now: i64) -> Result<(), StoreError> {
         let dir = self.channel_dir(channel);
         fs::create_dir_all(&dir)?;
-        write_atomically(&self.root, dir.join("announced"), now.to_string().as_bytes())
+        write_atomically(
+            &self.root,
+            dir.join("announced"),
+            now.to_string().as_bytes(),
+        )
     }
 
-    fn write_readings(&self, channel: &ChannelId, readings: &OwnReadings) -> Result<(), StoreError> {
+    fn write_readings(
+        &self,
+        channel: &ChannelId,
+        readings: &OwnReadings,
+    ) -> Result<(), StoreError> {
         let dir = self.channel_dir(channel);
         fs::create_dir_all(&dir)?;
-        write_atomically(&self.root, dir.join("own-readings"), readings.encode().as_bytes())
+        write_atomically(
+            &self.root,
+            dir.join("own-readings"),
+            readings.encode().as_bytes(),
+        )
     }
 
     /// Keeps a chunk this node fetched, so it survives being closed.
@@ -1493,9 +1532,7 @@ impl Store {
     /// not act on — and refusing to start would turn one bad file into a node
     /// that cannot open at all, when the honest consequence is one author's
     /// content being unreachable until it is learned again.
-    pub fn pointers(
-        &self,
-    ) -> Result<Vec<intranet_storage::PointerRecord>, StoreError> {
+    pub fn pointers(&self) -> Result<Vec<intranet_storage::PointerRecord>, StoreError> {
         let dir = self.root.join("pointers");
         if !dir.exists() {
             return Ok(Vec::new());
@@ -1626,7 +1663,11 @@ impl Store {
     /// Stored as two lines: the shared network's id, then the peer's identity
     /// **in that network** — not in the conversation, since the whole point is
     /// to ask the shared network's governance a question about them.
-    pub fn set_origin(&self, shared: &NetworkId, peer: &PerNetworkIdentityId) -> Result<(), StoreError> {
+    pub fn set_origin(
+        &self,
+        shared: &NetworkId,
+        peer: &PerNetworkIdentityId,
+    ) -> Result<(), StoreError> {
         let mut e = intranet_crypto::Enc::domain("kols.conversation-origin.v1");
         shared.encode(&mut e);
         peer.encode(&mut e);
@@ -1660,11 +1701,7 @@ impl Store {
             offer.download_offered,
             u8::from(offer.relay_willing),
         );
-        write_atomically(
-            &self.root,
-            self.root.join("contribution"),
-            text.as_bytes(),
-        )
+        write_atomically(&self.root, self.root.join("contribution"), text.as_bytes())
     }
 
     /// What this machine contributes here, or `None` if nobody has said.
@@ -1799,7 +1836,7 @@ impl Store {
         Ok(())
     }
 
-        /// Notes that a designated relay has not answered, keeping the first time.
+    /// Notes that a designated relay has not answered, keeping the first time.
     ///
     /// # Why this is written down rather than counted in memory
     ///
@@ -2051,7 +2088,9 @@ impl Store {
     /// Not a protocol key and never leaves this machine. It exists so nothing
     /// confidential sits on disk in the clear next to the seed that protects it.
     fn at_rest_key(&self) -> Dek {
-        Dek::from_bytes(*intranet_crypto::keyed_hash(&self.entropy, b"kols.cli.at-rest.v1").as_bytes())
+        Dek::from_bytes(
+            *intranet_crypto::keyed_hash(&self.entropy, b"kols.cli.at-rest.v1").as_bytes(),
+        )
     }
 
     /// Records epoch keys this node holds.
@@ -2200,7 +2239,10 @@ impl Store {
     pub fn remember_dek(&self, pointer: &PointerId, dek: &Dek) -> Result<(), StoreError> {
         let epoch = self.epoch_key()?;
         fs::create_dir_all(self.root.join("deks"))?;
-        Ok(secret::write_private(&self.dek_path(pointer), &epoch.wrap(pointer, dek))?)
+        Ok(secret::write_private(
+            &self.dek_path(pointer),
+            &epoch.wrap(pointer, dek),
+        )?)
     }
 
     /// The data-encryption key for one author log **this node owns**.
@@ -2324,15 +2366,11 @@ impl Store {
     pub fn want_history(&self, channel: &ChannelId, before: Hlc) -> Result<(), StoreError> {
         let dir = self.root.join("wants");
         fs::create_dir_all(&dir)?;
-        write_atomically(
-            &self.root,
-            dir.join(to_hex(channel.as_bytes())),
-            &{
-                let mut raw = before.wall_millis.to_be_bytes().to_vec();
-                raw.extend_from_slice(&before.counter.to_be_bytes());
-                raw
-            },
-        )
+        write_atomically(&self.root, dir.join(to_hex(channel.as_bytes())), &{
+            let mut raw = before.wall_millis.to_be_bytes().to_vec();
+            raw.extend_from_slice(&before.counter.to_be_bytes());
+            raw
+        })
     }
 
     /// Channels a member has asked for older history in.
@@ -2395,11 +2433,7 @@ impl Store {
     ) -> Result<(), StoreError> {
         let dir = self.root.join("conversations").join("offered");
         fs::create_dir_all(&dir)?;
-        write_atomically(
-            &self.root,
-            dir.join(hex_id(to)),
-            conversation.as_bytes(),
-        )
+        write_atomically(&self.root, dir.join(hex_id(to)), conversation.as_bytes())
     }
 
     /// Conversations this member has offered and this node has not delivered.
@@ -2607,7 +2641,10 @@ impl Store {
         self.did(0, 2 * held.len() as u64, 0);
         let answer = held
             .iter()
-            .filter(|cid| self.segment_channel(cid).is_none_or(|held| held == *channel))
+            .filter(|cid| {
+                self.segment_channel(cid)
+                    .is_none_or(|held| held == *channel)
+            })
             .any(|cid| {
                 self.segment_link(cid)
                     .and_then(|(_, previous)| previous)
@@ -2654,11 +2691,7 @@ impl Store {
     }
 
     /// Records which channel a segment belongs to.
-    pub fn mark_segment_channel(
-        &self,
-        cid: &Cid,
-        channel: &ChannelId,
-    ) -> Result<(), StoreError> {
+    pub fn mark_segment_channel(&self, cid: &Cid, channel: &ChannelId) -> Result<(), StoreError> {
         self.write_segment_mark(cid, "channel", channel.as_bytes())
     }
 
@@ -3043,7 +3076,10 @@ fn append_to(path: impl AsRef<Path>, bytes: &[u8]) -> Result<(), StoreError> {
     if let Some(parent) = path.as_ref().parent() {
         fs::create_dir_all(parent)?;
     }
-    let mut file = fs::OpenOptions::new().create(true).append(true).open(path)?;
+    let mut file = fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(path)?;
     file.write_all(bytes)?;
     Ok(())
 }
@@ -3322,7 +3358,10 @@ mod tests {
     fn an_absent_first_candidate_falls_through() {
         // Which is the whole point on Windows, where HOME is normally unset and
         // USERPROFILE is the answer — and on Git Bash, where it is the reverse.
-        assert_eq!(first_set(None, os("/second")), Some(PathBuf::from("/second")));
+        assert_eq!(
+            first_set(None, os("/second")),
+            Some(PathBuf::from("/second"))
+        );
     }
 
     #[test]
@@ -3330,7 +3369,10 @@ mod tests {
         // The case `or_else` gets wrong: set-but-empty is not an answer, and
         // treating it as one throws away a good second candidate to return a
         // path that is silently the current directory.
-        assert_eq!(first_set(os(""), os("/second")), Some(PathBuf::from("/second")));
+        assert_eq!(
+            first_set(os(""), os("/second")),
+            Some(PathBuf::from("/second"))
+        );
     }
 
     #[test]
@@ -3358,7 +3400,10 @@ mod contribution_tests {
         let bytes = b"a segment's worth of ciphertext".to_vec();
         let cid = Cid::of(&bytes);
 
-        assert!(store.put_chunk(&cid, &bytes).expect("writes"), "first write");
+        assert!(
+            store.put_chunk(&cid, &bytes).expect("writes"),
+            "first write"
+        );
         assert!(
             !store.put_chunk(&cid, &bytes).expect("writes"),
             "the same chunk again is not new — it is addressed by content, so \

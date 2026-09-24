@@ -86,8 +86,7 @@ pub fn write_private(path: &Path, bytes: &[u8]) -> io::Result<()> {
 fn restrict_to_owner(path: &Path) -> Result<(), (&'static str, io::Error)> {
     use std::os::unix::fs::PermissionsExt;
 
-    fs::set_permissions(path, fs::Permissions::from_mode(0o600))
-        .map_err(|err| ("chmod 0600", err))
+    fs::set_permissions(path, fs::Permissions::from_mode(0o600)).map_err(|err| ("chmod 0600", err))
 }
 
 /// Restricts an existing file to the account running this process.
@@ -260,8 +259,8 @@ mod tests {
 
     impl Scratch {
         fn new(name: &str) -> Self {
-            let dir = std::env::temp_dir()
-                .join(format!("kols-secret-{name}-{}", std::process::id()));
+            let dir =
+                std::env::temp_dir().join(format!("kols-secret-{name}-{}", std::process::id()));
             let _ = fs::remove_dir_all(&dir);
             fs::create_dir_all(&dir).unwrap();
             Self(dir)
@@ -285,7 +284,11 @@ mod tests {
         write_private(&path, b"seed").unwrap();
 
         let mode = fs::metadata(&path).unwrap().permissions().mode();
-        assert_eq!(mode & 0o077, 0, "a fresh secret is readable beyond its owner");
+        assert_eq!(
+            mode & 0o077,
+            0,
+            "a fresh secret is readable beyond its owner"
+        );
         assert_eq!(fs::read(&path).unwrap(), b"seed");
     }
 

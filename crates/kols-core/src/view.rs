@@ -19,8 +19,8 @@
 //! the durable path guarantees they eventually do.
 
 use crate::{
-    Attachment, Authority, ChannelId, Cursor, Hlc, MessageId, Placement, ReaderLimits, Record, RecordBody,
-    Withheld,
+    Attachment, Authority, ChannelId, Cursor, Hlc, MessageId, Placement, ReaderLimits, Record,
+    RecordBody, Withheld,
 };
 use intranet_identity::PerNetworkIdentityId;
 use std::collections::{BTreeMap, BTreeSet};
@@ -239,7 +239,11 @@ impl ChannelView {
     /// same set thereafter, which is exactly what "held, not dropped" buys.
     pub fn render(&self, limits: &ReaderLimits, now_millis: i64) -> Vec<RenderedMessage> {
         let withheld = self.withheld(limits, now_millis);
-        self.render_excluding(limits, now_millis, &withheld.refused.keys().copied().collect())
+        self.render_excluding(
+            limits,
+            now_millis,
+            &withheld.refused.keys().copied().collect(),
+        )
     }
 
     /// Renders with refusals decided elsewhere.

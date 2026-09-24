@@ -377,7 +377,11 @@ impl Record {
                 }
                 for a in attachments {
                     if a.name.len() > MAX_ATTACHMENT_NAME_BYTES {
-                        return too_large("attachment name", a.name.len(), MAX_ATTACHMENT_NAME_BYTES);
+                        return too_large(
+                            "attachment name",
+                            a.name.len(),
+                            MAX_ATTACHMENT_NAME_BYTES,
+                        );
                     }
                 }
             }

@@ -169,8 +169,7 @@ impl DmInvite {
 
         let invite =
             intranet_invite::decode_invite(invite_bytes).map_err(|_| CoreError::BadSignature)?;
-        let link =
-            CommonOwnershipProof::decode(link_bytes).map_err(|_| CoreError::BadSignature)?;
+        let link = CommonOwnershipProof::decode(link_bytes).map_err(|_| CoreError::BadSignature)?;
         Ok(Self { invite, link })
     }
 }

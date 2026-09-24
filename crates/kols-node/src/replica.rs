@@ -22,8 +22,8 @@
 //! chooses *which keys* to rank over and does no arithmetic of its own.
 
 use crate::store::Store;
-use intranet_ledger::{CapabilityLedger, WeightField, placement};
 use intranet_identity::PerNetworkIdentityId;
+use intranet_ledger::{CapabilityLedger, WeightField, placement};
 use intranet_storage::Cid;
 use std::collections::BTreeMap;
 
@@ -59,9 +59,7 @@ impl Budget {
     /// not hand out room that does not exist.
     pub fn remaining(&self, duty_held: u64) -> u64 {
         let by_offer = self.offered.saturating_sub(duty_held);
-        let by_disk = self
-            .installation
-            .saturating_sub(self.installation_used);
+        let by_disk = self.installation.saturating_sub(self.installation_used);
         by_offer.min(by_disk)
     }
 }
@@ -413,7 +411,13 @@ impl Census {
     /// asked is *would this survive without me*, and a count that included this
     /// node would answer a different one and always be off by exactly the amount
     /// that matters.
-    pub fn heard(&mut self, cid: Cid, providers: &[PerNetworkIdentityId], me: &PerNetworkIdentityId, now: i64) {
+    pub fn heard(
+        &mut self,
+        cid: Cid,
+        providers: &[PerNetworkIdentityId],
+        me: &PerNetworkIdentityId,
+        now: i64,
+    ) {
         self.pending.remove(&cid);
         let others = providers.iter().filter(|node| *node != me).count();
         self.heard.insert(cid, (others, now));

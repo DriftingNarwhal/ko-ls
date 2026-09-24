@@ -139,11 +139,11 @@ pub mod executor;
 pub mod invite;
 pub mod join;
 pub mod network;
-pub mod readings;
-pub mod secret;
 pub mod nodes;
-pub mod serve;
+pub mod readings;
 pub mod replica;
+pub mod secret;
+pub mod serve;
 pub mod store;
 pub mod workspace;
 
@@ -159,7 +159,9 @@ pub fn parse_identity(hex: &str) -> Result<intranet_identity::PerNetworkIdentity
         .ok_or("an identity is 64 hex characters")?;
     let key = intranet_crypto::VerifyingKey::from_bytes(bytes)
         .map_err(|_| "those bytes are not a valid identity key".to_owned())?;
-    Ok(intranet_identity::PerNetworkIdentityId::from_verifying_key(key))
+    Ok(intranet_identity::PerNetworkIdentityId::from_verifying_key(
+        key,
+    ))
 }
 
 /// Reads a network id out of the 64 hex characters that display it.
@@ -188,9 +190,9 @@ pub fn parse_network(hex: &str) -> Result<intranet_identity::NetworkId, String> 
 /// network designated (Core §5.5).
 pub fn parse_relay(address: &str) -> Result<String, String> {
     let address = address.trim();
-    address
-        .parse::<libp2p::Multiaddr>()
-        .map_err(|_| format!("{address} is not an address — a relay looks like /dns4/host/tcp/443/p2p/12D3Koo…"))?;
+    address.parse::<libp2p::Multiaddr>().map_err(|_| {
+        format!("{address} is not an address — a relay looks like /dns4/host/tcp/443/p2p/12D3Koo…")
+    })?;
     if !address.contains("/p2p/") {
         return Err(format!(
             "{address} names no peer id — without the /p2p/… part nothing can \
@@ -438,7 +440,9 @@ mod address_tests {
     #[test]
     fn a_routable_address_is_published() {
         assert!(is_worth_publishing(&addr("/ip4/203.0.113.7/tcp/4001")));
-        assert!(is_worth_publishing(&addr("/ip6/2001:db8::1/udp/4001/quic-v1")));
+        assert!(is_worth_publishing(&addr(
+            "/ip6/2001:db8::1/udp/4001/quic-v1"
+        )));
         // A private LAN address still is: two machines on one network reach
         // each other with it, and tier 1 is meant to find that.
         assert!(is_worth_publishing(&addr("/ip4/192.168.1.200/tcp/65519")));
@@ -467,7 +471,7 @@ mod address_tests {
 
 #[cfg(test)]
 mod invite_address_tests {
-    use super::{addresses_for_an_invite, reach_of, Reach, INVITE_ADDRESS_LIMIT};
+    use super::{INVITE_ADDRESS_LIMIT, Reach, addresses_for_an_invite, reach_of};
     use libp2p::Multiaddr;
 
     const ME: &str = "12D3KooWMHZbUfFYuqe6NxXBFSg3aLzfTSa1B5QKGNKwMrWz5FaD";
@@ -531,14 +535,20 @@ mod invite_address_tests {
         // Both halves of Tailscale. Somebody on the tailnet does not need the
         // invite to find this machine; somebody who is not on it never can.
         assert_eq!(reach_of(&direct("100.101.152.117")), Reach::Overlay);
-        assert_eq!(reach_of(&direct("fd7a:115c:a1e0::4b36:9876")), Reach::Overlay);
+        assert_eq!(
+            reach_of(&direct("fd7a:115c:a1e0::4b36:9876")),
+            Reach::Overlay
+        );
         // A private relay hop is not overlay — a member relaying on the LAN
         // looks exactly like this, and `addresses_for_an_invite` is what tells
         // the two apart, by whether the same relay was also offered publicly.
         assert_eq!(reach_of(&circuit("10.140.152.103")), Reach::SameLan);
 
         assert_eq!(reach_of(&direct("2600:1700:a825:4800::3f")), Reach::Anybody);
-        assert_eq!(reach_of(&circuit("switchback.proxy.rlwy.net")), Reach::Anybody);
+        assert_eq!(
+            reach_of(&circuit("switchback.proxy.rlwy.net")),
+            Reach::Anybody
+        );
         assert_eq!(reach_of(&direct("192.168.1.200")), Reach::SameLan);
     }
 
@@ -615,12 +625,29 @@ mod invite_address_tests {
         // own addresses is real says nothing about it — and it is this
         // network's only way in.
         let chosen = addresses_for_an_invite(
-            &[direct("192.168.1.200"), direct("192.168.56.1"), circuit("192.168.1.7")],
+            &[
+                direct("192.168.1.200"),
+                direct("192.168.56.1"),
+                circuit("192.168.1.7"),
+            ],
             &lan(),
         );
-        assert!(chosen.iter().any(|address| address.contains("192.168.1.7")), "{chosen:#?}");
-        assert!(chosen.iter().any(|address| address.contains("192.168.1.200")), "{chosen:#?}");
-        assert!(!chosen.iter().any(|address| address.contains("192.168.56.1")), "{chosen:#?}");
+        assert!(
+            chosen.iter().any(|address| address.contains("192.168.1.7")),
+            "{chosen:#?}"
+        );
+        assert!(
+            chosen
+                .iter()
+                .any(|address| address.contains("192.168.1.200")),
+            "{chosen:#?}"
+        );
+        assert!(
+            !chosen
+                .iter()
+                .any(|address| address.contains("192.168.56.1")),
+            "{chosen:#?}"
+        );
     }
 
     #[test]
@@ -671,7 +698,9 @@ mod invite_address_tests {
         // returning nothing and failing open forever.
         let preferred = super::preferred_source_addresses();
         assert!(
-            preferred.iter().any(|ip| !ip.is_loopback() && !ip.is_unspecified()),
+            preferred
+                .iter()
+                .any(|ip| !ip.is_loopback() && !ip.is_unspecified()),
             "no usable source address: {preferred:?}"
         );
     }

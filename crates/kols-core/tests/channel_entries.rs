@@ -868,10 +868,7 @@ fn a_category_update_accepts_its_own_scope_or_the_network_wide_one() {
 fn categories_are_governance_tier() {
     // Departs from tier-by-what-it-widens, which spec 07 §1.8 argues for: they
     // are few, and channel structural mutation already rides this capability.
-    assert_eq!(
-        category_definition().body.required_verb(),
-        "manage-channel",
-    );
+    assert_eq!(category_definition().body.required_verb(), "manage-channel",);
 }
 
 #[test]
@@ -907,7 +904,10 @@ fn an_unallocated_category_change_is_refused() {
         },
     )
     .encode();
-    let tag = payload.iter().rposition(|b| *b == 0x03).expect("the Delete discriminant");
+    let tag = payload
+        .iter()
+        .rposition(|b| *b == 0x03)
+        .expect("the Delete discriminant");
     payload[tag] = 0x04;
     assert!(ChannelEntry::decode_payload(&payload).is_err());
 }

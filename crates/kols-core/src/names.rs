@@ -77,7 +77,10 @@ impl std::fmt::Display for NameRefusal {
             ),
             Self::Empty => write!(f, "that name is empty"),
             Self::TooManyBytes { actual } => {
-                write!(f, "that name is {actual} bytes, and the limit is {MAX_NAME_BYTES}")
+                write!(
+                    f,
+                    "that name is {actual} bytes, and the limit is {MAX_NAME_BYTES}"
+                )
             }
             Self::TooManyGraphemes { actual } => write!(
                 f,
@@ -289,11 +292,7 @@ impl Names {
     }
 
     /// Whether this name is claimable by `author`.
-    pub fn claimable(
-        &self,
-        author: &PerNetworkIdentityId,
-        name: &str,
-    ) -> Result<(), NameRefusal> {
+    pub fn claimable(&self, author: &PerNetworkIdentityId, name: &str) -> Result<(), NameRefusal> {
         let key = name_key(name)?;
         match self.by_key.get(&key) {
             Some(holder) if holder != author => Err(NameRefusal::Taken { holder: *holder }),

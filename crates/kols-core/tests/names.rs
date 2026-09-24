@@ -117,7 +117,10 @@ fn both_bounds_are_checked_because_neither_implies_the_other() {
     ));
 
     let many_graphemes = "a".repeat(MAX_NAME_GRAPHEMES + 1);
-    assert!(many_graphemes.len() <= MAX_NAME_BYTES, "byte bound not the one under test");
+    assert!(
+        many_graphemes.len() <= MAX_NAME_BYTES,
+        "byte bound not the one under test"
+    );
     assert!(matches!(
         name_key(&many_graphemes),
         Err(NameRefusal::TooManyGraphemes { .. })

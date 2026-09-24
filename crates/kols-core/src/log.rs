@@ -22,7 +22,9 @@
 use crate::{ChannelId, CoreError, Record, Segment, author_log_pointer, author_segment_pointer};
 use intranet_governance::{ContentType, GovernanceState, PointerId};
 use intranet_identity::PerNetworkIdentity;
-use intranet_storage::{AppendOnlyObject, Cid, ChunkSpec, Dek, EncodedObject, Manifest, MutablePointer};
+use intranet_storage::{
+    AppendOnlyObject, ChunkSpec, Cid, Dek, EncodedObject, Manifest, MutablePointer,
+};
 
 /// The content type an author log is published under.
 ///

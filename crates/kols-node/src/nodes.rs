@@ -255,9 +255,7 @@ impl Nodes {
     /// running" by construction — there is no state in which a cold network has
     /// a task.
     pub fn tier(&self, network: &NetworkId) -> Tier {
-        self.running
-            .get(network)
-            .map_or(Tier::Cold, |run| run.tier)
+        self.running.get(network).map_or(Tier::Cold, |run| run.tier)
     }
 
     /// Brings the running set in line with what `specs` and `in_view` ask for.
@@ -503,7 +501,10 @@ mod tests {
         assert!(Tier::Hot.runs());
         assert!(Tier::Warm.runs());
         assert!(!Tier::Cold.runs());
-        assert!(POLL_INTERVAL > POLL_SETTLE, "a poll sleeps longer than it wakes");
+        assert!(
+            POLL_INTERVAL > POLL_SETTLE,
+            "a poll sleeps longer than it wakes"
+        );
     }
 
     #[test]

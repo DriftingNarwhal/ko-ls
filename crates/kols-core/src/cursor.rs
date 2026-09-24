@@ -68,7 +68,10 @@ impl Cursor {
         let wall = i64::from_be_bytes(raw[..8].try_into().ok()?);
         let counter = u32::from_be_bytes(raw[8..12].try_into().ok()?);
         let id: [u8; 32] = raw[12..].try_into().ok()?;
-        Some(Self::new(Hlc::new(wall, counter), MessageId::from_bytes(id)))
+        Some(Self::new(
+            Hlc::new(wall, counter),
+            MessageId::from_bytes(id),
+        ))
     }
 }
 

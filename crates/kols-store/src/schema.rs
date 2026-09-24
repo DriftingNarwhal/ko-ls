@@ -121,8 +121,7 @@ impl Projection {
         )?;
         conn.pragma_update(None, "user_version", SCHEMA)?;
 
-        let empty: i64 =
-            conn.query_row("SELECT COUNT(*) FROM records", [], |row| row.get(0))?;
+        let empty: i64 = conn.query_row("SELECT COUNT(*) FROM records", [], |row| row.get(0))?;
         Ok((Self { conn }, empty == 0))
     }
 
@@ -167,7 +166,10 @@ impl Projection {
     ) -> Result<Vec<MessageId>, ProjectionError> {
         // **Past the newest record rather than at it**, so `None` means "the
         // tail" without a special case in the predicate below.
-        let end = before.unwrap_or(Cursor::new(Hlc::new(i64::MAX, u32::MAX), MessageId::from_bytes([0xFF; 32])));
+        let end = before.unwrap_or(Cursor::new(
+            Hlc::new(i64::MAX, u32::MAX),
+            MessageId::from_bytes([0xFF; 32]),
+        ));
         let mut statement = self.conn.prepare_cached(
             "SELECT id FROM records
               WHERE channel = ?1
@@ -197,7 +199,10 @@ impl Projection {
         limit: usize,
     ) -> Result<Vec<MessageId>, ProjectionError> {
         // Before the oldest possible record, so `None` means "from the start".
-        let start = after.unwrap_or(Cursor::new(Hlc::new(i64::MIN, 0), MessageId::from_bytes([0; 32])));
+        let start = after.unwrap_or(Cursor::new(
+            Hlc::new(i64::MIN, 0),
+            MessageId::from_bytes([0; 32]),
+        ));
         let mut statement = self.conn.prepare_cached(
             "SELECT id FROM records
               WHERE channel = ?1
@@ -223,7 +228,10 @@ impl Projection {
         to: Option<Cursor>,
         limit: usize,
     ) -> Result<Vec<MessageId>, ProjectionError> {
-        let end = to.unwrap_or(Cursor::new(Hlc::new(i64::MAX, u32::MAX), MessageId::from_bytes([0xFF; 32])));
+        let end = to.unwrap_or(Cursor::new(
+            Hlc::new(i64::MAX, u32::MAX),
+            MessageId::from_bytes([0xFF; 32]),
+        ));
         let mut statement = self.conn.prepare_cached(
             "SELECT id FROM records
               WHERE channel = ?1
@@ -402,10 +410,9 @@ impl Projection {
         let mut statement = self
             .conn
             .prepare_cached("SELECT id FROM records WHERE channel = ?1")?;
-        let rows = statement.query_map(
-            rusqlite::params![channel.as_bytes().to_vec()],
-            |row| row.get::<_, Vec<u8>>(0),
-        )?;
+        let rows = statement.query_map(rusqlite::params![channel.as_bytes().to_vec()], |row| {
+            row.get::<_, Vec<u8>>(0)
+        })?;
         let mut ids = std::collections::BTreeSet::new();
         for row in rows {
             ids.insert(message_id(&row?)?);

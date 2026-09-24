@@ -42,7 +42,10 @@ fn a_created_network_is_replayable_and_its_founder_is_a_member() {
     let workspace = Workspace::at(dir.0.clone());
 
     let store = workspace
-        .create("the workshop", vec!["/ip4/198.51.100.7/tcp/4001".to_owned()])
+        .create(
+            "the workshop",
+            vec!["/ip4/198.51.100.7/tcp/4001".to_owned()],
+        )
         .expect("creates");
     let identity = store.identity().expect("an identity");
     let state = store.state().expect("replays");
@@ -160,7 +163,9 @@ fn the_name_a_founder_types_is_the_networks_name_and_not_just_this_machines() {
     let dir = Dir::new("create-named");
     let workspace = Workspace::at(dir.0.clone());
 
-    let store = workspace.create("the workshop", Vec::new()).expect("creates");
+    let store = workspace
+        .create("the workshop", Vec::new())
+        .expect("creates");
     let state = store.state().expect("replays");
 
     assert_eq!(
@@ -205,7 +210,11 @@ fn forgetting_removes_the_store_and_leaves_the_others() {
 
     assert!(!path.exists(), "the store should be gone from disk");
     let left: Vec<String> = workspace.list().into_iter().map(|k| k.label).collect();
-    assert_eq!(left, vec!["alpha".to_owned()], "only the forgotten one goes");
+    assert_eq!(
+        left,
+        vec!["alpha".to_owned()],
+        "only the forgotten one goes"
+    );
     // And the one that stayed is still findable by its id, which is the property
     // the path fix above exists for.
     assert!(workspace.path_for(&kept).exists());
@@ -230,21 +239,33 @@ fn forgetting_destroys_the_seed_so_a_later_join_is_a_stranger() {
     let dir = Dir::new("forget-identity");
     let workspace = Workspace::at(dir.0.clone());
 
-    let store = workspace.create("the workshop", Vec::new()).expect("creates");
+    let store = workspace
+        .create("the workshop", Vec::new())
+        .expect("creates");
     let network = *store.network();
     let path = store.root().to_path_buf();
     let before = store.identity().expect("an identity").id();
-    assert!(path.join("seed").is_file(), "the seed is what forget destroys");
+    assert!(
+        path.join("seed").is_file(),
+        "the seed is what forget destroys"
+    );
     drop(store);
 
     workspace.forget(&network).expect("forgets");
-    assert!(!path.exists(), "the store, and the seed inside it, are gone");
+    assert!(
+        !path.exists(),
+        "the store, and the seed inside it, are gone"
+    );
 
     // Joining the same network again, on this machine, with everything public
     // about it still known: the id names the network and nothing else is needed
     // to arrive at it.
-    let again = Store::create(path.clone(), network, kols_node::random_32().expect("entropy"))
-        .expect("a second store for the same network");
+    let again = Store::create(
+        path.clone(),
+        network,
+        kols_node::random_32().expect("entropy"),
+    )
+    .expect("a second store for the same network");
     assert_ne!(
         before,
         again.identity().expect("an identity").id(),
@@ -285,7 +306,9 @@ fn a_write_that_is_interrupted_cannot_leave_a_log_that_will_not_open() {
 
     let dir = Dir::new("atomic");
     let workspace = Workspace::at(dir.0.clone());
-    let store = workspace.create("the workshop", Vec::new()).expect("creates");
+    let store = workspace
+        .create("the workshop", Vec::new())
+        .expect("creates");
     let root = store.root().to_path_buf();
 
     // Everything a reader scans holds only what a reader expects. A temporary
@@ -320,7 +343,9 @@ fn a_write_that_is_interrupted_cannot_leave_a_log_that_will_not_open() {
     let store = Store::open(root.clone()).expect("opens");
     let claim = store.hold_node().expect("claims");
     assert_eq!(
-        std::fs::read_dir(root.join("tmp")).expect("scratch").count(),
+        std::fs::read_dir(root.join("tmp"))
+            .expect("scratch")
+            .count(),
         0,
         "taking the claim sweeps what an interrupted write left"
     );
@@ -359,7 +384,11 @@ fn a_claim_taken_over_while_its_holder_slept_is_reported_lost() {
     let store = Store::create(root.clone(), network, [4u8; 32]).expect("creates");
 
     let sleeper = store.hold_node().expect("claims");
-    assert_eq!(sleeper.beat(), Beat::Held, "its own claim, before anything else");
+    assert_eq!(
+        sleeper.beat(),
+        Beat::Held,
+        "its own claim, before anything else"
+    );
 
     // The laptop sleeps. Reproduced by ageing the heartbeat rather than by
     // waiting out the window, because what is under test is the ownership
@@ -391,7 +420,10 @@ fn a_claim_taken_over_while_its_holder_slept_is_reported_lost() {
         Beat::Held,
         "the loser's drop must leave the winner's claim alone"
     );
-    assert!(beat.exists(), "the successor's heartbeat survives the loser's drop");
+    assert!(
+        beat.exists(),
+        "the successor's heartbeat survives the loser's drop"
+    );
 }
 
 /// What this machine contributes to one network — Core §4.3, and O1's `SetContribution`.
@@ -458,8 +490,13 @@ fn what_this_machine_contributes_survives_a_reopen_and_zero_is_not_unset() {
     // means not confirmed, which is weaker than not reachable.
     let store = Store::open(root).expect("reopens");
     assert_eq!(store.reachable(), None);
-    store.set_reachable("/ip4/203.0.113.7/tcp/4001").expect("writes");
-    assert_eq!(store.reachable().as_deref(), Some("/ip4/203.0.113.7/tcp/4001"));
+    store
+        .set_reachable("/ip4/203.0.113.7/tcp/4001")
+        .expect("writes");
+    assert_eq!(
+        store.reachable().as_deref(),
+        Some("/ip4/203.0.113.7/tcp/4001")
+    );
 }
 
 /// Replica duty — Storage §3.3, and what makes a storage offer mean anything.
@@ -487,7 +524,9 @@ fn a_node_takes_duty_for_what_placement_ranks_it_for() {
 
     let dir = Dir::new("duty");
     let workspace = Workspace::at(dir.0.clone());
-    let store = workspace.create("the workshop", Vec::new()).expect("creates");
+    let store = workspace
+        .create("the workshop", Vec::new())
+        .expect("creates");
     let founder = store.identity().expect("identity");
     let me = founder.id();
     let network = *store.network();
@@ -545,7 +584,9 @@ fn a_node_takes_duty_for_what_placement_ranks_it_for() {
     let sealed_first = store_object(b"the first sealed segment");
     let sealed_second = store_object(b"the second sealed segment");
     let head = store_object(b"the open head segment");
-    store.mark_segment_link(&sealed_first, 0, None).expect("link");
+    store
+        .mark_segment_link(&sealed_first, 0, None)
+        .expect("link");
     store
         .mark_segment_link(&sealed_second, 1, Some(sealed_first))
         .expect("link");
@@ -591,7 +632,8 @@ fn a_node_takes_duty_for_what_placement_ranks_it_for() {
     ledger
         .insert(advertise(&founder, 0, 1), &state)
         .expect("advertises");
-    let duty = kols_node::replica::evaluate(&store, &ledger, &me, 3, roomy, &quiet, 0).expect("evaluates");
+    let duty =
+        kols_node::replica::evaluate(&store, &ledger, &me, 3, roomy, &quiet, 0).expect("evaluates");
     assert_eq!(duty.considered, 2, "only the sealed pair is considered");
     assert_eq!(duty.mine, 0, "a node offering nothing is never conscripted");
     assert!(!store.has_duty(&sealed_first));
@@ -602,7 +644,8 @@ fn a_node_takes_duty_for_what_placement_ranks_it_for() {
     ledger
         .insert(advertise(&founder, 8 << 30, 2), &state)
         .expect("advertises");
-    let duty = kols_node::replica::evaluate(&store, &ledger, &me, 3, roomy, &quiet, 0).expect("evaluates");
+    let duty =
+        kols_node::replica::evaluate(&store, &ledger, &me, 3, roomy, &quiet, 0).expect("evaluates");
     assert_eq!(duty.mine, 2, "the only contributor holds everything");
     assert_eq!(
         duty.under_replicated, 2,
@@ -619,7 +662,10 @@ fn a_node_takes_duty_for_what_placement_ranks_it_for() {
         .iter()
         .map(|cid| store.object_bytes(cid).expect("held"))
         .sum();
-    assert_eq!(duty.mine_bytes, expected, "the tier is summed from its own marks");
+    assert_eq!(
+        duty.mine_bytes, expected,
+        "the tier is summed from its own marks"
+    );
     assert_eq!(store.duty_bytes(), expected);
     assert!(
         store.stored_bytes() > expected,
@@ -636,8 +682,12 @@ fn a_node_takes_duty_for_what_placement_ranks_it_for() {
             .insert(advertise(member, 64 << 30, 3), &state)
             .expect("advertises");
     }
-    let duty = kols_node::replica::evaluate(&store, &ledger, &me, 1, roomy, &quiet, 0).expect("evaluates");
-    assert_eq!(duty.under_replicated, 0, "five contributors meet a factor of one");
+    let duty =
+        kols_node::replica::evaluate(&store, &ledger, &me, 1, roomy, &quiet, 0).expect("evaluates");
+    assert_eq!(
+        duty.under_replicated, 0,
+        "five contributors meet a factor of one"
+    );
     let candidates: Vec<_> = ledger.entries().cloned().collect();
     let mut released = 0;
     for cid in [sealed_first, sealed_second] {
@@ -690,7 +740,11 @@ fn a_budget_past_either_ceiling_offers_no_room_rather_than_underflowing() {
         installation: 8 * gib,
         installation_used: 2 * gib,
     };
-    assert_eq!(budget.remaining(gib), 3 * gib, "the offer binds while it is the smaller");
+    assert_eq!(
+        budget.remaining(gib),
+        3 * gib,
+        "the offer binds while it is the smaller"
+    );
 
     // The installation ceiling binds first once the disk is nearly full, even
     // though this network has offered plenty. That is the point of having two:
@@ -700,7 +754,11 @@ fn a_budget_past_either_ceiling_offers_no_room_rather_than_underflowing() {
         installation_used: 7 * gib,
         ..budget
     };
-    assert_eq!(pressed.remaining(0), gib, "the disk binds before the offer does");
+    assert_eq!(
+        pressed.remaining(0),
+        gib,
+        "the disk binds before the offer does"
+    );
 
     // Already past the offer, because it was lowered under what is held.
     assert_eq!(budget.remaining(9 * gib), 0, "no room, and no underflow");
@@ -720,7 +778,9 @@ fn duty_stops_at_the_offer_and_says_it_refused() {
 
     let dir = Dir::new("duty-ceiling");
     let workspace = Workspace::at(dir.0.clone());
-    let store = workspace.create("the workshop", Vec::new()).expect("creates");
+    let store = workspace
+        .create("the workshop", Vec::new())
+        .expect("creates");
     let founder = store.identity().expect("identity");
     let me = founder.id();
     let network = *store.network();
@@ -728,10 +788,15 @@ fn duty_stops_at_the_offer_and_says_it_refused() {
 
     let dek = intranet_storage::Dek::generate().expect("a data key");
     let store_object = |plaintext: &[u8]| {
-        let encoded =
-            intranet_storage::encode(plaintext, &dek, intranet_storage::ChunkSpec::from_target(64 * 1024));
+        let encoded = intranet_storage::encode(
+            plaintext,
+            &dek,
+            intranet_storage::ChunkSpec::from_target(64 * 1024),
+        );
         let cid = encoded.manifest_cid();
-        store.put_chunk(&cid, &encoded.manifest.canonical_bytes()).expect("manifest");
+        store
+            .put_chunk(&cid, &encoded.manifest.canonical_bytes())
+            .expect("manifest");
         for (chunk, bytes) in &encoded.chunks {
             store.put_chunk(chunk, bytes).expect("chunk");
         }
@@ -741,8 +806,12 @@ fn duty_stops_at_the_offer_and_says_it_refused() {
     let second = store_object(b"the second sealed segment");
     let head = store_object(b"the open head");
     store.mark_segment_link(&first, 0, None).expect("link");
-    store.mark_segment_link(&second, 1, Some(first)).expect("link");
-    store.mark_segment_link(&head, 2, Some(second)).expect("link");
+    store
+        .mark_segment_link(&second, 1, Some(first))
+        .expect("link");
+    store
+        .mark_segment_link(&head, 2, Some(second))
+        .expect("link");
 
     let mut ledger = CapabilityLedger::new(network);
     ledger
@@ -772,9 +841,13 @@ fn duty_stops_at_the_offer_and_says_it_refused() {
         installation: u64::MAX,
         installation_used: 0,
     };
-    let duty = kols_node::replica::evaluate(&store, &ledger, &me, 3, budget, &quiet, 0).expect("evaluates");
+    let duty = kols_node::replica::evaluate(&store, &ledger, &me, 3, budget, &quiet, 0)
+        .expect("evaluates");
     assert_eq!(duty.mine, 1, "one object fits");
-    assert_eq!(duty.refused, 1, "and declining the other is reported, not silent");
+    assert_eq!(
+        duty.refused, 1,
+        "and declining the other is reported, not silent"
+    );
     assert!(
         duty.mine_bytes <= one,
         "a node must never hold more than it offered: {} against {one}",
@@ -790,7 +863,8 @@ fn duty_stops_at_the_offer_and_says_it_refused() {
     };
     let store2 = workspace.create("another", Vec::new()).expect("creates");
     drop(store2);
-    let duty = kols_node::replica::evaluate(&store, &ledger, &me, 3, full, &quiet, 0).expect("evaluates");
+    let duty =
+        kols_node::replica::evaluate(&store, &ledger, &me, 3, full, &quiet, 0).expect("evaluates");
     assert_eq!(duty.refused, 1, "no room on the disk means no new duty");
 }
 
@@ -804,8 +878,8 @@ fn duty_stops_at_the_offer_and_says_it_refused() {
 /// dropped because the DHT had not answered yet.
 #[test]
 fn a_census_tells_never_asked_from_told_nobody_has_it() {
-    use kols_node::replica::{ANSWER_FRESH_MILLIS, ASK_TIMEOUT_MILLIS, Census};
     use intranet_storage::Cid;
+    use kols_node::replica::{ANSWER_FRESH_MILLIS, ASK_TIMEOUT_MILLIS, Census};
 
     let object = Cid::of(b"an object");
     let me = intranet_identity::MasterSeed::from_entropy([1u8; 32])
@@ -818,7 +892,10 @@ fn a_census_tells_never_asked_from_told_nobody_has_it() {
         .id();
 
     let mut census = Census::default();
-    assert!(census.should_ask(&object, 0), "nothing known, so worth asking");
+    assert!(
+        census.should_ask(&object, 0),
+        "nothing known, so worth asking"
+    );
     assert_eq!(
         census.others_holding(&object, 0),
         None,
@@ -879,7 +956,9 @@ fn a_census_tells_never_asked_from_told_nobody_has_it() {
 fn shedding_gives_back_cached_copies_and_never_duty_or_records() {
     let dir = Dir::new("shed");
     let workspace = Workspace::at(dir.0.clone());
-    let store = workspace.create("the workshop", Vec::new()).expect("creates");
+    let store = workspace
+        .create("the workshop", Vec::new())
+        .expect("creates");
     let channel = kols_core::ChannelId::from_bytes([5u8; 32]);
 
     let dek = intranet_storage::Dek::generate().expect("a data key");
@@ -890,7 +969,9 @@ fn shedding_gives_back_cached_copies_and_never_duty_or_records() {
             intranet_storage::ChunkSpec::from_target(64 * 1024),
         );
         let cid = encoded.manifest_cid();
-        store.put_chunk(&cid, &encoded.manifest.canonical_bytes()).expect("manifest");
+        store
+            .put_chunk(&cid, &encoded.manifest.canonical_bytes())
+            .expect("manifest");
         for (chunk, bytes) in &encoded.chunks {
             store.put_chunk(chunk, bytes).expect("chunk");
         }
@@ -902,10 +983,16 @@ fn shedding_gives_back_cached_copies_and_never_duty_or_records() {
     let newer = store_object(&[b'b'; 4096]);
     let head = store_object(&[b'c'; 4096]);
     store.mark_segment_link(&older, 0, None).expect("link");
-    store.mark_segment_link(&newer, 1, Some(older)).expect("link");
-    store.mark_segment_link(&head, 2, Some(newer)).expect("link");
+    store
+        .mark_segment_link(&newer, 1, Some(older))
+        .expect("link");
+    store
+        .mark_segment_link(&head, 2, Some(newer))
+        .expect("link");
     store.mark_chain_whole(&newer).expect("mark");
-    store.take_duty(&newer, store.object_bytes(&newer).expect("held")).expect("duty");
+    store
+        .take_duty(&newer, store.object_bytes(&newer).expect("held"))
+        .expect("duty");
 
     // A record, standing in for the member's own history.
     let founder = store.identity().expect("identity");
@@ -924,7 +1011,10 @@ fn shedding_gives_back_cached_copies_and_never_duty_or_records() {
     let before = store.stored_bytes();
     let shed = kols_node::replica::shed_cache(&store, 1, 0).expect("sheds");
 
-    assert_eq!(shed.objects, 1, "only the cached sealed segment is sheddable");
+    assert_eq!(
+        shed.objects, 1,
+        "only the cached sealed segment is sheddable"
+    );
     assert!(shed.bytes > 0);
     assert!(
         store.object_bytes(&older).is_none(),
@@ -944,7 +1034,10 @@ fn shedding_gives_back_cached_copies_and_never_duty_or_records() {
         1,
         "records are what a member reads and are never what a storage ceiling takes"
     );
-    assert!(store.stored_bytes() < before, "the disk actually got smaller");
+    assert!(
+        store.stored_bytes() < before,
+        "the disk actually got smaller"
+    );
 
     // **The link and the whole-chain mark both survive, and that is correct.**
     // Those describe the *chain*, which a walk hops along using links and never
@@ -984,7 +1077,9 @@ fn duty_is_given_up_only_with_evidence_and_never_silently() {
 
     let dir = Dir::new("evict");
     let workspace = Workspace::at(dir.0.clone());
-    let store = workspace.create("the workshop", Vec::new()).expect("creates");
+    let store = workspace
+        .create("the workshop", Vec::new())
+        .expect("creates");
     let me = store.identity().expect("identity").id();
     let network = *store.network();
     let peer = |n: u8| {
@@ -1002,19 +1097,27 @@ fn duty_is_given_up_only_with_evidence_and_never_silently() {
             intranet_storage::ChunkSpec::from_target(64 * 1024),
         );
         let cid = encoded.manifest_cid();
-        store.put_chunk(&cid, &encoded.manifest.canonical_bytes()).expect("manifest");
+        store
+            .put_chunk(&cid, &encoded.manifest.canonical_bytes())
+            .expect("manifest");
         for (chunk, bytes) in &encoded.chunks {
             store.put_chunk(chunk, bytes).expect("chunk");
         }
-        store.take_duty(&cid, store.object_bytes(&cid).expect("held")).expect("duty");
+        store
+            .take_duty(&cid, store.object_bytes(&cid).expect("held"))
+            .expect("duty");
         cid
     };
     let held = store_object(&[b'a'; 4096]);
     let lonely = store_object(&[b'b'; 4096]);
     let unknown = store_object(&[b'c'; 4096]);
     store.mark_segment_link(&held, 0, None).expect("link");
-    store.mark_segment_link(&lonely, 1, Some(held)).expect("link");
-    store.mark_segment_link(&unknown, 2, Some(lonely)).expect("link");
+    store
+        .mark_segment_link(&lonely, 1, Some(held))
+        .expect("link");
+    store
+        .mark_segment_link(&unknown, 2, Some(lonely))
+        .expect("link");
 
     let mut census = Census::default();
     census.heard(held, &[me, peer(20), peer(21)], &me, 0);
@@ -1067,7 +1170,10 @@ fn duty_is_given_up_only_with_evidence_and_never_silently() {
         "an expired window plus a stale answer is still not a reason to destroy anything"
     );
     assert!(evicted.lost.is_empty());
-    assert!(evicted.awaiting.contains(&lonely), "it is asked about again instead");
+    assert!(
+        evicted.awaiting.contains(&lonely),
+        "it is asked about again instead"
+    );
 
     // Asked again, and the answer is the same: still nobody. *Now* the window
     // has run on a current answer, and the copy goes — written down, because a
@@ -1075,10 +1181,18 @@ fn duty_is_given_up_only_with_evidence_and_never_silently() {
     // it chosen for them.
     census.heard(lonely, &[me], &me, later);
     let evicted = shed_duty(&store, &census, u64::MAX, 4, later).expect("evicts");
-    assert_eq!(evicted.lost, vec![lonely], "the window runs out and the copy goes");
+    assert_eq!(
+        evicted.lost,
+        vec![lonely],
+        "the window runs out and the copy goes"
+    );
     assert!(store.object_bytes(&lonely).is_none());
     let dropped = store.dropped();
-    assert_eq!(dropped.len(), 1, "what was given up is recorded, not merely done");
+    assert_eq!(
+        dropped.len(),
+        1,
+        "what was given up is recorded, not merely done"
+    );
     assert_eq!(dropped[0].0, later);
 }
 
@@ -1116,7 +1230,9 @@ fn a_node_takes_on_under_replicated_content_it_is_the_next_ranked_for() {
 
     let dir = Dir::new("repair");
     let workspace = Workspace::at(dir.0.clone());
-    let store = workspace.create("the workshop", Vec::new()).expect("creates");
+    let store = workspace
+        .create("the workshop", Vec::new())
+        .expect("creates");
     let founder = store.identity().expect("identity");
     let me = founder.id();
     let network = *store.network();
@@ -1210,10 +1326,14 @@ fn a_node_takes_on_under_replicated_content_it_is_the_next_ranked_for() {
     // a standby with room to test the depth rule below it.
     let candidates: Vec<_> = ledger.entries().cloned().collect();
     let position = |cid: &intranet_storage::Cid| {
-        placement::rank(cid.hash().as_bytes(), &candidates, WeightField::StorageOffered)
-            .iter()
-            .position(|scored| scored.node == me)
-            .expect("every member offers storage, so every member is ranked")
+        placement::rank(
+            cid.hash().as_bytes(),
+            &candidates,
+            WeightField::StorageOffered,
+        )
+        .iter()
+        .position(|scored| scored.node == me)
+        .expect("every member offers storage, so every member is ranked")
     };
     let (target, index) = sealed
         .iter()
@@ -1240,17 +1360,23 @@ fn a_node_takes_on_under_replicated_content_it_is_the_next_ranked_for() {
     let mut census = Census::default();
     let holders: Vec<_> = others.iter().take(factor - 1).map(|m| m.id()).collect();
     census.heard(target, &holders, &me, now);
-    let duty =
-        kols_node::replica::evaluate(&store, &ledger, &me, factor, roomy, &census, now).expect("evaluates");
-    assert_eq!(duty.adopted, 0, "one missing copy wakes one standby, not every standby");
+    let duty = kols_node::replica::evaluate(&store, &ledger, &me, factor, roomy, &census, now)
+        .expect("evaluates");
+    assert_eq!(
+        duty.adopted, 0,
+        "one missing copy wakes one standby, not every standby"
+    );
     assert!(!store.has_duty(&target));
 
     // Two copies short, and the second standby is exactly who §3.4 re-places on.
     let holders: Vec<_> = others.iter().take(factor - 2).map(|m| m.id()).collect();
     census.heard(target, &holders, &me, now);
-    let duty =
-        kols_node::replica::evaluate(&store, &ledger, &me, factor, roomy, &census, now).expect("evaluates");
-    assert_eq!(duty.adopted, 1, "the shortfall reached this node's place in the ranking");
+    let duty = kols_node::replica::evaluate(&store, &ledger, &me, factor, roomy, &census, now)
+        .expect("evaluates");
+    assert_eq!(
+        duty.adopted, 1,
+        "the shortfall reached this node's place in the ranking"
+    );
     assert_eq!(
         duty.adopted_bytes,
         store.object_bytes(&target).expect("held"),
@@ -1263,9 +1389,13 @@ fn a_node_takes_on_under_replicated_content_it_is_the_next_ranked_for() {
     // came back yet, and giving the object up here would undo the repair on
     // exactly the evidence that is missing.
     let much_later = now + 10 * kols_node::replica::ANSWER_FRESH_MILLIS;
-    let duty = kols_node::replica::evaluate(&store, &ledger, &me, factor, roomy, &census, much_later)
-        .expect("evaluates");
-    assert_eq!(duty.returned, 0, "a stale count is not evidence the hole closed");
+    let duty =
+        kols_node::replica::evaluate(&store, &ledger, &me, factor, roomy, &census, much_later)
+            .expect("evaluates");
+    assert_eq!(
+        duty.returned, 0,
+        "a stale count is not evidence the hole closed"
+    );
     assert!(store.has_duty(&target), "and the object stays held");
 
     // Told the network has its target without this node, the repair ends. The
@@ -1273,9 +1403,13 @@ fn a_node_takes_on_under_replicated_content_it_is_the_next_ranked_for() {
     // is only whether this node is promising them.
     let holders: Vec<_> = others.iter().take(factor).map(|m| m.id()).collect();
     census.heard(target, &holders, &me, much_later);
-    let duty = kols_node::replica::evaluate(&store, &ledger, &me, factor, roomy, &census, much_later)
-        .expect("evaluates");
-    assert_eq!(duty.returned, 1, "evidence the hole closed is the one way a repair ends");
+    let duty =
+        kols_node::replica::evaluate(&store, &ledger, &me, factor, roomy, &census, much_later)
+            .expect("evaluates");
+    assert_eq!(
+        duty.returned, 1,
+        "evidence the hole closed is the one way a repair ends"
+    );
     assert!(!store.has_duty(&target) && !store.has_repair(&target));
     assert!(
         store.object_bytes(&target).is_some(),
@@ -1319,16 +1453,28 @@ fn a_relay_another_network_uses_is_reported_however_it_is_addressed() {
     let workspace = Workspace::at(dir.0.clone());
 
     workspace
-        .create("the workshop", vec![format!("/dns4/relay.example/tcp/443/p2p/{RELAY}")])
+        .create(
+            "the workshop",
+            vec![format!("/dns4/relay.example/tcp/443/p2p/{RELAY}")],
+        )
         .expect("creates");
-    let second = workspace.create("the other one", Vec::new()).expect("creates");
+    let second = workspace
+        .create("the other one", Vec::new())
+        .expect("creates");
 
     let shared = workspace.shared_relays(
         Some(second.network()),
         &[format!("/ip4/198.51.100.7/udp/4001/quic-v1/p2p/{RELAY}")],
     );
-    assert_eq!(shared.len(), 1, "one relay, named differently, is still one relay");
-    assert_eq!(shared[0].label, "the workshop", "the warning has to name which network");
+    assert_eq!(
+        shared.len(),
+        1,
+        "one relay, named differently, is still one relay"
+    );
+    assert_eq!(
+        shared[0].label, "the workshop",
+        "the warning has to name which network"
+    );
     assert!(
         shared[0].relay.contains("198.51.100.7"),
         "echoed back as the member typed it, so they can tell which entry is meant"
@@ -1354,7 +1500,9 @@ fn a_networks_own_relay_is_not_reported_against_itself() {
     let workspace = Workspace::at(dir.0.clone());
     let address = format!("/dns4/relay.example/tcp/443/p2p/{RELAY}");
 
-    let store = workspace.create("the workshop", vec![address.clone()]).expect("creates");
+    let store = workspace
+        .create("the workshop", vec![address.clone()])
+        .expect("creates");
 
     assert!(
         workspace
@@ -1374,7 +1522,9 @@ fn a_network_that_does_not_exist_yet_is_compared_against_every_other() {
     let workspace = Workspace::at(dir.0.clone());
     let address = format!("/dns4/relay.example/tcp/443/p2p/{RELAY}");
 
-    workspace.create("the workshop", vec![address.clone()]).expect("creates");
+    workspace
+        .create("the workshop", vec![address.clone()])
+        .expect("creates");
 
     let shared = workspace.shared_relays(None, std::slice::from_ref(&address));
     assert_eq!(shared.len(), 1);
@@ -1392,7 +1542,9 @@ fn a_conversation_declares_its_profile_and_a_server_deliberately_does_not() {
     let dir = Dir::new("profiles");
     let workspace = Workspace::at(dir.0.clone());
 
-    let server = workspace.create("the workshop", Vec::new()).expect("creates");
+    let server = workspace
+        .create("the workshop", Vec::new())
+        .expect("creates");
     let server_state = server.state().expect("replays");
     assert!(
         !server_state
@@ -1429,7 +1581,9 @@ fn the_behaviour_set_a_node_runs_follows_what_the_network_is() {
     let dir = Dir::new("discovery");
     let workspace = Workspace::at(dir.0.clone());
 
-    let server = workspace.create("the workshop", Vec::new()).expect("creates");
+    let server = workspace
+        .create("the workshop", Vec::new())
+        .expect("creates");
     let conversation = workspace.create_conversation("sam").expect("creates");
 
     assert_eq!(
@@ -1472,7 +1626,9 @@ fn a_conversation_refuses_channel_structure_before_anything_is_signed() {
 
     // The control matters: the founder holds every capability in both networks,
     // so without it a refusal could be about permission rather than the profile.
-    let server = workspace.create("the workshop", Vec::new()).expect("creates");
+    let server = workspace
+        .create("the workshop", Vec::new())
+        .expect("creates");
     assert!(make(&server).is_ok(), "a server takes channels");
 
     let conversation = workspace.create_conversation("sam").expect("creates");
@@ -1499,7 +1655,9 @@ fn a_node_for_a_conversation_is_built_without_discovery_and_says_so() {
 
     // And the control, because a line that appeared for everything would say
     // nothing about the choice.
-    let server = workspace.create("the workshop", Vec::new()).expect("creates");
+    let server = workspace
+        .create("the workshop", Vec::new())
+        .expect("creates");
     let said = common::brief_run(server.root().to_path_buf());
     assert!(
         said.iter().any(|line| line.contains("peer id")),
@@ -1524,7 +1682,11 @@ use kols_node::store::Store;
 // some third network.
 
 /// Admits `who` to `store`'s `everyone`, signed by `founder`.
-fn admit_to(store: &Store, founder: &intranet_identity::PerNetworkIdentity, who: &intranet_identity::PerNetworkIdentityId) {
+fn admit_to(
+    store: &Store,
+    founder: &intranet_identity::PerNetworkIdentity,
+    who: &intranet_identity::PerNetworkIdentityId,
+) {
     let log = store.log().expect("log");
     let parent = log.canonical_chain().last().copied();
     store
@@ -1542,7 +1704,11 @@ fn admit_to(store: &Store, founder: &intranet_identity::PerNetworkIdentity, who:
 }
 
 /// Removes `who` from `store`'s `everyone`, signed by `founder`.
-fn remove_from(store: &Store, founder: &intranet_identity::PerNetworkIdentity, who: &intranet_identity::PerNetworkIdentityId) {
+fn remove_from(
+    store: &Store,
+    founder: &intranet_identity::PerNetworkIdentity,
+    who: &intranet_identity::PerNetworkIdentityId,
+) {
     let log = store.log().expect("log");
     let parent = log.canonical_chain().last().copied();
     store
@@ -1561,10 +1727,21 @@ fn remove_from(store: &Store, founder: &intranet_identity::PerNetworkIdentity, w
 
 /// A shared network with a relay, a peer admitted to it, and a conversation
 /// whose origin points back at that network and peer.
-fn conversation_with_origin(dir: &Dir) -> (Workspace, Store, Store, intranet_identity::PerNetworkIdentity, intranet_identity::PerNetworkIdentityId) {
+fn conversation_with_origin(
+    dir: &Dir,
+) -> (
+    Workspace,
+    Store,
+    Store,
+    intranet_identity::PerNetworkIdentity,
+    intranet_identity::PerNetworkIdentityId,
+) {
     let workspace = Workspace::at(dir.0.clone());
     let shared = workspace
-        .create("the workshop", vec![format!("/dns4/relay.example/tcp/443/p2p/{RELAY}")])
+        .create(
+            "the workshop",
+            vec![format!("/dns4/relay.example/tcp/443/p2p/{RELAY}")],
+        )
         .expect("creates");
     let founder = shared.identity().expect("identity");
     let peer = intranet_identity::MasterSeed::from_entropy([77u8; 32])
@@ -1574,7 +1751,9 @@ fn conversation_with_origin(dir: &Dir) -> (Workspace, Store, Store, intranet_ide
     admit_to(&shared, &founder, &peer);
 
     let conversation = workspace.create_conversation("alice").expect("creates");
-    conversation.set_origin(shared.network(), &peer).expect("records origin");
+    conversation
+        .set_origin(shared.network(), &peer)
+        .expect("records origin");
     (workspace, shared, conversation, founder, peer)
 }
 
@@ -1587,7 +1766,10 @@ fn a_conversation_borrows_the_shared_networks_relay_while_both_are_members() {
         .borrowable_relay(&conversation)
         .expect("both are members, so there is somewhere to meet");
     assert_eq!(borrowed.len(), 1);
-    assert!(borrowed[0].contains(RELAY), "the shared network's relay, not one of its own");
+    assert!(
+        borrowed[0].contains(RELAY),
+        "the shared network's relay, not one of its own"
+    );
 }
 
 #[test]
@@ -1597,7 +1779,10 @@ fn the_relay_stops_being_borrowable_when_the_peer_leaves_the_shared_network() {
     // conversation could know to remove it.
     let dir = Dir::new("borrow-revoked");
     let (workspace, shared, conversation, founder, peer) = conversation_with_origin(&dir);
-    assert!(workspace.borrowable_relay(&conversation).is_some(), "borrowable first");
+    assert!(
+        workspace.borrowable_relay(&conversation).is_some(),
+        "borrowable first"
+    );
 
     remove_from(&shared, &founder, &peer);
 
@@ -1666,7 +1851,10 @@ fn the_relay_stops_being_borrowable_when_this_member_is_revoked() {
     // check rather than of a broken log.
     let state = shared.state().expect("replays");
     assert!(!state.is_member(&me), "the revocation took effect");
-    assert!(state.is_member(&peer), "and the peer is still there, so only my side changed");
+    assert!(
+        state.is_member(&peer),
+        "and the peer is still there, so only my side changed"
+    );
 
     assert!(
         workspace.borrowable_relay(&conversation).is_none(),
@@ -1681,7 +1869,10 @@ fn a_conversation_with_no_origin_borrows_nothing() {
     let dir = Dir::new("borrow-no-origin");
     let workspace = Workspace::at(dir.0.clone());
     workspace
-        .create("the workshop", vec![format!("/dns4/relay.example/tcp/443/p2p/{RELAY}")])
+        .create(
+            "the workshop",
+            vec![format!("/dns4/relay.example/tcp/443/p2p/{RELAY}")],
+        )
         .expect("creates");
     let orphan = workspace.create_conversation("nobody").expect("creates");
 
@@ -1731,15 +1922,31 @@ fn a_supervisor_runs_every_joined_network_at_once() {
 
     let dir = Dir::new("supervisor-many");
     let workspace = Workspace::at(dir.0.clone());
-    let a = workspace.create("the workshop", Vec::new()).expect("creates");
-    let b = workspace.create("the other one", Vec::new()).expect("creates");
+    let a = workspace
+        .create("the workshop", Vec::new())
+        .expect("creates");
+    let b = workspace
+        .create("the other one", Vec::new())
+        .expect("creates");
     let c = workspace.create_conversation("sam").expect("creates");
 
     let (a_id, b_id, c_id) = (*a.network(), *b.network(), *c.network());
     let specs = vec![
-        Spec { network: a_id, root: a.root().to_path_buf(), set_aside: false },
-        Spec { network: b_id, root: b.root().to_path_buf(), set_aside: false },
-        Spec { network: c_id, root: c.root().to_path_buf(), set_aside: false },
+        Spec {
+            network: a_id,
+            root: a.root().to_path_buf(),
+            set_aside: false,
+        },
+        Spec {
+            network: b_id,
+            root: b.root().to_path_buf(),
+            set_aside: false,
+        },
+        Spec {
+            network: c_id,
+            root: c.root().to_path_buf(),
+            set_aside: false,
+        },
     ];
 
     // Events are tagged, because `Event` says what happened and not where —
@@ -1753,10 +1960,20 @@ fn a_supervisor_runs_every_joined_network_at_once() {
         .block_on(async {
             let now = std::time::Instant::now();
             let mut nodes = Nodes::here();
-            nodes.reconcile(&specs, Some(&a_id), &sink, kols_node::serve::SEAL_TARGET_BYTES, now);
+            nodes.reconcile(
+                &specs,
+                Some(&a_id),
+                &sink,
+                kols_node::serve::SEAL_TARGET_BYTES,
+                now,
+            );
 
             assert_eq!(nodes.tier(&a_id), Tier::Hot, "the one in view");
-            assert_eq!(nodes.tier(&b_id), Tier::Warm, "a server nobody is looking at still runs");
+            assert_eq!(
+                nodes.tier(&b_id),
+                Tier::Warm,
+                "a server nobody is looking at still runs"
+            );
             assert_eq!(nodes.tier(&c_id), Tier::Warm, "and so does a conversation");
             assert_eq!(nodes.running().len(), 3, "three networks, three nodes");
 
@@ -1771,7 +1988,13 @@ fn a_supervisor_runs_every_joined_network_at_once() {
 
             // Looking elsewhere moves the labels and stops nothing, which is the
             // correction: a network does not go dark because you looked away.
-            nodes.reconcile(&specs, Some(&b_id), &sink, kols_node::serve::SEAL_TARGET_BYTES, now);
+            nodes.reconcile(
+                &specs,
+                Some(&b_id),
+                &sink,
+                kols_node::serve::SEAL_TARGET_BYTES,
+                now,
+            );
             assert_eq!(nodes.tier(&a_id), Tier::Warm);
             assert_eq!(nodes.tier(&b_id), Tier::Hot);
             assert_eq!(nodes.running().len(), 3, "still all three");
@@ -1793,7 +2016,9 @@ fn a_network_the_member_set_aside_is_polled_rather_than_abandoned() {
     // everybody else in it.
     let dir = Dir::new("supervisor-cold");
     let workspace = Workspace::at(dir.0.clone());
-    let quiet = workspace.create("the quiet one", Vec::new()).expect("creates");
+    let quiet = workspace
+        .create("the quiet one", Vec::new())
+        .expect("creates");
     let quiet_id = *quiet.network();
     let specs = vec![Spec {
         network: quiet_id,
@@ -1811,27 +2036,68 @@ fn a_network_the_member_set_aside_is_polled_rather_than_abandoned() {
             let mut nodes = Nodes::here();
 
             // First reconcile wakes it, because it has never been polled.
-            nodes.reconcile(&specs, None, &sink, kols_node::serve::SEAL_TARGET_BYTES, start);
-            assert_eq!(nodes.running().len(), 1, "a cold network is woken to catch up");
+            nodes.reconcile(
+                &specs,
+                None,
+                &sink,
+                kols_node::serve::SEAL_TARGET_BYTES,
+                start,
+            );
+            assert_eq!(
+                nodes.running().len(),
+                1,
+                "a cold network is woken to catch up"
+            );
             assert_eq!(nodes.tier(&quiet_id), Tier::Cold, "woken, and still cold");
 
             // Mid-poll it is left alone rather than restarted on every tick.
-            nodes.reconcile(&specs, None, &sink, kols_node::serve::SEAL_TARGET_BYTES, start);
+            nodes.reconcile(
+                &specs,
+                None,
+                &sink,
+                kols_node::serve::SEAL_TARGET_BYTES,
+                start,
+            );
             assert_eq!(nodes.running().len(), 1);
 
             // Once it has had time to catch up, it goes back to sleep.
             let settled = start + POLL_SETTLE + std::time::Duration::from_secs(1);
-            nodes.reconcile(&specs, None, &sink, kols_node::serve::SEAL_TARGET_BYTES, settled);
-            assert!(nodes.running().is_empty(), "the poll ends rather than becoming a warm node");
+            nodes.reconcile(
+                &specs,
+                None,
+                &sink,
+                kols_node::serve::SEAL_TARGET_BYTES,
+                settled,
+            );
+            assert!(
+                nodes.running().is_empty(),
+                "the poll ends rather than becoming a warm node"
+            );
 
             // And it is not woken again until its poll comes round.
             let soon = settled + std::time::Duration::from_secs(1);
-            nodes.reconcile(&specs, None, &sink, kols_node::serve::SEAL_TARGET_BYTES, soon);
+            nodes.reconcile(
+                &specs,
+                None,
+                &sink,
+                kols_node::serve::SEAL_TARGET_BYTES,
+                soon,
+            );
             assert!(nodes.running().is_empty(), "not every tick");
 
             let due = start + POLL_INTERVAL + std::time::Duration::from_secs(1);
-            nodes.reconcile(&specs, None, &sink, kols_node::serve::SEAL_TARGET_BYTES, due);
-            assert_eq!(nodes.running().len(), 1, "woken again when the poll comes round");
+            nodes.reconcile(
+                &specs,
+                None,
+                &sink,
+                kols_node::serve::SEAL_TARGET_BYTES,
+                due,
+            );
+            assert_eq!(
+                nodes.running().len(),
+                1,
+                "woken again when the poll comes round"
+            );
 
             for task in nodes.stop_all() {
                 let _ = task.await;
@@ -1845,12 +2111,22 @@ fn reconciling_twice_changes_nothing_and_a_tier_change_is_not_a_restart() {
 
     let dir = Dir::new("supervisor-idempotent");
     let workspace = Workspace::at(dir.0.clone());
-    let a = workspace.create("the workshop", Vec::new()).expect("creates");
+    let a = workspace
+        .create("the workshop", Vec::new())
+        .expect("creates");
     let b = workspace.create_conversation("sam").expect("creates");
     let (a_id, b_id) = (*a.network(), *b.network());
     let specs = vec![
-        Spec { network: a_id, root: a.root().to_path_buf(), set_aside: false },
-        Spec { network: b_id, root: b.root().to_path_buf(), set_aside: false },
+        Spec {
+            network: a_id,
+            root: a.root().to_path_buf(),
+            set_aside: false,
+        },
+        Spec {
+            network: b_id,
+            root: b.root().to_path_buf(),
+            set_aside: false,
+        },
     ];
     let sink: kols_node::nodes::TaggedSink = std::sync::Arc::new(|_, _| {});
 
@@ -1861,21 +2137,43 @@ fn reconciling_twice_changes_nothing_and_a_tier_change_is_not_a_restart() {
         .block_on(async {
             let now = std::time::Instant::now();
             let mut nodes = Nodes::here();
-            nodes.reconcile(&specs, Some(&a_id), &sink, kols_node::serve::SEAL_TARGET_BYTES, now);
+            nodes.reconcile(
+                &specs,
+                Some(&a_id),
+                &sink,
+                kols_node::serve::SEAL_TARGET_BYTES,
+                now,
+            );
             let first = nodes.running();
 
             // Idempotent: a caller may run this on every tick without tracking
             // what it did last time, which keeps the policy in one place.
-            nodes.reconcile(&specs, Some(&a_id), &sink, kols_node::serve::SEAL_TARGET_BYTES, now);
+            nodes.reconcile(
+                &specs,
+                Some(&a_id),
+                &sink,
+                kols_node::serve::SEAL_TARGET_BYTES,
+                now,
+            );
             assert_eq!(nodes.running(), first, "nothing restarted");
 
             // Moving the view raises one and lowers the other without restarting
             // either — hot and warm are both continuously running, and dropping a
             // node's connections to change a label would be a cost for nothing.
-            nodes.reconcile(&specs, Some(&b_id), &sink, kols_node::serve::SEAL_TARGET_BYTES, now);
+            nodes.reconcile(
+                &specs,
+                Some(&b_id),
+                &sink,
+                kols_node::serve::SEAL_TARGET_BYTES,
+                now,
+            );
             assert_eq!(nodes.tier(&b_id), Tier::Hot);
             assert_eq!(nodes.tier(&a_id), Tier::Warm);
-            assert_eq!(nodes.running().len(), 2, "both still up; only the labels moved");
+            assert_eq!(
+                nodes.running().len(),
+                2,
+                "both still up; only the labels moved"
+            );
             for task in nodes.stop_all() {
                 let _ = task.await;
             }
@@ -1886,17 +2184,21 @@ fn reconciling_twice_changes_nothing_and_a_tier_change_is_not_a_restart() {
 fn setting_a_network_aside_survives_a_reopen() {
     let dir = Dir::new("set-aside-persists");
     let workspace = Workspace::at(dir.0.clone());
-    let network = workspace.create("the quiet one", Vec::new()).expect("creates");
+    let network = workspace
+        .create("the quiet one", Vec::new())
+        .expect("creates");
     assert!(!network.is_set_aside(), "warm is the default");
 
     network.set_aside(true).expect("sets aside");
     let reopened = workspace.open(&network.network().short()).expect("opens");
-    assert!(reopened.is_set_aside(), "a preference nobody has to set twice");
+    assert!(
+        reopened.is_set_aside(),
+        "a preference nobody has to set twice"
+    );
 
     reopened.set_aside(false).expect("brings it back");
     assert!(!reopened.is_set_aside());
 }
-
 
 #[test]
 fn reconciling_from_a_synchronous_caller_does_not_panic() {
@@ -1910,7 +2212,9 @@ fn reconciling_from_a_synchronous_caller_does_not_panic() {
 
     let dir = Dir::new("reconcile-sync");
     let workspace = Workspace::at(dir.0.clone());
-    let network = workspace.create("the workshop", Vec::new()).expect("creates");
+    let network = workspace
+        .create("the workshop", Vec::new())
+        .expect("creates");
     let specs = vec![Spec {
         network: *network.network(),
         root: network.root().to_path_buf(),
@@ -1943,7 +2247,10 @@ fn starting_a_conversation_makes_a_network_records_its_origin_and_offers_it() {
     let dir = Dir::new("dm-start");
     let workspace = Workspace::at(dir.0.clone());
     let shared = workspace
-        .create("the workshop", vec![format!("/dns4/relay.example/tcp/443/p2p/{RELAY}")])
+        .create(
+            "the workshop",
+            vec![format!("/dns4/relay.example/tcp/443/p2p/{RELAY}")],
+        )
         .expect("creates");
     let founder = shared.identity().expect("identity");
     let peer = intranet_identity::MasterSeed::from_entropy([91u8; 32])
@@ -1999,7 +2306,9 @@ fn a_second_offer_to_one_person_replaces_the_first_rather_than_queueing() {
     // somebody who was unreachable (`03` §4.3 makes retrying the sender's job).
     let dir = Dir::new("dm-reoffer");
     let workspace = Workspace::at(dir.0.clone());
-    let shared = workspace.create("the workshop", Vec::new()).expect("creates");
+    let shared = workspace
+        .create("the workshop", Vec::new())
+        .expect("creates");
     let founder = shared.identity().expect("identity");
     let peer = intranet_identity::MasterSeed::from_entropy([92u8; 32])
         .identity_for(shared.network())
@@ -2027,7 +2336,9 @@ fn a_second_offer_to_one_person_replaces_the_first_rather_than_queueing() {
 fn a_conversation_is_refused_with_a_stranger_and_with_yourself() {
     let dir = Dir::new("dm-refusals");
     let workspace = Workspace::at(dir.0.clone());
-    let shared = workspace.create("the workshop", Vec::new()).expect("creates");
+    let shared = workspace
+        .create("the workshop", Vec::new())
+        .expect("creates");
     let mine = shared.identity().expect("identity").id();
 
     // A stranger: the recipient is obliged to refuse a sender who is not a
@@ -2074,7 +2385,11 @@ fn a_store_that_is_its_own_home_belongs_to_no_workspace() {
     // workspace, whatever else is in it.
     let alone = Store::open(store.root().to_path_buf()).expect("opens");
     let as_home = Workspace::at(store.root().to_path_buf());
-    assert_eq!(as_home.list().len(), 1, "a workspace of one, which is the supported shape");
+    assert_eq!(
+        as_home.list().len(),
+        1,
+        "a workspace of one, which is the supported shape"
+    );
     assert!(
         Workspace::containing(&alone).is_some_and(|w| w.root() == lone.root()),
         "found by layout rather than by nesting, so the answer does not change \
@@ -2122,11 +2437,7 @@ fn a_store_that_is_its_own_home_belongs_to_no_workspace() {
 /// The terminal's `attach` writes a store straight at `--home`, which is its
 /// single-store shape; a workspace needs the store where `path_for` would put
 /// it, or nothing above will find it.
-fn attach_in(
-    workspace: &Workspace,
-    network: &intranet_identity::NetworkId,
-    label: &str,
-) -> Store {
+fn attach_in(workspace: &Workspace, network: &intranet_identity::NetworkId, label: &str) -> Store {
     let store = Store::create(
         workspace.path_for(network),
         *network,
@@ -2144,7 +2455,9 @@ fn two_sides(name: &str) -> (Dir, Dir, Workspace, Store, Workspace, Store) {
     let alice_ws = Workspace::at(alice_dir.0.clone());
     let bob_ws = Workspace::at(bob_dir.0.clone());
 
-    let alice = alice_ws.create("the workshop", Vec::new()).expect("creates");
+    let alice = alice_ws
+        .create("the workshop", Vec::new())
+        .expect("creates");
     let founder = alice.identity().expect("identity");
 
     // Bob's identity in that network exists before anybody has heard of him,
@@ -2174,12 +2487,16 @@ fn a_request_built_on_one_side_verifies_on_the_other() {
     // so there is nothing for an invite to carry. This is the ordinary state
     // rather than a failure, and it is why the offer is a want.
     assert!(
-        kols_node::dm::deliverable(&alice_ws, &alice, 1_000).expect("builds").is_empty(),
+        kols_node::dm::deliverable(&alice_ws, &alice, 1_000)
+            .expect("builds")
+            .is_empty(),
         "an offer with no address is not deliverable"
     );
 
     // What `kols serve` does for the conversation once it runs.
-    let conversation = alice_ws.store_for(&started.conversation).expect("on the disk");
+    let conversation = alice_ws
+        .store_for(&started.conversation)
+        .expect("on the disk");
     conversation
         .set_addresses(&["/ip4/127.0.0.1/tcp/4001".to_owned()])
         .expect("records an address");
@@ -2297,7 +2614,10 @@ fn a_request_from_somebody_who_is_not_a_member_is_refused() {
     let alice_id = alice.identity().expect("identity").id();
     match kols_node::dm::receive(&unsynced, &alice_id, &ready[0].payload) {
         kols_node::dm::Arrived::Refused { why, .. } => {
-            assert!(why.contains("not a current member") || why.contains("replay"), "{why}");
+            assert!(
+                why.contains("not a current member") || why.contains("replay"),
+                "{why}"
+            );
         }
         other => panic!("a sender this node cannot see as a member must be refused: {other:?}"),
     }
@@ -2319,11 +2639,19 @@ fn being_told_that_closing_is_not_quitting_is_remembered_across_launches() {
     // close is one nobody reads, and one every morning is the same notice.
     let dir = Dir::new("told-about-tray");
     let workspace = Workspace::at(dir.0.clone());
-    assert!(!workspace.told_closing_is_not_quitting(), "nothing said yet");
-    workspace.remember_closing_is_not_quitting().expect("remembers");
+    assert!(
+        !workspace.told_closing_is_not_quitting(),
+        "nothing said yet"
+    );
+    workspace
+        .remember_closing_is_not_quitting()
+        .expect("remembers");
     assert!(workspace.told_closing_is_not_quitting());
     // A second workspace over the same root is a second launch.
-    assert!(Workspace::at(dir.0.clone()).told_closing_is_not_quitting(), "and it survives");
+    assert!(
+        Workspace::at(dir.0.clone()).told_closing_is_not_quitting(),
+        "and it survives"
+    );
 }
 
 // --- One application per installation (`design/09` §1.1) -------------------
@@ -2339,7 +2667,10 @@ fn a_second_launch_asks_the_first_to_show_itself_rather_than_starting() {
         panic!("the first launch is the application");
     };
     assert!(first.beat(), "and it holds its own claim");
-    assert!(!first.asked_to_show(), "nobody has asked it to do anything yet");
+    assert!(
+        !first.asked_to_show(),
+        "nobody has asked it to do anything yet"
+    );
 
     // **The holder has to actually answer**, which is the protocol rather than
     // a detail of the test: a launch concludes somebody is there by watching
@@ -2416,8 +2747,11 @@ fn a_claim_left_by_a_crash_is_taken_over_rather_than_waited_on_forever() {
         .expect("a clock")
         .as_millis() as i64
         - 60_000;
-    std::fs::write(dir.0.join("running").join("heartbeat"), long_ago.to_string())
-        .expect("a stale beat");
+    std::fs::write(
+        dir.0.join("running").join("heartbeat"),
+        long_ago.to_string(),
+    )
+    .expect("a stale beat");
     std::fs::write(dir.0.join("running").join("owner"), "12345").expect("somebody else's token");
 
     assert!(

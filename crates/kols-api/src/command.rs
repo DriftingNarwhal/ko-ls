@@ -1,7 +1,8 @@
 //! What the interface may ask for, and how much a request costs in consent.
 
 use kols_core::{
-    Attachment, CategoryChange, CategoryId, ChannelChange, ChannelId, Hlc, MessageId, Privacy, Window,
+    Attachment, CategoryChange, CategoryId, ChannelChange, ChannelId, Hlc, MessageId, Privacy,
+    Window,
 };
 
 /// One thing the interface can ask the core to do.

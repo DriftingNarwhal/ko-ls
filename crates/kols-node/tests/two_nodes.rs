@@ -21,7 +21,7 @@
 //! same one (`three_nodes.rs`).
 
 mod common;
-use common::{every_daemon_log, field, ok, patience, run, serve, serve_sealing, serve_tuned, Home};
+use common::{Home, every_daemon_log, field, ok, patience, run, serve, serve_sealing, serve_tuned};
 use std::time::{Duration, Instant};
 
 #[test]
@@ -727,7 +727,10 @@ fn presence_travels_and_invisible_sends_nothing() {
 
     // The bracket. A record going out live is the same mesh a beat would ride,
     // between these two nodes, right now.
-    ok(&alice, &["post", "general", "still here, just not saying so"]);
+    ok(
+        &alice,
+        &["post", "general", "still here, just not saying so"],
+    );
     alice_node.wait_for("broadcast 1 record(s) live", Duration::from_secs(45));
     bob_node.wait_for("learned 1 record", Duration::from_secs(45));
 

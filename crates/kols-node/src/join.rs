@@ -334,9 +334,7 @@ pub async fn redeem(
 
             NodeEvent::AwaitingAdmission { .. } => {
                 return Ok(Landed::Waiting {
-                    identity: intranet_crypto::to_hex(
-                        identity.id().verifying_key().as_bytes(),
-                    ),
+                    identity: intranet_crypto::to_hex(identity.id().verifying_key().as_bytes()),
                 });
             }
 

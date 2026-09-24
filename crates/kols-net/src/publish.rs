@@ -58,11 +58,7 @@ pub fn publish_segment(node: &mut MemberNode, published: &Published) -> PublishO
 /// while reassembly is a pure function of bytes already held. Keeping them apart
 /// means the decode path is testable without a network and the caller decides
 /// how long to wait for chunks.
-pub fn fetch_segment(
-    node: &MemberNode,
-    manifest_cid: Cid,
-    dek: &Dek,
-) -> Result<Segment, NetError> {
+pub fn fetch_segment(node: &MemberNode, manifest_cid: Cid, dek: &Dek) -> Result<Segment, NetError> {
     let manifest_bytes = node
         .chunk_store()
         .get(&manifest_cid)

@@ -19,7 +19,9 @@ use kols_store::{Projection, Verdict};
 const NETWORK: NetworkId = NetworkId::from_bytes([3u8; 32]);
 
 fn identity(n: u8) -> PerNetworkIdentity {
-    MasterSeed::from_entropy([n; 32]).identity_for(&NETWORK).unwrap()
+    MasterSeed::from_entropy([n; 32])
+        .identity_for(&NETWORK)
+        .unwrap()
 }
 
 fn channel() -> ChannelId {
@@ -81,7 +83,9 @@ fn agree(records: &[Record], limits: &ReaderLimits, why: &str) {
         .zip(&real)
         .enumerate()
         .filter(|(_, (verdict, refused))| verdict.renders() == **refused)
-        .map(|(at, (verdict, refused))| format!("#{at}: stored {verdict:?}, pass refused {refused}"))
+        .map(|(at, (verdict, refused))| {
+            format!("#{at}: stored {verdict:?}, pass refused {refused}")
+        })
         .collect();
     assert!(mismatch.is_empty(), "{why}: {mismatch:?}");
 }

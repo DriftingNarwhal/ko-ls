@@ -4,10 +4,9 @@ use crate::{Command, Sensitivity};
 use intranet_governance::{Capability, GovernanceState};
 use intranet_identity::PerNetworkIdentityId;
 use kols_core::{
-    CategoryChange, MAX_CATEGORY_NAME_BYTES,
-    Authority, CategoryId, ChannelChange, ChannelId, ChatPolicy, MAX_CHANNEL_NAME_BYTES,
-    MAX_CHANNEL_TOPIC_BYTES, MAX_REACTION_KEY_BYTES, NameRefusal, Names, Placement, holds,
-    holds_in_scope,
+    Authority, CategoryChange, CategoryId, ChannelChange, ChannelId, ChatPolicy,
+    MAX_CATEGORY_NAME_BYTES, MAX_CHANNEL_NAME_BYTES, MAX_CHANNEL_TOPIC_BYTES,
+    MAX_REACTION_KEY_BYTES, NameRefusal, Names, Placement, holds, holds_in_scope,
 };
 
 /// Where replayed state says a channel sits.
@@ -161,7 +160,11 @@ impl std::fmt::Display for Refusal {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::NoSuchChannel(id) => {
-                write!(f, "no channel {}", &intranet_crypto::to_hex(id.as_bytes())[..12])
+                write!(
+                    f,
+                    "no channel {}",
+                    &intranet_crypto::to_hex(id.as_bytes())[..12]
+                )
             }
             Self::NotPermitted { command, needs } => {
                 write!(f, "{command} needs {needs}, which you do not hold")
@@ -171,7 +174,10 @@ impl std::fmt::Display for Refusal {
                 field,
                 actual,
                 limit,
-            } => write!(f, "{field} is {actual} bytes, and the ceiling here is {limit}"),
+            } => write!(
+                f,
+                "{field} is {actual} bytes, and the ceiling here is {limit}"
+            ),
             Self::TooMany {
                 field,
                 actual,
@@ -179,7 +185,10 @@ impl std::fmt::Display for Refusal {
             } => write!(f, "{actual} {field}, and the ceiling here is {limit}"),
             Self::Name(refusal) => write!(f, "{refusal}"),
             Self::NotAServer => {
-                write!(f, "this network is a conversation, which has no channels to manage")
+                write!(
+                    f,
+                    "this network is a conversation, which has no channels to manage"
+                )
             }
             Self::UnknownVerb(verb) => write!(
                 f,
@@ -361,9 +370,7 @@ pub fn authorize<A: Authority, C: Channels>(
             )?;
         }
 
-        Command::React {
-            channel, key, ..
-        } => {
+        Command::React { channel, key, .. } => {
             let placement = placement_of(actor, channel)?;
             require(
                 actor.authority.may_post(&actor.identity, &placement),
@@ -447,7 +454,11 @@ pub fn authorize<A: Authority, C: Channels>(
             if category_name.trim().is_empty() {
                 return Err(Refusal::Empty("category name"));
             }
-            bound("category name", category_name.len(), MAX_CATEGORY_NAME_BYTES)?;
+            bound(
+                "category name",
+                category_name.len(),
+                MAX_CATEGORY_NAME_BYTES,
+            )?;
         }
 
         Command::UpdateCategory { category, change } => {
@@ -468,7 +479,11 @@ pub fn authorize<A: Authority, C: Channels>(
                 if category_name.trim().is_empty() {
                     return Err(Refusal::Empty("category name"));
                 }
-                bound("category name", category_name.len(), MAX_CATEGORY_NAME_BYTES)?;
+                bound(
+                    "category name",
+                    category_name.len(),
+                    MAX_CATEGORY_NAME_BYTES,
+                )?;
             }
             // A position has no range to violate, for the reason `check_change`
             // gives of a channel's, and deleting carries no value at all.
@@ -696,10 +711,7 @@ pub fn authorize<A: Authority, C: Channels>(
                 .groups
                 .get(group)
                 .ok_or_else(|| Refusal::NoSuchRole(group.to_string()))?;
-            if matches!(
-                target.capabilities,
-                intranet_governance::CapabilitySet::All
-            ) {
+            if matches!(target.capabilities, intranet_governance::CapabilitySet::All) {
                 return Err(Refusal::Unrestricted {
                     group: group.to_string(),
                 });

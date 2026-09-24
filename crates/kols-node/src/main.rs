@@ -47,10 +47,10 @@
 use clap::{Parser, Subcommand};
 use intranet_crypto::to_hex;
 use kols_api::{Command as ApiCommand, Outcome};
+use kols_core::{ChannelChange, Hlc, Privacy};
 use kols_node::executor::{ExecuteError, Executor};
 use kols_node::store::Store;
 use kols_node::{network, random_32, serve};
-use kols_core::{ChannelChange, Hlc, Privacy};
 
 /// A terminal client for ko-ls.
 #[derive(Parser)]
@@ -739,7 +739,9 @@ fn render(outcome: &Outcome, names: &kols_core::Names) {
                 println!("nothing is published about you");
                 println!();
                 println!("Invisible does not broadcast \"invisible\" — it broadcasts nothing, so");
-                println!("this node is indistinguishable from one that is switched off. Everything");
+                println!(
+                    "this node is indistinguishable from one that is switched off. Everything"
+                );
                 println!("else keeps working: you read, post and hold content exactly as before.");
             }
         }
@@ -802,10 +804,7 @@ fn render(outcome: &Outcome, names: &kols_core::Names) {
             );
         }
         Outcome::CategoryUpdated { category } => {
-            println!(
-                "updated category {}",
-                &to_hex(category.as_bytes())[..12]
-            );
+            println!("updated category {}", &to_hex(category.as_bytes())[..12]);
         }
         Outcome::Departed { groups } => {
             let named = groups
@@ -988,7 +987,9 @@ fn show_contribution(root: std::path::PathBuf) -> Result<(), String> {
     // *not confirmed* is weaker than *not reachable* — a node that has just
     // started has met nobody who could tell it yet.
     match store.reachable() {
-        Some(address) => println!("This node has been seen from outside on {address}, so relaying is useful here."),
+        Some(address) => println!(
+            "This node has been seen from outside on {address}, so relaying is useful here."
+        ),
         None => {
             println!("This node has not been confirmed reachable from outside, so volunteering");
             println!("as a relay would advertise something it probably cannot do — a relay's job");
@@ -1018,7 +1019,10 @@ fn waiting(root: std::path::PathBuf) -> Result<(), String> {
     let state = store.state().map_err(|e| e.to_string())?;
     let identity = store.identity().map_err(|e| e.to_string())?;
 
-    if !state.identity_holds(&identity.id(), &intranet_governance::Capability::ApproveNode) {
+    if !state.identity_holds(
+        &identity.id(),
+        &intranet_governance::Capability::ApproveNode,
+    ) {
         return Err(
             "seeing who is waiting needs approve-node — the same capability admitting them does"
                 .to_owned(),
@@ -1164,7 +1168,10 @@ fn init(root: std::path::PathBuf, name: &str, relays: Vec<String>) -> Result<(),
     println!("  you       {}", founder.id().short());
     println!("  state     {}", store.root().display());
     println!();
-    println!("The seed in {}/seed is the only copy.", store.root().display());
+    println!(
+        "The seed in {}/seed is the only copy.",
+        store.root().display()
+    );
     println!("Losing it loses this identity, and there is no recovery service.");
     println!();
     if relays.is_empty() {
@@ -1249,12 +1256,13 @@ fn attach(root: std::path::PathBuf, network_hex: &str, name: &str) -> Result<(),
     println!("  you       {}", identity.id().short());
     println!();
     println!("Ask a member to run:");
-    println!("  kols admit {}", to_hex(identity.id().verifying_key().as_bytes()));
+    println!(
+        "  kols admit {}",
+        to_hex(identity.id().verifying_key().as_bytes())
+    );
     println!("then `kols serve --peer <their address>` to sync.");
     Ok(())
 }
-
-
 
 /// Offers a conversation to a member of this network — spec 07 §6.2.
 ///

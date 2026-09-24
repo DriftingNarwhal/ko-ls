@@ -465,7 +465,10 @@ fn a_member_sets_what_this_machine_contributes_and_it_survives() {
     // reset its neighbours every time it was used would be unusable.
     ok(&home, &["contribute", "--storage", "64"]);
     let shown = ok(&home, &["contribute", "--upload", "250"]);
-    assert!(shown.contains("64 MiB"), "changing upload must not reset storage:\n{shown}");
+    assert!(
+        shown.contains("64 MiB"),
+        "changing upload must not reset storage:\n{shown}"
+    );
     assert!(shown.contains("250 KB/s"), "{shown}");
     assert!(
         !shown.contains("default"),
@@ -509,7 +512,10 @@ fn a_ceiling_bounds_history_and_leaves_the_application_working() {
     let home = Home::new("ceiling");
     ok(&home, &["init", "the workshop"]);
     let _node = keyed(&home, 45209);
-    ok(&home, &["channel", "create", "general", "--topic", "anything"]);
+    ok(
+        &home,
+        &["channel", "create", "general", "--topic", "anything"],
+    );
 
     // A ceiling of one gibibyte is far above anything this test writes, so
     // nothing here is bounded by it and the network works normally.
@@ -520,7 +526,10 @@ fn a_ceiling_bounds_history_and_leaves_the_application_working() {
         "the count is what makes the total mean anything once there are several:\n{shown}"
     );
 
-    ok(&home, &["post", "general", "written under a generous ceiling"]);
+    ok(
+        &home,
+        &["post", "general", "written under a generous ceiling"],
+    );
     let read = ok(&home, &["read", "general"]);
     assert!(read.contains("written under a generous ceiling"), "{read}");
 
@@ -568,7 +577,10 @@ fn asking_for_older_history_records_a_want_without_claiming_to_have_it() {
     let home = Home::new("history");
     ok(&home, &["init", "the workshop"]);
     let _node = keyed(&home, 45211);
-    ok(&home, &["channel", "create", "general", "--topic", "anything"]);
+    ok(
+        &home,
+        &["channel", "create", "general", "--topic", "anything"],
+    );
     ok(&home, &["post", "general", "the only message here"]);
 
     let asked = ok(&home, &["history", "general"]);
@@ -584,7 +596,11 @@ fn asking_for_older_history_records_a_want_without_claiming_to_have_it() {
     // Recorded durably, because the daemon reads it on a later pass and the
     // process that took the command is gone by then.
     let store = kols_node::store::Store::open(home.path().to_path_buf()).expect("opens");
-    assert_eq!(store.wants().len(), 1, "the want survives the command that made it");
+    assert_eq!(
+        store.wants().len(),
+        1,
+        "the want survives the command that made it"
+    );
 
     // And it is bounded by what this node already holds, rather than open-ended:
     // history is a backwards chain, so without a boundary the only choices are
@@ -635,7 +651,10 @@ fn a_locked_installation_refuses_rather_than_reading_the_seed() {
         .output()
         .expect("runs");
 
-    assert!(!locked.status.success(), "a locked installation must refuse");
+    assert!(
+        !locked.status.success(),
+        "a locked installation must refuse"
+    );
     let said = String::from_utf8_lossy(&locked.stderr);
     assert!(
         said.contains("locked"),
@@ -656,8 +675,12 @@ fn an_installation_that_predates_the_account_is_wrapped_in_place() {
 
     // Put the store back the way every installation looked before this landed.
     let network = intranet_identity::NetworkId::from_bytes(
-        <[u8; 32]>::try_from(std::fs::read(home.path().join("network")).unwrap().as_slice())
-            .unwrap(),
+        <[u8; 32]>::try_from(
+            std::fs::read(home.path().join("network"))
+                .unwrap()
+                .as_slice(),
+        )
+        .unwrap(),
     );
     let plain = [9u8; 32];
     std::fs::write(home.path().join("seed"), plain).unwrap();

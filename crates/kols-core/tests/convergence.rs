@@ -70,10 +70,7 @@ fn governance(
 }
 
 /// The entries that network is made of, oldest first.
-fn chain_for(
-    members: &[&PerNetworkIdentity],
-    moderators: &[&PerNetworkIdentity],
-) -> Vec<LogEntry> {
+fn chain_for(members: &[&PerNetworkIdentity], moderators: &[&PerNetworkIdentity]) -> Vec<LogEntry> {
     let founder = identity(1);
     let mut policy = NetworkPolicy::conservative_default();
     policy
@@ -202,11 +199,19 @@ fn arrival_order_does_not_change_the_rendering() {
     for seed in 1..40u32 {
         let mut view = ChannelView::new(placement());
         view.admit(shuffled(records.clone(), seed), &authority, &LAX);
-        assert_eq!(view.render(&LAX, 0), expected, "seed {seed} rendered differently");
+        assert_eq!(
+            view.render(&LAX, 0),
+            expected,
+            "seed {seed} rendered differently"
+        );
     }
 
     let mut reversed = ChannelView::new(placement());
-    reversed.admit(records.iter().rev().cloned().collect::<Vec<_>>(), &authority, &LAX);
+    reversed.admit(
+        records.iter().rev().cloned().collect::<Vec<_>>(),
+        &authority,
+        &LAX,
+    );
     assert_eq!(reversed.render(&LAX, 0), expected);
 }
 
@@ -266,7 +271,11 @@ fn a_partition_heals_to_one_history() {
     node_a.admit(side_a.clone(), &authority, &LAX);
     let mut node_b = ChannelView::new(placement());
     node_b.admit(side_b.clone(), &authority, &LAX);
-    assert_ne!(node_a.render(&LAX, 0), node_b.render(&LAX, 0), "the partition was not real");
+    assert_ne!(
+        node_a.render(&LAX, 0),
+        node_b.render(&LAX, 0),
+        "the partition was not real"
+    );
 
     // Heal: each side learns the other's records, in different orders.
     node_a.admit(shuffled(side_b, 11), &authority, &LAX);
@@ -281,7 +290,12 @@ fn a_partition_heals_to_one_history() {
     // first even though neither did.
     let ids: Vec<_> = healed.iter().map(|m| m.id).collect();
     let mut sorted = ids.clone();
-    sorted.sort_by_key(|id| (healed.iter().find(|m| m.id == *id).expect("present").hlc, *id));
+    sorted.sort_by_key(|id| {
+        (
+            healed.iter().find(|m| m.id == *id).expect("present").hlc,
+            *id,
+        )
+    });
     assert_eq!(ids, sorted);
 }
 
@@ -333,7 +347,12 @@ fn a_record_for_another_channel_is_refused() {
 
     let mut view = ChannelView::new(placement());
     view.admit(
-        vec![Record::create(&member, elsewhere, Hlc::new(1, 0), message("hi"))],
+        vec![Record::create(
+            &member,
+            elsewhere,
+            Hlc::new(1, 0),
+            message("hi"),
+        )],
         &authority,
         &LAX,
     );
@@ -538,7 +557,10 @@ fn a_non_moderator_cannot_pin() {
         &LAX,
     );
 
-    assert!(!view.render(&LAX, 0)[0].pinned, "a pin from a non-moderator holds");
+    assert!(
+        !view.render(&LAX, 0)[0].pinned,
+        "a pin from a non-moderator holds"
+    );
     assert_eq!(view.rejected()[0].1, Rejection::NotAModerator);
 }
 
@@ -548,7 +570,12 @@ fn a_moderator_can_pin() {
     let state = state(&[&author, &moderator], &[&moderator]);
     let authority = StateAuthority { state: &state };
 
-    let original = Record::create(&author, channel(), Hlc::new(10, 0), message("worth keeping"));
+    let original = Record::create(
+        &author,
+        channel(),
+        Hlc::new(10, 0),
+        message("worth keeping"),
+    );
     let target = original.id();
 
     let mut view = ChannelView::new(placement());

@@ -16,7 +16,11 @@ const RELAY: &str = "12D3KooWAT1R2JjcZbnVUKLX8Xo1Qg5APTWMkpHarHY4Uo1YpGzT";
 
 fn direct(host: &str, quic: bool) -> Multiaddr {
     let family = if host.contains(':') { "ip6" } else { "ip4" };
-    let tail = if quic { "udp/65343/quic-v1" } else { "tcp/65343" };
+    let tail = if quic {
+        "udp/65343/quic-v1"
+    } else {
+        "tcp/65343"
+    };
     format!("/{family}/{host}/{tail}/p2p/{ME}")
         .parse()
         .expect("valid multiaddr")

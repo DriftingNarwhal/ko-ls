@@ -66,7 +66,12 @@ fn derived_identifiers_are_stable() {
 #[test]
 fn record_encoding_is_stable() {
     let author = identity(1);
-    let record = Record::create(&author, channel(), Hlc::new(1_700_000_000_000, 0), message("hi"));
+    let record = Record::create(
+        &author,
+        channel(),
+        Hlc::new(1_700_000_000_000, 0),
+        message("hi"),
+    );
     assert_eq!(
         to_hex(&record.canonical_bytes()),
         concat!(
@@ -273,8 +278,8 @@ fn class_is_derivable_from_an_unknown_discriminant() {
 #[test]
 fn an_unknown_kind_decodes_as_unknown_rather_than_garbage() {
     let author = identity(1);
-    let mut bytes = Record::create(&author, channel(), Hlc::new(1, 0), message("hi"))
-        .canonical_bytes();
+    let mut bytes =
+        Record::create(&author, channel(), Hlc::new(1, 0), message("hi")).canonical_bytes();
     // Flip the discriminant to something unallocated.
     // Locate the discriminant deterministically: length-prefixed domain tag,
     // then channel + author + device (32 each), then the 12-byte HLC.
@@ -346,7 +351,10 @@ fn an_undeclared_policy_reads_as_defaults_and_a_server() {
     // Absent means default, never refused — the asymmetry Core §2.6.2 draws
     // against the capability registry.
     assert_eq!(chat.message_rate_per_minute(), defaults::MESSAGE_RATE);
-    assert_eq!(chat.segment_max_bytes(), defaults::SEGMENT_MAX_BYTES as usize);
+    assert_eq!(
+        chat.segment_max_bytes(),
+        defaults::SEGMENT_MAX_BYTES as usize
+    );
 
     // And a network that never declared a profile is a server, so its existing
     // channel history stays valid.
@@ -493,7 +501,10 @@ fn messages_and_attachments_carry_separate_windows() {
 
     assert_eq!(chat.retain_messages(), Retention::Forever);
     assert_eq!(chat.retain_attachments(), Retention::Days(30));
-    assert!(chat.retain_attachments().covers(30), "the window is inclusive");
+    assert!(
+        chat.retain_attachments().covers(30),
+        "the window is inclusive"
+    );
     assert!(!chat.retain_attachments().covers(31));
 }
 
@@ -567,13 +578,20 @@ fn a_live_payload_round_trips_and_yields_the_identical_record() {
     // addressed, so a duplicate is genuinely idempotent rather than merely
     // similar.
     let author = identity(1);
-    let record = Record::create(&author, channel(), Hlc::new(1_700_000_000_000, 0), message("live"));
+    let record = Record::create(
+        &author,
+        channel(),
+        Hlc::new(1_700_000_000_000, 0),
+        message("live"),
+    );
 
     let sealed = LivePayload::seal(&record, &epoch(7), rotation(3));
     let decoded = LivePayload::decode(&sealed.encode()).expect("round trips");
     assert_eq!(decoded, sealed);
 
-    let opened = decoded.open(&epoch(7)).expect("opens under the sealing key");
+    let opened = decoded
+        .open(&epoch(7))
+        .expect("opens under the sealing key");
     assert_eq!(opened, record);
     assert_eq!(
         opened.canonical_bytes(),
@@ -650,8 +668,11 @@ fn the_content_key_is_derived_and_stable_but_not_the_epoch_key() {
     let again = channel_content_key(&epoch(7), &channel(), &rotation(3));
     assert_eq!(a.commitment(), again.commitment(), "derivation is stable");
 
-    let other_channel =
-        channel_content_key(&epoch(7), &server_channel_id(&network(), &[5u8; 32]), &rotation(3));
+    let other_channel = channel_content_key(
+        &epoch(7),
+        &server_channel_id(&network(), &[5u8; 32]),
+        &rotation(3),
+    );
     let other_rotation = channel_content_key(&epoch(7), &channel(), &rotation(4));
     assert_ne!(a.commitment(), other_channel.commitment());
     assert_ne!(a.commitment(), other_rotation.commitment());

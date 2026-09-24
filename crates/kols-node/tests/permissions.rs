@@ -111,8 +111,10 @@ fn a_new_role_holds_nothing() {
     // command that created a role *and* filled it would collapse an asymmetry
     // the protocol is built around.
     let lab = Lab::new("empty");
-    lab.run(Command::CreateRole { group: role("Mods") })
-        .expect("creates");
+    lab.run(Command::CreateRole {
+        group: role("Mods"),
+    })
+    .expect("creates");
 
     let state = lab.state();
     let made = state.groups.get(&role("Mods")).expect("replay produced it");
@@ -144,8 +146,10 @@ fn a_grant_resolves_at_the_scope_it_was_written_at() {
     };
 
     let who = lab.subject();
-    lab.run(Command::CreateRole { group: role("Team") })
-        .expect("creates");
+    lab.run(Command::CreateRole {
+        group: role("Team"),
+    })
+    .expect("creates");
     lab.run(Command::SetRoleMember {
         group: role("Team"),
         identity: who,
@@ -215,8 +219,10 @@ fn withdrawing_a_grant_leaves_the_others_alone() {
     // silent: writing back a set built from a stale read, and reverting a grant
     // nobody meant to touch.
     let lab = Lab::new("partial");
-    lab.run(Command::CreateRole { group: role("Team") })
-        .expect("creates");
+    lab.run(Command::CreateRole {
+        group: role("Team"),
+    })
+    .expect("creates");
     lab.run(Command::SetRoleMember {
         group: role("Team"),
         identity: lab.me(),
@@ -235,8 +241,7 @@ fn withdrawing_a_grant_leaves_the_others_alone() {
     let held = state.groups.get(&role("Team")).expect("exists");
     for (verb, expected) in [("post", true), ("read", false), ("moderate", true)] {
         assert_eq!(
-            held.capabilities
-                .grants(&Scope::Network.capability(verb)),
+            held.capabilities.grants(&Scope::Network.capability(verb)),
             expected,
             "chat:{verb} after withdrawing only chat:read"
         );
@@ -250,8 +255,10 @@ fn a_role_member_is_added_and_removed_without_leaving_the_network() {
     // network membership would report a landed change as having failed — and
     // the wording would claim they had been removed from the network.
     let lab = Lab::new("assign");
-    lab.run(Command::CreateRole { group: role("Team") })
-        .expect("creates");
+    lab.run(Command::CreateRole {
+        group: role("Team"),
+    })
+    .expect("creates");
     lab.run(Command::SetRoleMember {
         group: role("Team"),
         identity: lab.me(),
@@ -338,8 +345,10 @@ fn leaving_writes_one_entry_per_group() {
         member: true,
     })
     .expect("hands over `revoke-node`");
-    lab.run(Command::CreateRole { group: role("Team") })
-        .expect("creates");
+    lab.run(Command::CreateRole {
+        group: role("Team"),
+    })
+    .expect("creates");
     lab.run(Command::SetRoleMember {
         group: role("Team"),
         identity: lab.me(),
@@ -380,8 +389,10 @@ fn stepping_out_of_one_role_is_not_leaving_and_is_not_guarded() {
     // an ordinary role keeps it through `Founders` — so this must stay the
     // ordinary act it was, with no mention of stranding anything.
     let lab = Lab::new("step-down");
-    lab.run(Command::CreateRole { group: role("Team") })
-        .expect("creates");
+    lab.run(Command::CreateRole {
+        group: role("Team"),
+    })
+    .expect("creates");
     lab.run(Command::SetRoleMember {
         group: role("Team"),
         identity: lab.me(),

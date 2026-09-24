@@ -223,7 +223,10 @@ pub async fn serve(
     live_window: i64,
     out: &Output<'_>,
 ) -> Result<(), String> {
-    let Output { events: sink, report } = out;
+    let Output {
+        events: sink,
+        report,
+    } = out;
     let store = Store::open(root).map_err(|e| e.to_string())?;
     // Claimed before anything else, and held for the whole loop: only one
     // process may run a node for a network, because the key group is live state
@@ -233,9 +236,7 @@ pub async fn serve(
     // Provider records name a *swarm*, and this one is new. See
     // `Store::forget_announcements` — the chunks survived and the announcements
     // did not, and the difference is invisible until somebody cannot fetch.
-    store
-        .forget_announcements()
-        .map_err(|e| e.to_string())?;
+    store.forget_announcements().map_err(|e| e.to_string())?;
 
     // **Decided from the network's own policy, before the node exists.** Core
     // §5.1.1 fixes the behaviour set at construction, so this is not a setting
@@ -279,14 +280,12 @@ pub async fn serve(
     //
     // `--listen` still overrides, for a test that wants one specific socket.
     if listen.trim().is_empty() {
-        node.listen_default()
-            .map_err(|err| err.to_string())?;
+        node.listen_default().map_err(|err| err.to_string())?;
     } else {
         let address: Multiaddr = listen
             .parse()
             .map_err(|err| format!("{listen:?} is not a multiaddr: {err}"))?;
-        node.listen_on(address)
-            .map_err(|err| err.to_string())?;
+        node.listen_on(address).map_err(|err| err.to_string())?;
     }
 
     // Kademlia stays in client mode until a node has a confirmed external
@@ -318,7 +317,10 @@ pub async fn serve(
     // wanted, and only the node knows what was built. A line derived from the
     // request would still print if the constructor had ignored it.
     if node.discovery() == intranet_transport::Discovery::Off {
-        crate::say!(report, "  discovery off — a conversation has nobody to find");
+        crate::say!(
+            report,
+            "  discovery off — a conversation has nobody to find"
+        );
     }
 
     // Both of these are best-effort at startup and repeated after every
@@ -393,8 +395,14 @@ pub async fn serve(
 
     match (keyed, holds_group) {
         (true, true) => crate::say!(report, "  epoch     held, and this node can key others in"),
-        (true, false) => crate::say!(report, "  epoch     held, but no group — this node cannot key others in"),
-        _ => crate::say!(report, "  epoch     none — this node can fetch content and open none of it"),
+        (true, false) => crate::say!(
+            report,
+            "  epoch     held, but no group — this node cannot key others in"
+        ),
+        _ => crate::say!(
+            report,
+            "  epoch     none — this node can fetch content and open none of it"
+        ),
     }
 
     // What this node kept for other members, put back before anything asks for
@@ -493,11 +501,20 @@ pub async fn serve(
 
     let mut failures: Vec<String> = Vec::new();
     let mut unreachable = Vec::new();
-    let reserved =
-        reserve_any_reporting(&mut node, &designated, sink, &mut failures, &mut unreachable).await;
+    let reserved = reserve_any_reporting(
+        &mut node,
+        &designated,
+        sink,
+        &mut failures,
+        &mut unreachable,
+    )
+    .await;
     note_relay_standing(&store, reserved.as_ref(), &unreachable);
     if designated.is_empty() {
-        crate::say!(report, "  relay     none designated — this node is reachable only on its own addresses");
+        crate::say!(
+            report,
+            "  relay     none designated — this node is reachable only on its own addresses"
+        );
     }
     // Emitted in every case, including the good one. A terminal has had this all
     // along only to the report; a window had only the failures, through `Degraded`.
@@ -1137,7 +1154,10 @@ pub async fn serve(
             // other angle nothing happened.
             NodeEvent::ListenAddrGone(address) => {
                 if crate::is_circuit_address(&address) {
-                    crate::say!(report, "  relay     the circuit on {address} ended — asking again");
+                    crate::say!(
+                        report,
+                        "  relay     the circuit on {address} ended — asking again"
+                    );
                     sink(&[Event::Relay {
                         reserved: None,
                         designated: designated.len(),
@@ -1185,10 +1205,7 @@ pub async fn serve(
                 // a circuit address already ends in one, and appending a second
                 // produces `/p2p-circuit/p2p/<id>/p2p/<id>`, which is not what
                 // anybody dials.
-                let full = if address
-                    .iter()
-                    .any(|part| matches!(part, Protocol::P2p(_)))
-                {
+                let full = if address.iter().any(|part| matches!(part, Protocol::P2p(_))) {
                     address.clone()
                 } else {
                     address.clone().with(Protocol::P2p(identity.peer_id()))
@@ -1254,9 +1271,14 @@ pub async fn serve(
             }
 
             NodeEvent::HolePunchSucceeded { peer } => {
-                crate::say!(report, "  direct    hole-punched to {peer} — the relay is out of the path");
+                crate::say!(
+                    report,
+                    "  direct    hole-punched to {peer} — the relay is out of the path"
+                );
                 sink(&[Event::Degraded {
-                    reason: format!("connected directly to {peer}; the relay introduced you and is no longer carrying anything"),
+                    reason: format!(
+                        "connected directly to {peer}; the relay introduced you and is no longer carrying anything"
+                    ),
                 }]);
                 continue;
             }
@@ -1290,7 +1312,8 @@ pub async fn serve(
                 // This is not a partition from the network. Everything here is
                 // pull-based and content-addressed, so the two converge through
                 // any member both can reach; what they have lost is each other.
-                crate::say!(report, 
+                crate::say!(
+                    report,
                     "  direct    could not hole-punch to {peer} — the circuit is closed \
                      (Core §5.2). You still converge through any member you both reach"
                 );
@@ -1380,12 +1403,26 @@ pub async fn serve(
             // rankable that was not before, so this is where a stalled fetch
             // gets its second chance.
             NodeEvent::LedgerSynced { accepted, .. } if accepted > 0 => {
-                request_foreign_segments(&store, &mut node, &identity, &mut fetched, &backfill, history_budget(disk.room_for_history(), asked_for_history(&store)))?;
+                request_foreign_segments(
+                    &store,
+                    &mut node,
+                    &identity,
+                    &mut fetched,
+                    &backfill,
+                    history_budget(disk.room_for_history(), asked_for_history(&store)),
+                )?;
             }
 
             NodeEvent::PointersReceived { .. } => {
                 keep_pointers(&store, &node, sink);
-                request_foreign_segments(&store, &mut node, &identity, &mut fetched, &backfill, history_budget(disk.room_for_history(), asked_for_history(&store)))?;
+                request_foreign_segments(
+                    &store,
+                    &mut node,
+                    &identity,
+                    &mut fetched,
+                    &backfill,
+                    history_budget(disk.room_for_history(), asked_for_history(&store)),
+                )?;
             }
 
             NodeEvent::FetchComplete {
@@ -1424,8 +1461,7 @@ pub async fn serve(
                 // fetch is re-planned every couple of seconds, and a banner
                 // rewritten that often is furniture rather than news.
                 if !unavailable.is_empty() {
-                    let now: std::collections::BTreeSet<_> =
-                        unavailable.iter().copied().collect();
+                    let now: std::collections::BTreeSet<_> = unavailable.iter().copied().collect();
                     if unreachable_history.as_ref() != Some(&now) {
                         crate::say!(
                             report,
@@ -1445,7 +1481,14 @@ pub async fn serve(
                     // Something arrived, so whatever could not be had before is
                     // worth reporting again if it fails again.
                     unreachable_history = None;
-                    request_foreign_segments(&store, &mut node, &identity, &mut fetched, &backfill, history_budget(disk.room_for_history(), asked_for_history(&store)))?;
+                    request_foreign_segments(
+                        &store,
+                        &mut node,
+                        &identity,
+                        &mut fetched,
+                        &backfill,
+                        history_budget(disk.room_for_history(), asked_for_history(&store)),
+                    )?;
                 }
             }
 
@@ -1453,7 +1496,9 @@ pub async fn serve(
             // the connection binding, `read-content`, the key package — was
             // already applied before this arrives; what is left needs an
             // identity to sign with and a clock to sign at.
-            NodeEvent::EpochKeyRequested { requester, request, .. } => {
+            NodeEvent::EpochKeyRequested {
+                requester, request, ..
+            } => {
                 // Answering appends a rotation, parented on this node's head —
                 // so the store's head has to *be* this node's head first, and
                 // nothing else may append in between. Adopt under the lock, then
@@ -1503,10 +1548,18 @@ pub async fn serve(
                     persist_keyring(&store, &node)?;
                     persist_group(&store, &node)?;
                     keyed = true;
-                    crate::say!(report, 
+                    crate::say!(
+                        report,
                         "keyed into this network ({historical_keys} historical key(s) came with it)"
                     );
-                    request_foreign_segments(&store, &mut node, &identity, &mut fetched, &backfill, history_budget(disk.room_for_history(), asked_for_history(&store)))?;
+                    request_foreign_segments(
+                        &store,
+                        &mut node,
+                        &identity,
+                        &mut fetched,
+                        &backfill,
+                        history_budget(disk.room_for_history(), asked_for_history(&store)),
+                    )?;
                 }
             }
 
@@ -1521,8 +1574,11 @@ pub async fn serve(
                 // a membership entry, and an append racing the daemon's own
                 // would fork the log.
                 let lock = store.lock().map_err(|e| e.to_string())?;
-                let answered =
-                    node.answer_join(request, &identity, Timestamp::from_millis(crate::chat::now_millis()));
+                let answered = node.answer_join(
+                    request,
+                    &identity,
+                    Timestamp::from_millis(crate::chat::now_millis()),
+                );
                 drop(lock);
 
                 match answered {
@@ -1647,7 +1703,9 @@ pub async fn serve(
                     && let Err(err) = store.forget_offer(&to)
                 {
                     sink(&[Event::Degraded {
-                        reason: format!("a conversation request was delivered and this node could not stop retrying it: {err}"),
+                        reason: format!(
+                            "a conversation request was delivered and this node could not stop retrying it: {err}"
+                        ),
                     }]);
                 }
             }
@@ -2228,22 +2286,21 @@ fn absorb_segments(
                 backfill.insert(cid);
                 continue;
             };
-            let one =
-                absorb_chain(
-                    store,
-                    node,
-                    channel,
-                    &member,
-                    (cid, segment),
-                    // Borrowed for the call rather than held across the loop:
-                    // `resolve` above wants the same keys, and one long-lived
-                    // borrow would make the lazy load unreachable.
-                    &mut Walk {
-                        keys: &mut keys,
-                        backfill,
-                        asked,
-                    },
-                )?;
+            let one = absorb_chain(
+                store,
+                node,
+                channel,
+                &member,
+                (cid, segment),
+                // Borrowed for the call rather than held across the loop:
+                // `resolve` above wants the same keys, and one long-lived
+                // borrow would make the lazy load unreachable.
+                &mut Walk {
+                    keys: &mut keys,
+                    backfill,
+                    asked,
+                },
+            )?;
             took.absorb(one);
         }
         events.extend(took.into_events(*channel));
@@ -2290,10 +2347,14 @@ fn resolve(
         Some(keys) => keys,
         None => keys.insert(store.epoch_keys().map_err(|e| e.to_string())?),
     };
-    let Some(dek) = node.wrappings_for(pointer_id).into_iter().find_map(|wrapping| {
-        held.iter()
-            .find_map(|(_, key)| wrapping.unwrap(key, &commitment).ok())
-    }) else {
+    let Some(dek) = node
+        .wrappings_for(pointer_id)
+        .into_iter()
+        .find_map(|wrapping| {
+            held.iter()
+                .find_map(|(_, key)| wrapping.unwrap(key, &commitment).ok())
+        })
+    else {
         return Ok(None);
     };
     // Remembered under the current epoch, so this scan happens once per object
@@ -2360,8 +2421,7 @@ fn record_waiting(
     // admitted member leaves on the next tick, and somebody who knocked and was
     // never admitted is genuinely still waiting, which is what the entry says.
     let members = store.state().ok();
-    let mut identities: std::collections::BTreeSet<String> =
-        store.waiting().into_iter().collect();
+    let mut identities: std::collections::BTreeSet<String> = store.waiting().into_iter().collect();
     identities.extend(
         occupants
             .iter()
@@ -2374,9 +2434,8 @@ fn record_waiting(
     let identities: Vec<String> = identities
         .into_iter()
         .filter(|hex| {
-            crate::parse_identity(hex).is_ok_and(|id| {
-                members.as_ref().is_none_or(|state| !state.is_member(&id))
-            })
+            crate::parse_identity(hex)
+                .is_ok_and(|id| members.as_ref().is_none_or(|state| !state.is_member(&id)))
         })
         .collect();
     if let Err(err) = store.set_waiting(&identities) {
@@ -2471,7 +2530,10 @@ fn render(events: &[Event]) {
             }
             Event::JoinAnswered { joiner, accepted } => {
                 if *accepted {
-                    println!("let {} in — `kols waiting` shows who is waiting", joiner.short());
+                    println!(
+                        "let {} in — `kols waiting` shows who is waiting",
+                        joiner.short()
+                    );
                 } else {
                     println!("refused a join from {}", joiner.short());
                 }
@@ -2933,7 +2995,11 @@ fn adopt_local_changes(
     seal_bytes: usize,
     sink: &Sink,
 ) -> Result<Option<()>, String> {
-    let held: BTreeSet<_> = node.governance_log().canonical_chain().into_iter().collect();
+    let held: BTreeSet<_> = node
+        .governance_log()
+        .canonical_chain()
+        .into_iter()
+        .collect();
     let stored = store.log().map_err(|e| e.to_string())?;
     let mut adopted = 0;
     for hash in stored.canonical_chain() {
@@ -3111,10 +3177,7 @@ fn beat_presence(
         .map_err(|err| format!("could not subscribe to presence: {err}"))?;
     let sealed = kols_core::PresenceBeat::seal(identity, beat, now, &epoch, rotation);
     if node
-        .publish_live(
-            &kols_core::presence_topic(store.network()),
-            sealed.encode(),
-        )
+        .publish_live(&kols_core::presence_topic(store.network()), sealed.encode())
         .is_ok()
     {
         *last_beat = now;
@@ -3422,7 +3485,7 @@ fn start_sync(node: &mut MemberNode, peer: PeerId) {
 
 #[cfg(test)]
 mod tests {
-    use super::{next_relay_backoff, retires, RELAY_BACKOFF_CEILING, RELAY_RECHECK};
+    use super::{RELAY_BACKOFF_CEILING, RELAY_RECHECK, next_relay_backoff, retires};
     use kols_core::Retention;
 
     const DAY: i64 = 86_400_000;

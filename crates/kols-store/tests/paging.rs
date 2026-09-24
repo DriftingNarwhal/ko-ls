@@ -13,15 +13,15 @@
 //! §4.4 argues it; [`kols_core::Cursor`] is the fix; this is the proof.
 
 use intranet_identity::{MasterSeed, NetworkId, PerNetworkIdentity};
-use kols_core::{
-    ChannelId, Cursor, Hlc, MessageId, Record, RecordBody, server_channel_id,
-};
+use kols_core::{ChannelId, Cursor, Hlc, MessageId, Record, RecordBody, server_channel_id};
 use kols_store::{Projection, Verdict};
 
 const NETWORK: NetworkId = NetworkId::from_bytes([7u8; 32]);
 
 fn identity(n: u8) -> PerNetworkIdentity {
-    MasterSeed::from_entropy([n; 32]).identity_for(&NETWORK).unwrap()
+    MasterSeed::from_entropy([n; 32])
+        .identity_for(&NETWORK)
+        .unwrap()
 }
 
 fn channel() -> ChannelId {
@@ -45,7 +45,9 @@ fn message(author: &PerNetworkIdentity, hlc: Hlc, body: &str) -> Record {
 fn holding(records: &[Record]) -> Projection {
     let (projection, _) = Projection::in_memory().expect("opens");
     for record in records {
-        projection.insert(record, Verdict::Admitted).expect("inserts");
+        projection
+            .insert(record, Verdict::Admitted)
+            .expect("inserts");
     }
     projection
 }
@@ -154,8 +156,7 @@ fn a_boundary_between_two_tied_records_keeps_the_undrawn_one() {
         .collect::<Vec<_>>();
     assert_eq!(tie.len(), 2, "the fixture holds a tie");
 
-    let drawn: std::collections::BTreeSet<_> =
-        first.iter().chain(next.iter()).copied().collect();
+    let drawn: std::collections::BTreeSet<_> = first.iter().chain(next.iter()).copied().collect();
     for id in tie {
         assert!(
             drawn.contains(&id),
@@ -181,8 +182,12 @@ fn walking_forward_is_the_exact_complement_of_walking_back() {
             .expect("known record")
             .cursor();
 
-        let back = projection.before(&channel(), Some(at), usize::MAX).expect("pages");
-        let forward = projection.after(&channel(), Some(at), usize::MAX).expect("pages");
+        let back = projection
+            .before(&channel(), Some(at), usize::MAX)
+            .expect("pages");
+        let forward = projection
+            .after(&channel(), Some(at), usize::MAX)
+            .expect("pages");
 
         assert_eq!(back, order[..n], "everything before position {n}");
         assert_eq!(forward, order[n + 1..], "everything after position {n}");
@@ -202,10 +207,20 @@ fn a_range_includes_both_of_its_ends() {
     let projection = holding(&records);
     let order = merged(&records);
 
-    let from = records.iter().find(|r| r.id() == order[1]).unwrap().cursor();
-    let to = records.iter().find(|r| r.id() == order[2]).unwrap().cursor();
+    let from = records
+        .iter()
+        .find(|r| r.id() == order[1])
+        .unwrap()
+        .cursor();
+    let to = records
+        .iter()
+        .find(|r| r.id() == order[2])
+        .unwrap()
+        .cursor();
 
-    let range = projection.between(&channel(), from, Some(to), usize::MAX).expect("reads");
+    let range = projection
+        .between(&channel(), from, Some(to), usize::MAX)
+        .expect("reads");
     assert_eq!(range, vec![order[1], order[2]]);
 }
 
@@ -217,10 +232,16 @@ fn a_live_range_runs_to_the_tail() {
     let records = tied();
     let projection = holding(&records);
     let order = merged(&records);
-    let from = records.iter().find(|r| r.id() == order[0]).unwrap().cursor();
+    let from = records
+        .iter()
+        .find(|r| r.id() == order[0])
+        .unwrap()
+        .cursor();
 
     assert_eq!(
-        projection.between(&channel(), from, None, usize::MAX).expect("reads"),
+        projection
+            .between(&channel(), from, None, usize::MAX)
+            .expect("reads"),
         order
     );
 }
@@ -235,12 +256,24 @@ fn backfill_landing_inside_a_range_is_inside_it() {
     let records = tied();
     let projection = holding(&records);
     let order = merged(&records);
-    let from = records.iter().find(|r| r.id() == order[0]).unwrap().cursor();
+    let from = records
+        .iter()
+        .find(|r| r.id() == order[0])
+        .unwrap()
+        .cursor();
 
-    let late = message(&identity(3), Hlc::new(1_500, 0), "recovered from an old chain");
-    projection.insert(&late, Verdict::Admitted).expect("inserts");
+    let late = message(
+        &identity(3),
+        Hlc::new(1_500, 0),
+        "recovered from an old chain",
+    );
+    projection
+        .insert(&late, Verdict::Admitted)
+        .expect("inserts");
 
-    let range = projection.between(&channel(), from, None, usize::MAX).expect("reads");
+    let range = projection
+        .between(&channel(), from, None, usize::MAX)
+        .expect("reads");
     assert!(
         range.contains(&late.id()),
         "a record backfilled into the middle of a loaded range has to be in it"

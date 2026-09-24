@@ -192,8 +192,7 @@ fn derive(
 ) -> Result<[u8; 32], BundleError> {
     let params = argon2::Params::new(memory, passes, lanes, Some(32))
         .map_err(|err| BundleError::Kdf(err.to_string()))?;
-    let argon =
-        argon2::Argon2::new(argon2::Algorithm::Argon2id, argon2::Version::V0x13, params);
+    let argon = argon2::Argon2::new(argon2::Algorithm::Argon2id, argon2::Version::V0x13, params);
     let mut key = [0u8; 32];
     argon
         .hash_password_into(passphrase.as_bytes(), salt, &mut key)

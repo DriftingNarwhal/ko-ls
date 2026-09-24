@@ -181,7 +181,11 @@ fn a_record_that_arrives_late_is_folded_in_rather_than_missed() {
         .expect("answers")
         .records;
 
-    assert_eq!(after.len(), before.len() + 1, "the new record was folded in");
+    assert_eq!(
+        after.len(),
+        before.len() + 1,
+        "the new record was folded in"
+    );
     assert!(after.iter().any(|record| matches!(
         &record.body,
         kols_core::RecordBody::Message { body, .. } if body == "afterwards"
@@ -330,7 +334,9 @@ fn a_settled_read_costs_the_same_at_any_size() {
         let mut raw = [0u8; 32];
         raw[..4].copy_from_slice(&n.to_be_bytes());
         let cid = intranet_storage::Cid::from_hash(intranet_crypto::Hash::from_bytes(raw));
-        store.mark_segment_link(&cid, u64::from(n), None).expect("marks");
+        store
+            .mark_segment_link(&cid, u64::from(n), None)
+            .expect("marks");
         store.mark_segment_channel(&cid, &channel).expect("marks");
     }
 
@@ -347,7 +353,10 @@ fn a_settled_read_costs_the_same_at_any_size() {
     // constant, and so would one that read a fixed thousand files. What this
     // pins is that the work follows the page: ask for a fifth as much and it
     // costs a fifth as much.
-    assert_eq!(large.listed, 0, "a settled read lists no directories at all");
+    assert_eq!(
+        large.listed, 0,
+        "a settled read lists no directories at all"
+    );
 
     executor.store().reset_work();
     executor

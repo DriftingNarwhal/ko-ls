@@ -36,11 +36,11 @@
 //! leave two nodes with different channel state, which is the divergence replay
 //! exists to prevent.
 
-use std::collections::BTreeMap;
 use crate::{CategoryId, ChannelId, CoreError, NetworkProfile};
 use intranet_crypto::{Dec, Enc, Hash, VerifyingKey, to_hex};
 use intranet_governance::{Capability, EntryBody, GovernanceState, is_valid_app_entry_name};
 use intranet_identity::PerNetworkIdentityId;
+use std::collections::BTreeMap;
 
 /// Domain tag for a channel entry payload — spec 07 §3.2.
 pub(crate) const CHANNEL_ENTRY_DOMAIN: &str = "intranet.chat-channel-entry.v1";
@@ -361,7 +361,10 @@ impl ChannelEntry {
 
     /// Builds an entry.
     pub fn new(subject: impl Into<EntrySubject>, body: ChannelEntryBody) -> Self {
-        Self { subject: subject.into(), body }
+        Self {
+            subject: subject.into(),
+            body,
+        }
     }
 
     /// The narrowest capability that authorizes this entry.
@@ -387,10 +390,7 @@ impl ChannelEntry {
             ChannelEntryBody::Definition {
                 category: Some(category),
                 ..
-            } => Capability::extension(format!(
-                "chat:{verb}:cat:{}",
-                to_hex(category.as_bytes())
-            )),
+            } => Capability::extension(format!("chat:{verb}:cat:{}", to_hex(category.as_bytes()))),
             // A category definition can only ever be authorized network-wide:
             // nothing encloses a category, so there is no narrower grant to hold
             // (spec 07 §1.8).
@@ -401,10 +401,7 @@ impl ChannelEntry {
                 "chat:{verb}:cat:{}",
                 to_hex(self.subject.as_bytes())
             )),
-            _ => Capability::extension(format!(
-                "chat:{verb}:{}",
-                to_hex(self.subject.as_bytes())
-            )),
+            _ => Capability::extension(format!("chat:{verb}:{}", to_hex(self.subject.as_bytes()))),
         }
     }
 
@@ -570,9 +567,8 @@ impl ChannelEntry {
         let body = match tag {
             0x01 => ChannelEntryBody::Definition {
                 name: d.str()?.to_owned(),
-                category: d.option(|d| {
-                    Ok::<_, CoreError>(CategoryId::from_bytes(d.fixed::<32>()?))
-                })?,
+                category: d
+                    .option(|d| Ok::<_, CoreError>(CategoryId::from_bytes(d.fixed::<32>()?)))?,
                 kind: match d.variant()? {
                     0x01 => ChannelKind::Text,
                     0x02 => ChannelKind::Voice,
@@ -685,9 +681,8 @@ impl ChannelEntry {
         // tag chooses both. One built in memory can disagree, and this is where
         // that is caught — before it is signed, rather than by every reader.
         let agrees = match &self.body {
-            ChannelEntryBody::CategoryDefinition { .. } | ChannelEntryBody::CategoryUpdate { .. } => {
-                self.subject.category().is_some()
-            }
+            ChannelEntryBody::CategoryDefinition { .. }
+            | ChannelEntryBody::CategoryUpdate { .. } => self.subject.category().is_some(),
             _ => self.subject.channel().is_some(),
         };
         if !agrees {
@@ -733,7 +728,10 @@ impl std::fmt::Display for ChannelRefusal {
             Self::NotAnAppEntry => write!(f, "not an application entry"),
             Self::Malformed(why) => write!(f, "malformed channel entry: {why}"),
             Self::NotAServer => {
-                write!(f, "a conversation-profile network has no channels to define")
+                write!(
+                    f,
+                    "a conversation-profile network has no channels to define"
+                )
             }
             Self::WrongCapability { declared, required } => write!(
                 f,
@@ -875,8 +873,8 @@ impl ChannelEntry {
         if namespace != CHAT_NAMESPACE {
             return Err(ChannelRefusal::ForeignNamespace(namespace.clone()));
         }
-        let entry =
-            Self::decode(kind, payload).map_err(|err| ChannelRefusal::Malformed(err.to_string()))?;
+        let entry = Self::decode(kind, payload)
+            .map_err(|err| ChannelRefusal::Malformed(err.to_string()))?;
         entry
             .check_bounds()
             .map_err(|err| ChannelRefusal::Malformed(err.to_string()))?;
@@ -975,9 +973,8 @@ pub fn sidebar_order(
         positions.entry(*category).or_insert(None);
     }
 
-    loose.sort_by(|a, b| {
-        cmp_siblings((a.position, a.id.as_bytes()), (b.position, b.id.as_bytes()))
-    });
+    loose
+        .sort_by(|a, b| cmp_siblings((a.position, a.id.as_bytes()), (b.position, b.id.as_bytes())));
 
     let mut ordered: Vec<(CategoryId, Option<u32>)> = positions.into_iter().collect();
     ordered.sort_by(|a, b| cmp_siblings((a.1, a.0.as_bytes()), (b.1, b.0.as_bytes())));

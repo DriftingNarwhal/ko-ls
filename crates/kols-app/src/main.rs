@@ -61,10 +61,10 @@ mod dto;
 
 use intranet_crypto::to_hex;
 use kols_api::{Command, Outcome};
+use kols_core::ChannelId;
 use kols_node::executor::Executor;
 use kols_node::network;
 use kols_node::workspace::Workspace;
-use kols_core::ChannelId;
 use std::sync::Mutex;
 use tauri::{Emitter, Manager};
 
@@ -149,7 +149,10 @@ struct App {
 impl App {
     /// Runs `f` against the open network, or says none is.
     fn with<T>(&self, f: impl FnOnce(&Executor) -> Result<T, String>) -> Result<T, String> {
-        let open = self.open.lock().map_err(|_| "the workspace lock is poisoned")?;
+        let open = self
+            .open
+            .lock()
+            .map_err(|_| "the workspace lock is poisoned")?;
         let executor = open
             .as_ref()
             .ok_or("no network is open — create or choose one first")?;
@@ -230,13 +233,22 @@ fn me_of(executor: &Executor) -> Result<dto::Me, String> {
         may_post: holds("chat:post:*"),
         may_create_channel: holds("chat:create-channel:*"),
         may_manage_channel: holds("chat:manage-channel:*"),
-        may_invite: state.identity_holds(&identity.id(), &intranet_governance::Capability::ApproveNode),
-        may_moderate: state
-            .identity_holds(&identity.id(), &intranet_governance::Capability::ModerateContent),
-        may_set_relays: state
-            .identity_holds(&identity.id(), &intranet_governance::Capability::DefinePolicy),
-        may_define_group: state
-            .identity_holds(&identity.id(), &intranet_governance::Capability::DefineGroup),
+        may_invite: state.identity_holds(
+            &identity.id(),
+            &intranet_governance::Capability::ApproveNode,
+        ),
+        may_moderate: state.identity_holds(
+            &identity.id(),
+            &intranet_governance::Capability::ModerateContent,
+        ),
+        may_set_relays: state.identity_holds(
+            &identity.id(),
+            &intranet_governance::Capability::DefinePolicy,
+        ),
+        may_define_group: state.identity_holds(
+            &identity.id(),
+            &intranet_governance::Capability::DefineGroup,
+        ),
         // Any role at all, so the tab is offered. Which ones is per role, since
         // `manage-membership:<group>` is dynamically tiered (Core §2.4).
         may_assign_role: state.groups.keys().any(|group| {
@@ -446,7 +458,11 @@ fn set_presence(app: tauri::State<'_, App>, state: String) -> Result<(), String>
 /// oldest message the member can currently see is exactly the right boundary —
 /// it is where their view stops.
 #[tauri::command]
-fn fetch_history(app: tauri::State<'_, App>, channel: String, before_millis: i64) -> Result<(), String> {
+fn fetch_history(
+    app: tauri::State<'_, App>,
+    channel: String,
+    before_millis: i64,
+) -> Result<(), String> {
     let channel = App::channel(&channel)?;
     app.with(|executor| {
         executor
@@ -730,7 +746,10 @@ fn conversations(app: tauri::State<'_, App>) -> Result<Vec<dto::Conversation>, S
 /// to render enough identity beside a name to tell two lookalikes apart. This
 /// returns the name; the row puts the identity beside it, which is where a
 /// person is actually deciding who they are talking to.
-fn name_in(store: &kols_node::store::Store, who: &intranet_identity::PerNetworkIdentityId) -> String {
+fn name_in(
+    store: &kols_node::store::Store,
+    who: &intranet_identity::PerNetworkIdentityId,
+) -> String {
     let short = to_hex(who.verifying_key().as_bytes())[..8].to_owned();
     let Ok(state) = store.state() else {
         return short;
@@ -869,7 +888,10 @@ async fn open_conversation(
 
 /// Who a conversation is with, and whether it can still be reached.
 #[tauri::command]
-fn conversation_who(app: tauri::State<'_, App>, network: String) -> Result<dto::Conversation, String> {
+fn conversation_who(
+    app: tauri::State<'_, App>,
+    network: String,
+) -> Result<dto::Conversation, String> {
     let id = kols_node::parse_network(&network)?;
     let store = app
         .workspace
@@ -898,7 +920,11 @@ fn conversation_who(app: tauri::State<'_, App>, network: String) -> Result<dto::
             .map(|who| to_hex(who.verifying_key().as_bytes()))
             .unwrap_or_default(),
         shared: shared.map(|it| to_hex(it.as_bytes())).unwrap_or_default(),
-        state: if reachable { "joined".to_owned() } else { "adrift".to_owned() },
+        state: if reachable {
+            "joined".to_owned()
+        } else {
+            "adrift".to_owned()
+        },
         label,
     })
 }
@@ -1075,8 +1101,11 @@ fn roles(app: tauri::State<'_, App>) -> Result<Vec<dto::Role>, String> {
                     })
                     .collect();
                 members.sort_by(|a, b| {
-                    (a.name.is_none(), &a.name, &a.short)
-                        .cmp(&(b.name.is_none(), &b.name, &b.short))
+                    (a.name.is_none(), &a.name, &a.short).cmp(&(
+                        b.name.is_none(),
+                        &b.name,
+                        &b.short,
+                    ))
                 });
 
                 dto::Role {
@@ -1118,7 +1147,11 @@ fn parse_grant(
         .any(|(name, tier)| *name == verb && *tier == intranet_governance::Tier::Governance);
 
     let (kind, id, label) = if scope == "*" {
-        ("network".to_owned(), String::new(), "network-wide".to_owned())
+        (
+            "network".to_owned(),
+            String::new(),
+            "network-wide".to_owned(),
+        )
     } else if let Some(id) = scope.strip_prefix("cat:") {
         let label = labels.get(id).map_or_else(
             // A grant can outlive what it names: deleting a category or channel
@@ -1182,7 +1215,9 @@ fn verbs() -> Vec<dto::Verb> {
                 "post" => "write, revise and withdraw messages",
                 "read" => "read what is written",
                 "create-channel" => "define new channels",
-                "manage-channel" => "rename, move, archive and delete channels, and set who is in a private one",
+                "manage-channel" => {
+                    "rename, move, archive and delete channels, and set who is in a private one"
+                }
                 "moderate" => "hide other members' messages, and pin",
                 "set-name" => "claim a display name here",
                 "connect-voice" => "join a voice channel and hear it",
@@ -1352,8 +1387,10 @@ fn relays(app: tauri::State<'_, App>) -> Result<dto::Relays, String> {
             designated: state.policy.bootstrap_relays.clone(),
             cached: store.relays(),
             unreachable,
-            may_set: state
-                .identity_holds(&identity.id(), &intranet_governance::Capability::DefinePolicy),
+            may_set: state.identity_holds(
+                &identity.id(),
+                &intranet_governance::Capability::DefinePolicy,
+            ),
             reported: standing.is_some(),
             failures: standing
                 .as_ref()
@@ -1581,7 +1618,10 @@ fn sidebar(app: tauri::State<'_, App>) -> Result<Vec<dto::SidebarRow>, String> {
                         channel: dto::Channel::of(channel),
                     })
                 }
-                kols_core::SidebarRow::Category { id, channels: inner } => {
+                kols_core::SidebarRow::Category {
+                    id,
+                    channels: inner,
+                } => {
                     Some(dto::SidebarRow::Category {
                         id: to_hex(id.as_bytes()),
                         // Empty when nothing defined it. A channel may name a
@@ -1643,14 +1683,26 @@ fn category_change(
 
 /// Renames a category.
 #[tauri::command]
-fn rename_category(app: tauri::State<'_, App>, category: String, name: String) -> Result<(), String> {
+fn rename_category(
+    app: tauri::State<'_, App>,
+    category: String,
+    name: String,
+) -> Result<(), String> {
     category_change(&app, &category, kols_core::CategoryChange::Rename(name))
 }
 
 /// Moves a category among the other categories.
 #[tauri::command]
-fn move_category(app: tauri::State<'_, App>, category: String, position: u32) -> Result<(), String> {
-    category_change(&app, &category, kols_core::CategoryChange::SetPosition(position))
+fn move_category(
+    app: tauri::State<'_, App>,
+    category: String,
+    position: u32,
+) -> Result<(), String> {
+    category_change(
+        &app,
+        &category,
+        kols_core::CategoryChange::SetPosition(position),
+    )
 }
 
 /// Deletes a category.
@@ -1685,7 +1737,11 @@ fn rename_channel(app: tauri::State<'_, App>, channel: String, name: String) -> 
 
 /// Sets a channel's topic.
 #[tauri::command]
-fn set_channel_topic(app: tauri::State<'_, App>, channel: String, topic: String) -> Result<(), String> {
+fn set_channel_topic(
+    app: tauri::State<'_, App>,
+    channel: String,
+    topic: String,
+) -> Result<(), String> {
     channel_change(&app, &channel, kols_core::ChannelChange::SetTopic(topic))
 }
 
@@ -1736,7 +1792,11 @@ fn move_channel(
             kols_core::ChannelChange::Recategorise(target),
         )?;
     }
-    channel_change(&app, &channel, kols_core::ChannelChange::SetPosition(position))
+    channel_change(
+        &app,
+        &channel,
+        kols_core::ChannelChange::SetPosition(position),
+    )
 }
 
 /// Opens a channel and renders the range a reader is holding.
@@ -1975,7 +2035,10 @@ fn waiting(app: tauri::State<'_, App>) -> Result<Vec<dto::Waiting>, String> {
         let state = store.state().map_err(|e| e.to_string())?;
         // The same capability admitting them needs. Seeing who is asking is not
         // a smaller question than letting them in.
-        if !state.identity_holds(&identity.id(), &intranet_governance::Capability::ApproveNode) {
+        if !state.identity_holds(
+            &identity.id(),
+            &intranet_governance::Capability::ApproveNode,
+        ) {
             return Ok(Vec::new());
         }
         Ok(store
@@ -2008,8 +2071,7 @@ fn people(app: tauri::State<'_, App>) -> Result<Vec<dto::Member>, String> {
         let me = store.identity().map_err(|e| e.to_string())?.id();
         let state = store.state().map_err(|e| e.to_string())?;
         let names = executor.names(&state).map_err(|e| e.to_string())?;
-        let connected: std::collections::BTreeSet<String> =
-            store.connected().into_iter().collect();
+        let connected: std::collections::BTreeSet<String> = store.connected().into_iter().collect();
         // **Freshness is applied here rather than in the store**, because this
         // is the layer that is answering a question. The store keeps
         // observations, and an observation that has gone stale is still an
@@ -2159,7 +2221,9 @@ fn create_network(
         open: true,
     };
     let id = *executor.store().network();
-    *app.open.lock().map_err(|_| "the workspace lock is poisoned")? = Some(executor);
+    *app.open
+        .lock()
+        .map_err(|_| "the workspace lock is poisoned")? = Some(executor);
     if let Ok(mut view) = app.in_view.lock() {
         *view = Some(id);
     }
@@ -2175,10 +2239,7 @@ fn create_network(
 /// the joiner has, and everything after the first connection is ordinary sync
 /// (Core §5.7).
 #[tauri::command]
-async fn join_network(
-    handle: tauri::AppHandle,
-    invite: String,
-) -> Result<dto::Joined, String> {
+async fn join_network(handle: tauri::AppHandle, invite: String) -> Result<dto::Joined, String> {
     let credential = kols_node::invite::from_uri(&invite)?;
     let workspace = {
         let app = handle.state::<App>();
@@ -2323,7 +2384,9 @@ async fn forget_network(
             .as_ref()
             .is_some_and(|executor| *executor.store().network() == id);
         if was_in_view {
-            *app.open.lock().map_err(|_| "the workspace lock is poisoned")? = None;
+            *app.open
+                .lock()
+                .map_err(|_| "the workspace lock is poisoned")? = None;
             if let Ok(mut view) = app.in_view.lock() {
                 *view = None;
             }
@@ -2386,7 +2449,11 @@ fn network_title(store: &kols_node::store::Store, unread: usize) -> String {
     let replayed = store.state().ok();
     let named = replayed
         .as_ref()
-        .and_then(|state| kols_core::ChatPolicy::of(&state.policy).network_name().map(str::to_owned))
+        .and_then(|state| {
+            kols_core::ChatPolicy::of(&state.policy)
+                .network_name()
+                .map(str::to_owned)
+        })
         .filter(|name| !name.trim().is_empty())
         .or_else(|| store.label().filter(|label| !label.trim().is_empty()))
         .unwrap_or_else(|| to_hex(store.network().as_bytes())[..8].to_owned());
@@ -2471,11 +2538,18 @@ fn show_network_window(
 /// a total across all of them — the cross-network count belongs on the
 /// workspace window, which names no network and cannot be confused for one.
 #[tauri::command]
-fn set_unread(handle: tauri::AppHandle, app: tauri::State<'_, App>, unread: usize) -> Result<(), String> {
+fn set_unread(
+    handle: tauri::AppHandle,
+    app: tauri::State<'_, App>,
+    unread: usize,
+) -> Result<(), String> {
     let Some(window) = handle.get_webview_window(NETWORK_WINDOW) else {
         return Ok(());
     };
-    let open = app.open.lock().map_err(|_| "the workspace lock is poisoned")?;
+    let open = app
+        .open
+        .lock()
+        .map_err(|_| "the workspace lock is poisoned")?;
     let Some(executor) = open.as_ref() else {
         return Ok(());
     };
@@ -2527,7 +2601,9 @@ async fn open_network(
     show_network_window(&handle, &store)?;
     drop(store);
     let executor = Executor::open(root).map_err(|err| err.to_string())?;
-    *app.open.lock().map_err(|_| "the workspace lock is poisoned")? = Some(executor);
+    *app.open
+        .lock()
+        .map_err(|_| "the workspace lock is poisoned")? = Some(executor);
     if let Ok(mut view) = app.in_view.lock() {
         *view = Some(id);
     }
@@ -2575,114 +2651,115 @@ fn reconcile_nodes(handle: &tauri::AppHandle, app: &tauri::State<'_, App>) {
     let emitter = handle.clone();
     let sink: kols_node::nodes::TaggedSink = std::sync::Arc::new(
         move |network: &intranet_identity::NetworkId, events: &[kols_api::Event]| {
-        let from = network.short();
-        for event in events {
-            // Named for what happened rather than carrying the payload: the
-            // interface re-reads the channel, because `design/05` §3's third
-            // property is that a consumer merges rather than appends, and the
-            // cheapest way to hold to that is to render from the projection
-            // every time.
-            let name = match event {
-                kols_api::Event::Records {
-                    channel, records, ..
-                } => {
-                    // Two facts, because the interface wants different things
-                    // from them: *something arrived here* means redraw, and *a
-                    // message arrived here* is what makes a channel unread. A
-                    // vote or an edit is activity and is not something somebody
-                    // needs to be told to go and read.
-                    let messages = records
-                        .iter()
-                        .any(|record| matches!(record.body, kols_core::RecordBody::Message { .. }));
-                    // No author check: a record this member wrote is already in
-                    // their store, so the absorb that follows reports nothing,
-                    // and anything they write live goes to the channel they are
-                    // looking at. Nothing here can mark your own post unread.
-                    // The network first, because a consumer has to know whether
-                    // this event is even about the network it is showing before
-                    // it looks at anything else in the payload.
-                    let _ = emitter.emit(
-                        "kols://records",
-                        (from.clone(), to_hex(channel.as_bytes()), messages),
-                    );
-                    continue;
-                }
-                kols_api::Event::Governance { .. } | kols_api::Event::Adopted { .. } => {
-                    "kols://governance"
-                }
-                kols_api::Event::MemberKeyed { .. } | kols_api::Event::EpochRotated { .. } => {
-                    "kols://keys"
-                }
-                kols_api::Event::JoinAnswered { .. } => "kols://joins",
-                // **Redrawn from the roster rather than applied from the
-                // payload**, like everything else here: the beat is already in
-                // the store with the time it was heard, and freshness has to be
-                // recomputed anyway — a member stops being here because nothing
-                // arrived, which is not an event and can never be one.
-                kols_api::Event::MemberPresence { .. } => "kols://presence",
-                // Re-read from the store rather than carried, for the same
-                // reason as everything else here — the request is on disk
-                // (spec 07 §6.2 lets exactly the two parties keep one), and a
-                // consumer that rendered from this payload would be appending
-                // where it should be merging. The workspace window's
-                // conversations group listens for this and asks again
-                // (`09` §1.8): without it a verified request sat on the disk
-                // until something else happened to redraw that list.
-                kols_api::Event::DirectMessageRequest { .. } => "kols://conversations",
-                kols_api::Event::GovernanceReorg { mine, others } => {
-                    // Recorded before it is emitted, like the relay standing:
-                    // the emit makes it prompt, the record makes it reliable.
-                    if let Ok(mut held) = emitter.state::<App>().reorg.lock() {
-                        *held = Some(dto::Reorg {
-                            mine: mine
-                                .iter()
-                                .map(|action| dto::VoidedAction {
-                                    kind: action.kind.clone(),
-                                    security_relevant: action.security_relevant,
-                                })
-                                .collect(),
-                            others: *others,
+            let from = network.short();
+            for event in events {
+                // Named for what happened rather than carrying the payload: the
+                // interface re-reads the channel, because `design/05` §3's third
+                // property is that a consumer merges rather than appends, and the
+                // cheapest way to hold to that is to render from the projection
+                // every time.
+                let name = match event {
+                    kols_api::Event::Records {
+                        channel, records, ..
+                    } => {
+                        // Two facts, because the interface wants different things
+                        // from them: *something arrived here* means redraw, and *a
+                        // message arrived here* is what makes a channel unread. A
+                        // vote or an edit is activity and is not something somebody
+                        // needs to be told to go and read.
+                        let messages = records.iter().any(|record| {
+                            matches!(record.body, kols_core::RecordBody::Message { .. })
                         });
+                        // No author check: a record this member wrote is already in
+                        // their store, so the absorb that follows reports nothing,
+                        // and anything they write live goes to the channel they are
+                        // looking at. Nothing here can mark your own post unread.
+                        // The network first, because a consumer has to know whether
+                        // this event is even about the network it is showing before
+                        // it looks at anything else in the payload.
+                        let _ = emitter.emit(
+                            "kols://records",
+                            (from.clone(), to_hex(channel.as_bytes()), messages),
+                        );
+                        continue;
                     }
-                    let _ = emitter.emit("kols://reorg", ());
-                    continue;
-                }
-                kols_api::Event::Degraded { reason } => {
-                    let _ = emitter.emit("kols://degraded", reason.clone());
-                    continue;
-                }
-                // The good news as well as the bad, which is the whole point:
-                // before this, relay trouble reached the window and relay health
-                // never did.
-                kols_api::Event::Relay {
-                    reserved,
-                    failures,
-                    // The count is not carried into the window: it reads the
-                    // designated set from replay, which is the authority on it.
-                    ..
-                } => {
-                    // Recorded before it is emitted, so that a consumer which
-                    // missed the event can still ask. The emit is what makes it
-                    // prompt; this is what makes it reliable.
-                    if let Ok(mut held) = emitter.state::<App>().relay.lock() {
-                        *held = Some(RelayStanding {
-                            reserved: reserved.clone(),
-                            failures: failures.clone(),
-                        });
+                    kols_api::Event::Governance { .. } | kols_api::Event::Adopted { .. } => {
+                        "kols://governance"
                     }
-                    let _ = emitter.emit("kols://relay", from.clone());
-                    continue;
-                }
-            };
-            // **Every event now says where it came from.** `Event` carries no
-            // network id — it never needed one while a single node reported —
-            // and a consumer that could not tell a record in a conversation from
-            // one in a server would render each into the other. Tagged here
-            // rather than in the type, so `design/05` §3's vocabulary is
-            // unchanged for anything that still watches one network.
-            let _ = emitter.emit(name, from.clone());
-        }
-    });
+                    kols_api::Event::MemberKeyed { .. } | kols_api::Event::EpochRotated { .. } => {
+                        "kols://keys"
+                    }
+                    kols_api::Event::JoinAnswered { .. } => "kols://joins",
+                    // **Redrawn from the roster rather than applied from the
+                    // payload**, like everything else here: the beat is already in
+                    // the store with the time it was heard, and freshness has to be
+                    // recomputed anyway — a member stops being here because nothing
+                    // arrived, which is not an event and can never be one.
+                    kols_api::Event::MemberPresence { .. } => "kols://presence",
+                    // Re-read from the store rather than carried, for the same
+                    // reason as everything else here — the request is on disk
+                    // (spec 07 §6.2 lets exactly the two parties keep one), and a
+                    // consumer that rendered from this payload would be appending
+                    // where it should be merging. The workspace window's
+                    // conversations group listens for this and asks again
+                    // (`09` §1.8): without it a verified request sat on the disk
+                    // until something else happened to redraw that list.
+                    kols_api::Event::DirectMessageRequest { .. } => "kols://conversations",
+                    kols_api::Event::GovernanceReorg { mine, others } => {
+                        // Recorded before it is emitted, like the relay standing:
+                        // the emit makes it prompt, the record makes it reliable.
+                        if let Ok(mut held) = emitter.state::<App>().reorg.lock() {
+                            *held = Some(dto::Reorg {
+                                mine: mine
+                                    .iter()
+                                    .map(|action| dto::VoidedAction {
+                                        kind: action.kind.clone(),
+                                        security_relevant: action.security_relevant,
+                                    })
+                                    .collect(),
+                                others: *others,
+                            });
+                        }
+                        let _ = emitter.emit("kols://reorg", ());
+                        continue;
+                    }
+                    kols_api::Event::Degraded { reason } => {
+                        let _ = emitter.emit("kols://degraded", reason.clone());
+                        continue;
+                    }
+                    // The good news as well as the bad, which is the whole point:
+                    // before this, relay trouble reached the window and relay health
+                    // never did.
+                    kols_api::Event::Relay {
+                        reserved,
+                        failures,
+                        // The count is not carried into the window: it reads the
+                        // designated set from replay, which is the authority on it.
+                        ..
+                    } => {
+                        // Recorded before it is emitted, so that a consumer which
+                        // missed the event can still ask. The emit is what makes it
+                        // prompt; this is what makes it reliable.
+                        if let Ok(mut held) = emitter.state::<App>().relay.lock() {
+                            *held = Some(RelayStanding {
+                                reserved: reserved.clone(),
+                                failures: failures.clone(),
+                            });
+                        }
+                        let _ = emitter.emit("kols://relay", from.clone());
+                        continue;
+                    }
+                };
+                // **Every event now says where it came from.** `Event` carries no
+                // network id — it never needed one while a single node reported —
+                // and a consumer that could not tell a record in a conversation from
+                // one in a server would render each into the other. Tagged here
+                // rather than in the type, so `design/05` §3's vocabulary is
+                // unchanged for anything that still watches one network.
+                let _ = emitter.emit(name, from.clone());
+            }
+        },
+    );
 
     // The relay standing belongs to whichever network is in view, and a node
     // that has not reported yet says nothing about it. Cleared on reconcile
@@ -2890,7 +2967,9 @@ fn main() {
                 tick.tick().await;
                 let asked = {
                     let state = handle.state::<App>();
-                    let Ok(held) = state.claim.lock() else { continue };
+                    let Ok(held) = state.claim.lock() else {
+                        continue;
+                    };
                     let Some(claim) = held.as_ref() else {
                         // Released on the way out. Nothing left to answer for.
                         return;
@@ -2935,8 +3014,9 @@ fn main() {
     // replica duty for other people that a close must not silently drop.
     {
         let handle = app.handle().clone();
-        let show = tauri::menu::MenuItem::with_id(&handle, "show", "open ko-ls", true, None::<&str>)
-            .expect("a menu item");
+        let show =
+            tauri::menu::MenuItem::with_id(&handle, "show", "open ko-ls", true, None::<&str>)
+                .expect("a menu item");
         let quit = tauri::menu::MenuItem::with_id(&handle, "quit", "quit", true, None::<&str>)
             .expect("a menu item");
         let menu = tauri::menu::Menu::with_items(&handle, &[&show, &quit]).expect("a menu");

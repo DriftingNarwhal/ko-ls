@@ -73,7 +73,10 @@ fn functions(source: &str) -> Vec<Function<'_>> {
 
         // Whatever is attached above the signature, back to the last blank line:
         // the attributes and doc comment, which is where `#[tauri::command]` is.
-        let attached = source[..line_start].rfind("\n\n").map(|at| at + 2).unwrap_or(0);
+        let attached = source[..line_start]
+            .rfind("\n\n")
+            .map(|at| at + 2)
+            .unwrap_or(0);
         let command = source[attached..line_start].contains("#[tauri::command]");
 
         // The body, by brace matching. Good enough on this file, which has no
@@ -131,9 +134,9 @@ fn no_synchronous_command_creates_a_window() {
     let mut offenders = Vec::new();
     for function in functions.iter().filter(|function| function.command) {
         let builds_here = function.body.contains("WebviewWindowBuilder");
-        let builds_below = builders
-            .iter()
-            .any(|helper| *helper != function.name && function.body.contains(&format!("{helper}(")));
+        let builds_below = builders.iter().any(|helper| {
+            *helper != function.name && function.body.contains(&format!("{helper}("))
+        });
         if (builds_here || builds_below) && !function.is_async {
             offenders.push(function.name);
         }
