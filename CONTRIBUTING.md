@@ -35,9 +35,13 @@ reserved. A licence on `main` does not reach a tag.
 
 ## The gate
 
-`KOLS_PASSWORD=<anything> cargo test --workspace` and `cargo clippy --workspace
---all-targets` must both be clean before a change lands. A run that skipped clippy because
-the toolchain lacked it has checked half the gate and should say so.
+`KOLS_PASSWORD=<anything> cargo test --workspace`, `cargo clippy --workspace --all-targets`
+and `cargo fmt --all --check` must all be clean before a change lands. A run that skipped
+clippy because the toolchain lacked it has checked only part of the gate and should say so.
+
+**Formatting is rustfmt's defaults, with no configuration.** Run `cargo fmt --all` before
+committing. It also formats the protocol crates, which this workspace reaches by path, and the
+protocol's own gate checks them too.
 
 **The password is not optional and is not a convenience.** Seeds are wrapped under an
 account key (`design/02` §6.3), and there is deliberately **no unwrapped path** — not even

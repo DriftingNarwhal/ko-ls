@@ -24,7 +24,40 @@ Kept because this project keeps re-learning the same lessons and paying for them
 
 ---
 
-- **2026-09-22** — **Two controls that could be reached and not used, and one that should not
+- **2026-09-24** — **The formatter joins the gate, and the error types stop being written by
+  hand.**
+
+  Neither was a decision anybody had taken. Nothing in this repository or the protocol's had
+  ever run `rustfmt` over the whole tree, so `cargo fmt --check` reported 871 hunks here and 482
+  there. And this client wrote every error type out by hand (`Display`, `Error`, `From`) while
+  the protocol derived the same three with `thiserror`, for no reason either repository recorded.
+  Asked, the answer was that neither had been chosen, so choose.
+
+  **Formatting.** One commit per repository that does nothing but run `cargo fmt --all`, then
+  `cargo fmt --all --check` in the gate (`CONTRIBUTING.md`). The protocol went first, because
+  `cargo fmt --all` here reaches its crates through the path dependency: run from this side,
+  it rewrote 82 of the protocol's files as well as 56 of this repository's. That also means an
+  unformatted protocol change now fails this gate, which matches "both gates must pass".
+
+  **Errors: `thiserror`, because it was already here.** `thiserror 2.0.20` was in
+  `Cargo.lock` through the protocol crates, so deriving adds no crate, while going the other
+  way would have meant hand-writing the error boilerplate of twelve crates. Nine types moved:
+  `CoreError`, `NameRefusal`, `Refusal`, `NetError`, `ProjectionError`, `StoreError`,
+  `AccountError`, `BundleError` and `ExecuteError`. `StoreError` had implemented `Display`
+  but never `Error`, which is why a search for `impl Error` counted eight. Plain wrapping `From`s became
+  `#[from]`. `BundleError`'s two stay hand-written, because they flatten the source into a
+  string rather than wrap it.
+
+  **Every message is byte-identical, which was measured, not assumed.** A throwaway test
+  printed 44 of them, covering every variant that has a line continuation, a positional
+  `{0:?}` or a computed argument. It ran against the tree before the change and after, and the
+  outputs matched. That matters beyond tidiness: some of these strings are what a member reads,
+  and `StoreError::Locked` names the password variable a terminal user has to set.
+
+  One behavioural difference, deliberately accepted: a `#[from]` field is also the error's
+  `source()`, which was `None` before. Nothing in this workspace walks error chains.
+
+ that could be reached and not used, and one that should not
   exist.**
 
   A member tried to leave a conversation and was told a node was running for it. They closed

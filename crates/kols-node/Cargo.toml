@@ -15,6 +15,7 @@ name = "kols"
 path = "src/main.rs"
 
 [dependencies]
+thiserror.workspace = true
 kols-core.workspace = true
 kols-store.workspace = true
 kols-net.workspace = true

@@ -39,61 +39,39 @@ pub const MAX_NAME_BYTES: usize = 64;
 pub const MAX_NAME_GRAPHEMES: usize = 32;
 
 /// Why a name was refused.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum NameRefusal {
     /// It carried a code point that cannot be seen or rendered.
     ///
     /// A name nobody can see cannot be checked by the person it misleads, which
     /// is the whole reason these are refused rather than stripped.
+    #[error("that name contains an invisible character (U+{code_point:04X})")]
     Invisible {
         /// The offending code point.
         code_point: u32,
     },
     /// It normalized to nothing.
+    #[error("that name is empty")]
     Empty,
     /// The claimed form is longer than [`MAX_NAME_BYTES`].
+    #[error("that name is {actual} bytes, and the limit is {MAX_NAME_BYTES}")]
     TooManyBytes {
         /// How many it carried.
         actual: usize,
     },
     /// The normalized form occupies more than [`MAX_NAME_GRAPHEMES`].
+    #[error("that name is {actual} characters wide, and the limit is {MAX_NAME_GRAPHEMES}")]
     TooManyGraphemes {
         /// How many it occupies.
         actual: usize,
     },
     /// Another identity already holds this name key.
+    #[error("that name is held by {}", holder.short())]
     Taken {
         /// Who holds it.
         holder: PerNetworkIdentityId,
     },
 }
-
-impl std::fmt::Display for NameRefusal {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::Invisible { code_point } => write!(
-                f,
-                "that name contains an invisible character (U+{code_point:04X})"
-            ),
-            Self::Empty => write!(f, "that name is empty"),
-            Self::TooManyBytes { actual } => {
-                write!(
-                    f,
-                    "that name is {actual} bytes, and the limit is {MAX_NAME_BYTES}"
-                )
-            }
-            Self::TooManyGraphemes { actual } => write!(
-                f,
-                "that name is {actual} characters wide, and the limit is {MAX_NAME_GRAPHEMES}"
-            ),
-            Self::Taken { holder } => {
-                write!(f, "that name is held by {}", holder.short())
-            }
-        }
-    }
-}
-
-impl std::error::Error for NameRefusal {}
 
 /// The key two names are compared on — spec 07 §3.9.1.
 ///

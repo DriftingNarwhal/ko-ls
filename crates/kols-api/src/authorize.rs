@@ -62,11 +62,13 @@ pub struct Actor<'a, A: Authority, C: Channels> {
 /// Refusals are values rather than strings so the interface can react to the
 /// kind — "you are going too fast" wants different chrome from "you cannot post
 /// here" — and so the reason survives crossing the boundary intact.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum Refusal {
     /// Replay knows no such channel.
+    #[error("no channel {}", &intranet_crypto::to_hex(.0.as_bytes())[..12])]
     NoSuchChannel(ChannelId),
     /// The actor does not hold what this command needs.
+    #[error("{command} needs {needs}, which you do not hold")]
     NotPermitted {
         /// Which command.
         command: &'static str,
@@ -74,8 +76,10 @@ pub enum Refusal {
         needs: &'static str,
     },
     /// A field that must carry something carried nothing.
+    #[error("{0} is empty")]
     Empty(&'static str),
     /// A field exceeded the bound that applies to it.
+    #[error("{field} is {actual} bytes, and the ceiling here is {limit}")]
     TooLarge {
         /// Which field.
         field: &'static str,
@@ -85,6 +89,7 @@ pub enum Refusal {
         limit: usize,
     },
     /// More of something than this network permits.
+    #[error("{actual} {field}, and the ceiling here is {limit}")]
     TooMany {
         /// Which field.
         field: &'static str,
@@ -94,12 +99,14 @@ pub enum Refusal {
         limit: usize,
     },
     /// A display name could not be claimed.
+    #[error("{0}")]
     Name(NameRefusal),
     /// Channel structure was asked for in a network that has no channels.
     ///
     /// A `conversation`-profile network has exactly one implied channel and a
     /// channel entry in it is invalid on replay (`design/03` §4.1), so refusing
     /// here saves writing an entry every node would reject.
+    #[error("this network is a conversation, which has no channels to manage")]
     NotAServer,
     /// A verb outside the vocabulary `design/02` §2.2 defines.
     ///
@@ -107,6 +114,10 @@ pub enum Refusal {
     /// refused by the protocol at replay (Core §2.2.1) — so a mistyped verb
     /// produces a grant that resolves for nobody, and an absent grant and a
     /// misspelled one look identical from every side.
+    #[error(
+        "{0:?} is not one of this application's permissions, and granting it \
+                 would produce an entry no node resolves"
+    )]
     UnknownVerb(String),
     /// A governance-tier verb was aimed at `everyone`.
     ///
@@ -114,6 +125,10 @@ pub enum Refusal {
     /// capability under *any* configuration, because admission would otherwise
     /// confer governance power. The protocol refuses it too — this refuses it
     /// before an entry every node would reject is signed and replayed forever.
+    #[error(
+        "chat:{verb} is governance-tier, and everyone may never hold one — \
+                 otherwise being admitted would itself confer it. Put it on a role instead"
+    )]
     EveryoneCeiling {
         /// The verb that cannot go there.
         verb: String,
@@ -125,6 +140,10 @@ pub enum Refusal {
     /// verb from it means replacing `All` with an explicit set, which is a
     /// different and much larger act than the checkbox that asked for it: it
     /// would silently drop every capability nobody happened to enumerate.
+    #[error(
+        "{group} holds every capability there is, so there is no set to take one \
+                 out of. Narrowing it means replacing that with an explicit list"
+    )]
     Unrestricted {
         /// Which role.
         group: String,
@@ -134,6 +153,10 @@ pub enum Refusal {
     /// Refused rather than written, because every reader of these falls back to
     /// the default on a value it cannot use — so a negative would be replayed
     /// forever and read as the number it was meant to replace.
+    #[error(
+        "{field} cannot be negative — every reader would fall back to the default, \
+                 so the change would be recorded forever and do nothing"
+    )]
     Negative {
         /// Which setting.
         field: &'static str,
@@ -143,91 +166,29 @@ pub enum Refusal {
     /// Core §2.6's one incompatible pairing: admission cannot be both automatic
     /// and deliberated. The protocol refuses it on replay; this refuses it
     /// before a governance entry is spent finding that out.
+    #[error(
+        "this network decides admission by member vote, so it cannot also admit \
+                 automatically. Change the governance model first, or keep explicit intake"
+    )]
     IncoherentAdmission,
     /// No role by that name.
+    #[error("there is no role called {0:?} here")]
     NoSuchRole(String),
     /// A role by that name already exists.
+    #[error("a role called {0:?} already exists here")]
     RoleExists(String),
     /// A presence state outside the four this vocabulary has.
     ///
     /// Refused rather than stored, because the store reads an unrecognised value
     /// as "never chosen" and that reads as the default — which is visible. A
     /// mistyped state must not be the way somebody stops being invisible.
-    UnknownPresence(String),
-}
-
-impl std::fmt::Display for Refusal {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::NoSuchChannel(id) => {
-                write!(
-                    f,
-                    "no channel {}",
-                    &intranet_crypto::to_hex(id.as_bytes())[..12]
-                )
-            }
-            Self::NotPermitted { command, needs } => {
-                write!(f, "{command} needs {needs}, which you do not hold")
-            }
-            Self::Empty(field) => write!(f, "{field} is empty"),
-            Self::TooLarge {
-                field,
-                actual,
-                limit,
-            } => write!(
-                f,
-                "{field} is {actual} bytes, and the ceiling here is {limit}"
-            ),
-            Self::TooMany {
-                field,
-                actual,
-                limit,
-            } => write!(f, "{actual} {field}, and the ceiling here is {limit}"),
-            Self::Name(refusal) => write!(f, "{refusal}"),
-            Self::NotAServer => {
-                write!(
-                    f,
-                    "this network is a conversation, which has no channels to manage"
-                )
-            }
-            Self::UnknownVerb(verb) => write!(
-                f,
-                "{verb:?} is not one of this application's permissions, and granting it \
-                 would produce an entry no node resolves"
-            ),
-            Self::EveryoneCeiling { verb } => write!(
-                f,
-                "chat:{verb} is governance-tier, and everyone may never hold one — \
-                 otherwise being admitted would itself confer it. Put it on a role instead"
-            ),
-            Self::Unrestricted { group } => write!(
-                f,
-                "{group} holds every capability there is, so there is no set to take one \
-                 out of. Narrowing it means replacing that with an explicit list"
-            ),
-            Self::UnknownPresence(state) => write!(
-                f,
-                "{state:?} is not one of here, idle, busy or invisible. There is no \
+    #[error(
+        "{0:?} is not one of here, idle, busy or invisible. There is no \
                  \"offline\": with no server, nobody can tell somebody being away from \
                  somebody being unreachable from here"
-            ),
-            Self::Negative { field } => write!(
-                f,
-                "{field} cannot be negative — every reader would fall back to the default, \
-                 so the change would be recorded forever and do nothing"
-            ),
-            Self::IncoherentAdmission => write!(
-                f,
-                "this network decides admission by member vote, so it cannot also admit \
-                 automatically. Change the governance model first, or keep explicit intake"
-            ),
-            Self::NoSuchRole(group) => write!(f, "there is no role called {group:?} here"),
-            Self::RoleExists(group) => write!(f, "a role called {group:?} already exists here"),
-        }
-    }
+    )]
+    UnknownPresence(String),
 }
-
-impl std::error::Error for Refusal {}
 
 /// A command that has been through [`authorize`].
 ///

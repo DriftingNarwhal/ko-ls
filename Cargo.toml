@@ -32,6 +32,10 @@ clap = { version = "4", features = ["derive"] }
 # wanted from it.
 argon2 = { version = "0.5", default-features = false, features = ["alloc"] }
 tokio = { version = "1", default-features = false }
+# Error enums derive their Display, Error and From through this, as the protocol
+# crates do. It was already in the dependency tree through them, so using it here
+# adds no crate.
+thiserror = "2"
 
 # Debug builds here are dominated by debug information, not code: a test binary
 # statically links libp2p, quinn, rustls and openmls, and 83% of the 369 MB one

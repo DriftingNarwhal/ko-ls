@@ -79,11 +79,13 @@ pub use view::{ChannelView, Rejection, RenderedMessage};
 /// Not `Clone`, because `StorageError` is not — and wrapping it in something
 /// cloneable (a `String`, an `Arc`) to win a derive would throw away the
 /// structured refusal the storage layer took care to produce.
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq, thiserror::Error)]
 pub enum CoreError {
     /// The bytes were not a valid encoding of the expected type.
-    Decode(intranet_crypto::DecodeError),
+    #[error("decode failed: {0}")]
+    Decode(#[from] intranet_crypto::DecodeError),
     /// A record's signature did not verify against its author's device key.
+    #[error("signature did not verify")]
     BadSignature,
     /// A channel entry's payload discriminant disagreed with its declared kind.
     ///
@@ -91,6 +93,7 @@ pub enum CoreError {
     /// envelope the protocol reads, the discriminant from bytes it never decodes
     /// — so a disagreement means one was changed by something that could not
     /// change both.
+    #[error("entry declared kind {declared} but its payload encodes {encoded}")]
     ChannelKindMismatch {
         /// The `kind` the entry travelled under.
         declared: String,
@@ -102,12 +105,14 @@ pub enum CoreError {
     /// Refused rather than skipped, unlike an unknown *record* kind: a channel
     /// entry carries structure, and applying part of it would leave two nodes
     /// with different channel state.
+    #[error("unknown {0} discriminant {1:#04x}")]
     UnknownChannelField(&'static str, u8),
     /// An entry's subject disagrees with what its body is about.
     ///
     /// Unreachable from a decode, where the discriminant chooses both. Reachable
     /// from a value built in memory, which is what this catches — before it is
     /// signed, rather than at every reader that would have to refuse it.
+    #[error("a {kind} entry names the wrong kind of subject")]
     SubjectMismatch {
         /// The kind whose subject was wrong.
         kind: &'static str,
@@ -117,8 +122,10 @@ pub enum CoreError {
     /// Not an error at the reader level — `design/08` §9 requires unknown kinds
     /// be retained and counted rather than rejected — but the decoder still has
     /// to say so, since it cannot produce a typed body it does not know.
+    #[error("unknown record kind {0:#04x}")]
     UnknownKind(u8),
     /// A record's clock did not strictly increase within its author's log.
+    #[error("clock did not advance: previous {previous:?}, offered {offered:?}")]
     NonMonotonicClock {
         /// The previous record's reading.
         previous: crate::Hlc,
@@ -132,10 +139,13 @@ pub enum CoreError {
     /// about a different pair than the request claims. Core §1.2 names that as the
     /// forgery worth guarding against, since a broken signature is caught by
     /// decoding and this is not.
+    #[error("the request's proof is valid but links a different pair than it claims")]
     UnlinkedInvite,
     /// The storage layer refused the publish.
+    #[error("storage refused the publish: {0}")]
     Storage(intranet_storage::StorageError),
     /// A field exceeded the bound that applies to it.
+    #[error("{field} is {actual} bytes, limit is {limit}")]
     TooLarge {
         /// Which field.
         field: &'static str,
@@ -145,45 +155,3 @@ pub enum CoreError {
         limit: usize,
     },
 }
-
-impl From<intranet_crypto::DecodeError> for CoreError {
-    fn from(err: intranet_crypto::DecodeError) -> Self {
-        Self::Decode(err)
-    }
-}
-
-impl std::fmt::Display for CoreError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::Decode(err) => write!(f, "decode failed: {err}"),
-            Self::BadSignature => write!(f, "signature did not verify"),
-            Self::UnknownKind(tag) => write!(f, "unknown record kind {tag:#04x}"),
-            Self::ChannelKindMismatch { declared, encoded } => write!(
-                f,
-                "entry declared kind {declared} but its payload encodes {encoded}"
-            ),
-            Self::UnknownChannelField(field, tag) => {
-                write!(f, "unknown {field} discriminant {tag:#04x}")
-            }
-            Self::SubjectMismatch { kind } => {
-                write!(f, "a {kind} entry names the wrong kind of subject")
-            }
-            Self::UnlinkedInvite => write!(
-                f,
-                "the request's proof is valid but links a different pair than it claims"
-            ),
-            Self::NonMonotonicClock { previous, offered } => write!(
-                f,
-                "clock did not advance: previous {previous:?}, offered {offered:?}"
-            ),
-            Self::Storage(err) => write!(f, "storage refused the publish: {err}"),
-            Self::TooLarge {
-                field,
-                actual,
-                limit,
-            } => write!(f, "{field} is {actual} bytes, limit is {limit}"),
-        }
-    }
-}
-
-impl std::error::Error for CoreError {}

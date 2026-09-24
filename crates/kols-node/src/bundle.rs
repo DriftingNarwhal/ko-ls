@@ -74,36 +74,24 @@ pub struct Entry {
 }
 
 /// What can go wrong reading or writing a bundle.
-#[derive(Debug)]
+#[derive(Debug, thiserror::Error)]
 pub enum BundleError {
     /// The file is not one of these.
+    #[error("that file is not a ko-ls backup")]
     NotABundle,
     /// It was written by a version this build does not read.
+    #[error("that backup was written by a newer version of ko-ls (format {0})")]
     Version(u8),
     /// The passphrase did not open it.
+    #[error("that passphrase does not open this backup")]
     WrongPassphrase,
     /// It opened and its contents were not readable.
+    #[error("the backup opened but is unreadable: {0}")]
     Malformed(String),
     /// A key could not be derived from the passphrase.
+    #[error("could not derive a key from that passphrase: {0}")]
     Kdf(String),
 }
-
-impl std::fmt::Display for BundleError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::NotABundle => write!(f, "that file is not a ko-ls backup"),
-            Self::Version(v) => write!(
-                f,
-                "that backup was written by a newer version of ko-ls (format {v})"
-            ),
-            Self::WrongPassphrase => write!(f, "that passphrase does not open this backup"),
-            Self::Malformed(what) => write!(f, "the backup opened but is unreadable: {what}"),
-            Self::Kdf(what) => write!(f, "could not derive a key from that passphrase: {what}"),
-        }
-    }
-}
-
-impl std::error::Error for BundleError {}
 
 impl From<DecodeError> for BundleError {
     fn from(err: DecodeError) -> Self {

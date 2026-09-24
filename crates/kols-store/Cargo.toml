@@ -5,6 +5,7 @@ edition.workspace = true
 license.workspace = true
 
 [dependencies]
+thiserror.workspace = true
 kols-core = { path = "../kols-core" }
 intranet-identity.workspace = true
 rusqlite = { version = "0.37", features = ["bundled"] }

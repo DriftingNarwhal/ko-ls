@@ -33,29 +33,18 @@ pub use publish::{
 };
 
 /// What can go wrong carrying a channel over the wire.
-#[derive(Debug)]
+#[derive(Debug, thiserror::Error)]
 pub enum NetError {
     /// The pointer named a segment this node could not assemble.
+    #[error("{} chunk(s) could not be fetched", .0.len())]
     ChunksUnavailable(Vec<intranet_storage::Cid>),
     /// The fetched bytes did not decode as a segment.
+    #[error("segment did not decode: {0}")]
     Malformed(kols_core::CoreError),
     /// The storage layer refused an operation.
+    #[error("storage refused: {0}")]
     Storage(intranet_storage::StorageError),
     /// No pointer for that author log is known yet.
+    #[error("no pointer known for that author log")]
     NoSuchPointer,
 }
-
-impl std::fmt::Display for NetError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::ChunksUnavailable(cids) => {
-                write!(f, "{} chunk(s) could not be fetched", cids.len())
-            }
-            Self::Malformed(err) => write!(f, "segment did not decode: {err}"),
-            Self::Storage(err) => write!(f, "storage refused: {err}"),
-            Self::NoSuchPointer => write!(f, "no pointer known for that author log"),
-        }
-    }
-}
-
-impl std::error::Error for NetError {}

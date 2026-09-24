@@ -3039,6 +3039,7 @@ dependencies = [
  "intranet-governance",
  "intranet-identity",
  "kols-core",
+ "thiserror 2.0.20",
 ]
 
 [[package]]
@@ -3066,6 +3067,7 @@ dependencies = [
  "intranet-identity",
  "intranet-invite",
  "intranet-storage",
+ "thiserror 2.0.20",
  "unicode-normalization",
  "unicode-segmentation",
 ]
@@ -3082,6 +3084,7 @@ dependencies = [
  "intranet-transport",
  "kols-core",
  "libp2p",
+ "thiserror 2.0.20",
  "tokio",
 ]
 
@@ -3104,6 +3107,7 @@ dependencies = [
  "kols-net",
  "kols-store",
  "libp2p",
+ "thiserror 2.0.20",
  "tokio",
  "tracing-subscriber",
  "windows-sys 0.61.2",
@@ -3116,6 +3120,7 @@ dependencies = [
  "intranet-identity",
  "kols-core",
  "rusqlite",
+ "thiserror 2.0.20",
 ]
 
 [[package]]

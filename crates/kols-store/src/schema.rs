@@ -6,29 +6,14 @@ use kols_core::{ChannelId, Cursor, Hlc, MessageId, Record, RecordClass};
 use rusqlite::Connection;
 
 /// What can go wrong reading or writing the projection.
-#[derive(Debug)]
+#[derive(Debug, thiserror::Error)]
 pub enum ProjectionError {
     /// SQLite refused.
-    Sqlite(rusqlite::Error),
+    #[error("the projection refused: {0}")]
+    Sqlite(#[from] rusqlite::Error),
     /// A stored row was not the shape this build expects.
+    #[error("the projection holds something unreadable: {0}")]
     Corrupt(String),
-}
-
-impl std::fmt::Display for ProjectionError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::Sqlite(err) => write!(f, "the projection refused: {err}"),
-            Self::Corrupt(what) => write!(f, "the projection holds something unreadable: {what}"),
-        }
-    }
-}
-
-impl std::error::Error for ProjectionError {}
-
-impl From<rusqlite::Error> for ProjectionError {
-    fn from(err: rusqlite::Error) -> Self {
-        Self::Sqlite(err)
-    }
 }
 
 /// The version this build writes.

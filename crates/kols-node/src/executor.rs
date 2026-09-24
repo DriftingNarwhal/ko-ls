@@ -64,41 +64,20 @@ use std::path::PathBuf;
 ///
 /// Separate from [`Refusal`], which is the boundary saying no. A refusal is an
 /// answer; these are failures.
-#[derive(Debug)]
+#[derive(Debug, thiserror::Error)]
 pub enum ExecuteError {
     /// The boundary refused the command.
-    Refused(Refusal),
+    #[error("{0}")]
+    Refused(#[from] Refusal),
     /// The store could not be read or written.
-    Store(StoreError),
+    #[error("{0}")]
+    Store(#[from] StoreError),
     /// A record or entry was built but the log or the log's rules rejected it.
+    #[error("{0}")]
     Rejected(String),
     /// Nothing matched what the caller named.
+    #[error("{0}")]
     NotFound(String),
-}
-
-impl std::fmt::Display for ExecuteError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::Refused(refusal) => write!(f, "{refusal}"),
-            Self::Store(err) => write!(f, "{err}"),
-            Self::Rejected(why) => write!(f, "{why}"),
-            Self::NotFound(what) => write!(f, "{what}"),
-        }
-    }
-}
-
-impl std::error::Error for ExecuteError {}
-
-impl From<StoreError> for ExecuteError {
-    fn from(err: StoreError) -> Self {
-        Self::Store(err)
-    }
-}
-
-impl From<Refusal> for ExecuteError {
-    fn from(refusal: Refusal) -> Self {
-        Self::Refused(refusal)
-    }
 }
 
 /// Runs commands against one node's store.

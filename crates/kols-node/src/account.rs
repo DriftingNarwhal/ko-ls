@@ -53,41 +53,26 @@ const PASSES: u32 = 3;
 const LANES: u32 = 1;
 
 /// What can go wrong opening or making an account.
-#[derive(Debug)]
+#[derive(Debug, thiserror::Error)]
 pub enum AccountError {
     /// No account has been made on this installation yet.
+    #[error("this installation has no account yet")]
     None,
     /// One already exists, and making a second would strand the first's seeds.
+    #[error("this installation already has an account")]
     Exists,
     /// The password did not open it.
+    #[error("that password does not unlock this installation")]
     WrongPassword,
     /// The account file is not readable as one.
+    #[error("the account file is unreadable: {0}")]
     Malformed(String),
     /// The key could not be derived.
+    #[error("could not derive a key from that password: {0}")]
     Kdf(String),
     /// The disk refused.
-    Io(std::io::Error),
-}
-
-impl std::fmt::Display for AccountError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::None => write!(f, "this installation has no account yet"),
-            Self::Exists => write!(f, "this installation already has an account"),
-            Self::WrongPassword => write!(f, "that password does not unlock this installation"),
-            Self::Malformed(what) => write!(f, "the account file is unreadable: {what}"),
-            Self::Kdf(what) => write!(f, "could not derive a key from that password: {what}"),
-            Self::Io(err) => write!(f, "{err}"),
-        }
-    }
-}
-
-impl std::error::Error for AccountError {}
-
-impl From<std::io::Error> for AccountError {
-    fn from(err: std::io::Error) -> Self {
-        Self::Io(err)
-    }
+    #[error("{0}")]
+    Io(#[from] std::io::Error),
 }
 
 /// An unlocked account: the key that opens this installation's seeds.

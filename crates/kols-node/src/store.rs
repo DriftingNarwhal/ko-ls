@@ -190,54 +190,32 @@ struct CachedLog {
 }
 
 /// What can go wrong reading or writing the store.
-#[derive(Debug)]
+#[derive(Debug, thiserror::Error)]
 pub enum StoreError {
     /// The filesystem refused.
-    Io(io::Error),
+    #[error("{0}")]
+    Io(#[from] io::Error),
     /// No network has been created or joined here yet.
+    #[error("no network at {}. Run `kols init <name>` to create one, or `kols join <invite>`", .0.display())]
     NotInitialised(PathBuf),
     /// A network already exists here, and this would have overwritten it.
+    #[error("a network already exists at {}. Refusing to overwrite it — the seed there \
+                 cannot be recovered if it is lost", .0.display())]
     AlreadyInitialised(PathBuf),
     /// A stored file was not the shape this build expects.
+    #[error("stored state is unreadable: {0}")]
     Corrupt(String),
     /// Nobody has unlocked this installation, so the seed cannot be opened.
     ///
     /// Its own variant rather than a `Corrupt`, because the two need opposite
     /// responses: this one is answered by somebody logging in, and reporting it
     /// as corruption would send a member looking for a disk fault instead.
+    #[error(
+        "this installation is locked: {0}. Log in to open it, or set \
+                 {var} for the terminal",
+        var = crate::account::PASSWORD_VAR
+    )]
     Locked(String),
-}
-
-impl std::fmt::Display for StoreError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::Io(err) => write!(f, "{err}"),
-            Self::NotInitialised(path) => write!(
-                f,
-                "no network at {}. Run `kols init <name>` to create one, or `kols join <invite>`",
-                path.display()
-            ),
-            Self::AlreadyInitialised(path) => write!(
-                f,
-                "a network already exists at {}. Refusing to overwrite it — the seed there \
-                 cannot be recovered if it is lost",
-                path.display()
-            ),
-            Self::Corrupt(what) => write!(f, "stored state is unreadable: {what}"),
-            Self::Locked(why) => write!(
-                f,
-                "this installation is locked: {why}. Log in to open it, or set \
-                 {} for the terminal",
-                crate::account::PASSWORD_VAR
-            ),
-        }
-    }
-}
-
-impl From<io::Error> for StoreError {
-    fn from(err: io::Error) -> Self {
-        Self::Io(err)
-    }
 }
 
 /// The most one request from an interface may reach beyond what is loaded.
