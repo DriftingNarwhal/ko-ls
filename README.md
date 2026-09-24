@@ -106,8 +106,9 @@ still landing. The dev container in `.devcontainer/` has the whole toolchain if 
 rather not assemble one.
 
 ```bash
-cargo test                                   # 306 tests; the two-node ones spawn real nodes on loopback
+KOLS_PASSWORD=x cargo test --workspace       # any password; the two-node tests spawn real nodes on loopback
 cargo clippy --workspace --all-targets       # must stay clean
+cargo fmt --all --check                      # must stay clean
 ./scripts/cross-check.sh                     # big-endian verification, see below
 ```
 

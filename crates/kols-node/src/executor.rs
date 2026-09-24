@@ -67,10 +67,10 @@ use std::path::PathBuf;
 #[derive(Debug, thiserror::Error)]
 pub enum ExecuteError {
     /// The boundary refused the command.
-    #[error("{0}")]
+    #[error(transparent)]
     Refused(#[from] Refusal),
     /// The store could not be read or written.
-    #[error("{0}")]
+    #[error(transparent)]
     Store(#[from] StoreError),
     /// A record or entry was built but the log or the log's rules rejected it.
     #[error("{0}")]

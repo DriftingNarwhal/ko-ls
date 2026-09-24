@@ -30,12 +30,14 @@ is the whole fix.
 ```sh
 cd distributed-intranet                    # the protocol
 cargo test --workspace
-cargo clippy --workspace --all-targets     # both halves of the CLAUDE.md gate
+cargo clippy --workspace --all-targets     # the gate, with the fmt check below (CONTRIBUTING.md)
+cargo fmt --all --check
 ./harness/run-scenario.sh all              # needs the docker socket mount
 
 cd ../ko-ls                                # the client
-cargo test
+KOLS_PASSWORD=x cargo test --workspace     # any password; the suite unlocks as the window does
 cargo clippy --workspace --all-targets
+cargo fmt --all --check
 ./scripts/cross-check.sh                   # big-endian, not part of the default gate
 ```
 
@@ -44,7 +46,7 @@ cargo clippy --workspace --all-targets
 | Piece | Why |
 |---|---|
 | `rust:1-bookworm` | workspace is edition 2024 / rust-version 1.85 |
-| `clippy`, `rustfmt` | `cargo clippy --workspace --all-targets` is part of the gate |
+| `clippy`, `rustfmt` | `cargo clippy --workspace --all-targets` and `cargo fmt --all --check` are part of the gate |
 | `build-essential`, `pkg-config`, `libssl-dev` | native builds for the crypto/transport crates |
 | Docker CLI + compose plugin | `harness/run-scenario.sh` brings up the 12-container NAT topology |
 | `iproute2`, `iputils-ping`, `jq`, `curl` | tools the harness scripts reach for |

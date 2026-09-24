@@ -695,23 +695,27 @@ impl ChannelEntry {
 }
 
 /// Why a channel entry was refused.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum ChannelRefusal {
     /// The log entry was not an application entry at all.
+    #[error("not an application entry")]
     NotAnAppEntry,
     /// The payload was not a well-formed channel entry.
+    #[error("malformed channel entry: {0}")]
     Malformed(String),
     /// The network's profile has no channels to define.
     ///
     /// A `conversation` network has exactly one implied channel (spec 07 §1.2).
     /// The protocol cannot enforce this — it carries `chat` payloads without
     /// decoding them — so every conformant reader must.
+    #[error("a conversation-profile network has no channels to define")]
     NotAServer,
     /// The entry declared a capability that does not authorize its kind.
     ///
     /// The protocol checked the author holds what was declared; this checks that
     /// what was declared is what this kind requires. Without it, an author with
     /// any registered `chat` capability could mint channel structure.
+    #[error("entry declared {declared:?} but its kind requires {required:?}")]
     WrongCapability {
         /// What the entry declared.
         declared: Capability,
@@ -719,29 +723,8 @@ pub enum ChannelRefusal {
         required: Capability,
     },
     /// The entry was not in the `chat` namespace.
+    #[error("namespace {0} is not chat")]
     ForeignNamespace(String),
-}
-
-impl std::fmt::Display for ChannelRefusal {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::NotAnAppEntry => write!(f, "not an application entry"),
-            Self::Malformed(why) => write!(f, "malformed channel entry: {why}"),
-            Self::NotAServer => {
-                write!(
-                    f,
-                    "a conversation-profile network has no channels to define"
-                )
-            }
-            Self::WrongCapability { declared, required } => write!(
-                f,
-                "entry declared {declared:?} but its kind requires {required:?}"
-            ),
-            Self::ForeignNamespace(namespace) => {
-                write!(f, "namespace {namespace} is not chat")
-            }
-        }
-    }
 }
 
 /// Decides whether a channel entry may be applied — spec 07 §1.2, §3.8.

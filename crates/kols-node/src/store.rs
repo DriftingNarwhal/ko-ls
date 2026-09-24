@@ -193,7 +193,7 @@ struct CachedLog {
 #[derive(Debug, thiserror::Error)]
 pub enum StoreError {
     /// The filesystem refused.
-    #[error("{0}")]
+    #[error(transparent)]
     Io(#[from] io::Error),
     /// No network has been created or joined here yet.
     #[error("no network at {}. Run `kols init <name>` to create one, or `kols join <invite>`", .0.display())]

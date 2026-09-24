@@ -1,6 +1,6 @@
 # Client Architecture
 
-**Document status:** v1.31 — §5.1's own rule — *nobody answered* and *nobody holds it* must never collapse into one answer — turns out to have been violated by the fetch that implements it: a provider lookup naming nobody marked the chunk **exhausted**, so two members who both wrote while partitioned never reconciled after meeting, each holding a pointer it had just fetched *from the other*. A lookup that reached no peers is not an answer about the content, so a connected peer is now a candidate, with the holder count left at what the lookup produced. And a fetch that completed with nothing was re-planned immediately, which spun thousands of times a second and flooded the peer until Kademlia evicted it from the routing table — after which every lookup answered "nobody" without asking, and the node could not recover. Recorded in Storage §4.4 as a requirement rather than left as client policy. Previously v1.30 — §1 records the **third** shell trap, and the first that is a
+**Document status:** v1.32 — §8's closing gate paragraph includes `cargo fmt --all --check`, which both repositories' gates now require (`CONTRIBUTING.md`). Previously v1.31 — §5.1's own rule — *nobody answered* and *nobody holds it* must never collapse into one answer — turns out to have been violated by the fetch that implements it: a provider lookup naming nobody marked the chunk **exhausted**, so two members who both wrote while partitioned never reconciled after meeting, each holding a pointer it had just fetched *from the other*. A lookup that reached no peers is not an answer about the content, so a connected peer is now a candidate, with the holder count left at what the lookup produced. And a fetch that completed with nothing was re-planned immediately, which spun thousands of times a second and flooded the peer until Kademlia evicted it from the routing table — after which every lookup answered "nobody" without asking, and the node could not recover. Recorded in Storage §4.4 as a requirement rather than left as client policy. Previously v1.30 — §1 records the **third** shell trap, and the first that is a
 platform rather than a default: a synchronous `#[tauri::command]` runs inline in the IPC
 handler, which on Windows is the message-loop thread, so building a window there deadlocks
 (Tauri's own *Known issues*, wry#583). `v0.13.2` shipped it — a blank white network window that
@@ -1371,9 +1371,10 @@ boundary, which is worth having regardless.
 | Window creation is off the message-loop thread (§1) | That no `#[tauri::command]` which builds a window is synchronous, and that no event handler builds one. A synchronous command runs inline in the IPC handler, which on Windows is that thread, and `build()` there deadlocks — a blank window, unclosable, with the tray dead beside it | **Done** — `tests/window_creation.rs`, a rule about the source rather than behaviour under test, because every gate here runs on Linux where the same code is correct. Written after `v0.13.2` shipped it, and verified by reverting the fix |
 | Media | Loss and jitter injection against both `MediaTransport` impls; the fallback is expected to degrade badly and the test should record how badly, not skip it | Not started (P3) |
 
-The protocol repo's gate applies to this work too: `cargo test --workspace` and
-`cargo clippy --workspace --all-targets` both stay clean, and a run that skipped clippy
-because the toolchain lacked it has checked half the gate and should say so.
+The protocol repo's gate applies to this work too: `cargo test --workspace`,
+`cargo clippy --workspace --all-targets` and `cargo fmt --all --check` all stay clean, and a run
+that skipped clippy because the toolchain lacked it has checked only part of the gate and should
+say so.
 
 **Where these run, and why it is not CI.** The suite runs in the development container, where
 the output is complete and a failure can be reproduced in the minute it appears. CI builds; it

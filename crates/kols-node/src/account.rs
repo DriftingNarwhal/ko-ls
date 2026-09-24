@@ -71,7 +71,7 @@ pub enum AccountError {
     #[error("could not derive a key from that password: {0}")]
     Kdf(String),
     /// The disk refused.
-    #[error("{0}")]
+    #[error(transparent)]
     Io(#[from] std::io::Error),
 }
 
