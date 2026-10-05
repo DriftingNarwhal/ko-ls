@@ -1,7 +1,12 @@
 # Record Encoding — Implementation and Conformance
 
-**Document status:** v1.0 — **not normative.** `distributed-intranet/specs/07` §3 is the
-contract; this document is where the client's obligations against it live.
+**Document status:** v1.1 — **not normative.** `distributed-intranet/specs/07` §3 is the
+contract; this document is where the client's obligations against it live. §2's module map
+names the five encoding modules it was missing (channel structure, names, direct
+messages, live delivery, presence), and §3 stops stating a `kols-core` test count as current:
+30 was the suite when the big-endian run was first made, and the claim about *unsafe* is
+narrowed to `kols-core`, since the workspace now has one (`kols-node::secret`). Previously
+v1.0 — the document as it stood once F2 moved the encoding upstream to spec 07 §3.
 **Depends on:** Chat Application Spec §3 (normative), `intranet_crypto::{Enc, Dec}`
 **Consumed by:** `kols-core`
 
@@ -32,6 +37,11 @@ what, and what the client must prove about its own implementation.
 | `ChannelId`, `MessageId`, every derivation in spec §3.6 | `kols-core::ids` |
 | `Record`, `RecordBody`, `RecordClass`, encode/decode/sign/verify | `kols-core::record` |
 | `Segment`, ordering validity | `kols-core::segment` |
+| Channel structure as `chat`-namespace payloads, spec §1.3, §3.8 | `kols-core::channel` |
+| Member name claims, spec §3.9 | `kols-core::names` |
+| The direct-message invitation payload, spec §6.2 | `kols-core::dm` |
+| The live-delivery payload and its content key, spec §5.2, §6.1 | `kols-core::live` |
+| Presence beats and their key, `design/01` §9 — spec 07 does not cover these | `kols-core::presence` |
 | Capability names and their tiers | `kols-core::capabilities` |
 | Frozen test vectors | `kols-core/tests/encoding.rs` |
 
@@ -58,10 +68,13 @@ Required of any implementation, and permanent once written:
 
 **All six are met.** Obligations 1–5 by `kols-core/tests/encoding.rs`; obligation 6 by
 `scripts/cross-check.sh`, which cross-compiles to `s390x-unknown-linux-gnu` and runs the
-suite under emulation. All 30 `kols-core` tests pass there, frozen vectors included.
+suite under emulation — the whole `kols-core` suite, frozen vectors included. All 30 tests it
+had when this was first written passed there; the suite has grown since, so the count is
+whatever `cargo test -p kols-core` reports rather than a number kept here, and the run has to
+be repeated to be claimed for today's.
 
 The argument for host-independence was always decent — `Enc` writes big-endian explicitly,
-and this codebase contains no `to_ne_bytes`, no `transmute` and no `unsafe` — but an
+and `kols-core` contains no `to_ne_bytes`, no `transmute` and no `unsafe` — but an
 argument is what a test exists to replace. It is not in the default gate, since it needs an
 emulator and a cross-linker and takes about a minute; run it when the encoding, its
 vectors, or anything in the hashing and signing path changes.

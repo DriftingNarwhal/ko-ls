@@ -1,10 +1,10 @@
 # ko-ls — Status
 
-**Updated:** 2026-09-11
+**Updated:** 2026-10-05
 **Phase:** P2 has started. P1's register was cleared, both working branches merged on 2026-09-09,
 and the client now **runs a node per network** rather than one for whichever is in view — which is
-what direct messages were actually waiting on, and what `v0.13.1` carries. What remains before
-they work is the flow itself, and §1 says where it starts.
+what direct messages were actually waiting on, and what `v0.13.1` carries. The flow itself was
+built on 2026-09-11 and first shipped in `v0.13.2`; §1 says what comes after it.
 
 **This file is a map, and holds nothing that lives anywhere else.** It says where the work
 stands and which document owns each part of it. Anything long-lived — how a mechanism works,
@@ -54,8 +54,9 @@ extensions still move, so a fresh machine needs those two cloned as siblings.
 **The protocol is tagged `v1.2.0`** as of 2026-09-10, its first tag since `v1.0.2` on 08-22. A
 tag's major and minor track the Core spec's own version at the moment it is cut, as the
 `v1.0.x` run did while Core sat at v1.0 — `v1.1.0` is deliberately absent because Core v1.1
-existed only between commits and was never tagged. `DI-Relay` still pins `v1.0.2` and can move
-whenever its operator wants a redeploy; nothing obliges it to.
+existed only between commits and was never tagged. `DI-Relay` has pinned `v1.2.0` since
+2026-09-10 (its `e6205a9`). The protocol's `main` has moved past that tag since, so a relay that
+wants those changes waits on the next tag and then a redeploy; nothing obliges it to.
 
 **This file names no current Core version, deliberately.** It said "Core is now v1.2" and that
 was already false when it was written — Core had reached v1.4 the same day — because a version
@@ -348,7 +349,7 @@ was a run of bad luck rather than a property. The one failure arrived directly a
 governance change and was attributed by measurement rather than by reading; how, and why the
 comparison is worth running even when you are sure, is in `CONTRIBUTING.md`.
 
-**`v0.13.4`**, cut 2026-09-11: direct messages and the
+**`v0.13.2`**, cut 2026-09-11: direct messages and the
 window model they live in — the workspace as a window of its own, a network window reused as
 the member switches, a small window per conversation, a tray, and a second launch that raises
 what is already running. `design/09` §§1.1–1.14 is the design and D40 the decision.
@@ -609,9 +610,9 @@ as a fix nobody had got round to.
 | `kols-core` | Encoding, author logs, merge, collision recovery, chat policy, channel structure, `sidebar_order`, reader-side limits, and `Scope` — the one construction of a capability's name, used by the writer and the resolver alike, and the direct-message request payload with the identity-link check no platform can make for it. 150 tests |
 | `kols-net` | Publish and fetch over a running node. Two live two-node tests |
 | `kols-api` | The whole boundary — all three of `design/05` §3's properties held. 25 commands, 11 events, 50 tests, and the consent drift test is guarded at both ends: a new command stops the suite compiling until it is sampled, which is how `LeaveNetwork` was caught unsampled the moment it existed |
-| `kols-node` | `kols`, its node daemon, the executor, the store and the workspace — the window's entire backend, and the largest crate here at 201 tests. Sixteen of them run over a live wire between separate processes (`two_nodes`, `three_nodes`, `relay`); the rest cover the workspace, the store, roles and grants, invites, names, records and the paged read |
-| `kols-app` | The Tauri shell, holding a workspace, an executor for whichever network is open, and **the supervisor running a node for every network** (`design/09` §2). Builds `kols-desktop`. 8 tests, one of which resolves the webview's ACL against the real configuration — the boundary whose failure produces no output |
-| `kols-ui` | The interface: HTML, CSS and one script, holding no keys, no sockets and no files |
+| `kols-node` | `kols`, its node daemon, the executor, the store and the workspace — the window's entire backend, and the largest crate here at 214 tests. Seventeen of them run over a live wire between separate processes (`two_nodes`, `three_nodes`, `relay`); the rest cover the workspace, the store, roles and grants, invites, names, records and the paged read |
+| `kols-app` | The Tauri shell, holding a workspace, an executor for whichever network is open, and **the supervisor running a node for every network** (`design/09` §2). Builds `kols-desktop`. 11 tests, one of which resolves the webview's ACL against the real configuration — the boundary whose failure produces no output |
+| `kols-ui` | The interface: a page and a script per window (`app.js`, `workspace.js`, `conversation.js`) and one stylesheet, holding no keys, no sockets and no files |
 | `kols-store` | The read-side projection, **built and switched on**: the schema, the range and target queries, the stored rate verdict and its fingerprint. 14 tests — six compare its verdicts against `kols_core::withheld` itself rather than a second implementation of the fold, and eight walk a channel whose records share a reading, which is the boundary a bare clock reading cannot cut. This row said 19 until 2026-09-09, while its own breakdown summed to 14 |
 | `kols-media` | Not created. A crate is made when there is code for it — an empty one is a claim that something exists |
 
@@ -638,7 +639,8 @@ produced, which the whole segment model rests on, are in `design/08` §4.
 
 ## 4. Log
 
-Moved to [`docs/log.md`](docs/log.md) — 140 entries, newest first.
+Moved to [`docs/log.md`](docs/log.md), newest first. No entry count is kept here: the one this
+line carried had fallen sixteen behind by 2026-10-05.
 
 What happened *lately* is §1. The log is why things are the way they are: the reasoning behind
 a change, the thing tried and abandoned, the bug that turned out to be a different bug. It

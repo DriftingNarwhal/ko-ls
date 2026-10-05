@@ -1,6 +1,6 @@
 # Client Architecture
 
-**Document status:** v1.32 — §8's closing gate paragraph includes `cargo fmt --all --check`, which both repositories' gates now require (`CONTRIBUTING.md`). Previously v1.31 — §5.1's own rule — *nobody answered* and *nobody holds it* must never collapse into one answer — turns out to have been violated by the fetch that implements it: a provider lookup naming nobody marked the chunk **exhausted**, so two members who both wrote while partitioned never reconciled after meeting, each holding a pointer it had just fetched *from the other*. A lookup that reached no peers is not an answer about the content, so a connected peer is now a candidate, with the holder count left at what the lookup produced. And a fetch that completed with nothing was re-planned immediately, which spun thousands of times a second and flooded the peer until Kademlia evicted it from the routing table — after which every lookup answered "nobody" without asking, and the node could not recover. Recorded in Storage §4.4 as a requirement rather than left as client policy. Previously v1.30 — §1 records the **third** shell trap, and the first that is a
+**Document status:** v1.33 — §1's drawing, §2's crate table and §3's listing describe what was built rather than what was planned: `kols-store` exists and has been switched on since 2026-09-09 (`573c2dc`), so it is no longer "not built" with `kols-node` "standing in" for it, and `OpenChannel` carries a `Window` of `Cursor`s, which is the fix §5 records for `before: Option<Hlc>`. §5's paragraph that said none of the projection existed yet is marked as written before it did. §5.1 names `FetchHistory` as the command that asks for stopped history, where it named `OpenChannel`'s `before`, which no longer exists. The drawing stops naming a protocol version, which had stayed at v1.0 while the specs moved; each spec's status line is where its version lives. Previously v1.32 — §8's closing gate paragraph includes `cargo fmt --all --check`, which both repositories' gates now require (`CONTRIBUTING.md`). Previously v1.31 — §5.1's own rule — *nobody answered* and *nobody holds it* must never collapse into one answer — turns out to have been violated by the fetch that implements it: a provider lookup naming nobody marked the chunk **exhausted**, so two members who both wrote while partitioned never reconciled after meeting, each holding a pointer it had just fetched *from the other*. A lookup that reached no peers is not an answer about the content, so a connected peer is now a candidate, with the holder count left at what the lookup produced. And a fetch that completed with nothing was re-planned immediately, which spun thousands of times a second and flooded the peer until Kademlia evicted it from the routing table — after which every lookup answered "nobody" without asking, and the node could not recover. Recorded in Storage §4.4 as a requirement rather than left as client policy. Previously v1.30 — §1 records the **third** shell trap, and the first that is a
 platform rather than a default: a synchronous `#[tauri::command]` runs inline in the IPC
 handler, which on Windows is the message-loop thread, so building a window there deadlocks
 (Tauri's own *Known issues*, wry#583). `v0.13.2` shipped it — a blank white network window that
@@ -35,10 +35,10 @@ and an HTML/CSS/JS interface rendered in a webview, with **Tauri v2** as the she
 │  kols-node      the executor, the node daemon, and a    │
 │                 file-backed store — owns the event loop │
 │  kols-net       publish and fetch over a running node   │
-│  kols-store     not built — kols-node stands in for it  │
+│  kols-store     the SQLite index a page is read through │
 └───────────────────────────┬─────────────────────────────┘
                             │
-              intranet-* crates (protocol v1.0)
+              intranet-* crates (versions: each spec's status line)
 ```
 
 **Why Tauri rather than a native Rust GUI.** The stated goal is to eventually run this
@@ -195,9 +195,9 @@ everything the bound gives up on is what the expiry already covers.
 | Crate | Owns | Deliberately does not own |
 |---|---|---|
 | `kols-core` | Record types and canonical encoding, merge ordering, permission resolution, channel/session key management, retention policy, local search | Any I/O, any libp2p type |
-| `kols-node` | The executor behind §3's boundary, the `kols` binary, the `MemberNode` event loop, gossip subscriptions and sync back-off, and the file-backed store standing in for `kols-store` | The interface, and any view shape |
+| `kols-node` | The executor behind §3's boundary, the `kols` binary, the `MemberNode` event loop, gossip subscriptions and sync back-off, and the file-backed record store that `kols-store` indexes | The interface, and any view shape |
 | `kols-net` | Publishing and fetching over a running node — chunk store and announce, pointer accept, segment reassembly | The event loop, domain rules, UI state |
-| `kols-store` | **Not built.** SQLite schema and queries, blob cache, migrations | Domain rules |
+| `kols-store` | **Built and switched on 2026-09-09.** The SQLite projection a page is read through: the page indexes, the stored rate verdicts and their fold (§5). No blob cache yet, and the schema is bumped and rebuilt rather than migrated | Domain rules, and record bytes, which stay in files |
 | `kols-media` | **Not built.** Capture, encode, jitter buffer, playback, `MediaTransport` impls (`04` §5) | Signalling policy |
 | `kols-api` | The command/event surface (§3) and its consent decorators | Anything else |
 | `kols-app` | Tauri shell, window/tray/notifications, OS keychain, and the view shapes the webview receives | Domain rules |
@@ -207,7 +207,7 @@ everything the bound gives up on is what the expiry already covers.
 addition.** This layout was drawn before there was an executor. When one arrived it needed the
 store, the daemon and the event loop in the same place — an executor that cannot reach the log
 cannot refuse an edit aimed at somebody else's message — and `kols-net` kept only what does not
-need the loop. `kols-store` remains the intended projection (§5); until it exists,
+need the loop. `kols-store`, built later, is the projection over those files (§5) and not a replacement for them;
 saying `kols-net` owns the event loop describes a client nobody built.
 
 **`kols-app` converts rather than deriving.** The domain's records have exactly one
@@ -239,7 +239,7 @@ material crossing in either direction, ever.
 ```
 Built, and crossing the boundary today:
 
-Command  = OpenChannel { channel_id, before: Option<Hlc>, limit }
+Command  = OpenChannel { channel_id, window: Window }              — `09` §4.4, `kols_core::Cursor`
          | SendMessage { channel_id, body, attachments, reply_to }
          | EditMessage | DeleteMessage | React | Pin
          | CreateChannel { .., category: Option<CategoryId> } | UpdateChannel
@@ -847,8 +847,9 @@ The equivalence that makes the whole thing sound is asserted rather than argued:
 `kols_core::withheld` over the same set — the real pass, not a second implementation of it —
 across bursts, sliding windows, two authors, slowmode and the no-ceiling sentinel.
 
-**None of that projection exists yet, and `kols-node` carries a file-backed store instead.**
-Nothing has needed one: the terminal replays the governance log on every invocation, which is
+**Written before any of that existed, and kept because the measurements below answer it:** none
+of the projection existed then, and `kols-node` carried a file-backed store alone. Nothing had
+needed one: the terminal replays the governance log on every invocation, which is
 slow and correct, and the window re-reads on a two-second tick. The projection is worth
 building when something renders fast enough to notice it is not there.
 
@@ -1219,7 +1220,8 @@ this machine holds it; content already *has been*, and here is the record. A mem
 and did nothing has made a choice; one who was never told had it made for them.
 
 **A member may ask for history the ceiling stopped**, bounded by the oldest reading they can see
-— which is what `OpenChannel`'s `before` was always for. Asking is not getting: the executor
+— which is `FetchHistory { channel, before }`; `OpenChannel`'s old `before` was meant for this
+and never read. Asking is not getting: the executor
 holds no node, so a want is recorded and the daemon honours it on its next pass. What arrives is
 pinned for an hour, because shedding takes the oldest history first and that is precisely what
 somebody scrolling back has just asked for.

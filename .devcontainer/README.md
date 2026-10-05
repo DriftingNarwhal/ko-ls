@@ -69,7 +69,8 @@ forwards into the container, and the WebKit child process comes up with it.
 
 ```sh
 xdpyinfo | head -3                      # is there a display at all
-GDK_BACKEND=x11 npm run tauri dev       # deterministic; a window on $DISPLAY
+cargo build -p kols-app                 # from the ko-ls folder
+GDK_BACKEND=x11 KOLS_HOME=/tmp/alice ./target/debug/kols-desktop   # deterministic; a window on $DISPLAY
 ```
 
 There is no `/mnt/wslg` in here — WSLg is on the *host*, and what reaches the

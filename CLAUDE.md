@@ -56,7 +56,8 @@ Each of these is load-bearing and none is enforced by anything that will shout a
 - **Key material types implement no `Debug` and no serialization, deliberately.** Use their
   `fingerprint()` methods for logging and tests rather than deriving around it.
 - **A crate is created when there is code for it.** An empty crate is a claim that something
-  exists. `kols-store` and `kols-media` are named in `design/05` §2 and do not exist.
+  exists. `kols-media` is named in `design/05` §2 and does not exist; `kols-store` was named
+  there the same way and was created, on 2026-09-09, when its code arrived.
 
 The one `unsafe` in this workspace is the Windows DACL path in `kols-node::secret`, which is
 FFI and is documented where it sits. Everything else is safe Rust; keep it that way.

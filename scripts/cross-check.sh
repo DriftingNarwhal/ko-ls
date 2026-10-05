@@ -3,8 +3,8 @@
 #
 # design/08 §3 obligation 6: the frozen vectors are produced on a little-endian
 # machine, so running them only there proves they are self-consistent, not that
-# the encoding is host-independent. `Enc` writes big-endian explicitly and this
-# codebase contains no native-endian conversion, no transmute and no unsafe —
+# the encoding is host-independent. `Enc` writes big-endian explicitly and
+# kols-core contains no native-endian conversion, no transmute and no unsafe —
 # but that is an argument, and this is the test that replaces it.
 #
 # Not part of the default gate: it needs an emulator and a cross-linker, and

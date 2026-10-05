@@ -24,6 +24,44 @@ Kept because this project keeps re-learning the same lessons and paying for them
 
 ---
 
+- **2026-10-05** — **The documents are brought back to what was built, and one belief about
+  Windows turns out to need measuring.**
+
+  A drift audit on 2026-09-24 listed statements here that had stopped being true, and every
+  one was re-checked against the code or git before it was edited, since most had come from an
+  audit subagent and had never been checked directly. They had one cause: a fact written in two places, where the
+  second copy was not in the change that moved the first. `kols-store` was built and switched
+  on 2026-09-09 while `CLAUDE.md`, `design/05` §2 and the README went on saying it did not
+  exist; `OpenChannel` took a `Window` the same day and `design/05` §3 kept the `before:
+  Option<Hlc>` that change was made to remove; the UI became three scripts and three documents
+  still described one; presence and the credentials gate shipped and the README listed both as
+  missing. `STATUS.md` named `v0.13.4` for the release that was `v0.13.2`, and still had
+  `DI-Relay` pinning `v1.0.2` a fortnight after it moved to `v1.2.0`.
+
+  **Where a number would only drift again, a pointer replaced it.** The kols-core count in
+  `design/08` §3 (30) is now stated as what the suite was when the big-endian run was first
+  made, rather than as today's; that run could not be repeated here, because this container
+  has no `s390x` cross toolchain, so it is not claimed for today's suite. The protocol's
+  README and `CLAUDE.md` stop naming a spec version and point at each document's status line,
+  the same rule `STATUS.md` §0 already keeps for Core. The counts that stay in `STATUS.md` §3 were measured
+  rather than carried: `kols-node` has 214 tests where it said 201, seventeen of them over a
+  live wire where it said sixteen, and `kols-app` 11 where it said 8.
+
+  **`println!` in the window's node: reachable, and probably not the crash this repository
+  says it is.** `CONTRIBUTING.md` and `kols_node::Report` say lifecycle lines go through
+  `Report` because a GUI-subsystem process on Windows has no stdout and Rust panics on the
+  write. Four `println!`s in `serve.rs` are on the window's path all the same: the relay
+  reservation line, the live-broadcast count, epoch catch-up, and a failed exclusion. They run
+  inside `serve::serve` whichever `Output` was passed. `render`, which holds the rest, is
+  reached only through `serve::printing`, which only `kols serve` uses. But the standard
+  library, read at 1.97.1 (the toolchain here), does not panic on a null handle.
+  `sys/stdio/windows.rs` turns a null `GetStdHandle` into `ERROR_INVALID_HANDLE`, `io/stdio.rs` maps that to success in
+  `handle_ebadf`, and `Stdout`'s own documentation says a `windows_subsystem = "windows"`
+  process's writes "do nothing and silently succeed". `print_to` still panics on any *other*
+  write error, a closed pipe for example. Nobody has run either case on Windows, so neither
+  the code nor the claim was changed: what to do is for whoever decides, and the evidence is
+  here so it does not have to be re-derived.
+
 - **2026-09-24** — **The formatter joins the gate, and the error types stop being written by
   hand.**
 

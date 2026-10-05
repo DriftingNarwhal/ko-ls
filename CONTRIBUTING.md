@@ -62,8 +62,9 @@ the minute it appears, which is the difference between diagnosing a fault and co
 log fragments at one.
 
 **The front end has no gate, and one thing to run by hand instead.** `crates/kols-ui` is
-some three thousand lines of JavaScript that nothing asks questions of. `drive.mjs` beside it
-loads the real `index.html` and `app.js` into `jsdom` with a stubbed `invoke`, walks the
+some four and a half thousand lines of JavaScript, across a script per window (`app.js`,
+`workspace.js`, `conversation.js`), that nothing asks questions of. `drive.mjs` beside it
+loads the real pages and their scripts into `jsdom` with a stubbed `invoke`, walks the
 interface, and reports:
 
 ```
@@ -72,7 +73,7 @@ cd crates/kols-ui && npm install jsdom && node drive.mjs
 
 It is not wired into the gate — adding a second toolchain to `cargo test` is a decision
 nobody has made — and it applies no CSS, so it says nothing about layout. Run it after
-changing `app.js`. Its first half hour found two bugs that reading had not.
+changing any of the three scripts. Its first half hour found two bugs that reading had not.
 
 **A green suite here can still be wrong about Windows, and once was.** `v0.13.2` opened a
 window from a synchronous `#[tauri::command]`, which runs inline in the IPC handler — on
@@ -159,12 +160,16 @@ Three things about the suite that are not obvious, each learned by getting them 
   above untouched, which is what identified it as separate. If you add a file like this,
   serialize it, budget its deadlines against the whole suite rather than a run of that file,
   and re-run the full gate before believing either result.
-- **Kill orphaned daemons before believing a red suite**: `pkill -f 'target/debug/kols'`.
+- **Kill orphaned daemons before believing a red suite**: the harness first, then the daemons,
+  with a bracketed character in every pattern for the reason below —
+  `for p in $(pgrep -f 'deps/two_node[s]-') $(pgrep -f 'deps/three_node[s]-'); do kill -9 $p; done`,
+  then the same over `pgrep -f 'debug/kol[s] --home'`.
   `Daemon::drop` kills its child, and `Drop` does not run when the *harness itself* is killed
-  — a Ctrl-C, a timeout, a `pkill` on cargo. The orphans keep listening on ports 45101–45162
-  (`two_nodes`) and 45301–45334 (`three_nodes`) indefinitely, and every later run fails to
-  bind. It presents as two or three tests failing
-  in ways that read as distributed-systems faults, and it is not one.
+  — a Ctrl-C, a timeout, a `pkill` on cargo. The orphans keep listening on their fixed
+  ports — 45101–45172 (`two_nodes`), 45301–45334 (`three_nodes`), and the 452xx, 454xx and
+  455xx of `flow`, `names` and `invites` — indefinitely, and every later run fails to bind.
+  It presents as two or three tests failing in ways that read as distributed-systems faults,
+  and it is not one.
 
   **Two ways that cleanup silently does nothing**, both found by watching it fail — and the
   first one twice in one session, the second time *after* it had been written down here.
@@ -184,7 +189,7 @@ Three things about the suite that are not obvious, each learned by getting them 
   as a kill that is not working. Kill the harness first, then the daemons.
 
   Then check rather than assume: `pgrep -f 'deps/two_node[s]-'` and
-  `pgrep -f 'debug/kol[s] --home'` both empty, `ss -ltn | grep 451` empty, and `/tmp/kols-*`
+  `pgrep -f 'debug/kol[s] --home'` both empty, `ss -ltn | grep -E ':45[1-5][0-9]{2}'` empty, and `/tmp/kols-*`
   removed.
 
   Worth doing before *any* starved run, since that is exactly where a leftover port presents

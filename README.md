@@ -75,13 +75,16 @@ The design set (`design/00`–`09`) owns client design, rationale and sequencing
 ```
 crates/kols-core   records, canonical encoding, merge ordering, permissions, chat policy,
                    channel structure as chat-namespace governance payloads
+crates/kols-store  the SQLite index a page of a channel is read through — derived from the
+                   record files, never the truth
 crates/kols-net    publishing a channel over the transport, and reading one back
 crates/kols-api    the boundary — commands and their gate going in, outcomes and events out
 crates/kols-node   the executor, the node loop, the store, the workspace — what the window
                    depends on for everything except its own window. Also `kols`, a
                    development client over the same boundary (D30), not a product
-crates/kols-app    `kols-desktop` — the Tauri shell, holding a workspace and running a node
-crates/kols-ui     the interface: HTML, CSS and one script, holding no keys and no sockets
+crates/kols-app    `kols-desktop` — the Tauri shell, holding a workspace and a node per network
+crates/kols-ui     the interface: HTML, CSS and a script per window (`app.js`, `workspace.js`,
+                   `conversation.js`), holding no keys and no sockets
 design/            00-08 the design set, 09 the interface
 .devcontainer/     the environment for this repo and the protocol beside it
 .github/           release.yml — Windows and macOS builds, on a tag or on demand
@@ -151,6 +154,8 @@ feature parity and nobody is expected to chat from a command line.
 ```bash
 cargo build -p kols-node
 alias kols="$PWD/target/debug/kols"
+export KOLS_PASSWORD=x      # unlocks the seeds, which are wrapped under it; required, and
+                            # the first command in an empty home creates the account with it
 
 # A network needs a relay before it can invite anybody: two people behind home
 # routers cannot reach each other directly (Core §5.5). Run one, on a routable
@@ -183,9 +188,11 @@ The joiner syncs the governance log, asks to be keyed in, receives the epoch key
 including the historical ones, fetches the other author's segments and renders a merged
 view — everything over the real transport, nothing shared out of band but the network id.
 
-State lands in `$KOLS_HOME`, else `~/.kols`. The seed written there is the only copy of
-your identity and there is no recovery service, so point `--home` somewhere disposable
-while you are poking at it.
+State lands in `$KOLS_HOME`, else `~/.kols`. The seeds written there are wrapped under the
+account password, and the terminal provisions that account at deliberately cheap parameters
+because it is a test harness. A seed is the only copy of that identity unless you export a
+bundle from the window, and there is no recovery service, so point `--home` somewhere
+disposable while you are poking at it.
 
 ## The window
 
@@ -199,7 +206,7 @@ finds the Wayland socket VS Code forwards, and on a desktop it finds whatever is
 from a terminal you can leave occupied — it holds the terminal until you close the window.
 
 It opens on a picker — join a network with an invite, or create one — and then **runs a node
-for whichever network you open**, so it fetches, hears gossip and updates while you watch. It
+for every network you belong to**, so it fetches, hears gossip and updates while you watch. It
 lists channels, renders one, posts to it, and, for a member holding `approve-node`, mints an
 invite and admits whoever redeems it. No step of the flow needs a terminal any more.
 
@@ -208,11 +215,12 @@ refused, and the other way round. The claim expires after six seconds without a 
 because a window is closed by the window manager and that runs no destructors — a crash costs a
 pause rather than a stuck store.
 
-What it does **not** do is presence. `design/09` §4's third question — who is here, and are
-they around — has no answer, because nothing implements the ephemeral gossip it needs. What the
-window shows instead is the narrower thing it can actually know: how many members this node is
-connected to, and whether that is more than none. `design/09` §4.1 carries what is still owed
-there, and why it is last.
+It shows **presence**, and two marks that never stand in for each other: a ring beside a member
+is this node's own observation that it holds a connection to them, and a word beside a name is
+what that member last said (here, idle or busy) over `design/01` §9's ephemeral gossip. No word
+at all covers a beat gone stale, a member who chose to be invisible and one never heard from,
+because nothing distinguishes them, so nothing here ever says *offline*. `design/09` §4.1 is the
+design.
 
 ## What exists
 
@@ -278,9 +286,10 @@ protected DACL on Windows — or it is not written at all. That last part is the
 fail-closed rule applied where it is easy to skip: a secret written somewhere another account
 can read it is worse than a secret not written, because the second is an error somebody sees.
 
-What does not exist yet: no private-channel keying, no voice, no search, no presence, and no
-credentials — seeds are unencrypted on disk with no way to back them up, which is fine while
-you are testing between machines you own and is a release gate before anything else.
+What does not exist yet: no private-channel keying, no voice and no search. Credentials do:
+seeds are wrapped under an account password (Argon2id) rather than written in the clear, and
+the window exports them as a bundle sealed under a passphrase of its own, which restores an
+identity on another machine — portability, not recovery, since nobody holds a copy for you.
 [`STATUS.md`](STATUS.md) is where to start: it says where the work stands and points at the
 document that owns each part of it.
 

@@ -238,7 +238,7 @@ jobs:
           name: ${{ matrix.name }}
           path: ko-ls/out/*
 
-  # Publishing is its own job so that three matrix legs do not race to create one
+  # Publishing is its own job so that the matrix legs do not race to create one
   # release. A manual run stops after `build` and leaves the artifacts, which is
   # how to exercise this without publishing anything.
   publish:

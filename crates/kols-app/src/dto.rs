@@ -17,9 +17,13 @@
 //!
 //! # The interface never builds a command
 //!
-//! Nothing here deserializes. The webview names an intent with plain arguments —
-//! a channel id, a body — and the shell builds the `kols_api::Command` from
-//! them. That is not a weakening of `design/05` §3's first property: the command
+//! The webview names an intent with plain arguments — a channel id, a body —
+//! and the shell builds the `kols_api::Command` from them. One type here does
+//! deserialize, [`WindowArg`], and it is such an argument rather than a command:
+//! plain optional strings and counts, which [`WindowArg::resolve`] reads into a
+//! `kols_core::Window`, discarding anything that is not a cursor.
+//!
+//! That is not a weakening of `design/05` §3's first property: the command
 //! still names its target explicitly, and the gate still resolves permission by
 //! replay. It is one fewer place where a hostile front end can hand the core a
 //! shape it did not expect.

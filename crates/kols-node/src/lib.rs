@@ -25,8 +25,9 @@
 //!
 //! Everything that touches a disk or a network. `kols-core` is I/O-free on
 //! purpose, and `kols-api` reaches no store by design, so the composition has to
-//! land somewhere and this is it — until `design/05` §5's `kols-store` exists and
-//! takes the persistence half.
+//! land somewhere and this is it. `kols-store` (`design/05` §5) took a part of it,
+//! the index a page is read through, and nothing else: the record and log files
+//! are still written here, and the index is derived from them.
 
 #![deny(missing_docs)]
 
