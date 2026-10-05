@@ -54,8 +54,13 @@
     }
   },
 
-  // Fails loudly here rather than at the first Tauri build. `pkg-config
+  // The bind mount brings the host's file ownership with it, which does not
+  // match the container user, so git refuses every repository here as
+  // "dubious ownership" until each is marked safe. Named one by one rather than
+  // with `*`, so a repository nobody meant to trust is still refused.
+  //
+  // The rest fails loudly here rather than at the first Tauri build. `pkg-config
   // --exists webkit2gtk-4.1` is the one worth keeping: it is the dependency
   // whose absence looks like a Rust link error rather than a missing package.
-  "postCreateCommand": "cargo --version && cargo clippy --version && cargo fmt --version && docker --version && docker compose version && claude --version && node --version && npm --version && pkg-config --modversion webkit2gtk-4.1"
+  "postCreateCommand": "for r in /workspaces/ko-ls /workspaces/ko-ls/ko-ls /workspaces/ko-ls/distributed-intranet /workspaces/ko-ls/DI-Relay; do git config --global --get-all safe.directory | grep -qxF \"$r\" || git config --global --add safe.directory \"$r\"; done && cargo --version && cargo clippy --version && cargo fmt --version && docker --version && docker compose version && claude --version && node --version && npm --version && pkg-config --modversion webkit2gtk-4.1"
 }
