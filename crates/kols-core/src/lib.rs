@@ -9,8 +9,9 @@
 //!
 //! # Encoding is normative
 //!
-//! Every encoding here implements `design/08-record-encoding.md`, which is the
-//! contract rather than a description of this code. Three things depend on the
+//! Every encoding here implements `distributed-intranet/specs/07` §3, which is
+//! the contract rather than a description of this code (`design/08` holds this
+//! crate's obligations against it). Three things depend on the
 //! exact bytes: a record's id is the hash of them, signatures verify against
 //! them, and the final merge tie-break compares them. A change that alters an
 //! encoding is a wire break, and the test vectors in `tests/` exist to make that
@@ -69,7 +70,7 @@ pub use presence::{
 };
 pub use record::{
     Attachment, DEFAULT_MAX_BODY_BYTES, MAX_ATTACHMENT_NAME_BYTES, MAX_REACTION_KEY_BYTES, Record,
-    RecordBody, RecordClass,
+    RecordBody, RecordClass, UnknownBody,
 };
 pub use segment::{MAX_RECORDS_PER_SEGMENT, Segment, framed};
 pub use view::{ChannelView, Rejection, RenderedMessage};
@@ -117,12 +118,13 @@ pub enum CoreError {
         /// The kind whose subject was wrong.
         kind: &'static str,
     },
-    /// A record carried a discriminant this build does not recognise.
+    /// A record carried a discriminant from the reserved range.
     ///
-    /// Not an error at the reader level — `design/08` §9 requires unknown kinds
-    /// be retained and counted rather than rejected — but the decoder still has
-    /// to say so, since it cannot produce a typed body it does not know.
-    #[error("unknown record kind {0:#04x}")]
+    /// `0xC0`–`0xFF`, which spec 07 §3.3 refuses, and `0x00`, which no class
+    /// range covers. An unallocated
+    /// discriminant in a class range is not an error: it decodes as
+    /// [`crate::RecordBody::Unknown`] and is retained (§3.7).
+    #[error("reserved record kind {0:#04x}")]
     UnknownKind(u8),
     /// A record's clock did not strictly increase within its author's log.
     #[error("clock did not advance: previous {previous:?}, offered {offered:?}")]

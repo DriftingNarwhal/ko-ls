@@ -153,6 +153,52 @@ fn a_reader_refuses_what_the_author_wrote_past_the_ceiling() {
     );
 }
 
+/// A validly signed message-class record of a kind this build does not know.
+fn unknown(who: &PerNetworkIdentity, wall: i64) -> Record {
+    let mut bytes =
+        Record::create(who, channel(), Hlc::new(wall, 0), message("new")).canonical_bytes();
+    bytes.truncate(bytes.len() - 64);
+    bytes[8 + "intranet.chat-record.v1".len() + 96 + 12] = 0x04;
+    let mut payload = intranet_crypto::Enc::new();
+    for &byte in &bytes {
+        payload.u8(byte);
+    }
+    bytes.extend_from_slice(who.sign(&payload).as_bytes());
+    Record::decode(&bytes).expect("an unallocated kind decodes")
+}
+
+#[test]
+fn a_kind_this_build_cannot_read_is_kept_and_counted_but_never_drawn() {
+    // Spec 07 §3.7. Two message-class records of a kind added after this build,
+    // then three messages, all inside one minute under a ceiling of three. A
+    // newer node counts five message-class records and draws the first three;
+    // this one must refuse the same records, so it may draw only one message.
+    let alice = identity(2);
+    let state = state(&[&alice]);
+    let limits = strict();
+    let mut records = vec![unknown(&alice, START), unknown(&alice, START + 1_000)];
+    records.extend((0..3).map(|i: i64| {
+        Record::create(
+            &alice,
+            channel(),
+            Hlc::new(START + 2_000 + i * 1_000, 0),
+            message(&format!("m{i}")),
+        )
+    }));
+
+    let view = view_of(records, &state, &limits);
+    assert_eq!(view.len(), 5, "retained, not dropped");
+    assert!(view.rejected().is_empty(), "admitted, not rejected");
+    let rendered = view.render(&limits, START + 60_000);
+    assert_eq!(
+        rendered.len(),
+        1,
+        "the unknown two count against the ceiling"
+    );
+    assert_eq!(rendered[0].body, "m0");
+    assert_eq!(view.withheld(&limits, START + 60_000).refused.len(), 2);
+}
+
 #[test]
 fn the_window_slides_rather_than_counting_forever() {
     // Ten messages two minutes apart are not a flood, and a reader that counted

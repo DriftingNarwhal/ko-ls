@@ -1,4 +1,4 @@
-//! Hybrid logical clocks — `design/01` §4, `design/08` §4.1.
+//! Hybrid logical clocks — `design/01` §4, spec 07 §2.6.
 
 use intranet_crypto::{Dec, DecodeError, Enc};
 

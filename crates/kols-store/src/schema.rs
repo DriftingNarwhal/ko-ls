@@ -454,7 +454,9 @@ impl Projection {
 /// on nothing, and every other kind names its target in its own field.
 const fn target_of(body: &kols_core::RecordBody) -> Option<&MessageId> {
     match body {
-        kols_core::RecordBody::Message { .. } => None,
+        // An unknown kind may well name a target, but where it keeps one is
+        // part of what this build does not know.
+        kols_core::RecordBody::Message { .. } | kols_core::RecordBody::Unknown(_) => None,
         kols_core::RecordBody::Edit { target, .. }
         | kols_core::RecordBody::Tombstone { target }
         | kols_core::RecordBody::Reaction { target, .. }

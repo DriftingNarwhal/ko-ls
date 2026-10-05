@@ -235,7 +235,7 @@ impl AuthorLog {
     /// Appends a record and republishes the open segment.
     ///
     /// Refuses a record that does not belong to this log, and one whose reading
-    /// does not strictly increase — both are invalid under `design/08` §4.1, and
+    /// does not strictly increase — both are invalid under spec 07 §2.6 and §3.5, and
     /// catching them here means an author never publishes history that readers
     /// will refuse.
     pub fn append(

@@ -1,4 +1,4 @@
-//! Records — `design/01` §3.3, encoded per `design/08` §5.
+//! Records — `design/01` §3.3, encoded per spec 07 §3.3.
 
 use crate::{ChannelId, CoreError, Hlc, MessageId};
 use intranet_crypto::{Dec, Enc, Hash, Signature, VerifyingKey, hash_bytes};
@@ -26,7 +26,7 @@ pub const DEFAULT_MAX_BODY_BYTES: usize = 8 * 1024;
 /// kind correctly without understanding it. Had the class been a property of what
 /// a variant *means*, two client versions would reach different verdicts on the
 /// same records, which is exactly the divergence the rate rule exists to prevent
-/// (`design/08` §5.2).
+/// (spec 07 §3.3).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum RecordClass {
     /// Counts against `chat:message-rate-per-minute`.
@@ -111,6 +111,42 @@ pub enum RecordBody {
         /// The governance head the moderator's authority is checked against.
         governance_head: Hash,
     },
+    /// A kind this build does not know, kept exactly as it arrived.
+    ///
+    /// Spec 07 §3.7: an unknown kind is retained, counted by class and not
+    /// rendered. Refusing it took the whole segment with it, so one record from
+    /// a newer client hid every other record its author had in that segment —
+    /// and the segments behind it, since the link to the previous one is inside.
+    /// Dropping it would make this node re-emit a different record set from the
+    /// one it received, which a republished union (spec 07 §2.9) would then
+    /// spread. Kept, its id, signature and rate class are the same here as on a
+    /// node that understands it, and only what is displayed differs.
+    ///
+    /// Only a decode produces one: [`UnknownBody`] has no public constructor, so
+    /// this build cannot fabricate a kind it does not know. It is not prevented
+    /// from re-signing one it received — `Record::create` accepts any body —
+    /// and nothing does: the executor builds known kinds only, and `kols-api`
+    /// carries no `RecordBody`.
+    Unknown(UnknownBody),
+}
+
+/// The body of a record whose kind this build does not know.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct UnknownBody {
+    kind: u8,
+    bytes: Vec<u8>,
+}
+
+impl UnknownBody {
+    /// The discriminant it arrived with, in a non-reserved class range.
+    pub const fn kind(&self) -> u8 {
+        self.kind
+    }
+
+    /// The body exactly as encoded, between the discriminant and the signature.
+    pub fn bytes(&self) -> &[u8] {
+        &self.bytes
+    }
 }
 
 impl RecordBody {
@@ -123,6 +159,7 @@ impl RecordBody {
             Self::Reaction { .. } => 0x40,
             Self::Pin { .. } => 0x41,
             Self::Redaction { .. } => 0x80,
+            Self::Unknown(unknown) => unknown.kind,
         }
     }
 
@@ -140,7 +177,7 @@ pub struct Record {
     /// A channel id already commits to its network (every derivation in
     /// [`crate::ids`] takes the network id), so a record cannot be replayed into
     /// another network and carrying the network id as well would restate a fixed
-    /// fact in every record (`design/08` §5.1).
+    /// fact in every record (spec 07 §3.3).
     pub channel: ChannelId,
     /// The identity that wrote it.
     pub author: PerNetworkIdentityId,
@@ -236,6 +273,14 @@ impl Record {
             } => {
                 target.encode(&mut e);
                 e.fixed(governance_head.as_bytes());
+            }
+            // Unframed, because that is how it arrived: the body runs from the
+            // discriminant to the signature, and re-emitting it any other way
+            // would change the record's id.
+            RecordBody::Unknown(unknown) => {
+                for &byte in &unknown.bytes {
+                    e.u8(byte);
+                }
             }
         }
         e
@@ -341,7 +386,37 @@ impl Record {
                 target: MessageId::from_bytes(dec.fixed::<32>()?),
                 governance_head: Hash::from_bytes(dec.fixed::<32>()?),
             },
-            other => return Err(CoreError::UnknownKind(other)),
+            other if RecordClass::of(other) == RecordClass::Reserved => {
+                return Err(CoreError::UnknownKind(other));
+            }
+            // Spec 07 §3.7. A body this build cannot parse still has a known
+            // extent — a record is delivered whole, and the signature is the
+            // last 64 bytes of it — so it can be kept and verified unread.
+            other => {
+                let start = bytes.len() - dec.remaining();
+                let end = bytes
+                    .len()
+                    .checked_sub(64)
+                    .filter(|&end| end >= start)
+                    .ok_or(intranet_crypto::DecodeError::UnexpectedEnd {
+                        needed: 64,
+                        remaining: dec.remaining(),
+                    })?;
+                let signature = Signature::from_bytes(
+                    bytes[end..].try_into().expect("exactly 64 bytes remain"),
+                );
+                return Ok(Self {
+                    channel,
+                    author,
+                    device,
+                    hlc,
+                    body: RecordBody::Unknown(UnknownBody {
+                        kind: other,
+                        bytes: bytes[start..end].to_vec(),
+                    }),
+                    signature,
+                });
+            }
         };
         let signature = Signature::from_bytes(dec.fixed::<64>()?);
         dec.finish()?;
@@ -355,7 +430,19 @@ impl Record {
         })
     }
 
-    /// Checks the field bounds `design/08` §4.3 defines.
+    /// Checks a record's field bounds.
+    ///
+    /// The body limit is spec 07 §4.3's `chat:message-max-bytes`. **Flagged:**
+    /// the reaction-key and attachment-name limits are refused by readers and so
+    /// are validity rules, but no specification states them; they lived in
+    /// `design/08` §4.3 before the encoding moved upstream, and that section was
+    /// not carried across. Spec 07 §4.3 is where they belong.
+    ///
+    /// **Flagged:** an unknown kind's body is bounded only by the segment
+    /// ceiling, since which of its fields a limit applies to is part of what
+    /// this build does not know. A newer node may refuse one as too large and
+    /// not count it where this one keeps and counts it — the same divergence the
+    /// admission check's flag in `ChannelView` describes, from a second cause.
     ///
     /// `max_body` comes from the network's `chat:message-max-bytes`; the other
     /// two limits are fixed, because nothing is gained by letting them vary and

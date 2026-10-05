@@ -1,4 +1,4 @@
-//! Segments — `design/01` §3.1, encoded per `design/08` §6.
+//! Segments — `design/01` §3.1, encoded per spec 07 §3.5.
 
 use crate::{ChannelId, CoreError, Record};
 use intranet_crypto::{Dec, Enc, Hash};
@@ -75,7 +75,7 @@ impl Segment {
     /// an append changes only the tail — which is the property this type is for.
     ///
     /// *Found by the P0 spike measuring bytes actually moved, not by reading the
-    /// design. `design/08` §6 records it.*
+    /// design. Spec 07 §3.5 records it.*
     pub fn canonical_bytes(&self) -> Vec<u8> {
         let mut bytes = self.header_bytes();
         for record in &self.records {
@@ -176,7 +176,7 @@ impl Segment {
     ///
     /// *The per-device split was found implementing pointer-collision recovery,
     /// where a merged segment necessarily interleaves two devices' records;
-    /// `design/08` §4.1 records it.*
+    /// spec 07 §2.6 records it.*
     pub fn ordering_is_valid(&self) -> bool {
         let ascending = self
             .records

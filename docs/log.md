@@ -24,6 +24,45 @@ Kept because this project keeps re-learning the same lessons and paying for them
 
 ---
 
+- **2026-10-05** — **A record of a kind this build does not know is kept rather than taking its
+  segment with it**, which is what spec 07 §3.7 has always said.
+
+  `Record::decode` returned `UnknownKind` for any unallocated discriminant and
+  `Segment::decode` passed it up with `?`, so one record from a newer client refused the whole
+  segment — every other record its author had there, and the segments behind it too, since the
+  link to the previous one is inside the refused bytes. Reproduced before it was fixed: a
+  segment of one message and one record of kind `0x04` failed with `UnknownKind(4)`. The
+  existing test called `an_unknown_kind_decodes_as_unknown_rather_than_garbage` asserted the
+  error, so it had been guarding the divergence; `CoreError::UnknownKind`'s own doc comment
+  said the reader should retain the record, and nothing did.
+
+  The spec's reason was checked before following it, because the alternative was amending the
+  spec to match the code: without it, adding any record kind is a break for every older client,
+  and dropping rather than refusing would make a node republish (§2.9) a different record set
+  from the one it received. It is also cheap: a record arrives whole and its signature is its
+  last 64 bytes, so a body this build cannot parse still has a known extent and can be kept,
+  verified and re-emitted byte-identically, so its id is unchanged. The rate class was already
+  computed from the discriminant's range, so an old node counts it correctly without
+  understanding it. `RecordBody::Unknown` has no public constructor, so this build cannot
+  fabricate a kind it does not know — though `Record::create` would re-sign a received one,
+  and nothing calls it that way. The reserved range (`0xC0`–`0xFF`, and `0x00`, which no
+  class covers) is refused as before. No vector moved.
+
+  `design/00` §2's *fail closed* principle had listed unknown record types among what is
+  refused, which read as the reason for the code; it now says what the spec says.
+
+  **One limit, said rather than solved:** an unknown kind is admitted under the ordinary
+  posting check, since which capability a kind needs is part of what this build does not know.
+  A newer node applying a stricter rule (moderator-only, say) could refuse a record this one
+  keeps, so their rate counts could differ by that record — and the same follows from size,
+  since an unknown body is bounded only by the segment ceiling. Nothing renders it on either
+  side. Both are `**Flagged:**` where the choice is made.
+
+  Two smaller things found beside it: `kols-core`'s module headers cited `design/08` §§4–9,
+  which went away when the encoding moved to spec 07 §3, and now cite the spec; and the
+  reaction-key and attachment-name limits are reader-enforced validity rules that no
+  specification states any longer, so they are `**Flagged:**` in `Record::check_bounds`.
+
 - **2026-10-05** — **The documents are brought back to what was built, and one belief about
   Windows turns out to need measuring.**
 

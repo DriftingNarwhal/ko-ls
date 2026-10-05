@@ -1,4 +1,4 @@
-//! Derived identifiers — `design/08` §7.
+//! Derived identifiers — spec 07 §3.6.
 //!
 //! Every identifier here is derived rather than allocated, which is what lets
 //! any member locate any other member's content from public information alone,

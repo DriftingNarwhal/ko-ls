@@ -275,20 +275,112 @@ fn class_is_derivable_from_an_unknown_discriminant() {
     assert_eq!(RecordClass::of(0x00), RecordClass::Reserved);
 }
 
+/// A validly signed record of a kind this build does not know.
+///
+/// Built the only way a newer client's record could reach this one: as bytes.
+/// The body is a message's, so it has a realistic shape, under a discriminant
+/// nothing has allocated; the signature is genuine over the result.
+fn unknown_record(author: &intranet_identity::PerNetworkIdentity, kind: u8, wall: i64) -> Vec<u8> {
+    let mut bytes = Record::create(
+        author,
+        channel(),
+        Hlc::new(wall, 0),
+        message("from the future"),
+    )
+    .canonical_bytes();
+    bytes.truncate(bytes.len() - 64);
+    // Length-prefixed domain tag, then channel + author + device, then the HLC.
+    bytes[8 + "intranet.chat-record.v1".len() + 96 + 12] = kind;
+    let mut payload = intranet_crypto::Enc::new();
+    for &byte in &bytes {
+        payload.u8(byte);
+    }
+    bytes.extend_from_slice(author.sign(&payload).as_bytes());
+    bytes
+}
+
 #[test]
-fn an_unknown_kind_decodes_as_unknown_rather_than_garbage() {
+fn an_unknown_kind_is_kept_whole_and_re_emits_byte_identically() {
     let author = identity(1);
-    let mut bytes =
-        Record::create(&author, channel(), Hlc::new(1, 0), message("hi")).canonical_bytes();
-    // Flip the discriminant to something unallocated.
-    // Locate the discriminant deterministically: length-prefixed domain tag,
-    // then channel + author + device (32 each), then the 12-byte HLC.
-    let idx = 8 + "intranet.chat-record.v1".len() + 96 + 12;
-    bytes[idx] = 0x7E;
+    for kind in [0x04, 0x3F, 0x42, 0x81, 0xBF] {
+        let bytes = unknown_record(&author, kind, 1);
+        let record = Record::decode(&bytes).expect("spec 07 §3.7: retained, not rejected");
+        let RecordBody::Unknown(body) = &record.body else {
+            panic!("{kind:#04x} decoded as a kind this build knows");
+        };
+        assert_eq!(body.kind(), kind);
+        // Same bytes, so the same id and a signature that still verifies: the
+        // record set is identical on a node that cannot read it.
+        assert_eq!(
+            record.canonical_bytes(),
+            bytes,
+            "{kind:#04x} did not re-emit"
+        );
+        record
+            .verify_signature()
+            .expect("signature verifies unread");
+        // Counted by class, from the range alone.
+        assert_eq!(record.body.class(), RecordClass::of(kind));
+    }
+}
+
+#[test]
+fn a_segment_holding_an_unknown_kind_is_not_refused_over_it() {
+    let author = identity(1);
+    let known = Record::create(&author, channel(), Hlc::new(1, 0), message("hi"));
+    let mut segment = Segment::new(channel(), author.id(), 0, None);
+    segment.records.push(known.clone());
+    segment
+        .records
+        .push(Record::decode(&unknown_record(&author, 0x04, 2)).expect("decodes"));
+    let bytes = segment.canonical_bytes();
+
+    let decoded = Segment::decode(&bytes).expect("one new record does not refuse the segment");
+    assert_eq!(decoded.records.len(), 2);
+    assert_eq!(decoded.records[0], known);
+    assert_eq!(decoded.canonical_bytes(), bytes);
+    decoded.verify().expect("verifies");
+}
+
+#[test]
+fn a_reserved_kind_is_still_refused() {
+    let author = identity(1);
+    for kind in [0x00, 0xC0, 0xFF] {
+        assert!(matches!(
+            Record::decode(&unknown_record(&author, kind, 1)),
+            Err(CoreError::UnknownKind(k)) if k == kind
+        ));
+    }
+}
+
+#[test]
+fn an_unknown_kind_too_short_to_hold_a_signature_is_refused() {
+    let author = identity(1);
+    let mut bytes = unknown_record(&author, 0x04, 1);
+    // Keep the header and discriminant and less than a signature's worth after.
+    bytes.truncate(8 + "intranet.chat-record.v1".len() + 96 + 12 + 1 + 63);
     assert!(matches!(
         Record::decode(&bytes),
-        Err(CoreError::UnknownKind(0x7E))
+        Err(CoreError::Decode(
+            intranet_crypto::DecodeError::UnexpectedEnd { needed: 64, .. }
+        ))
     ));
+}
+
+#[test]
+fn an_unknown_kind_arriving_live_opens_to_the_record_a_segment_would_hold() {
+    // The live path decodes the sealed plaintext exactly as a segment does, so
+    // the record a node takes from gossip and the one it later reads from the
+    // author's log must be the same bytes — or it would count one record twice.
+    let author = identity(1);
+    let bytes = unknown_record(&author, 0x04, 1);
+    let record = Record::decode(&bytes).expect("decodes");
+    let opened = LivePayload::seal(&record, &epoch(7), rotation(3))
+        .open(&epoch(7))
+        .expect("opens");
+    assert_eq!(opened, record);
+    assert_eq!(opened.canonical_bytes(), bytes);
+    assert_eq!(opened.id(), record.id());
 }
 
 // ── bounds ─────────────────────────────────────────────────────────────

@@ -30,7 +30,7 @@
 //!
 //! # Unknown discriminants are refused, not skipped
 //!
-//! Unlike a record kind, which `design/08` §9 requires be retained and counted
+//! Unlike a record kind, which spec 07 §3.7 requires be retained and counted
 //! without being rendered, a channel entry carries *structure* — a reader either
 //! applies it correctly or must not apply it at all. Skipping one silently would
 //! leave two nodes with different channel state, which is the divergence replay
