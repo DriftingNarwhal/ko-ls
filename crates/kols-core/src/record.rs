@@ -432,21 +432,26 @@ impl Record {
 
     /// Checks a record's field bounds.
     ///
-    /// The body limit is spec 07 §4.3's `chat:message-max-bytes`. **Flagged:**
-    /// the reaction-key and attachment-name limits are refused by readers and so
-    /// are validity rules, but no specification states them; they lived in
-    /// `design/08` §4.3 before the encoding moved upstream, and that section was
-    /// not carried across. Spec 07 §4.3 is where they belong.
-    ///
-    /// **Flagged:** an unknown kind's body is bounded only by the segment
-    /// ceiling, since which of its fields a limit applies to is part of what
-    /// this build does not know. A newer node may refuse one as too large and
-    /// not count it where this one keeps and counts it — the same divergence the
-    /// admission check's flag in `ChannelView` describes, from a second cause.
-    ///
-    /// `max_body` comes from the network's `chat:message-max-bytes`; the other
-    /// two limits are fixed, because nothing is gained by letting them vary and
+    /// The body limit is spec 07 §4.3's `chat:message-max-bytes`, and the
+    /// reaction-key and attachment-name limits are the two fixed field bounds
+    /// the same section states. `max_body` comes from the network's policy; the
+    /// other two are fixed, because nothing is gained by letting them vary and
     /// every policy value is one more thing two nodes can briefly disagree on.
+    ///
+    /// Only the reader half is here. The writer's gate (`kols-api`'s
+    /// `authorize`) bounds the body and the reaction key but not an attachment's
+    /// name, which no shipped path builds yet: every `SendMessage` the shell and
+    /// the harness construct carries no attachments.
+    ///
+    /// An unknown kind's body is checked against nothing, as spec 07 §3.7
+    /// requires: which of its fields a limit applies to is part of what this
+    /// build does not know. §3.7 bounds it through the segment carrying it, by
+    /// `chat:segment-max-bytes`, and **this reader does not enforce that
+    /// ceiling yet.** `ChatPolicy::segment_max_bytes` has no caller outside the
+    /// tests, so a segment of any byte size is fetched and read, though
+    /// `MAX_RECORDS_PER_SEGMENT` still bounds how many records it holds. That is
+    /// a divergence from spec 07 §2.2 for every kind, not only unknown ones
+    /// (`STATUS.md` O27).
     pub fn check_bounds(&self, max_body: usize) -> Result<(), CoreError> {
         let too_large = |field, actual, limit| {
             Err(CoreError::TooLarge {

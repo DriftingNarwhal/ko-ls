@@ -1,7 +1,13 @@
 # Record Encoding — Implementation and Conformance
 
-**Document status:** v1.1 — **not normative.** `distributed-intranet/specs/07` §3 is the
-contract; this document is where the client's obligations against it live. §2's module map
+**Document status:** v1.2 — **not normative.** `distributed-intranet/specs/07` §3 and §6.4
+are the contract; this document is where the client's obligations against them live. §2's presence row
+no longer says the spec does not cover presence: spec 07 v0.10 §6.4 specifies the beat's
+encoding, key, topic, cadence and receiver checks, and `kols-core/tests/presence.rs` now
+carries its frozen vectors, so §2's vector row and §3 name both files. Those vectors have not
+yet been through the big-endian run §3 asks for. Previously v1.1 — **not
+normative.** `distributed-intranet/specs/07` §3 is the contract; this document is where the
+client's obligations against it live. §2's module map
 names the five encoding modules it was missing (channel structure, names, direct
 messages, live delivery, presence), and §3 stops stating a `kols-core` test count as current:
 30 was the suite when the big-endian run was first made, and the claim about *unsafe* is
@@ -41,9 +47,9 @@ what, and what the client must prove about its own implementation.
 | Member name claims, spec §3.9 | `kols-core::names` |
 | The direct-message invitation payload, spec §6.2 | `kols-core::dm` |
 | The live-delivery payload and its content key, spec §5.2, §6.1 | `kols-core::live` |
-| Presence beats and their key, `design/01` §9 — spec 07 does not cover these | `kols-core::presence` |
+| Presence beats, their key and topic, spec §6.4 (`design/01` §9 is the design) | `kols-core::presence` |
 | Capability names and their tiers | `kols-core::capabilities` |
-| Frozen test vectors | `kols-core/tests/encoding.rs` |
+| Frozen test vectors | `kols-core/tests/encoding.rs`; presence's in `kols-core/tests/presence.rs` |
 
 ---
 
@@ -66,7 +72,8 @@ Required of any implementation, and permanent once written:
 6. **Cross-platform.** Vectors verified on a big-endian target, so that "the encoding is
    host-independent" is demonstrated rather than argued.
 
-**All six are met.** Obligations 1–5 by `kols-core/tests/encoding.rs`; obligation 6 by
+**All six are met.** Obligations 1–5 by `kols-core/tests/encoding.rs`, and presence's frozen
+vectors (spec 07 §6.4) by `kols-core/tests/presence.rs`; obligation 6 by
 `scripts/cross-check.sh`, which cross-compiles to `s390x-unknown-linux-gnu` and runs the
 suite under emulation — the whole `kols-core` suite, frozen vectors included. All 30 tests it
 had when this was first written passed there; the suite has grown since, so the count is

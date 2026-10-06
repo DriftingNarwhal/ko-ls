@@ -187,14 +187,12 @@ impl ChannelView {
                     return Err(Rejection::NotAModerator);
                 }
             }
-            // **Flagged:** this arm also admits `RecordBody::Unknown`, under
-            // `chat:post`, and spec 07 does not say which capability a kind
-            // this build cannot read should need — §3.3 calls the control range
-            // capability-governed without saying which. Admitting it is what
-            // §3.7's *retained* asks for; the cost is that a newer node holding
-            // the kind to a stricter rule refuses a record this one keeps, and
-            // their rate counts differ by it. Nothing renders it on either side.
-            // `serve::admit_live` makes the same choice for the live path.
+            // This arm also admits `RecordBody::Unknown`, under `chat:post`, as
+            // spec 07 §3.7 requires of a kind the reader does not know. The
+            // limit §3.7 states with it: a newer node holding the kind to a
+            // stricter rule refuses a record this one keeps, so their rate
+            // counts can differ by it, though nothing renders it on either side.
+            // `serve::admit_live` applies the same rule on the live path.
             _ => {
                 if !authority.may_post(&record.author, &self.placement) {
                     return Err(Rejection::NotPermitted);

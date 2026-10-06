@@ -1,4 +1,6 @@
-//! Presence — `design/01` §9, and the one rule `design/09` §4.1 exists to enforce.
+//! Presence — spec 07 §6.4 (normative: the encoding, the key, the topic, the
+//! cadence and the receiver's checks), `design/01` §9 (the design), and the one
+//! rule `design/09` §4.1 exists to enforce.
 //!
 //! # What presence is, and the claim it must never make
 //!

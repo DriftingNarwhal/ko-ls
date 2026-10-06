@@ -24,6 +24,41 @@ Kept because this project keeps re-learning the same lessons and paying for them
 
 ---
 
+- **2026-10-06** — **Spec 07 now states three things this client did that no specification
+  stated**, on the user's decision that day: *"Let's put them in for now, we can always remove
+  them later."* Spec 07 v0.10 §4.3 has the reaction-key (64 B) and attachment-name (255 B)
+  bounds. §3.7 has what admits a record of an unknown kind: the same authorization a `Message`
+  gets, with its body bounded only through the segment ceiling. §6.4 has presence beats, whose
+  encoding had shipped on 2026-09-08 with no section owning it. The three `**Flagged:**` comments
+  those choices carried (`9d88fb4`), and `admit_live`'s pointer to one, are now citations. `kols-core/tests/presence.rs` gains three
+  frozen vectors (the signature, the sealed beat and its plaintext, and the topic). Each was
+  watched failing against a placeholder and then pinned to what the unchanged code produces. No
+  encoding moved.
+
+  Writing the spec down against the code found four things, each now said where it lives:
+
+  - **Nothing enforces `chat:segment-max-bytes`.** `ChatPolicy::segment_max_bytes` has no
+    caller outside the tests. §3.7's bound on an unknown body is that ceiling, so the bound the
+    spec now states is one this reader does not apply. That is true for every kind, so it is
+    owed as O27 rather than hidden in a comment.
+  - **The writer's gate bounds the reaction key and not an attachment's name.** No shipped path
+    builds an attachment, so nothing exceeds it today. Recorded in `check_bounds`.
+  - **A presence beat can be replayed verbatim**, and the first draft of §6.4 said it could
+    not. The frame is unsigned and the seal deterministic, so anybody on the topic can
+    republish a beat byte for byte. Freshness is judged by heard time, so each replay renews the
+    sender for another ninety seconds until gossip's duplicate cache or the next rotation stops
+    it. `admit_beat` compares no `at`, so a replay can also put an older state back. The signature
+    stops forging a beat, not repeating one. The spec states this as a limit, and the code is
+    unchanged.
+  - **§3.7's rule makes record sets differ, not only displays.** A newer node that holds a kind
+    to a stricter rule refuses a record an older node keeps and counts. A *later* known record
+    near the author's ceiling can then be refused on one and rendered on the other. §3.3, §3.7 and
+    §4.3 had said every node reaches the same verdict, and each is now qualified.
+
+  Also found and fixed in the same bump: two references to a §4.4 that does not exist, and
+  §3.3's reserved row, which did not name `0x00`, although readers have always refused it.
+  The new vectors have not been through `scripts/cross-check.sh` (no s390x toolchain here).
+
 - **2026-10-06** — **The sweep's per-repository cap was deleting what the next build needed**,
   and it was found by reading `cargo-sweep`'s source rather than its help text.
 

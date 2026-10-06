@@ -1,6 +1,6 @@
 # Messaging Model
 
-**Document status:** v1.5 — §5's "a UI would bound this by pages" now points at `09` §4.4, which is that UI, and the two kinds of *older* are named apart: this walk is history the machine does not hold, and the one a reader meets first is history it holds and has not drawn. Previously v1.4 — §9's presence is built, and the section records what building it settled: the states are `here | idle | busy | invisible` rather than the `online`/`dnd` this once said, `invisible` has no wire form at all, a beat is signed as well as sealed, and freshness is judged by when a beat was heard rather than by the time it carries. Typing is still unbuilt. Previously v1.3 — §6's redaction rule is enforced as of the cited governance head, which it had not been: `may_moderate_at` took the head and answered from current state, so a demotion reached backwards and un-hid every message that moderator had ever redacted. Both halves are asserted together — a demotion stops new redactions and leaves past ones standing. Previously v1.2 — §2.3 makes categories nameable and ordered, §2.4 fixes the sidebar's two-level order. Both are implemented in `kols-core`; spec 07 is normative where they overlap
+**Document status:** v1.6 — §9's presence beat is now specified normatively, in spec 07 v0.10 §6.4: the encoding, the key, the topic, the thirty-second cadence and ninety-second window, and the receiver's checks, all as built. §9 keeps the design and its reasons and points there for the wire. Previously v1.5 — §5's "a UI would bound this by pages" now points at `09` §4.4, which is that UI, and the two kinds of *older* are named apart: this walk is history the machine does not hold, and the one a reader meets first is history it holds and has not drawn. Previously v1.4 — §9's presence is built, and the section records what building it settled: the states are `here | idle | busy | invisible` rather than the `online`/`dnd` this once said, `invisible` has no wire form at all, a beat is signed as well as sealed, and freshness is judged by when a beat was heard rather than by the time it carries. Typing is still unbuilt. Previously v1.3 — §6's redaction rule is enforced as of the cited governance head, which it had not been: `may_moderate_at` took the head and answered from current state, so a demotion reached backwards and un-hid every message that moderator had ever redacted. Both halves are asserted together — a demotion stops new redactions and leaves past ones standing. Previously v1.2 — §2.3 makes categories nameable and ordered, §2.4 fixes the sidebar's two-level order. Both are implemented in `kols-core`; spec 07 is normative where they overlap
 **Depends on:** Core Protocol Spec §2 (governance log), Storage Spec §1–§5, Search Spec §3
 **Consumed by:** `02-membership-and-permissions`, `03-confidentiality`, `05-client-architecture`
 
@@ -651,6 +651,10 @@ which this section had left to whoever wrote it:
 
 The topic is network-wide rather than per channel, which is the scaling change this section
 already names below rather than a correctness one.
+
+**The wire form is normative in spec 07 §6.4**, as of its v0.10: what a beat signs and seals,
+its key and topic, the cadence and freshness window above, and what a receiver checks before
+believing one. Where this section and that one differ, that one is right.
 
 At larger scales presence is subscribed **per channel currently in view**, not
 network-wide, so a 5,000-member server does not gossip a full roster heartbeat to

@@ -3349,8 +3349,8 @@ fn admit_live(store: &Store, payload: &[u8]) -> Result<Option<Record>, String> {
     };
     let authority = StateAuthority { state: &state };
     // A record of a kind this build cannot read is admitted under `chat:post`
-    // too, which is a choice spec 07 leaves open: see the **Flagged:** note in
-    // `ChannelView`'s admission check.
+    // too, as spec 07 §3.7 requires, and as `ChannelView`'s admission check
+    // does for a stored record.
     if !authority.may_post(&record.author, &placement) {
         return Err(format!("{} may not post there", record.author.short()));
     }

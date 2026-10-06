@@ -1,4 +1,4 @@
-//! Presence on the wire — `design/01` §9, and the claim `design/09` §4.1 forbids.
+//! Presence on the wire — spec 07 §6.4, `design/01` §9, and the claim `design/09` §4.1 forbids.
 //!
 //! # What these are actually guarding
 //!
@@ -172,6 +172,83 @@ fn freshness_uses_this_nodes_clock_and_never_the_senders() {
     // from a machine that was ahead. Not fresh, because the alternative is a
     // row that stays lit until the clock catches up.
     assert!(!PresenceBeat::fresh_at(heard, heard - 1));
+}
+
+// ── frozen vectors (spec 07 §6.4) ──────────────────────────────────────
+//
+// These are the contract, not a description of the implementation, in the
+// same sense as `tests/encoding.rs`: a change that alters one is a wire break
+// to be recognised and versioned, never re-blessed by updating the expected
+// value. Every input is fixed — the identity, the epoch key, the rotation and
+// the time — and both Ed25519 (RFC 8032) and the chunk seal (Storage §1.2)
+// are deterministic, so the whole sealed beat is reproducible byte for byte.
+
+/// The signature over a beat, which pins the signed payload's layout.
+///
+/// `intranet.chat-presence-payload.v1 ‖ who(32) ‖ state(1) ‖ at(8)`, signed by
+/// the per-network identity key `who` names.
+#[test]
+fn a_beat_signature_is_stable() {
+    let (_, signature) = PresenceBeat::create(&identity(1), Beat::Idle, 1_700_000_000_000);
+    assert_eq!(
+        intranet_crypto::to_hex(signature.as_bytes()),
+        concat!(
+            "c946c52995f39cbc0c58192e747f05fb3be4298bb3010a8cbbbce3d88fd60621",
+            "58e56a00f2a6326080b24800c402af1711992c28608a6b48b1319b7b9efe8103",
+        )
+    );
+}
+
+/// One sealed beat as it travels, and what it seals, field by field.
+///
+/// Split across lines so a diff shows *which* field moved. The frame: domain
+/// tag, rotation, sealed length, then the sealed beat — a 24-byte synthetic
+/// nonce and the XChaCha20-Poly1305 ciphertext of the 138-byte plaintext with
+/// its 16-byte tag. The plaintext: domain tag (the frame's own, reused), who,
+/// state (`0x02`, idle), the time, then the signature pinned above.
+#[test]
+fn a_sealed_beat_is_stable() {
+    let rotation = Hash::from_bytes([4u8; 32]);
+    let me = identity(1);
+    let sealed = PresenceBeat::seal(&me, Beat::Idle, 1_700_000_000_000, &epoch(1), rotation);
+    assert_eq!(
+        intranet_crypto::to_hex(&sealed.encode()),
+        concat!(
+            "0000000000000019696e7472616e65742e636861742d70726573656e63652e7631",
+            "0404040404040404040404040404040404040404040404040404040404040404",
+            "00000000000000b2",
+            "6fc9a5789e3ec4266c34e70f286970fd99931e54aaaf79a9",
+            "817ab2e82dd4fbf1f160ea7e1c1972b9c507ad2d44ea97bd3a40a227c472840e",
+            "981a1962b61152a36322da1d2ed66d12446c37b96742f2fd9c268d52108ac677",
+            "ac85dff85b0c6cfac8f04b77eb59a0f1fe7bcbca26be50c1914e1eb39b986a28",
+            "db01daa605d5ba56a936e294a2a802d4d1777c184298940d08ab3e0116911fd5",
+            "9ddc52be01450a05020a528b651ff12fa9250c11e7f77ec296a8",
+        )
+    );
+
+    let plaintext = presence_key(&epoch(1), &rotation)
+        .open_chunk(&sealed.sealed)
+        .expect("the presence key opens it");
+    assert_eq!(
+        intranet_crypto::to_hex(&plaintext),
+        concat!(
+            "0000000000000019696e7472616e65742e636861742d70726573656e63652e7631",
+            "040eda5286f411ed9f952bd92d9fa5c51cc7b7609e4ee801baffc901983f9099",
+            "02",
+            "0000018bcfe56800",
+            "c946c52995f39cbc0c58192e747f05fb3be4298bb3010a8cbbbce3d88fd60621",
+            "58e56a00f2a6326080b24800c402af1711992c28608a6b48b1319b7b9efe8103",
+        )
+    );
+}
+
+/// The topic a network's presence rides, which every member must derive alike.
+#[test]
+fn the_presence_topic_is_stable() {
+    assert_eq!(
+        presence_topic(&network()),
+        "aa534267e06a3a59aa1baeab63fc05e38c467decb41892c633bc434151aacc03"
+    );
 }
 
 /// The presence topic is its own, and is derived from the network.
