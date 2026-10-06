@@ -82,6 +82,13 @@ RUN install -m 0755 -d /etc/apt/keyrings \
 # `cargo clippy --workspace --all-targets`, so clippy has to be present.
 RUN rustup component add clippy rustfmt
 
+# `scripts/keep-targets-small.sh` sweeps the target/ directories on a schedule,
+# because this container's disk is its host's and cargo never deletes anything
+# on its own. Built in a throwaway target dir so installing the cleaner does not
+# leave the first thing for it to clean.
+RUN CARGO_TARGET_DIR=/tmp/cargo-sweep-build cargo install --locked cargo-sweep \
+    && rm -rf /tmp/cargo-sweep-build
+
 RUN curl -fsSL https://claude.ai/install.sh | bash
 ENV PATH="/root/.cargo/bin:/root/.local/bin:${PATH}"
 

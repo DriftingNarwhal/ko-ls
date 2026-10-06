@@ -62,5 +62,11 @@
   // The rest fails loudly here rather than at the first Tauri build. `pkg-config
   // --exists webkit2gtk-4.1` is the one worth keeping: it is the dependency
   // whose absence looks like a Rust link error rather than a missing package.
+  // Keeps the target/ directories inside the host owner's disk budget: runs
+  // whatever is due now (a daily sweep, a weekly clean) and then hourly while
+  // the container is up, with the schedule kept in timestamps so a container
+  // that was stopped catches up. `scripts/keep-targets-small.sh` says how.
+  "postStartCommand": "setsid nohup /workspaces/ko-ls/ko-ls/scripts/keep-targets-small.sh --loop >/dev/null 2>&1 &",
+
   "postCreateCommand": "for r in /workspaces/ko-ls /workspaces/ko-ls/ko-ls /workspaces/ko-ls/distributed-intranet /workspaces/ko-ls/DI-Relay; do git config --global --get-all safe.directory | grep -qxF \"$r\" || git config --global --add safe.directory \"$r\"; done && cargo --version && cargo clippy --version && cargo fmt --version && docker --version && docker compose version && claude --version && node --version && npm --version && pkg-config --modversion webkit2gtk-4.1"
 }

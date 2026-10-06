@@ -195,20 +195,28 @@ Three things about the suite that are not obvious, each learned by getting them 
   Worth doing before *any* starved run, since that is exactly where a leftover port presents
   as the race the starving was supposed to find.
 
-**Clean up afterwards.** This container's storage is the host's, and a day of cross-compiles
-took `target/` to 11 GB. **The budget is about 12 GB across both repositories**, and `cargo`
-never reclaims anything on its own, so it is worth knowing where it actually goes:
+**Clean up afterwards, and stay inside the budget.** This container's disk is its host's — a
+person's own machine — and **build output across the three repositories (this one,
+`distributed-intranet` and `DI-Relay`) stays near or below 12 GB**. That limit is the host
+owner's, not a property of the volume, so free space there is no reason to exceed it; raising
+it is a conversation to have first. `cargo` never reclaims anything on its own, so it is kept
+there on a schedule rather than by memory: `scripts/keep-targets-small.sh` runs `cargo sweep`
+daily and `cargo clean` weekly across all three, and the dev container starts it hourly
+(`--loop`). Run it by hand with `--status` to see where things stand, `--now` to sweep, or
+`--clean`.
 
-- **`target/debug/incremental`** — the largest single thing and pure rebuild speed. It reached
-  4.9 GB across the two repos and costs nothing but a slower next build to delete.
-- **Stale test binaries in `target/debug/deps`** — every test target leaves a hash-named
-  executable per build and the old ones are never swept.
-  `find target/debug/deps -maxdepth 1 -type f -executable -mtime +1 -delete` takes the ones
-  nothing is using.
-- **`target/release`** — only ever built here to measure (`tests/cost.rs`), where a debug build
-  is about forty times slower and answers the wrong question. Delete it when the measuring is
-  done; it is 800 MB.
+What one fresh gate build occupies, measured on 2026-10-05: this repository 4.6 GB,
+`distributed-intranet` 5.6 GB, `DI-Relay` 1.0 GB — 11.2 GB together, which is why the budget
+has little slack and why the script caps each at its share. Both main repos build the same
+dependency tree, so their `target/` directories largely duplicate each other and neither can
+be shared away; the number is the sum.
 
-Both repos build the same dependency tree, so the two `target/` directories are largely a
-duplicate of each other and neither can be shared away — this is why the number is the sum
-rather than one of them.
+- **Dependencies carry no debug information** (`[profile.dev.package."*"]` in all three
+  workspaces), and our own crates only line tables. It halved `DI-Relay`'s build and is most
+  of why the three fit at all.
+- **`target/debug/incremental`** is the largest thing that is pure rebuild speed, and the
+  first to go stale: every distinct build (test, clippy, rust-analyzer, each toolchain) keeps
+  its own, and none is ever collected. It reached 27 GB before the schedule existed.
+- **`target/release`** is only ever built here to measure (`tests/cost.rs`), where a debug
+  build is about forty times slower and answers the wrong question. Delete it when the
+  measuring is done; the script removes any one-off tree a day later regardless.

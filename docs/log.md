@@ -24,6 +24,27 @@ Kept because this project keeps re-learning the same lessons and paying for them
 
 ---
 
+- **2026-10-06** — **Build output is kept inside its budget on a schedule rather than by
+  memory, because the budget is somebody's own disk.**
+
+  The three `target/` directories had reached 53 GB against a budget of about 12 — 27 GB of it
+  `target/debug/incremental`, about seventy session directories per crate going back to
+  2026-09-10, one for every distinct build any tool had made and none ever collected. Answering
+  that with "the volume has room" was wrong in kind, which is the part worth keeping: this
+  container runs on a person's own machine, and 12 GB is that person's limit on their disk, not
+  a property of the project's volume (`CONTRIBUTING.md`, *Clean up afterwards*).
+
+  `scripts/keep-targets-small.sh` now sweeps daily (`cargo sweep`: dead toolchains, a week
+  unused, then a cap per repository) and cleans weekly, both due by timestamp so a container
+  that was stopped catches up, and the dev container starts it hourly. The caps came from
+  measuring one fresh gate build per repository, which turned up the second finding: the three
+  together were **12.7 GB with nothing stale at all**, over budget from a clean slate.
+  `distributed-intranet` and `DI-Relay` were carrying debug information for every dependency,
+  which this workspace had stopped doing long ago; giving them the same profile brought the
+  total to 11.2 GB (the relay alone 1.9 → 1.0). The first caps were written in decimal MB and
+  swept live artifacts out of a 5.6 GiB tree, so they are binary now — a cap below a fresh build
+  makes every sweep delete what the next gate rebuilds.
+
 - **2026-10-05** — **E13 is deferred by the user, not withdrawn and not landed.** The user's
   reason, closely: it is fine as it is, direct messages work well enough for now, and more may
   be added to them later. What made that possible is D39: since 2026-09-10 a conversation borrows
