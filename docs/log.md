@@ -24,6 +24,25 @@ Kept because this project keeps re-learning the same lessons and paying for them
 
 ---
 
+- **2026-10-06** — **The sweep's per-repository cap was deleting what the next build needed**,
+  and it was found by reading `cargo-sweep`'s source rather than its help text.
+
+  `cargo sweep` acts only on fingerprinted artifacts (`deps/`, `build/`, `.fingerprint/`) and
+  skips `incremental/` by design, while `--maxsize` measures the whole target directory,
+  incremental included. So once incremental state grew — and between weekly cleans it only
+  grows — the only way to meet the cap was to delete dependency artifacts in use, oldest first.
+  The entry below reports "12.1 GB to 10.0 GB"; that was the cap removing about 380 of
+  `distributed-intranet`'s dependencies, which its next gate rebuilt. The cap is gone. The
+  script deletes incremental state for crates not built in three days itself, and drops all
+  of it if the total is still over budget, since incremental state is only ever rebuild speed.
+
+  Three smaller things came with it. The loop's pidfile check could have stopped the schedule
+  silently after a restart, because a recycled pid passes `kill -0`; it now checks that the pid
+  is a loop and is not itself. Sweep and clean output went to `/dev/null`, so a failure was
+  logged as success; it goes to the log now, and a failed command says so. And the budget is
+  counted in decimal gigabytes, as its owner states it, which puts a fresh build of all three at
+  12.0 GB — at the limit rather than under it, as the binary 11.2 GiB had suggested.
+
 - **2026-10-06** — **Build output is kept inside its budget on a schedule rather than by
   memory, because the budget is somebody's own disk.**
 

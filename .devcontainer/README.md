@@ -56,6 +56,7 @@ cargo fmt --all --check
 | Node.js 24 LTS (NodeSource) | the UI toolchain; Debian 12 ships Node 18, which is past end of life |
 | `locales` + generated `en_US.UTF-8` | without it GTK falls back to the C locale, which is poor footing for a client whose payload is other people's text |
 | Claude Code | same as the workspace's own dev container |
+| `cargo-sweep` 0.8 | `scripts/keep-targets-small.sh`, which `postStartCommand` starts hourly: a daily sweep and a weekly `cargo clean` keep the three `target/` trees inside the host owner's 12 GB (`CONTRIBUTING.md`, *Clean up afterwards*) |
 
 Two Tauri package names are worth knowing before they cost an afternoon: v2 wants
 webkit2gtk **4.1** (4.0 is the v1 line, a different pkg-config module), and Debian

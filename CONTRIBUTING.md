@@ -200,14 +200,19 @@ person's own machine — and **build output across the three repositories (this 
 `distributed-intranet` and `DI-Relay`) stays near or below 12 GB**. That limit is the host
 owner's, not a property of the volume, so free space there is no reason to exceed it; raising
 it is a conversation to have first. `cargo` never reclaims anything on its own, so it is kept
-there on a schedule rather than by memory: `scripts/keep-targets-small.sh` runs `cargo sweep`
-daily and `cargo clean` weekly across all three, and the dev container starts it hourly
-(`--loop`). Run it by hand with `--status` to see where things stand, `--now` to sweep, or
-`--clean`.
+there on a schedule rather than by memory: `scripts/keep-targets-small.sh` sweeps daily and
+runs `cargo clean` weekly across all three, and the dev container starts it hourly (`--loop`).
+The daily sweep is `cargo sweep` for dead toolchains and dependencies unused for a week, plus
+what `cargo sweep` never touches: incremental state for crates not built in three days, and
+one-off trees nothing has written to for a day. Over budget after that, it drops all
+incremental state. It never deletes what a current build needs. Run it by hand with
+`--status` to see where things stand, `--now` to sweep, or `--clean`.
 
 What one fresh gate build occupies, measured on 2026-10-05: this repository 4.6 GB,
-`distributed-intranet` 5.6 GB, `DI-Relay` 1.0 GB — 11.2 GB together, which is why the budget
-has little slack and why the script caps each at its share. Both main repos build the same
+`distributed-intranet` 5.6 GB, `DI-Relay` 1.0 GB (in binary units, as `du -h` prints them) —
+11.2 GiB together, which is 12.0 GB in the decimal units the budget is counted in. **A fresh
+build of all three is at the budget, not under it**, so the slack is in what is not built at
+once: the relay gate's `--release` tree (about 0.7 GB) has to go as soon as the gate is done. Both main repos build the same
 dependency tree, so their `target/` directories largely duplicate each other and neither can
 be shared away; the number is the sum.
 
@@ -216,7 +221,11 @@ be shared away; the number is the sum.
   of why the three fit at all.
 - **`target/debug/incremental`** is the largest thing that is pure rebuild speed, and the
   first to go stale: every distinct build (test, clippy, rust-analyzer, each toolchain) keeps
-  its own, and none is ever collected. It reached 27 GB before the schedule existed.
+  its own, and none is ever collected. It reached 27 GB before the schedule existed. **`cargo
+  sweep` does not touch it at all**, and its `--maxsize` counts it anyway, so a size cap can
+  only be met by deleting dependencies a build still needs. The script deletes incremental
+  state itself and uses no cap, for that reason.
 - **`target/release`** is only ever built here to measure (`tests/cost.rs`), where a debug
   build is about forty times slower and answers the wrong question. Delete it when the
-  measuring is done; the script removes any one-off tree a day later regardless.
+  measuring is done; the script removes any one-off tree once nothing in it has been
+  written for a day.
