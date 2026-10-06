@@ -24,6 +24,33 @@ Kept because this project keeps re-learning the same lessons and paying for them
 
 ---
 
+- **2026-10-06** — **The window's nodes print nothing now, and the reason they must not was
+  the wrong one.**
+
+  Four lines in `serve.rs` — a relay reservation, a failed exclusion, *broadcast N record(s)
+  live*, and an epoch catch-up — were `println!` inside `serve::serve`, which the window runs
+  for every network with `quiet()`, so they went round the `Report` seam that exists to keep
+  the window's nodes from printing. `join::redeem` had a second switch of its own, `chatty`,
+  documented by what "a terminal wants". All of it goes through `Report` now: the four helpers
+  take one, `redeem` takes one in place of the flag, and the window and the conversation flow
+  pass `quiet()`. The strings are unchanged, since the daemon suites wait on two of them.
+  `tests/no_prints_in_the_node.rs` reads `src/` and fails on any direct print outside the three
+  functions that serve only the harness, and was watched failing with one line put back.
+
+  **The reason this project gave for the rule was not true.** `b2dc477` (2026-08-29) said a
+  GUI-subsystem process on Windows panics on its first print because it has no console. It
+  reasoned that rather than running it. std (read at 1.97.1) does the opposite: a null standard
+  handle becomes `ERROR_INVALID_HANDLE`, `handle_ebadf` turns that into a successful write, and
+  `Stdout`'s documentation says such writes "do nothing and silently succeed". The field agrees:
+  *broadcast … live* has run on every live send in Windows builds through several tests without
+  a crash. What does panic is any other write error, such as a stdout that is a closed pipe. So
+  the rule stands on that smaller reason, and `lib.rs` and `CONTRIBUTING.md` now give it.
+
+  And the user settled what the `kols` binary is for, which D30 had already said: it is the test
+  harness and nothing else, and **no decision is made on how it behaves at a terminal**. Its
+  output matters only because the suites read it. That is why this change kept the strings, and
+  it is the only reason.
+
 - **2026-10-06** — **Spec 07 now states three things this client did that no specification
   stated**, on the user's decision that day: *"Let's put them in for now, we can always remove
   them later."* Spec 07 v0.10 §4.3 has the reaction-key (64 B) and attachment-name (255 B)

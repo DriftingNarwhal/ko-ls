@@ -46,7 +46,8 @@ Each of these is load-bearing and none is enforced by anything that will shout a
   what it was handed shows every message twice, every time.
 - **Frozen test vectors are the contract.** A change that alters one is a wire break to be
   recognised and versioned, never a value to re-bless because a test went red.
-  `crates/kols-core/tests/encoding.rs`.
+  `crates/kols-core/tests/encoding.rs` for records and segments,
+  `crates/kols-core/tests/presence.rs` for presence beats.
 - **A command's consent class follows the tier of the capability it needs**, not how
   consequential the action looks — so pinning prompts harder than posting. A drift test
   resolves every command's verb against the vocabulary's own tier table.
@@ -58,6 +59,13 @@ Each of these is load-bearing and none is enforced by anything that will shout a
 - **A crate is created when there is code for it.** An empty crate is a claim that something
   exists. `kols-media` is named in `design/05` §2 and does not exist; `kols-store` was named
   there the same way and was created, on 2026-09-09, when its code arrived.
+
+**The window's nodes never print.** Every lifecycle line goes through `kols_node::Report`,
+which the window passes as `quiet()`; a direct `println!` panics on a write error, and in the
+window that takes down a network's node. `kols-node/tests/no_prints_in_the_node.rs` checks
+the source. The `kols` binary is the test harness and nothing else: no decision is made on
+how it behaves for a person at a terminal, and its output matters only because the suites
+read it (the user, 2026-10-06; `design/00` D30).
 
 The one `unsafe` in this workspace is the Windows DACL path in `kols-node::secret`, which is
 FFI and is documented where it sits. Everything else is safe Rust; keep it that way.

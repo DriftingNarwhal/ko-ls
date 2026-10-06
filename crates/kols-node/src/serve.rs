@@ -505,6 +505,7 @@ pub async fn serve(
         &mut node,
         &designated,
         sink,
+        report,
         &mut failures,
         &mut unreachable,
     )
@@ -696,7 +697,7 @@ pub async fn serve(
                 }
                 let mut unreachable = Vec::new();
                 let regained =
-                    reserve_any(&mut node, &designated, sink, &mut unreachable).await;
+                    reserve_any(&mut node, &designated, sink, report, &mut unreachable).await;
                 note_relay_standing(&store, regained.as_ref(), &unreachable);
                 if regained.is_some() {
                     relay_backoff = RELAY_RECHECK;
@@ -736,12 +737,13 @@ pub async fn serve(
                         &identity,
                         &mut broadcast,
                         live_window,
+                        report,
                     )?;
                     beat_presence(&store, &mut node, &identity, &mut last_beat)?;
                 }
                 if holds_group {
-                    catch_up_epochs(&store, &mut node)?;
-                    let excluded = exclude_removed_members(&store, &mut node, &identity, seal_bytes, sink)?;
+                    catch_up_epochs(&store, &mut node, report)?;
+                    let excluded = exclude_removed_members(&store, &mut node, &identity, seal_bytes, sink, report)?;
                     if excluded > 0 {
                         sink(&[Event::EpochRotated { excluded }]);
                     }
@@ -1361,7 +1363,7 @@ pub async fn serve(
                     }
                     // The entries that just arrived may include rotations this
                     // node was not present for.
-                    catch_up_epochs(&store, &mut node)?;
+                    catch_up_epochs(&store, &mut node, report)?;
                     // The log that just arrived may be the one that admits this
                     // node. Advertising and publishing are retried here rather
                     // than only at startup for exactly that reason, and the
@@ -2660,10 +2662,11 @@ async fn reserve_any(
     node: &mut MemberNode,
     designated: &[String],
     sink: &Sink,
+    report: &crate::Report,
     unreachable: &mut Vec<String>,
 ) -> Option<String> {
     let mut discarded = Vec::new();
-    reserve_any_reporting(node, designated, sink, &mut discarded, unreachable).await
+    reserve_any_reporting(node, designated, sink, report, &mut discarded, unreachable).await
 }
 
 /// As [`reserve_any`], collecting the reason each relay failed.
@@ -2671,6 +2674,7 @@ async fn reserve_any_reporting(
     node: &mut MemberNode,
     designated: &[String],
     sink: &Sink,
+    report: &crate::Report,
     failures: &mut Vec<String>,
     // **Addresses rather than a `&Store`**, because this awaits and a `Store`
     // is not `Send` — the node it belongs to is spawned onto the runtime. The
@@ -2690,7 +2694,7 @@ async fn reserve_any_reporting(
         match node.reserve_via_relay(address).await {
             Ok(()) => {
                 if node.await_reservation().await {
-                    println!("  relay     reserved a circuit on {relay}");
+                    crate::say!(report, "  relay     reserved a circuit on {relay}");
                     return Some(relay.clone());
                 }
                 // **Says which, when the relay said which.** This used to
@@ -3048,6 +3052,7 @@ fn exclude_removed_members(
     identity: &intranet_identity::PerNetworkIdentity,
     seal_bytes: usize,
     sink: &Sink,
+    report: &crate::Report,
 ) -> Result<usize, String> {
     // **Checked before locking, and that order matters.** This runs on every
     // tick, while one-shot commands need the same lock to append at all — so
@@ -3106,7 +3111,7 @@ fn exclude_removed_members(
                 persist_keyring(store, node)?;
                 persist_group(store, node)?;
             }
-            Err(err) => println!("could not exclude {}: {err}", who.short()),
+            Err(err) => crate::say!(report, "could not exclude {}: {err}", who.short()),
         }
     }
     Ok(excluded)
@@ -3256,6 +3261,7 @@ fn publish_unsent_live(
     identity: &intranet_identity::PerNetworkIdentity,
     sent: &mut BTreeSet<kols_core::MessageId>,
     window_millis: i64,
+    report: &crate::Report,
 ) -> Result<(), String> {
     let mut broadcast = 0usize;
     let Some(state) = replayable(store) else {
@@ -3303,7 +3309,7 @@ fn publish_unsent_live(
     // the moment a record was written. Without it there is no way to tell a
     // channel nobody is watching from one where delivery is broken.
     if broadcast > 0 {
-        println!("broadcast {broadcast} record(s) live");
+        crate::say!(report, "broadcast {broadcast} record(s) live");
     }
     Ok(())
 }
@@ -3384,12 +3390,16 @@ fn admit_live(store: &Store, payload: &[u8]) -> Result<Option<Record>, String> {
 /// skipped, and a commit that will not apply is skipped rather than fatal, since
 /// it may belong to a branch this node cannot reach — which reconciliation
 /// resolves by re-welcome rather than by replay.
-fn catch_up_epochs(store: &Store, node: &mut MemberNode) -> Result<(), String> {
+fn catch_up_epochs(
+    store: &Store,
+    node: &mut MemberNode,
+    report: &crate::Report,
+) -> Result<(), String> {
     let applied = node.apply_pending_rotations();
     if applied.is_empty() {
         return Ok(());
     }
-    println!("caught up on {} epoch rotation(s)", applied.len());
+    crate::say!(report, "caught up on {} epoch rotation(s)", applied.len());
     // Both, because applying a commit advances the group as well as the keyring,
     // and a restart that recovered one without the other would be worse than
     // recovering neither.

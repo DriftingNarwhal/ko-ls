@@ -74,7 +74,7 @@ pub fn run(root: PathBuf, uri: &str, timeout_secs: u64) -> Result<(), String> {
         root,
         invite,
         timeout_secs,
-        true,
+        &crate::printing_report(),
         kols_core::NetworkProfile::Server,
     ))?;
 
@@ -120,15 +120,16 @@ pub fn run(root: PathBuf, uri: &str, timeout_secs: u64) -> Result<(), String> {
 
 /// Redeems an invite, creating this node's store for the network it names.
 ///
-/// `chatty` is whether to narrate progress. A terminal wants the dialling
-/// reported as it happens, because a join that is going to fail spends its whole
-/// timeout looking identical to one that is about to work; a window shows a
-/// spinner and the outcome.
+/// Progress — who this is, what is being dialled, what answered — goes to
+/// `report`, the same seam the node loop reports through: the window and the
+/// conversation flow pass [`crate::quiet`] and show the outcome. `kols join`
+/// passes one that prints. No suite reads these lines today; they were kept
+/// unchanged when the flag they used to sit behind was removed.
 pub async fn redeem(
     root: PathBuf,
     invite: intranet_invite::Invite,
     timeout_secs: u64,
-    chatty: bool,
+    report: &crate::Report,
     profile: kols_core::NetworkProfile,
 ) -> Result<Landed, String> {
     // The identity is derived from the network id the invite names, so it can
@@ -151,10 +152,8 @@ pub async fn redeem(
     };
     let identity = store.identity().map_err(|e| e.to_string())?;
 
-    if chatty {
-        println!("  you       {}", identity.id().short());
-        println!("  issued by {}", invite.issuer.short());
-    }
+    crate::say!(report, "  you       {}", identity.id().short());
+    crate::say!(report, "  issued by {}", invite.issuer.short());
 
     // **Told rather than inferred — E12's obligation on E10.** A joiner cannot
     // learn the profile before it syncs: an invite carries only connection
@@ -211,9 +210,7 @@ pub async fn redeem(
     for parsed in intranet_transport::dial::order_candidates(candidates) {
         match node.dial_candidates([parsed.clone()]) {
             Ok(()) => {
-                if chatty {
-                    println!("  dialing   {parsed}");
-                }
+                crate::say!(report, "  dialing   {parsed}");
                 dialed.push(parsed.to_string());
             }
             Err(err) => refused.push(format!("{parsed} ({err})")),
@@ -309,9 +306,7 @@ pub async fn redeem(
 
         match event {
             NodeEvent::Connected { peer, .. } if !asked => {
-                if chatty {
-                    println!("connected to {peer}");
-                }
+                crate::say!(report, "connected to {peer}");
                 // Asking the issuer, whom the invite names. Any member holding
                 // `approve-node` could answer, but the issuer is the one this
                 // invite came from and is therefore the one known to be willing.
@@ -348,9 +343,7 @@ pub async fn redeem(
                 // Deduplicated because a single unreachable address is retried
                 // and would otherwise fill the refusal with one repeated line.
                 if !failures.contains(&line) {
-                    if chatty {
-                        println!("  no answer {line}");
-                    }
+                    crate::say!(report, "  no answer {line}");
                     failures.push(line);
                 }
             }

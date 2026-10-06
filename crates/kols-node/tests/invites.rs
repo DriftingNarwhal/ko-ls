@@ -430,7 +430,7 @@ fn the_window_takes_the_same_path_as_the_terminal_to_join() {
             path.clone(),
             credential,
             30,
-            false,
+            &kols_node::quiet(),
             kols_core::NetworkProfile::Server,
         ))
         .expect("joins");

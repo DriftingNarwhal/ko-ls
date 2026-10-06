@@ -42,18 +42,16 @@
 // product looks like (`design/00` D30: the window is the product, the terminal
 // is a development tool). `windows` is the GUI subsystem and closes that.
 //
-// **Release only, and the gate is not caution.** A debug build keeps its console
-// so that running it from a terminal still shows what the node is doing, which
-// is where this gets developed.
+// **Release only**, since a release build is what a person runs; a debug build
+// keeps Rust's default subsystem and nothing depends on which it has.
 //
-// **This attribute alone would have been worse than the terminal it removes.**
-// A GUI-subsystem process launched from Explorer has no console at all, so
-// `GetStdHandle` returns null, Rust's stdio turns that into a write error, and
-// `print_to` *panics* rather than dropping the line — the window would have
-// crashed on the node's first line of output, on the one platform this cannot
-// be run from. So it landed together with `kols_node::Report`: the node loop
-// hands its lifecycle lines to whoever is listening, the terminal prints them,
-// and this passes `quiet`. Nothing in this process writes to stdout.
+// **Nothing in this process writes to stdout or stderr.** It landed together
+// with `kols_node::Report`, on the belief that a GUI-subsystem process panics on
+// its first print for want of a console. That is not what std does — a null
+// standard handle is treated as a successful write — but any *other* write
+// error does panic, so the rule holds for that smaller reason: the node loop
+// hands its lifecycle lines to a `Report`, and this passes `quiet`.
+// `kols-node/tests/no_prints_in_the_node.rs` checks this file too.
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 #![deny(missing_docs)]
 
@@ -2253,7 +2251,7 @@ async fn join_network(handle: tauri::AppHandle, invite: String) -> Result<dto::J
         path.clone(),
         credential,
         30,
-        false,
+        &kols_node::quiet(),
         kols_core::NetworkProfile::Server,
     )
     .await?;
@@ -3068,9 +3066,8 @@ fn main() {
         // is the behaviour before this slice and is honest. Recorded in the
         // state so the close handler and the notice both follow it rather than
         // each deciding for themselves.
-        if let Err(err) = &tray {
-            eprintln!("no tray icon ({err}); closing the last window will quit");
-        }
+        // What failed is not reported anywhere: this process prints nothing,
+        // and the outcome that matters is recorded just below.
         if let Ok(mut outlives) = handle.state::<App>().outlives_windows.lock() {
             *outlives = tray.is_ok();
         }

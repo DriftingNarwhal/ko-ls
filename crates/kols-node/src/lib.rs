@@ -43,15 +43,21 @@
 /// something looks, the one thing `Sink`'s own documentation says a second
 /// interface cannot reuse.
 ///
-/// **It stopped being only an inelegance on Windows.** A GUI-subsystem binary
-/// launched from Explorer has no console, `GetStdHandle` hands back null, and
-/// Rust's `print_to` panics on the write error rather than dropping it. So a
-/// window that suppressed its console would have crashed on its first line of
-/// output, and the fix for a stray terminal would have been worse than the
-/// terminal. A front end with nowhere to print now passes [`quiet`].
+/// **The window's nodes print nothing, and every line goes through here.** A
+/// front end with nowhere to print passes [`quiet`]. The reason was first given
+/// as a crash: that a GUI-subsystem process on Windows has no console and
+/// Rust's `print_to` panics on the write. That is not what std does. A null
+/// standard handle becomes `ERROR_INVALID_HANDLE`, which `handle_ebadf` turns
+/// into a successful write, and `Stdout`'s own documentation says such writes
+/// "do nothing and silently succeed". What does panic is **any other** write
+/// error — a stdout that is a closed pipe, say — and in the window that would
+/// kill one network's node. So the rule stands, for a smaller reason than it
+/// was given: a node that prints can still be taken down by where its stdout
+/// goes, and one that reports cannot. `tests/no_prints_in_the_node.rs` checks
+/// the source for it, since four lines once went round it.
 pub type Report = std::sync::Arc<dyn Fn(&str) + Send + Sync>;
 
-/// A report that prints, for the terminal.
+/// A report that prints, for the test harness (`kols`), whose suites read it.
 pub fn printing_report() -> Report {
     std::sync::Arc::new(|line: &str| println!("{line}"))
 }

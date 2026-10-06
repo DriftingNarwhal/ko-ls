@@ -95,12 +95,15 @@ Three things about the suite that are not obvious, each learned by getting them 
   --target x86_64-pc-windows-gnu`. It catches warnings the Linux run cannot see, so it is
   worth making whenever `crates/kols-node/src/secret.rs` changes.
 - **The daemon tests read `kols serve`'s stdout, so those strings are a contract.**
-  `two_nodes.rs` waits on `listening`, `keyed into this network` and `learned 1 record` by
-  substring. They are produced through `kols_node::Report` rather than by `println!` —
-  `kols` passes a report that prints and the window passes `quiet`, because a
-  GUI-subsystem process on Windows has no stdout and Rust panics on the write rather than
-  dropping it. Changing one of those lines is changing what the suite waits for; changing
-  *where* they go is how the window avoids crashing on Windows. Neither is a free edit.
+  `two_nodes.rs` waits on `listening`, `keyed into this network`, `learned 1 record`,
+  `caught up on` and `broadcast 1 record(s) live` by substring, and `three_nodes.rs` on
+  `broadcast 1 record`. They are produced through `kols_node::Report` rather than by `println!` —
+  `kols` passes a report that prints and the window passes `quiet`, so the window's nodes
+  write nothing to stdout at all. Not because a console-less Windows process panics on a
+  write (std treats that as a silent success), but because any *other* write error does,
+  and in the window that would take down a network's node. Changing one of those lines is
+  changing what the suite waits for, and printing one directly instead is caught by
+  `tests/no_prints_in_the_node.rs`.
 - **Run the daemon tests starved as well as fast**: `taskset -c 0,1 cargo test -p kols-node
   --test two_nodes`. These spawn two or three processes that sign and encrypt, and a wide
   machine wins every race a narrow one loses — a keying bug latent for weeks was invisible at

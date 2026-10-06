@@ -369,7 +369,7 @@ pub async fn accept(
         workspace.path_for(&conversation),
         invite,
         30,
-        false,
+        &crate::quiet(),
         kols_core::NetworkProfile::Conversation,
     )
     .await?;
