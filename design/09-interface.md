@@ -1,6 +1,6 @@
 # Interface
 
-**Document status:** v0.37 — §3 gains relay *management*, which a network had none of: a relay
+**Document status:** v0.38 — §3 records that the address exchange it describes as the DM bootstrap is **E13, deferred by the user on 2026-10-05**, and is not built: direct messages reach each other through D39's borrowed rendezvous instead. §3 now says so where the mechanism is described, keeps the disclosure gate for if it is picked up, and marks the bounded-fallback paragraph as describing a circuit Core §5.2 no longer permits. Previously v0.37 — §3 gains relay *management*, which a network had none of: a relay
 could be designated and never taken back out, so one that no longer existed was dialled by every
 member, carried in every invite, and fixable by nobody. Each designated relay now has a remove,
 gated on the capability and refusing the last one with the reason. **The client does not remove
@@ -830,6 +830,12 @@ parties exchange their DM-network addresses across the connection they already h
 coordinate a simultaneous open. Nothing new leaks — Bob already knows Alice's IP from the
 shared network, and the identity link already told him who she is.
 
+**Not built, and deferred by the user on 2026-10-05** — this is E13, and `06` §13 owns the
+decision and what it costs. Direct messages work without it: a conversation borrows the shared
+network's relay as its rendezvous (D39, below) and ordinary Core §5.2 tier 2 does the punch, so
+a pair behind NAT connect where they can hole-punch and, where they cannot, over IPv6 or not at
+all. The address exchange, and the gate below, are kept here for if it is picked up.
+
 **The rejected alternative, and why.** Having a shared-network node *relay* DM traffic works
 and is worse: it tells a third party which two DM identities are talking. Address exchange
 tells nobody anything they did not already know. Relaying is the fallback, not the mechanism.
@@ -920,9 +926,16 @@ D29 refuses is a relay *designated by two networks*, carrying both as standing i
 The mechanism in this section is not that: it exchanges the DM network's addresses over a
 connection that already exists between two people who have already identified themselves to each
 other, and then opens a direct connection. **No relay is involved at all on the primary path**,
-and nothing is disclosed that either party did not already hold.
+and nothing is disclosed that either party did not already hold. *(That primary path is E13's,
+deferred on 2026-10-05 and not built; what runs today is the borrowed rendezvous below, which
+does involve the shared network's relay.)*
 
-**The fallback is where it gets subtle, and it is bounded rather than free.** When hole-punching
+**The fallback is where it gets subtle, and it is bounded rather than free.** *(This paragraph and
+the next describe a circuit Core §5.2 does not permit, and contradict the correction earlier in
+this section: since Core §5.2's 2026-08-22 change a relay circuit carries the negotiation and
+nothing else, so no relay carries a conversation when a punch fails. What still holds is the
+reservation — a conversation's node holds one on the borrowed relay — and so the IP correlation
+the next paragraph describes. Recorded rather than rewritten, 2026-10-05.)* When hole-punching
 fails and the shared network's bootstrap relay carries the circuit, that relay does briefly serve
 two networks. Two things bound it. A conversation-profile network runs `Discovery::Off` (§2), so
 it has no routing table and joins nobody else's — the structural half of D29's problem, mutual

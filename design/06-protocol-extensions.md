@@ -1,6 +1,6 @@
 # Required Protocol Extensions
 
-**Document status:** v2.7 — §12 records that **E12's obligation on E10 is discharged**: the join
+**Document status:** v2.8 — **E13 is deferred by the user, 2026-10-05: not withdrawn as unnecessary, and not landed.** Direct messages work well enough without it — D39's borrowed rendezvous lets a conversation meet at the shared network's relay and ordinary Core §5.2 tier 2 does the punch, and the `v0.13.6` field test had conversations working end to end across two networks — so what was left of it, address exchange over E10's carrier and the disclosure gate, is not going to be built for now. §13 keeps its reasoning and its gate so that neither is re-derived or forgotten if it is picked up, corrects the claim that without it there are no direct messages across NAT at all (D39 made that false), and states what not building it costs. Previously v2.7 — §12 records that **E12's obligation on E10 is discharged**: the join
 path takes a network profile rather than inferring one from a store whose log has not arrived.
 It came with a half nobody had written down — the profile is needed on every later launch too,
 and replay cannot answer any sooner then than it could at join — so a store caches what it was
@@ -42,7 +42,7 @@ Two rules govern this list:
 | ~~E10~~ | Direct delivery for DM invitations — **landed, in generalised form**, Core §5.1. Asked as `/chat/dm-invite/1.0.0`; landed as `/intranet/direct/1.0.0` carrying a namespace and an opaque payload | — | Done |
 | ~~E11~~ | Namespace registration for extension capabilities — **landed**, Core §2.2.1 | — | Done |
 | ~~E12~~ | Optional peer discovery — **landed**, Core §5.1.1. Asked as tiered liveness; only the behaviour set was the protocol's, and the tiering stayed in the client | — | Done |
-| E13 | Cross-network connection bootstrap, for direct messages — **load-bearing since D29, not merely convenient**: without it a conversation across NAT needs its own relay, so there are no DMs at all (§13) | P2 | Medium |
+| E13 | Cross-network connection bootstrap, for direct messages — **deferred by the user 2026-10-05**, neither withdrawn nor landed. D39's borrowed rendezvous carries direct messages across NAT without it, where the pair can hole-punch; §13 keeps the disclosure gate and states the limit | Nothing while deferred | Medium, if picked up |
 | ~~E14~~ | Idempotent epoch-key delivery — **landed**, Core §3.5.1. Asked as key re-delivery; landed as leaf replacement, because re-delivery restores no group state and re-adding silently breaks revocation | — | Done |
 | E15 | ✅ **Landed 2026-09-09** as Core v1.2. §1.1–§1.3 admit both identity models; §1.2's properties are requirements on the *result*, which independent generation meets by other means. Harness §5 amended with it | Nothing; conformance rather than function | Landed |
 | ~~E16~~ | Self-removal from a group — **landed**, Core §2.5.1. Asked as a capability exemption; landed with a fork-choice exclusion the proposal had not seen, because an entry needing no capability must carry no branch weight | — | Done |
@@ -510,8 +510,9 @@ named.
 
 **What is still owed is the flow rather than the mechanism**, and it is not this item: the
 acts that create a conversation, deliver a request and accept one are the client's
-(`design/05` §3.1), and they wait on E13 for connectivity across NAT. E10 is what makes them
-possible; §13 is what makes them work.
+(`design/05` §3.1). E10 is what makes them possible. *(This said they wait on E13 for
+connectivity across NAT. They did not in the end: D39's borrowed rendezvous carries them, and
+E13 was deferred on 2026-10-05 — §13.)*
 
 ### One more half of it was missing, and building the flow found it
 
@@ -530,8 +531,8 @@ request. The client needs the ack to know when to stop offering.
 §1.2's ownership proof had no serialized form; Core §5.6's invite had no bytes outside the
 join request; both were found by something finally trying to *send* one. This is the same
 shape one layer along, and §5.1 now says it: a mechanism specified from the receiving end is
-specified halfway. Worth expecting when E13 lands, since address exchange is another
-send-shaped thing this carrier will carry.
+specified halfway. Worth expecting if E13 is ever picked up (it is deferred — §13), since
+address exchange is another send-shaped thing this carrier would carry.
 
 **No new extension number.** The spec required an acknowledgement already; what changed is
 that an implementation now surfaces it, plus the sentence making that an obligation rather
@@ -685,7 +686,30 @@ lowered 2026-08-22, which strengthens the argument rather than changing it.)*
 
 ---
 
-## 13. E13 — Cross-Network Connection Bootstrap
+## 13. E13 — Cross-Network Connection Bootstrap — **deferred**
+
+**Deferred by the user on 2026-10-05: not withdrawn as unnecessary, and not landed.** Direct
+messages work well enough without it, and the user may want to add more to them later. D39's
+borrowed rendezvous (built 2026-09-10) lets a conversation's node reserve a circuit on the shared
+network's relay, recomputed at every start, and ordinary Core §5.2 tier 2 does the punch; the
+`v0.13.6` field test (2026-09-16) had conversations working end to end across two networks. What
+was left of this item — the address exchange over E10's carrier, and the disclosure gate — is
+therefore not being built. **Everything below is kept as written**, so that if it is picked up the
+rejected alternative is not re-proposed and **the gate is not forgotten**: it is the one part of
+this item that may not be dropped.
+
+**What not building it costs, as the documents establish it.** A pair who can dial each other
+connect at tier 1 and need nothing from here. A pair behind NAT connect only where the borrowed
+relay lets them hole-punch: that relay carries the DCUtR negotiation and nothing else (Core §5.2),
+so behind symmetric NAT or CGNAT over IPv4 they reach each other over IPv6 or not at all — and a
+conversation has two members, so there is no third member to converge through, which is Core
+§5.2's one case with no remedy. The loan holds only while both are still members of the shared
+network (D39), and only if that network designates a relay at all (`Workspace::borrowable_relay`
+lends nothing otherwise). The relay's operator sees one address holding a reservation as a member
+and as a party to a conversation (`09` §3), which this item's primary path — no relay involved —
+would have avoided. Note that E13 would not have rescued a pair who cannot punch either: a
+simultaneous open is a punch too — it is DCUtR's shape, as the section says below.
+
 
 **Two people starting a conversation cannot be asked to stand up a relay first** (`09` §3).
 The DM network is fresh, has two members and no infrastructure, and the friction of
@@ -698,7 +722,9 @@ failing to build this costs. A relay may not be shared between two of a member's
 conversation between two NATed people would need **its own deployed relay** — which nobody
 will do. So without E13 there are no direct messages across NAT at all, rather than
 direct messages that are tiresome to start. It is a P2 item whose absence removes a feature,
-not one that degrades it.
+not one that degrades it. *(No longer true as of D39, 2026-09-10: borrowing the shared
+network's relay as a rendezvous needs no relay of the conversation's own, and that is why the
+item could be deferred — see the top of this section.)*
 
 The material already exists. `03` §4.3 delivers the DM invite over a direct peer-to-peer
 stream *inside a shared network*, carrying a voluntary identity link — a signed
@@ -719,7 +745,9 @@ gone. For a direct message the check is tight by construction, since X has two m
 **Rejected alternative:** having a shared-network node relay the DM traffic. It works, needs
 no new mechanism, and is worse — it tells a third party which two identities are conversing,
 where address exchange tells nobody anything they did not know. It remains the *fallback*
-when hole-punching fails, not the mechanism.
+when hole-punching fails, not the mechanism. *(Not the fallback either, since Core §5.2's
+2026-08-22 correction: a relayed circuit carries the negotiation and nothing else, so there is
+no fallback when a punch fails — `09` §3.)*
 
 **Acceptance:** an address request naming a network the requester is not a member of is
 refused; a bootstrapped connection carries no shared-network identity into the new network;
@@ -992,8 +1020,9 @@ P0   — nothing; E3 turned out to need no protocol change
 P1   E2 → E4 ✅ ; E9 ✅, E11 ✅ (independent, small).  E5 landed here, ahead of its phase
 P1   E12 ✅ (independent of everything else; landed as its protocol half only)
 P1   E14 ✅ (independent, small — and a joiner stalls forever without it)
-P2   E7   (depends on E2's ChannelRotation) ; E10 (independent, small) ; E13 (pairs with E10,
-          and gates DMs across NAT entirely rather than easing them — §13)
+P2   E7   (depends on E2's ChannelRotation) ; E10 ✅ (independent, small)
+—    E13  deferred by the user 2026-10-05 (§13); D39's borrowed rendezvous carries DMs across
+          NAT without it, where the pair can punch
 P3   E6   — lands when it lands
 P4   E8
 —    E15  (blocks nothing; land it beside the credentials and backup work `00` §5 carries as a

@@ -24,6 +24,30 @@ Kept because this project keeps re-learning the same lessons and paying for them
 
 ---
 
+- **2026-10-05** — **E13 is deferred by the user, not withdrawn and not landed.** The user's
+  reason, closely: it is fine as it is, direct messages work well enough for now, and more may
+  be added to them later. What made that possible is D39: since 2026-09-10 a conversation borrows
+  the shared network's relay as its rendezvous and ordinary Core §5.2 tier 2 does the punch, and
+  the `v0.13.6` field test had conversations working end to end across two networks. What was
+  left of E13 — address exchange over E10's carrier, and the disclosure gate — is not being built.
+
+  Recorded as *deferred* rather than *withdrawn* on purpose. Withdrawn is what E1 and E3 were:
+  found unnecessary. E13 is not unnecessary, it is not wanted yet, and the difference is the gate
+  — addresses for network X only to a member of X, verified by replay — which is the half that
+  turns the mechanism into an unlinkability oracle if anybody builds the exchange and forgets it.
+  So `design/06` §13 keeps its text whole and leads with the deferral.
+
+  Writing it down found the documents still saying what D39 had already made false: that without
+  E13 two NATed people could not converse at all (`design/06` §13 and §0, `distributed-intranet/
+  CLAUDE.md`). The honest limit is narrower and is Core §5.2's own: a pair behind NAT connect
+  where the borrowed relay lets them punch, and otherwise over IPv6 or not at all — with no third
+  member to converge through, since a conversation has two. E13 would not have changed that part;
+  a simultaneous open is a punch too. What it would have changed is that the shared relay's
+  operator sees one address reserved both as a member and as a party to a conversation. Two
+  passages still described the relay carrying a conversation when a punch fails — `design/09` §3's
+  bounded-fallback paragraph and spec 07 §1.5's metadata bullet — which Core §5.2 has refused since
+  2026-08-22; the first is marked, the second corrected in spec 07 v0.9.
+
 - **2026-10-05** — **A record of a kind this build does not know is kept rather than taking its
   segment with it**, which is what spec 07 §3.7 has always said.
 

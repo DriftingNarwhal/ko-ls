@@ -536,8 +536,10 @@ impl Workspace {
     /// **It designates no relay, and that is D29 rather than an omission.** A
     /// relay is never shared between two of a member's networks, and a fresh
     /// two-person network has no infrastructure of its own — so a conversation
-    /// reaches its peer over the connection the shared network already has
-    /// (E13, `design/09` §3), never by naming a relay here.
+    /// borrows the shared network's relay as its rendezvous (D39,
+    /// [`Self::borrowable_relay`], `design/09` §3), never by naming a relay here.
+    /// E13's address exchange would have needed no relay at all; it is deferred
+    /// (`design/06` §13).
     pub fn create_conversation(&self, label: &str) -> Result<Store, String> {
         // **Anchored at the workspace, before any store exists.** The account
         // belongs to the installation rather than to a network, so whoever

@@ -1565,9 +1565,9 @@ fn a_conversation_declares_its_profile_and_a_server_deliberately_does_not() {
         kols_core::NetworkProfile::Conversation,
         "a conversation declares itself, because the rule keys off the declaration"
     );
-    // D29: a conversation designates no relay of its own. It reaches its peer
-    // over the connection the shared network already has (E13), and naming one
-    // here is exactly the sharing D29 refuses.
+    // D29: a conversation designates no relay of its own. It borrows the shared
+    // network's relay as its rendezvous (D39) rather than naming one, and naming
+    // one here is exactly the sharing D29 refuses.
     assert!(conversation_state.policy.bootstrap_relays.is_empty());
 }
 

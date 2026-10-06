@@ -66,8 +66,8 @@ client always builds against whatever is on `main` next door rather than against
 anybody has written down. What belongs here is the rule and not the number.
 
 **This client stays on the path dependency**, and `design/07` S1's instruction to switch to a tag
-"once the protocol changes have landed and stabilised" is not yet met: E7, E10 and E13 are P2 and
-unbuilt, so the extensions are still moving. The tag is for consumers who are not sitting in this
+"once the protocol changes have landed and stabilised" is not yet met: E7 is P2 and unbuilt, so
+the extensions are still moving. The tag is for consumers who are not sitting in this
 workspace.
 
 ### Which document owns what
@@ -107,8 +107,8 @@ sequencing.
 messages turned out not to be on the list at all.
 
 ~~**E10**~~ **landed** → ~~multi-node hosting~~ **landed** → **the direct-message flow**
-(started 2026-09-10) → **E13**, much reduced → **E7** (channel-scoped MLS, large) → O1's
-`Search`.
+(started 2026-09-10) → ~~**E13**~~ **deferred by the user 2026-10-05** → **E7** (channel-scoped
+MLS, large) → O1's `Search`.
 
 **The direct-message flow is under way, and the first thing it settled was where it lives.**
 `design/05` §3's grammar had three of them as boundary *commands* with "creates a network"
@@ -254,11 +254,15 @@ called the liveness tiers unwritten policy, and no document joined those two fac
 messages. It bit a step earlier than messaging, too — minting a conversation's invite needs an
 address, and only a running node knows one (`02` §6.1).
 
-**E13 is smaller than it was.** `design/06` §13 asks for a hand-rolled simultaneous open with the
-shared network's connection as the signalling channel, and libp2p's `dcutr` cannot be driven that
-way. It is not needed: a pair who can dial each other directly need no punch, and a pair who
+**E13 is deferred, by the user on 2026-10-05** — not withdrawn and not landed: direct messages
+work well enough without it. `design/06` §13 owns the decision, the gate kept for if it is picked
+up, and what not building it costs. What follows is why it had already shrunk.
+
+**E13 was smaller than it had been.** `design/06` §13 asks for a hand-rolled simultaneous open
+with the shared network's connection as the signalling channel, and libp2p's `dcutr` cannot be
+driven that way. It is not needed: a pair who can dial each other directly need no punch, and a pair who
 cannot may **borrow** the shared network's relay under D39 and let ordinary tier 2 do the work.
-What is left of E13 is the address exchange over E10's carrier and the disclosure gate — a
+What was left of E13 is the address exchange over E10's carrier and the disclosure gate — a
 member's addresses for network X go only to a member of X, verified by replay.
 
 **E10 landed as a carrier rather than as a chat protocol** — Core §5.1's
@@ -272,8 +276,9 @@ names has to be compared against the pair expected. Building it also found that
 `CommonOwnershipProof` had no serialized form: Core §1.2 called it *shared voluntarily* while
 providing no way to share it, the same gap §5.6 records for invites.
 
-**So E13 is now the only thing between the platform and direct messages**, and what remained on
-this side — the flow rather than the mechanism — is built as of 2026-09-11: starting a
+**E13 is not between the platform and direct messages** (it was written here as the only thing
+that was, until it was deferred), and what remained on this side — the flow rather than the
+mechanism — is built as of 2026-09-11: starting a
 conversation, delivering a request, accepting or declining one, and a window to talk in. E7 is where `design/03` §3.5's
 obligation comes due: placement must rank over a private channel's **roster** rather than over the
 capability ledger, or its effective replica set becomes *roster ∩ top-k* and can be empty. That is
@@ -570,7 +575,7 @@ not, the dependency is named in the owning document.
 
 | # | Owed | Specified in |
 |---|---|---|
-| O1 | Commands for search, voice and stage — each has a line in `design/05` §3's boundary *grammar* and nothing in `kols-api`. **The direct-message half is done and was never going to be commands**, which is the more useful correction: `05` §3.1 settled on 2026-09-10 that the flow is a workspace-level module and that what crosses the boundary is the inbound event alone, since creating a network is `§5.1`'s named example of an act above the per-network boundary. Built 2026-09-11, interface and all. What is left here waits on things that do not exist: `Search` on `03` §6's two indexes, and the voice and stage set on `kols-media`, which has no code and therefore no crate. E13 still gates the NAT'd conversation rather than the flow, since a pair who can dial each other or who borrow a relay under D39 connect without it | `design/05` §3, `design/00` §5 |
+| O1 | Commands for search, voice and stage — each has a line in `design/05` §3's boundary *grammar* and nothing in `kols-api`. **The direct-message half is done and was never going to be commands**, which is the more useful correction: `05` §3.1 settled on 2026-09-10 that the flow is a workspace-level module and that what crosses the boundary is the inbound event alone, since creating a network is `§5.1`'s named example of an act above the per-network boundary. Built 2026-09-11, interface and all. What is left here waits on things that do not exist: `Search` on `03` §6's two indexes, and the voice and stage set on `kols-media`, which has no code and therefore no crate. A NAT'd conversation connects through D39's borrowed relay where the pair can hole-punch; E13 is deferred (`design/06` §13), which states the limit | `design/05` §3, `design/00` §5 |
 | O26 | **`a_joiner_is_admitted_keyed_and_reads_what_was_written_before_they_arrived` does not reproduce, and the row that said it failed deterministically was contradicted by measurement rather than by argument.** Measured 2026-09-10: green alone five times running — the shape it had failed in five times running — green across all twelve of that file at full width, and green across all twelve starved under `taskset -c 0,1`. So the trigger was machine state that did not survive the session, which is what the original attribution already suspected and could not name; the orphans, ports, scratch, disk and fd limit it checked were all clean, so it is still unnamed. **What the session's attribution was pointing at was real, and is fixed** (`design/05` §4): the request for a key was gated on `ready(..).is_ok()` — advertise *and* publish every author log — as a proxy for *am I a member yet*. That is strictly stronger than the question, so a transient failure in the publish half suppressed the ask on every tick for as long as it lasted, which is the same permanent strand the retry schedule was written to remove, reached through the precondition instead of the cadence. The ask now asks replayed state directly, and the startup line reports what actually failed instead of saying *not a member of this network yet* whichever half did — a line that named a cause it had not established, and the reason a session went looking at membership. **Not closed**, because the trigger is unexplained and one green day is not evidence against a state-dependent fault; it no longer precedes the two-machine test | `tests/two_nodes.rs`, `CONTRIBUTING.md` |
 | O20 | **The daemon suite run starved is unreliable**, and `CONTRIBUTING.md` asks for exactly that run. One or two of eleven time out in `wait_for` under `taskset -c 0,1`; each passes alone. Measured at `main` on 2026-08-29, so it is the suite rather than any change — but it makes the starved run a signal to isolate rather than a gate, which is weaker than what it was added for | `CONTRIBUTING.md`, `tests/common::patience` |
 
@@ -618,16 +623,18 @@ as a fix nobody had got round to.
 
 **Protocol extensions.** [`design/06`](design/06-protocol-extensions.md) §0 carries the table
 and is the one place their state is kept. In summary: E1 and E3 withdrawn as unnecessary;
-**E2, E4, E5, E9, E10, E11, E12, E14, E15 and E16 landed**; E7 and E13 are P2, E6 is P3 and E8
-is P4. E10 landed on 2026-09-10 as a generic carrier rather than the chat-named protocol it was
+**E2, E4, E5, E9, E10, E11, E12, E14, E15 and E16 landed**; E7 is P2, E13 is deferred by the user
+(2026-10-05), E6 is P3 and E8 is P4. E10 landed on 2026-09-10 as a generic carrier rather than
+the chat-named protocol it was
 asked as, which is the third time that has happened and is now recorded in `design/06` §10 as a
 pattern to expect.
 
-**E13 is no longer what stands between here and direct messages, and is smaller than it was.**
-What stood there was the client running one node, which is built. And §13's hand-rolled
-simultaneous open is not needed: a pair who can dial each other directly need no punch, and a
-pair who cannot may borrow the shared network's relay (D39) and let ordinary tier 2 do it. What
-remains of E13 is address exchange over E10's carrier plus the disclosure gate. E15 landed on 2026-09-09 beside the credentials work it describes, as it was sequenced
+**E13 is deferred by the user (2026-10-05)**, and what stood between here and direct messages
+was the client running one node, which is built. §13's hand-rolled simultaneous open was not
+needed: a pair who can dial each other directly need no punch, and a pair who cannot may borrow
+the shared network's relay (D39) and let ordinary tier 2 do it. What was left of E13 — address
+exchange over E10's carrier plus the disclosure gate — is not being built; `design/06` §13 keeps
+the gate and states the limit. E15 landed on 2026-09-09 beside the credentials work it describes, as it was sequenced
 to — and took one amendment its proposal had not asked for: the harness spec tested the derived
 *mechanism* rather than the properties Core §1.2 requires, so the conformance suite would have
 failed a client the amended §1.1 calls conformant.
