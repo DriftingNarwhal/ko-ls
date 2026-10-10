@@ -121,6 +121,12 @@ struct App {
     /// The network the member is looking at, which is the only thing that makes
     /// a node hot rather than warm.
     in_view: Mutex<Option<intranet_identity::NetworkId>>,
+    /// Unread counts for every network, kept here because only the shell hears
+    /// every network's events (`kols_node::unread`, `design/09` §1.3, §4.3).
+    ///
+    /// Shared with the event sink, which counts as records arrive; the sink
+    /// outlives any one command.
+    unread: std::sync::Arc<Mutex<kols_node::unread::Unread>>,
     /// Whether this application can be reached after its last window closes.
     ///
     /// True when a tray icon was built (`design/09` §1.11). **False is not a
@@ -680,6 +686,7 @@ fn conversations(app: tauri::State<'_, App>) -> Result<Vec<dto::Conversation>, S
                 shared: shared.clone(),
                 state: "asked".to_owned(),
                 label: name_in(store, &who),
+                unread: 0,
             });
         }
         // One this member offered and the daemon has not delivered, or has
@@ -692,6 +699,7 @@ fn conversations(app: tauri::State<'_, App>) -> Result<Vec<dto::Conversation>, S
                 shared: shared.clone(),
                 state: "offered".to_owned(),
                 label: name_in(store, &who),
+                unread: 0,
             });
         }
     }
@@ -717,6 +725,7 @@ fn conversations(app: tauri::State<'_, App>) -> Result<Vec<dto::Conversation>, S
                     shared: String::new(),
                     state: "joined".to_owned(),
                     label: store.label().unwrap_or_default(),
+                    unread: 0,
                 });
                 continue;
             }
@@ -732,7 +741,20 @@ fn conversations(app: tauri::State<'_, App>) -> Result<Vec<dto::Conversation>, S
             shared: to_hex(shared.as_bytes()),
             state: "joined".to_owned(),
             label,
+            unread: 0,
         });
+    }
+
+    // Counted by the shell, like a network's (`kols_node::unread`). Only a
+    // conversation that exists has a network to count in.
+    let unread = app
+        .unread
+        .lock()
+        .map_err(|_| "the unread lock is poisoned")?;
+    for conversation in &mut found {
+        if let Ok(id) = kols_node::parse_network(&conversation.network) {
+            conversation.unread = unread.total(&id);
+        }
     }
     Ok(found)
 }
@@ -924,6 +946,7 @@ fn conversation_who(
             "adrift".to_owned()
         },
         label,
+        unread: 0,
     })
 }
 
@@ -2168,6 +2191,10 @@ fn networks(app: tauri::State<'_, App>) -> Result<Vec<dto::Network>, String> {
         .map_err(|_| "the workspace lock is poisoned")?
         .as_ref()
         .map(|executor| to_hex(executor.store().network().as_bytes()));
+    let totals = app
+        .unread
+        .lock()
+        .map_err(|_| "the unread lock is poisoned")?;
 
     Ok(app
         .workspace
@@ -2183,7 +2210,12 @@ fn networks(app: tauri::State<'_, App>) -> Result<Vec<dto::Network>, String> {
         // below keyed off a profile cache that only a joiner ever writes. So
         // the member who began a conversation found it filed as a server.
         .filter(|known| known.profile != kols_core::NetworkProfile::Conversation)
-        .map(|known| dto::Network::of(&known, open.as_deref()))
+        .map(|known| {
+            let unread = kols_node::parse_network(&known.id)
+                .ok()
+                .map_or(0, |id| totals.total(&id));
+            dto::Network::of(&known, open.as_deref(), unread)
+        })
         .collect())
 }
 
@@ -2217,6 +2249,8 @@ fn create_network(
         label: name.trim().to_owned(),
         keyed: false,
         open: true,
+        // Nothing has arrived in a network that did not exist a moment ago.
+        unread: 0,
     };
     let id = *executor.store().network();
     *app.open
@@ -2398,6 +2432,10 @@ async fn forget_network(
         }
 
         app.workspace.forget(&id)?;
+        if let Ok(mut unread) = app.unread.lock() {
+            unread.forget(&id);
+            title_workspace(&handle, unread.grand_total());
+        }
     }
 
     Ok(dto::Forgotten {
@@ -2520,6 +2558,71 @@ fn show_network_window(
     .build()
     .map_err(|err| format!("could not open a window for this network: {err}"))?;
     Ok(())
+}
+
+/// Unread counts for one network, per channel hex — `kols_node::unread`.
+///
+/// The network window asks rather than counting, because it hears only its own
+/// network's events while it is open, and a count kept that way was lost for
+/// everything that arrived while it showed something else.
+#[tauri::command]
+fn unread_counts(
+    app: tauri::State<'_, App>,
+    network: String,
+) -> Result<std::collections::BTreeMap<String, u32>, String> {
+    let id = kols_node::parse_network(&network)?;
+    let unread = app
+        .unread
+        .lock()
+        .map_err(|_| "the unread lock is poisoned")?;
+    Ok(unread.channels(&id))
+}
+
+/// Says which channel the calling window is showing, or that it shows none.
+///
+/// Showing a channel reads it, and a channel somebody is looking at gains no
+/// count while they are. Keyed by the window, because the network window and a
+/// conversation window can each be showing something at once.
+#[tauri::command]
+fn viewing(
+    handle: tauri::AppHandle,
+    window: tauri::Window,
+    app: tauri::State<'_, App>,
+    network: Option<String>,
+    channel: Option<String>,
+) -> Result<(), String> {
+    // A network with no channel is a window showing all of it, which is what a
+    // conversation window does.
+    let shown = match network {
+        Some(network) => Some((kols_node::parse_network(&network)?, channel)),
+        None => None,
+    };
+    let from = shown.as_ref().map(|(id, _)| id.short());
+    let mut unread = app
+        .unread
+        .lock()
+        .map_err(|_| "the unread lock is poisoned")?;
+    if unread.viewing(window.label(), shown) {
+        let _ = handle.emit("kols://unread", from.unwrap_or_default());
+        title_workspace(&handle, unread.grand_total());
+    }
+    Ok(())
+}
+
+/// Puts the total unread across every network in the workspace window's title.
+///
+/// `design/09` §1.3: the workspace window may carry a total because it names no
+/// network, so it cannot be mistaken for one — unlike a network window, whose
+/// title carries only its own (D36).
+fn title_workspace(handle: &tauri::AppHandle, total: u32) {
+    let Some(window) = handle.get_webview_window(WORKSPACE_WINDOW) else {
+        return;
+    };
+    let title = match total {
+        0 => "ko-ls".to_owned(),
+        n => format!("ko-ls — {n} unread"),
+    };
+    let _ = window.set_title(&title);
 }
 
 /// Folds the interface's unread count into the network window's title.
@@ -2646,7 +2749,15 @@ fn reconcile_nodes(handle: &tauri::AppHandle, app: &tauri::State<'_, App>) {
         })
         .collect();
 
+    if let Ok(mut unread) = app.unread.lock() {
+        for spec in &specs {
+            unread.track(spec.network, &spec.root);
+        }
+        title_workspace(handle, unread.grand_total());
+    }
+
     let emitter = handle.clone();
+    let unread = std::sync::Arc::clone(&app.unread);
     let sink: kols_node::nodes::TaggedSink = std::sync::Arc::new(
         move |network: &intranet_identity::NetworkId, events: &[kols_api::Event]| {
             let from = network.short();
@@ -2658,7 +2769,9 @@ fn reconcile_nodes(handle: &tauri::AppHandle, app: &tauri::State<'_, App>) {
                 // every time.
                 let name = match event {
                     kols_api::Event::Records {
-                        channel, records, ..
+                        channel,
+                        records,
+                        arrival,
                     } => {
                         // Two facts, because the interface wants different things
                         // from them: *something arrived here* means redraw, and *a
@@ -2675,10 +2788,24 @@ fn reconcile_nodes(handle: &tauri::AppHandle, app: &tauri::State<'_, App>) {
                         // The network first, because a consumer has to know whether
                         // this event is even about the network it is showing before
                         // it looks at anything else in the payload.
-                        let _ = emitter.emit(
-                            "kols://records",
-                            (from.clone(), to_hex(channel.as_bytes()), messages),
-                        );
+                        let channel = to_hex(channel.as_bytes());
+                        // Counted here rather than in a window, because no window
+                        // hears every network — `kols_node::unread`. Emitted
+                        // after the records event, so a window redrawing on it
+                        // already has the messages to show.
+                        let counted = unread.lock().ok().map(|mut unread| {
+                            let changed = unread.arrived(
+                                network,
+                                &channel,
+                                kols_node::unread::news(records, arrival),
+                            );
+                            (changed, unread.grand_total())
+                        });
+                        let _ = emitter.emit("kols://records", (from.clone(), channel, messages));
+                        if let Some((true, total)) = counted {
+                            let _ = emitter.emit("kols://unread", from.clone());
+                            title_workspace(&emitter, total);
+                        }
                         continue;
                     }
                     kols_api::Event::Governance { .. } | kols_api::Event::Adopted { .. } => {
@@ -2821,12 +2948,21 @@ fn main() {
                 tauri::async_runtime::handle().inner().clone(),
             )),
             in_view: Mutex::new(None),
+            unread: std::sync::Arc::default(),
             outlives_windows: Mutex::new(false),
             claim: Mutex::new(Some(claim)),
             relay: Mutex::new(None),
             reorg: Mutex::new(None),
         })
         .on_window_event(|window, event| {
+            // A window that is gone is showing nothing, so what it showed can
+            // gain a count again (`kols_node::unread`).
+            if let tauri::WindowEvent::Destroyed = event {
+                if let Ok(mut unread) = window.state::<App>().unread.lock() {
+                    unread.window_gone(window.label());
+                }
+                return;
+            }
             let tauri::WindowEvent::CloseRequested { api, .. } = event else {
                 return;
             };
@@ -2871,6 +3007,8 @@ fn main() {
             me,
             channels,
             sidebar,
+            unread_counts,
+            viewing,
             reorg,
             create_category,
             rename_category,

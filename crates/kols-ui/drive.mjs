@@ -122,6 +122,10 @@ const answers = {
   // The count the interface hands the shell, which composes the title from it
   // and from replayed state — D36, `design/09` §1.3.
   set_unread: ({ unread }) => { unreadSent.push(unread); return null; },
+  // Unread is counted by the shell now (`kols_node::unread`), so the window asks
+  // for it and says what it is showing.
+  unread_counts: () => unreadAnswer,
+  viewing: (args) => { viewed.push(args); return null; },
   show_workspace: () => null,
   shared_relays_for_new_network: () => sharedRelays,
   set_relays: () => null,
@@ -144,6 +148,8 @@ let offer = {
 const saved = [];
 const started = [];
 const unreadSent = [];
+let unreadAnswer = {};
+const viewed = [];
 const asked = [];
 // Empty unless a check is exercising the shared-relay warning.
 let sharedRelays = [];
@@ -428,10 +434,35 @@ say("hovering a marked message clears it", rows().every((f) => !f), JSON.stringi
 // from replayed state and this supplies only the number (`design/09` §1.3).
 // What is asserted is therefore the call, not the string: a document that could
 // produce the string would be the thing D36 forbids.
+//
+// **The shell counts; this window asks.** A records event alone no longer
+// counts anything here — that was how a message in a network the window was not
+// showing went uncounted. The shell says the counts moved, and the window
+// re-reads its own network's.
 await listeners["kols://records"]({ payload: [null, "c2", true] });
+await settled();
+say("a records event alone counts nothing in the window",
+    !unreadSent.some((n) => n > 0), JSON.stringify(unreadSent));
+unreadAnswer = { c2: 1 };
+await listeners["kols://unread"]({ payload: "ffffffff" });
+await settled();
+say("a count that moved in another network is not this window's",
+    !unreadSent.some((n) => n > 0), JSON.stringify(unreadSent));
+await listeners["kols://unread"]({ payload: "aa11bb22" });
 await settled();
 say("unread reaches the shell, which owns the title",
     unreadSent.at(-1) === 1, JSON.stringify(unreadSent.at(-1)));
+say("and the channel carries the shell's count",
+    [...el("channel-list").querySelectorAll(".unread-count")].map((b) => b.textContent).join() === "1",
+    [...el("channel-list").querySelectorAll(".unread-count")].map((b) => b.textContent).join());
+const viewedBefore = viewed.length;
+[...el("channel-list").querySelectorAll("button")]
+  .find((b) => b.querySelector(".unread-count"))
+  ?.dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
+await settled();
+say("opening a channel tells the shell it is being read",
+    viewed.length > viewedBefore && viewed.at(-1)?.channel === "c2",
+    JSON.stringify(viewed.slice(viewedBefore)));
 say("and this document never sets a title itself",
     titles.length === 0, JSON.stringify(titles));
 
@@ -1078,6 +1109,22 @@ await settled();
 say("the workspace lists what this installation belongs to",
     wsEl("networks").querySelectorAll("li").length === 2,
     `${wsEl("networks").querySelectorAll("li").length} rows`);
+
+// ── unread on a row, `09` §1.3 ──────────────────────────────────────────
+//
+// Counted by the shell for every network, including ones no window shows.
+const badges = () =>
+  [...wsEl("networks").querySelectorAll("li")].map((li) => li.querySelector(".unread-count")?.textContent ?? "");
+say("a row with nothing unread shows no number at all", badges().every((b) => b === ""), JSON.stringify(badges()));
+networksAnswer = networksAnswer.map((n, i) => ({ ...n, unread: i === 1 ? 3 : 0 }));
+await wsListeners["kols://unread"]({ payload: "bbbbbbbb" });
+await settled();
+say("a network nobody has open shows what arrived in it",
+    JSON.stringify(badges()) === JSON.stringify(["", "3"]), JSON.stringify(badges()));
+networksAnswer = networksAnswer.map((n) => ({ ...n, unread: 0 }));
+await wsListeners["kols://unread"]({ payload: "bbbbbbbb" });
+await settled();
+say("and stops once it is read", badges().every((b) => b === ""), JSON.stringify(badges()));
 say("and a network not yet keyed into says so rather than looking broken",
     [...wsEl("networks").querySelectorAll(".workspace-note")].some((n) => n.textContent.includes("not keyed")),
     "");

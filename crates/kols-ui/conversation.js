@@ -149,6 +149,10 @@ async function start() {
     fail("this window was opened without a conversation");
     return;
   }
+  // This window shows the whole conversation, so it reads all of it and nothing
+  // arriving while it is open is unread (`kols_node::unread`). The shell
+  // forgets this when the window closes.
+  void invoke("viewing", { network }).catch(() => {});
   await drawWho();
   await drawMessages();
   setInterval(() => {

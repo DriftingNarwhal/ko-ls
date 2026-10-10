@@ -62,11 +62,11 @@ function said(outcome) {
 
 /// Draws the list.
 ///
-/// One row per network, and for now that is all: the row contents `09` §1.3
-/// specifies — unread, whether this node holds a connection, the tier and when
-/// a cold one last looked — need shell state that does not exist yet, and a row
-/// that displayed a zero it had not earned would be making exactly the claim
-/// that section forbids.
+/// One row per network, carrying what `09` §1.3 specifies as the shell comes to
+/// know it. **Unread** is here, counted by the shell (`kols_node::unread`).
+/// Whether this node holds a connection, the tier, and when a cold one last
+/// looked are still to come — and a row that displayed a zero it had not earned
+/// would be making exactly the claim that section forbids.
 async function draw() {
   await drawNetworks();
   await drawConversations();
@@ -98,6 +98,7 @@ async function drawNetworks() {
     button.className = "workspace-open";
     button.textContent = network.label || network.id.slice(0, 12);
     button.addEventListener("click", () => void open(network.id));
+    button.append(...unreadBadge(network.unread));
 
     const note = document.createElement("span");
     note.className = "workspace-note";
@@ -151,6 +152,7 @@ async function drawConversations() {
       id.textContent = it.who.slice(0, 8);
       open.append(id);
     }
+    open.append(...unreadBadge(it.unread));
 
     if (it.state === "joined") {
       open.addEventListener("click", () => void openConversation(it));
@@ -164,6 +166,19 @@ async function drawConversations() {
     list.append(item);
   }
   el("conversations-empty").hidden = found.length > 0;
+}
+
+/// A row's unread count, or nothing at all when there is none.
+///
+/// Weight for a glance and a number when you look (`09` §4.3), the same badge
+/// the network window draws beside a channel. Nothing rather than a `0`, so a
+/// row never shows a number that has not been earned.
+function unreadBadge(count) {
+  if (!count) return [];
+  const badge = document.createElement("span");
+  badge.className = "unread-count";
+  badge.textContent = count > 99 ? "99+" : String(count);
+  return [badge];
 }
 
 /// What a row says about where a conversation has got to.
@@ -541,6 +556,12 @@ listen("kols://conversations", () => {
 // Being keyed into a network changes what its row says, and a join being
 // answered changes whether there is a row at all.
 listen("kols://keys", () => void drawNetworks());
+// The shell counted something, or something was read. Whichever network it
+// was, its row is in one of these two lists.
+listen("kols://unread", () => {
+  void drawNetworks();
+  void drawConversations();
+});
 listen("kols://joins", () => void drawNetworks());
 
 /// How often to ask again. Slower than the network window's two seconds,

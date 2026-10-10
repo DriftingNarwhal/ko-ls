@@ -375,16 +375,20 @@ pub struct Network {
     pub keyed: bool,
     /// Whether it is the one currently open.
     pub open: bool,
+    /// How many unread messages it holds across every channel, counted by the
+    /// shell (`kols_node::unread`, `design/09` §1.3).
+    pub unread: u32,
 }
 
 impl Network {
     /// Converts one known network.
-    pub fn of(known: &kols_node::workspace::Known, open: Option<&str>) -> Self {
+    pub fn of(known: &kols_node::workspace::Known, open: Option<&str>, unread: u32) -> Self {
         Self {
             id: known.id.clone(),
             label: known.label.clone(),
             keyed: known.keyed,
             open: open == Some(known.id.as_str()),
+            unread,
         }
     }
 }
@@ -1005,4 +1009,7 @@ pub struct Conversation {
     pub state: String,
     /// What to show, which is a display name and never an identifier.
     pub label: String,
+    /// How many unread messages it holds, counted by the shell
+    /// (`kols_node::unread`). Zero for a request, which has no network yet.
+    pub unread: u32,
 }

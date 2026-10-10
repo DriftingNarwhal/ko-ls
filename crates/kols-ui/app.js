@@ -1968,19 +1968,6 @@ el("messages").addEventListener("scroll", () => {
   if (reachedTop(el("messages"))) void reachBack();
 });
 
-/// Unread counts, per channel, for this person on this machine.
-///
-/// Local by construction and deliberately so: what somebody has read is not a
-/// fact about the network, and writing it to the log would publish a reading
-/// habit to every member. `localStorage` is per-origin and per-device, which is
-/// exactly the scope wanted.
-///
-/// Keyed by network, since one window opens several and a channel id is only
-/// unique within one.
-function unreadKey() {
-  return `kols:unread:${state.me?.network ?? "none"}`;
-}
-
 function seenKey() {
   return `kols:seen:${state.me?.network ?? "none"}`;
 }
@@ -2127,18 +2114,17 @@ function recallSeen() {
   }
 }
 
-function rememberUnread() {
+/// Unread counts, per channel, for the network in this window.
+///
+/// **Counted by the shell, not here** (`kols_node::unread`). This window hears
+/// only its own network's events while it is open, so a count kept here missed
+/// everything that arrived in a network while the window showed another — and
+/// with a node per network (`design/09` §2), that was most of it. Still local
+/// to this machine: what somebody has read is not a fact about the network.
+async function recallUnread() {
+  const network = state.me?.network;
   try {
-    localStorage.setItem(unreadKey(), JSON.stringify(state.unread));
-  } catch {
-    // A window that cannot store this still counts unread for the session.
-    // Losing it on restart is worth less than failing to draw anything.
-  }
-}
-
-function recallUnread() {
-  try {
-    state.unread = JSON.parse(localStorage.getItem(unreadKey()) ?? "{}") ?? {};
+    state.unread = network ? (await invoke("unread_counts", { network })) ?? {} : {};
   } catch {
     state.unread = {};
   }
@@ -2203,11 +2189,14 @@ async function announce() {
 /// there is nowhere else to go and back from.
 async function openChannel(id, { arriving = false } = {}) {
   if (arriving) state.holding = null;
-  // Reading it is what marks it read. Done before the render so the count is
-  // gone by the time the sidebar is drawn below.
+  // Reading it is what marks it read, and the shell keeps the count, so it is
+  // told. Cleared here too, before the render, so the count is gone by the time
+  // the sidebar is drawn below rather than a round trip later.
+  if (id !== state.current && state.me?.network) {
+    void invoke("viewing", { network: state.me.network, channel: id }).catch(() => {});
+  }
   if (state.unread[id]) {
     delete state.unread[id];
-    rememberUnread();
     void announce();
   }
   state.current = id;
@@ -3324,20 +3313,21 @@ async function watch() {
   await listen("kols://records", async (event) => {
     // `[network, channel, messages]` now — the network first, because every
     // event carries one and the consumer has to check it before anything else.
-    const [network, channel, messages] = event.payload;
+    const [network] = event.payload;
     if (!mine(network)) return;
-    // Unread is driven by arrival rather than by scanning, which is what makes
-    // it free: the node reports what it learned, and a channel nobody is
-    // looking at gains a count. It survives the app being closed for the same
-    // reason — the node was not running either, so it learns the backlog on the
-    // next start and reports it then.
-    if (messages && channel !== state.current) {
-      state.unread[channel] = (state.unread[channel] ?? 0) + 1;
-      rememberUnread();
-      drawSidebar(state.sidebar);
-      await announce();
-    }
     if (state.current) await openChannel(state.current);
+  });
+
+  // Unread is driven by arrival rather than by scanning, and counted by the
+  // shell, which hears every network (`kols_node::unread`): a channel nobody is
+  // looking at gains a count, and it survives the app being closed because the
+  // node learns the backlog on its next start. This window re-reads its own
+  // network's counts when the shell says they moved.
+  await listen("kols://unread", async (event) => {
+    if (!mine(event.payload)) return;
+    await recallUnread();
+    drawSidebar(state.sidebar);
+    await announce();
   });
 
   // Channels, permissions and names all come out of replay, so anything that
@@ -3510,7 +3500,7 @@ async function start() {
   drawMe(me);
   // After `drawMe`, which is what puts the network id in `state.me` — the key
   // these are stored under.
-  recallUnread();
+  await recallUnread();
   recallSeen();
   void announce();
   watchRelay();

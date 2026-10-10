@@ -152,6 +152,7 @@ pub mod replica;
 pub mod secret;
 pub mod serve;
 pub mod store;
+pub mod unread;
 pub mod workspace;
 
 /// Reads an identity id out of the 64 hex characters that display it.

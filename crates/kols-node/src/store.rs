@@ -3148,7 +3148,11 @@ fn remove_if_present(path: impl AsRef<Path>) -> Result<(), StoreError> {
     }
 }
 
-fn write_atomically(root: &Path, path: impl AsRef<Path>, bytes: &[u8]) -> Result<(), StoreError> {
+pub(crate) fn write_atomically(
+    root: &Path,
+    path: impl AsRef<Path>,
+    bytes: &[u8],
+) -> Result<(), StoreError> {
     use std::sync::atomic::{AtomicU64, Ordering};
     static NEXT: AtomicU64 = AtomicU64::new(0);
 
