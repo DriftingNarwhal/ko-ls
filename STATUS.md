@@ -1,6 +1,6 @@
 # ko-ls — Status
 
-**Updated:** 2026-10-05
+**Updated:** 2026-10-10
 **Phase:** P2 has started. P1's register was cleared, both working branches merged on 2026-09-09,
 and the client now **runs a node per network** rather than one for whichever is in view — which is
 what direct messages were actually waiting on, and what `v0.13.1` carries. The flow itself was
@@ -87,7 +87,7 @@ sequencing.
 | Keying tiers, private channels, direct messages, search leakage | [`design/03`](design/03-confidentiality.md) |
 | Voice, video, stage, media transport | [`design/04`](design/04-realtime.md) |
 | Crate layout, the `kols-api` boundary, the node loop, local state, testing | [`design/05`](design/05-client-architecture.md) |
-| Every change the protocol still owes, with acceptance criteria — E1–E16 | [`design/06`](design/06-protocol-extensions.md) |
+| Every change the protocol still owes, with acceptance criteria — E1–E17 | [`design/06`](design/06-protocol-extensions.md) |
 | How the project got from a finished design to first code — F/S items, P0 | [`design/07`](design/07-build-plan.md) |
 | Encoding conformance obligations and the `kols-core` module map | [`design/08`](design/08-record-encoding.md) |
 | Navigation, liveness tiers, presence honesty, settings, theming | [`design/09`](design/09-interface.md) |
@@ -579,12 +579,11 @@ not, the dependency is named in the owning document.
 | # | Owed | Specified in |
 |---|---|---|
 | O1 | Commands for search, voice and stage — each has a line in `design/05` §3's boundary *grammar* and nothing in `kols-api`. **The direct-message half is done and was never going to be commands**, which is the more useful correction: `05` §3.1 settled on 2026-09-10 that the flow is a workspace-level module and that what crosses the boundary is the inbound event alone, since creating a network is `§5.1`'s named example of an act above the per-network boundary. Built 2026-09-11, interface and all. What is left here waits on things that do not exist: `Search` on `03` §6's two indexes, and the voice and stage set on `kols-media`, which has no code and therefore no crate. A NAT'd conversation connects through D39's borrowed relay where the pair can hole-punch; E13 is deferred (`design/06` §13), which states the limit | `design/05` §3, `design/00` §5 |
-| O28 | **A segment manifest that understates its length still has its chunks fetched before it is refused.** Readers enforce `chat:segment-max-bytes` from the manifest's declared length (O27, closed 2026-10-06), and storage refuses bytes that do not match it — but only once every chunk is held. A list longer than its byte count is refused outright (`NetError::Implausible`), which bounds how many chunks; how large each is, up to the transport's 16 MiB, is unbounded until it arrives. Closing it needs a byte budget in the protocol's `FetchPlan` that aborts a fetch past the ceiling, which is a distributed-intranet change and is not started | `kols-net::publish::within_ceiling`, spec 07 §2.2 |
 | O26 | **`a_joiner_is_admitted_keyed_and_reads_what_was_written_before_they_arrived` does not reproduce, and the row that said it failed deterministically was contradicted by measurement rather than by argument.** Measured 2026-09-10: green alone five times running — the shape it had failed in five times running — green across all twelve of that file at full width, and green across all twelve starved under `taskset -c 0,1`. So the trigger was machine state that did not survive the session, which is what the original attribution already suspected and could not name; the orphans, ports, scratch, disk and fd limit it checked were all clean, so it is still unnamed. **What the session's attribution was pointing at was real, and is fixed** (`design/05` §4): the request for a key was gated on `ready(..).is_ok()` — advertise *and* publish every author log — as a proxy for *am I a member yet*. That is strictly stronger than the question, so a transient failure in the publish half suppressed the ask on every tick for as long as it lasted, which is the same permanent strand the retry schedule was written to remove, reached through the precondition instead of the cadence. The ask now asks replayed state directly, and the startup line reports what actually failed instead of saying *not a member of this network yet* whichever half did — a line that named a cause it had not established, and the reason a session went looking at membership. **Not closed**, because the trigger is unexplained and one green day is not evidence against a state-dependent fault; it no longer precedes the two-machine test | `tests/two_nodes.rs`, `CONTRIBUTING.md` |
 | O20 | **The daemon suite run starved is unreliable**, and `CONTRIBUTING.md` asks for exactly that run. One or two of eleven time out in `wait_for` under `taskset -c 0,1`; each passes alone. Measured at `main` on 2026-08-29, so it is the suite rather than any change — but it makes the starved run a signal to isolate rather than a gate, which is weaker than what it was added for | `CONTRIBUTING.md`, `tests/common::patience` |
 
-O2, O3, O4, O5, O6, O7, O8, O9, O10, O12, O13, O14, O15, O17, O18, O21, O22, O23, O24 and O27 are
-closed. What each was, and what closing it turned up, is in [`docs/log.md`](docs/log.md). The
+O2, O3, O4, O5, O6, O7, O8, O9, O10, O12, O13, O14, O15, O17, O18, O21, O22, O23, O24, O27 and O28
+are closed. What each was, and what closing it turned up, is in [`docs/log.md`](docs/log.md). The
 numbers are retired rather than reused, so the log stays readable.
 
 **O4, O5 and O7 left this table on 2026-09-09 rather than being deleted from it**, and the
@@ -617,7 +616,7 @@ as a fix nobody had got round to.
 | Crate | State |
 |---|---|
 | `kols-core` | Encoding, author logs, merge, collision recovery, chat policy, channel structure, `sidebar_order`, reader-side limits, and `Scope` — the one construction of a capability's name, used by the writer and the resolver alike, and the direct-message request payload with the identity-link check no platform can make for it. 158 tests |
-| `kols-net` | Publish and fetch over a running node, refusing a segment past the network's ceiling from its manifest alone. Four two-node tests |
+| `kols-net` | Publish and fetch over a running node, refusing a segment past the network's ceiling from its manifest alone, and holding one that understates its length to what it declares through the fetch (`design/06` §17). Five two-node tests |
 | `kols-api` | The whole boundary — all three of `design/05` §3's properties held. 25 commands, 11 events, 50 tests, and the consent drift test is guarded at both ends: a new command stops the suite compiling until it is sampled, which is how `LeaveNetwork` was caught unsampled the moment it existed |
 | `kols-node` | `kols`, its node daemon, the executor, the store and the workspace — the window's entire backend, and the largest crate here at 222 tests. Seventeen of them run over a live wire between separate processes (`two_nodes`, `three_nodes`, `relay`); the rest cover the workspace, the store, roles and grants, invites, names, records and the paged read |
 | `kols-app` | The Tauri shell, holding a workspace, an executor for whichever network is open, and **the supervisor running a node for every network** (`design/09` §2). Builds `kols-desktop`. 11 tests, one of which resolves the webview's ACL against the real configuration — the boundary whose failure produces no output |
@@ -627,7 +626,7 @@ as a fix nobody had got round to.
 
 **Protocol extensions.** [`design/06`](design/06-protocol-extensions.md) §0 carries the table
 and is the one place their state is kept. In summary: E1 and E3 withdrawn as unnecessary;
-**E2, E4, E5, E9, E10, E11, E12, E14, E15 and E16 landed**; E7 is P2, E13 is deferred by the user
+**E2, E4, E5, E9, E10, E11, E12, E14, E15, E16 and E17 landed**; E7 is P2, E13 is deferred by the user
 (2026-10-05), E6 is P3 and E8 is P4. E10 landed on 2026-09-10 as a generic carrier rather than
 the chat-named protocol it was
 asked as, which is the third time that has happened and is now recorded in `design/06` §10 as a

@@ -64,6 +64,9 @@ pub fn fetch_segment(
     dek: &Dek,
     max_bytes: usize,
 ) -> Result<Segment, NetError> {
+    if node.object_overran(&manifest_cid) {
+        return Err(NetError::Overran);
+    }
     let manifest_bytes = node
         .chunk_store()
         .get(&manifest_cid)
@@ -98,18 +101,18 @@ pub fn fetch_segment(
 /// to come first for a second reason too, since `decode` reserves the declared
 /// length up front.
 ///
-/// **What it does not stop**, said here because the rule reads stronger than
-/// this holds: a manifest that *understates* its length. `decode` refuses one,
-/// since the bytes must match, but only once every chunk is held, so its chunks
-/// are fetched first. Refusing a list longer than its byte count bounds how
-/// many there are; how large each is, up to the transport's 16 MiB, only a
-/// byte budget in the fetch could bound (`STATUS.md` O28).
+/// A manifest that *understates* its length passes here and is held to what it
+/// declares by the fetch: [`plan_fetch`] fetches through
+/// `MemberNode::fetch_object`, which keeps no more than the manifest's
+/// ciphertext bound (Storage Spec §4.4 step 6) and reports
+/// [`NetError::Overran`] past it. That bounds what is **kept**; responses in
+/// flight when the fetch stops still arrive, up to one chunk response per
+/// concurrent request.
 ///
-/// **Flagged, twice.** Spec 07 does not say what the ceiling measures; this reads
-/// it as the segment's canonical plaintext, which is what `plaintext_len` is and
-/// what the writer and the executor measure too, so all three agree. And the
-/// implausibility check assumes a chunk is never empty, which the storage spec
-/// does not state; an honest chunker never emits one.
+/// Spec 07 §2.2 says what the ceiling measures: the manifest's declared
+/// `plaintext_len`, which is the segment's canonical plaintext and what the
+/// writer and the executor measure too, so all three agree. The implausibility
+/// check rests on Storage §1.3's rule that no chunk is empty.
 fn within_ceiling(manifest: &intranet_storage::Manifest, max_bytes: usize) -> Result<(), NetError> {
     if manifest.chunks.len() as u64 > manifest.plaintext_len {
         return Err(NetError::Implausible {
@@ -135,8 +138,12 @@ fn within_ceiling(manifest: &intranet_storage::Manifest, max_bytes: usize) -> Re
 ///
 /// A segment whose manifest declares more than `max_bytes` wants nothing more:
 /// the manifest is the last thing fetched for it (spec 07 §2.2), and
-/// [`fetch_segment`] refuses it with [`NetError::TooLarge`].
+/// [`fetch_segment`] refuses it with [`NetError::TooLarge`]. Nor does one whose
+/// chunks already overran what it declares ([`NetError::Overran`]).
 pub fn wanted_chunks(node: &MemberNode, manifest_cid: Cid, max_bytes: usize) -> Vec<Cid> {
+    if node.object_overran(&manifest_cid) {
+        return Vec::new();
+    }
     match node.chunk_store().get(&manifest_cid) {
         None => vec![manifest_cid],
         Some(bytes) => match intranet_storage::Manifest::from_bytes(bytes) {
@@ -159,7 +166,17 @@ pub fn known_pointer<'a>(
     node.pointer(pointer_id)
 }
 
-/// Convenience: the identity's own view of what it should fetch next.
+/// Asks for whatever this segment still needs: its manifest, or the chunks the
+/// manifest names.
+///
+/// The chunks go through `MemberNode::fetch_object`, which keeps no more bytes
+/// for them than the manifest declares (Storage Spec §4.4 step 6). That is what
+/// holds an understated manifest to the ceiling [`wanted_chunks`] judged it
+/// against.
+///
+/// **Flagged:** the manifest itself has no manifest to bound it, so it is
+/// fetched as a plain chunk, up to the transport's per-message ceiling, and
+/// neither spec bounds a manifest's size (spec 07 §2.2 says so).
 pub fn plan_fetch(
     node: &mut MemberNode,
     reader: &PerNetworkIdentity,
@@ -167,8 +184,17 @@ pub fn plan_fetch(
     concurrency: usize,
     max_bytes: usize,
 ) {
-    let wanted = wanted_chunks(node, manifest_cid, max_bytes);
-    if !wanted.is_empty() {
-        node.fetch_chunks(wanted, reader, concurrency);
+    if wanted_chunks(node, manifest_cid, max_bytes).is_empty() {
+        return;
+    }
+    let manifest = node
+        .chunk_store()
+        .get(&manifest_cid)
+        .and_then(|bytes| intranet_storage::Manifest::from_bytes(bytes).ok());
+    match manifest {
+        Some(manifest) => {
+            node.fetch_object(manifest_cid, &manifest, reader, concurrency);
+        }
+        None => node.fetch_chunks([manifest_cid], reader, concurrency),
     }
 }

@@ -1,6 +1,6 @@
 # Required Protocol Extensions
 
-**Document status:** v2.8 — **E13 is deferred by the user, 2026-10-05: not withdrawn as unnecessary, and not landed.** Direct messages work well enough without it — D39's borrowed rendezvous lets a conversation meet at the shared network's relay and ordinary Core §5.2 tier 2 does the punch, and the `v0.13.6` field test had conversations working end to end across two networks — so what was left of it, address exchange over E10's carrier and the disclosure gate, is not going to be built for now. §13 keeps its reasoning and its gate so that neither is re-derived or forgotten if it is picked up, corrects the claim that without it there are no direct messages across NAT at all (D39 made that false), and states what not building it costs. Previously v2.7 — §12 records that **E12's obligation on E10 is discharged**: the join
+**Document status:** v2.9 — **E17 added and landed, in generalised form**, 2026-10-10. The client judged spec 07 §2.2's segment ceiling from a manifest's declared length, and a manifest that understated it had every chunk fetched and kept before storage refused the mismatch (O28). Asked for as a byte budget on the segment fetch; landed as a rule of every object fetch, Storage v1.3 §4.4 step 6, with the budget derived from the manifest itself rather than passed in by the caller. That is the fourth chat-shaped need to become a platform-shaped mechanism, after E2, E9 and E10. §17 records it and states what it does not bound. The sections after it are renumbered: Sequencing is now §18. Previously v2.8 — **E13 is deferred by the user, 2026-10-05: not withdrawn as unnecessary, and not landed.** Direct messages work well enough without it — D39's borrowed rendezvous lets a conversation meet at the shared network's relay and ordinary Core §5.2 tier 2 does the punch, and the `v0.13.6` field test had conversations working end to end across two networks — so what was left of it, address exchange over E10's carrier and the disclosure gate, is not going to be built for now. §13 keeps its reasoning and its gate so that neither is re-derived or forgotten if it is picked up, corrects the claim that without it there are no direct messages across NAT at all (D39 made that false), and states what not building it costs. Previously v2.7 — §12 records that **E12's obligation on E10 is discharged**: the join
 path takes a network profile rather than inferring one from a store whose log has not arrived.
 It came with a half nobody had written down — the profile is needed on every later launch too,
 and replay cannot answer any sooner then than it could at join — so a store caches what it was
@@ -46,6 +46,7 @@ Two rules govern this list:
 | ~~E14~~ | Idempotent epoch-key delivery — **landed**, Core §3.5.1. Asked as key re-delivery; landed as leaf replacement, because re-delivery restores no group state and re-adding silently breaks revocation | — | Done |
 | E15 | ✅ **Landed 2026-09-09** as Core v1.2. §1.1–§1.3 admit both identity models; §1.2's properties are requirements on the *result*, which independent generation meets by other means. Harness §5 amended with it | Nothing; conformance rather than function | Landed |
 | ~~E16~~ | Self-removal from a group — **landed**, Core §2.5.1. Asked as a capability exemption; landed with a fork-choice exclusion the proposal had not seen, because an entry needing no capability must carry no branch weight | — | Done |
+| ~~E17~~ | A fetch held to its manifest's declared length — **landed, in generalised form**, Storage §4.4 step 6. Asked as a byte budget for the segment fetch; landed as a rule of every object fetch, derived from the manifest rather than supplied by the caller. Bounds bytes kept, not bytes received | — | Done |
 
 ---
 
@@ -1013,7 +1014,57 @@ to other members as a member who left rather than as one who is not connected.
 
 ---
 
-## 17. Sequencing
+## 17. E17 — A Fetch Held to Its Manifest's Declared Length ✅ **landed, in generalised form**
+
+**The segment ceiling held only against honest authors.** Spec 07 §2.2 bounds a segment by
+`chat:segment-max-bytes`, and since O27 (closed 2026-10-06) this client judges that bound from
+the manifest's declared `plaintext_len`, before any chunk is asked for. Storage refuses an object
+whose chunks do not decrypt to the declared length, but only once it holds every chunk. So a
+manifest declaring one byte had all of its chunks fetched and kept first. Refusing a list
+longer than its byte count (`NetError::Implausible`) bounded how many chunks there were, but not
+how large each was, up to the transport's 16 MiB per response. That was `STATUS.md`'s O28.
+
+**What was asked, and what landed.** The need was a byte budget on the segment fetch. It
+landed as a rule of every object fetch, Storage v1.3 §4.4 step 6: a requester fetching an
+object's chunks from its manifest keeps no more than the manifest's **ciphertext bound**,
+`plaintext_len` plus a fixed per-chunk encryption overhead (§1.2: 40 bytes in the reference
+implementation), and stops asking once that is passed. The budget comes from the manifest
+rather than from a number the caller supplies, which is what makes it storage's rule rather than
+chat's. It is the fourth time a chat-shaped request became a platform-shaped mechanism, after E2,
+E9 and E10 (§10). Choosing that form was the implementing session's design choice, not the
+user's. The user asked for O28 to be done. Spec 07 v0.12 records it in its §7 and says in §2.2
+how the ceiling is held.
+
+Two details from the spec carry the weight. Only verified bytes count, so a bad holder cannot
+use up an honest object's allowance. And a chunk that another object still wants is not
+abandoned for the liar's sake. A requester SHOULD remember an overrun object, which matters here:
+`serve` re-plans on a timer, and without the memory every tick would pay the allowance again.
+
+**Client side.** `kols_net::plan_fetch` fetches a segment's chunks through
+`MemberNode::fetch_object`. `wanted_chunks` and `fetch_segment` consult
+`MemberNode::object_overran`, and an overrun segment is refused with `NetError::Overran`, which
+`refuses()` counts as final. Test: `kols-net/tests/two_nodes.rs`
+`a_manifest_that_understates_its_length_is_held_to_it_by_the_fetch`.
+
+**What it does not bound, stated because the rule reads stronger than this:**
+
+- **Bytes kept, not bytes received.** Responses already in flight when the budget runs out still
+  arrive, up to one chunk response (the codec's 16 MiB ceiling) per concurrent request.
+- **The manifest itself is fetched unbudgeted**, since nothing declares its size. Spec 07 §2.2
+  flags that no spec bounds a manifest's size, and so does `kols-net`'s `plan_fetch`.
+- **The overrun memory is in-process only.** A restart costs one more allowance per such object.
+- **Chunks kept before the budget ran out stay in the store**, within the bound.
+
+**Acceptance:** Storage states the bound and the harness spec tests it (Harness v1.5 §4: an
+understated manifest is held to its bound with its remaining chunks not requested, a corrupt
+chunk does not consume the allowance, and a chunk shared with an honest object still arrives);
+`intranet-storage`'s `FetchPlan` and `intranet-transport`'s `MemberNode::fetch_object` enforce
+it; and a reader of an understated segment keeps no chunk past the bound. All of these were met
+on 2026-10-10.
+
+---
+
+## 18. Sequencing
 
 ```
 P0   — nothing; E3 turned out to need no protocol change
@@ -1028,6 +1079,7 @@ P4   E8
 —    E15  (blocks nothing; land it beside the credentials and backup work `00` §5 carries as a
           release gate and `02` §6.3 shapes, which is what it describes)
 —    E16 ✅ (landed; the client half of leaving a network is O22 and waits on nothing)
+—    E17 ✅ (landed 2026-10-10 as Storage §4.4 step 6; found by O28, which it closed)
 ```
 
 E9 is small and unblocks the rest. E2 is the first item requiring real spec work.
@@ -1047,7 +1099,7 @@ consumer written against the old shape would have been another thing to migrate.
 
 ---
 
-## 18. What This Design Deliberately Does Not Ask For
+## 19. What This Design Deliberately Does Not Ask For
 
 Recorded so the boundary is visible, and so nobody adds them under the impression they
 were oversights:

@@ -1432,6 +1432,7 @@ pub async fn serve(
             NodeEvent::FetchComplete {
                 received,
                 unavailable,
+                ..
             } => {
                 sink(&absorb_segments(
                     &store,

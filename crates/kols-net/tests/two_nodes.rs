@@ -522,3 +522,46 @@ async fn a_manifest_naming_more_chunks_than_bytes_is_refused_before_any_is_wante
         "and it is final, not a segment still arriving"
     );
 }
+
+#[tokio::test]
+async fn a_manifest_that_understates_its_length_is_held_to_it_by_the_fetch() {
+    // O28. A manifest declaring ten bytes over three 2,000-byte chunks passes
+    // both manifest checks — it is under the ceiling, and names no more chunks
+    // than bytes — so only the fetch can hold it to what it declares. Before
+    // Storage §4.4 step 6 every chunk was fetched and kept, and the length
+    // mismatch was found only at decode.
+    let (mut a, _, mut b, peer) = pair().await;
+    let chunks: Vec<_> = (0..3u8)
+        .map(|n| {
+            let cid = a.store_chunk(vec![n; 2_000]);
+            a.announce_chunk(cid);
+            cid
+        })
+        .collect();
+    let manifest = intranet_storage::Manifest {
+        chunks: chunks.clone(),
+        plaintext_len: 10,
+    };
+    let cid = a.store_chunk(manifest.canonical_bytes());
+    a.announce_chunk(cid);
+
+    assert!(
+        fetch(&mut b, &mut a, &peer, cid).await,
+        "both rounds complete"
+    );
+    assert!(b.chunk_store().get(&cid).is_some(), "the manifest arrived");
+    for chunk in &chunks {
+        assert!(
+            b.chunk_store().get(chunk).is_none(),
+            "no chunk past the declared length is kept: {}",
+            chunk.short()
+        );
+    }
+    let refusal = fetch_segment(&b, cid, &Dek::from_bytes([5u8; 32]), CEILING).unwrap_err();
+    assert!(matches!(refusal, NetError::Overran), "{refusal:?}");
+    assert!(refusal.refuses(), "and it is final");
+    assert!(
+        wanted_chunks(&b, cid, CEILING).is_empty(),
+        "so nothing more of it is wanted, and a re-plan fetches nothing"
+    );
+}

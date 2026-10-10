@@ -62,12 +62,9 @@ pub enum NetError {
     /// The manifest names more chunks than it declares bytes, which no honest
     /// one does, since every chunk holds at least one.
     ///
-    /// The cheap half of holding an *understated* length to the ceiling. Storage
-    /// refuses a length that does not match the bytes, but only once they are
-    /// all held, so a manifest declaring one byte over a long chunk list is
-    /// otherwise fetched in full before it is refused. This bounds the list. It
-    /// does not bound the chunks' own sizes, which only a byte budget in the
-    /// fetch itself could (`STATUS.md` O28).
+    /// Refused from the manifest alone, before anything is fetched. The chunks'
+    /// own sizes are bounded by the fetch instead ([`NetError::Overran`]).
+    /// Spec 07 §2.2.
     #[error("segment manifest names {chunks} chunk(s) for {declared} byte(s)")]
     Implausible {
         /// How many chunks it names.
@@ -75,6 +72,15 @@ pub enum NetError {
         /// How many bytes it declares.
         declared: u64,
     },
+    /// The segment's chunks held more than its manifest declares, so the fetch
+    /// stopped there and kept nothing past it — Storage Spec §4.4 step 6.
+    ///
+    /// The other half of holding an *understated* length to the ceiling: the
+    /// declared length is what [`NetError::TooLarge`] judged, and this is the
+    /// fetch holding the author to it. The node remembers the object and does
+    /// not fetch it again.
+    #[error("segment's chunks hold more than its manifest declares")]
+    Overran,
 }
 
 impl NetError {
@@ -82,6 +88,9 @@ impl NetError {
     /// not yet held. A refusal is final: nothing more about it is wanted, so a
     /// caller stops waiting for it rather than queueing it again.
     pub const fn refuses(&self) -> bool {
-        matches!(self, Self::TooLarge { .. } | Self::Implausible { .. })
+        matches!(
+            self,
+            Self::TooLarge { .. } | Self::Implausible { .. } | Self::Overran
+        )
     }
 }

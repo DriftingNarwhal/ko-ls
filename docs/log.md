@@ -24,6 +24,53 @@ Kept because this project keeps re-learning the same lessons and paying for them
 
 ---
 
+- **2026-10-10** — **O28 is closed: an understated segment manifest is held to its declared
+  length by the fetch, and the fix landed in storage rather than in chat.** Done at the user's
+  request that day.
+
+  **What it was.** Since O27 a reader judges `chat:segment-max-bytes` from a manifest's
+  declared `plaintext_len`. Storage refuses bytes that do not match the declared length, but only
+  once every chunk is held, so a manifest declaring one byte had all its chunks fetched and kept
+  first, each up to the transport's 16 MiB.
+
+  **Where it landed, and whose choice that was.** The budget is derived from the manifest's own
+  declared length, not from a number the caller passes in. That makes it a generic storage
+  rule rather than a chat-shaped one: Storage v1.3 §4.4 step 6, recorded as E17 in spec 07 v0.12
+  §7 and `design/06` §17. It is the fourth time a chat-shaped need became a platform-shaped
+  mechanism, after E2, E9 and E10. That form was the implementing session's design choice, not
+  the user's. In `distributed-intranet`, `FetchPlan` gained `extend_within`, `admit`,
+  `overrun_objects` and `over_budget`; `Manifest` gained `ciphertext_bound` and
+  `CHUNK_OVERHEAD_BYTES`; and `MemberNode` gained `fetch_object` and `object_overran`. Here,
+  `plan_fetch` fetches chunks through `fetch_object`, `wanted_chunks` and `fetch_segment` honour
+  `object_overran`, and an overrun segment is refused with `NetError::Overran`, which `refuses()`
+  counts as final.
+
+  **Two things the next change to this path would otherwise re-learn.** The transport's
+  `request_chunk` shares its response arm with the fetch plan, so a gate in the plan must ignore
+  chunks it does not track. The review caught a version that refused them. And a caller that
+  re-plans on a timer (`serve.rs`) turns any per-attempt bound into a per-tick cost unless the
+  refusal is remembered. That is why the overrun is remembered, and why storage's step 6 says
+  SHOULD remember.
+
+  **What it does not stop, said because the rule reads stronger than this holds.** It bounds
+  bytes kept, not bytes received: responses already in flight still arrive, up to one chunk
+  response (the codec's 16 MiB) per concurrent request. The manifest chunk itself is fetched
+  unbudgeted, since nothing declares its size. That is flagged in spec 07 §2.2 and in
+  `publish.rs`. The overrun memory is in-process only, so a restart costs one more allowance per
+  such object. Chunks kept before the budget ran out stay in the store, within the bound.
+
+  **Measured.** DI gate 719/719, and ko-ls 460 passed with 4 ignored. Clippy and fmt were clean in
+  both. Each new live test was mutation-checked: with the budget disabled, the ko-ls test
+  `a_manifest_that_understates_its_length_is_held_to_it_by_the_fetch` fails at its "no chunk
+  kept" assertion, and when corrupt bytes are charged against the allowance, the DI corrupt-chunk
+  test fails. During the gate run, build output reached 18.1 GB against the 12 GB budget. The
+  sweep brought it back to 11.1 GB.
+
+  **Noticed and not fixed.** `intranet-storage`'s `ChunkSpec::CEILING` is 256 MiB, and a chunk's
+  maximum is four times the network's `target_chunk_size`, but the wire's `MAX_CHUNK_BYTES` is
+  16 MiB. So a network whose target is above 4 MiB would produce chunks that no peer can read.
+  Tracked in the workspace, not here, because it is the protocol's.
+
 - **2026-10-06** — **O27 is closed, and a replayed presence beat is refused**, both on the user's
   decision that day.
 
