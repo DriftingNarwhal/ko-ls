@@ -227,10 +227,20 @@ error line: a request sent is the flow working.
 three states need evidence nothing currently collects — *delivered* is provable only because
 the recipient became a holder, and *read* is a claim their client may withhold — and a window
 drawing two ticks it had not earned would be making the exact claim §1.8 spends its length
-refusing to make about a decline. Also not built: group conversations (`03` §4.4), the row
-contents `09` §1.3 specifies — unread per network, the connection dot, the tier and a cold
-row's staleness all need shell state that does not exist yet — and the second network window
-§1.5 allows on request.
+refusing to make about a decline. Also not built: group conversations (`03` §4.4), the second
+network window §1.5 allows on request, `09` §1.10's local order (the list sorts by label), and
+§2's cold-poll interval as a setting (it is a constant).
+
+**`09` §1.3's row contents are built**, 2026-10-10: unread per network and conversation with the
+total in the workspace window's title, the connection dot, and the tier — a set-aside control on
+network rows, which nothing in the application had reached, and a set-aside row saying when it
+was last checked. The user chose to count in the shell rather than in the webview, and approved
+the build order. **Building it found that unread had not worked outside the network in view
+since a node ran per network**: the window counted the events it heard and dropped the rest, so
+nobody counted them. That rule, and a store's connected list outliving its node, are in
+`design/05` §1; what the count covers and does not is `09` §1.3; the lock closing conversation
+windows is §1.12. **Flagged rather than decided:** whether a conversation can be set aside
+(`09` §7.9) — the interface offers it on network rows only.
 
 **Launching it found three defects the suite could not see, and all three were the same
 mistake**: a window drawn once and then trusted. The workspace window had no poll and no
@@ -317,7 +327,7 @@ Where that milestone stands:
 | An interface that survives being used | **done** — the first field test's list, worked through: first-sight marks on messages that land mid-timeline, the roster as a counted dropdown at the top right, the door as a sheet behind a counted button, and settings as a screen rather than a sheet over a dimmed channel (`design/09` §4.1–§4.3) |
 | A stolen laptop that is not an identity | **done** — the release gate `design/00` §5 has carried since before there was code. An account password derives an Argon2id key that *wraps* each per-network seed and never derives one, because a derived identity is checkable offline against ids the network publishes. There is no unwrapped path, including for tests. The window gates on login and starts no node until somebody has logged in, which is the half that decides what the password protects; locking hides the window and leaves the node answering. The export is **portability rather than recovery** — the seed is the member and lives on one disk (`design/02` §6.3) |
 | Belonging to more than one network at a time | **done, and it never had.** The shell ran a single node — for whichever network was in view — and stopped it the moment the member looked elsewhere, so somebody in a dozen networks received in one of them and the other eleven **served nothing**, quietly dropping replica duty they had taken. `design/05` §4 had described a node per network since before there was code; nothing recorded that the shell did not do it. Everything joined is warm unless the member sets it aside, and a set-aside network is *polled* rather than switched off (`design/09` §2) |
-| Knowing which network an event came from | **done** — `Event` says what happened and not where, which was unambiguous while one node reported and is not now. The supervisor tags each batch with the network whose node produced it, and the interface ignores what is not about the network it is showing. Without it a message in a conversation would count against a server's unread and reopen its channel |
+| Knowing which network an event came from | **done** — `Event` says what happened and not where, which was unambiguous while one node reported and is not now. The supervisor tags each batch with the network whose node produced it, and the interface ignores what is not about the network it is showing. Without it a message in a conversation would count against a server's unread and reopen its channel. Ignoring them left unread counted by nobody outside the network in view until the shell took the count over on 2026-10-10 (`design/09` §1.3) |
 | Scrolling back without reading the whole channel | **done** — and bounded rather than merely fast, which is the stronger claim. A settled page costs one file read per record drawn and **no directory listings at all**: 52 reads for a page of fifty, identical at five hundred records and at eight thousand. The guarantee is a count of work asserted equal across a fifteen-fold growth, not a duration that looked flat — `design/09` §4.4 forbids the two-second tick growing at all, which is the storage ceiling's argument about the other resource |
 
 **Runnable.** `kols-desktop` is the product (`design/00` D30); `kols` is a development tool
@@ -619,8 +629,8 @@ as a fix nobody had got round to.
 | `kols-core` | Encoding, author logs, merge, collision recovery, chat policy, channel structure, `sidebar_order`, reader-side limits, and `Scope` — the one construction of a capability's name, used by the writer and the resolver alike, and the direct-message request payload with the identity-link check no platform can make for it. 158 tests |
 | `kols-net` | Publish and fetch over a running node, refusing a segment past the network's ceiling from its manifest alone, and holding one that understates its length to what it declares through the fetch (`design/06` §17). Five two-node tests |
 | `kols-api` | The whole boundary — all three of `design/05` §3's properties held. 25 commands, 11 events, 50 tests, and the consent drift test is guarded at both ends: a new command stops the suite compiling until it is sampled, which is how `LeaveNetwork` was caught unsampled the moment it existed |
-| `kols-node` | `kols`, its node daemon, the executor, the store and the workspace — the window's entire backend, and the largest crate here at 222 tests. Seventeen of them run over a live wire between separate processes (`two_nodes`, `three_nodes`, `relay`); the rest cover the workspace, the store, roles and grants, invites, names, records and the paged read |
-| `kols-app` | The Tauri shell, holding a workspace, an executor for whichever network is open, and **the supervisor running a node for every network** (`design/09` §2). Builds `kols-desktop`. 11 tests, one of which resolves the webview's ACL against the real configuration — the boundary whose failure produces no output |
+| `kols-node` | `kols`, its node daemon, the executor, the store, the workspace and the unread counts the shell keeps for every network — the window's entire backend, and the largest crate here at 232 tests. Seventeen of them run over a live wire between separate processes (`two_nodes`, `three_nodes`, `relay`); the rest cover the workspace, the store, roles and grants, invites, names, records and the paged read |
+| `kols-app` | The Tauri shell, holding a workspace, an executor for whichever network is open, **the supervisor running a node for every network** (`design/09` §2), and the unread counts, since it is the one place that hears every network's events (`design/05` §1). Builds `kols-desktop`. 11 tests, one of which resolves the webview's ACL against the real configuration — the boundary whose failure produces no output |
 | `kols-ui` | The interface: a page and a script per window (`app.js`, `workspace.js`, `conversation.js`) and one stylesheet, holding no keys, no sockets and no files |
 | `kols-store` | The read-side projection, **built and switched on**: the schema, the range and target queries, the stored rate verdict and its fingerprint. 14 tests — six compare its verdicts against `kols_core::withheld` itself rather than a second implementation of the fold, and eight walk a channel whose records share a reading, which is the boundary a bare clock reading cannot cut. This row said 19 until 2026-09-09, while its own breakdown summed to 14 |
 | `kols-media` | Not created. A crate is made when there is code for it — an empty one is a claim that something exists |

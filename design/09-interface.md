@@ -1,6 +1,6 @@
 # Interface
 
-**Document status:** v0.39 — §1.12's note that `05` §1.1 needed amending now says it was, in `05` v1.35 on 2026-10-10; the amendment had been owed since this section was written. Previously v0.38 — §3 records that the address exchange it describes as the DM bootstrap is **E13, deferred by the user on 2026-10-05**, and is not built: direct messages reach each other through D39's borrowed rendezvous instead. §3 now says so where the mechanism is described, keeps the disclosure gate for if it is picked up, and marks the bounded-fallback paragraph as describing a circuit Core §5.2 no longer permits. Previously v0.37 — §3 gains relay *management*, which a network had none of: a relay
+**Document status:** v0.40 — §1.3's row contents are **built**, 2026-10-10: unread per network and conversation, the workspace window's total in its title, the connection dot, and the tier with a set-aside row's *last checked*. Building them found that §1.3 and §4.3 had not held since a node ran per network: unread was counted by the network window from the events it heard, so a message in any network it was not showing was counted by nobody. **§4.3's mechanism moves to the shell**, which hears every network's events, and §1.3 states the limits of what it counts. §1.10's set-aside control is placed on network rows and not on conversations, following §2, against a code comment that said otherwise — recorded in §2 and as §7's ninth question rather than settled. §1.12's lock closes conversation windows too, which it had not. §1's *leave or forget* follows the node per network: *leave* wherever a node runs, and a set-aside network's departure is never reported as told. §1.10 says the local order is not built. §1.9's heading, printed twice, is printed once. Previously v0.39 — §1.12's note that `05` §1.1 needed amending now says it was, in `05` v1.35 on 2026-10-10; the amendment had been owed since this section was written. Previously v0.38 — §3 records that the address exchange it describes as the DM bootstrap is **E13, deferred by the user on 2026-10-05**, and is not built: direct messages reach each other through D39's borrowed rendezvous instead. §3 now says so where the mechanism is described, keeps the disclosure gate for if it is picked up, and marks the bounded-fallback paragraph as describing a circuit Core §5.2 no longer permits. Previously v0.37 — §3 gains relay *management*, which a network had none of: a relay
 could be designated and never taken back out, so one that no longer existed was dialled by every
 member, carried in every invite, and fixable by nobody. Each designated relay now has a remove,
 gated on the capability and refusing the last one with the reason. **The client does not remove
@@ -117,6 +117,13 @@ reads **leave** there and **forget** everywhere else. That is not a cosmetic dif
 confirmation spells it out: one tells the network and the other cannot, and a person choosing
 between them should not have to infer which they are getting from whether they happened to open
 it first.
+
+*Which networks have a node changed under this paragraph, and the button followed it on
+2026-10-10.* Since a node runs per network (§2), every network not set aside has one, and
+`forget_network` publishes through whichever is running. So the button reads **leave** wherever
+a node runs, and **forget** for a set-aside network between polls. A set-aside network is never
+reported as told: with no live node the report is *not told*, rather than a count read from
+the last poll's connected list, which would claim the departure reached people it never reached.
 
 **The seed goes either way**, and the seed is the identity (`02` §6.3), so a later join arrives
 as a stranger rather than as the member the log already names. The confirmation says that, and
@@ -282,6 +289,41 @@ native chrome that says which network you are in, and a cross-network total in i
 exactly that. The **workspace window's** title may carry a total, because that window is about
 the set and names no network. An attention request fires from the window the activity belongs
 to when it is open, and from the workspace window when it is not.
+
+**Built 2026-10-10**, all three and the fourth claim's remedy, and building it found that the
+first had not held since a node ran per network (§2).
+
+- **Unread is counted by the shell** (`kols_node::unread`), per network and channel, kept in a
+  file in each store (`<store>/unread`), and §4.3 says why it moved there. One per message
+  arriving *live* or from an author log's *head*; never one arriving by *backfill*, which is
+  history being recovered rather than news; never one in a channel a window is showing. A
+  window says what it shows through a `viewing` command, and a conversation window views its
+  whole network. A row carries its network's total and the **workspace window's title carries
+  the sum**, as the paragraph above allows.
+- **The dot** is lit when this machine's node there is connected to another member, a ring when
+  it runs and is connected to nobody, and absent when no node runs, because then nothing has
+  looked. Every reader asks the supervisor whether the node is live (`Nodes::is_live`) before
+  believing the connected list on disk, because that list is written on connect and disconnect
+  and a node that stops never clears it: a stopped network went on claiming its last run's
+  peers, measured still present 20 s after a fresh node started. A starting node now clears it,
+  and the roster's rings and `forget`'s *how many it went out to* gate on liveness the same way.
+- **The tier** is the set-aside control §1.10 places, and a set-aside row says *set aside · last
+  checked N min ago*, from the wall-clock time of its last poll — not a monotonic age, which
+  after a laptop sleeps makes an hour-old look minutes old, the overstatement this section
+  forbids. A running network set aside counts as checked at that moment. It never says *off*.
+
+**What the count does not cover**, stated at the strength it holds:
+
+- **After an absence it counts one head segment per author.** Older sealed segments arrive by
+  backfill and are not counted, so a long absence in a busy channel under-counts.
+- **A joiner's first sync can count up to a head segment of history per author**, because to a
+  node that has never seen a log, its head *is* the head.
+- **A head-arrived message may count and never render**: one from somebody who may not post
+  there, or one the reader-side limits withhold. The count is taken before that filtering.
+- **A post from the same identity on another device would count** as unread here. That is a
+  single-device assumption, and it holds only until `05` §6's multi-device is built.
+- **Counts the network window kept in its own storage before this were dropped**, not migrated:
+  they start again from zero.
 
 ### 1.4 Two groups, one list, and the split is not this document's
 
@@ -495,7 +537,7 @@ membership to hold the history, so their copy stays theirs and yours goes, and `
 a later conversation a *different* network. So the confirmation says both: this is not a door
 you come back through, and starting another begins empty.
 
-### 1.9 A conversation can stop working, and silence is the wrong way to say so### 1.9 A conversation can stop working, and silence is the wrong way to say so
+### 1.9 A conversation can stop working, and silence is the wrong way to say so
 
 D39 borrows a conversation's rendezvous from the network it was arranged in, recomputed every
 time and never stored, so **a conversation between two people who no longer share a network,
@@ -542,6 +584,15 @@ is how a third ends up guessing.
 What the control says is what §2 decided: set aside means **polled, not off**. A member choosing
 it is choosing slower, not absent, and their machine goes on holding up the replica duty it took
 (`05` §5.1). Saying *off* would describe a state this client deliberately does not have.
+
+**The control is built, 2026-10-10**, on **network rows only**: *set aside* and *bring back*
+through a `set_network_aside` command, which sets the flag and reconciles the nodes. Before it,
+`Store::set_aside` had no caller outside tests, so the cold tier was reachable only by creating
+a file by hand. Conversation rows have no such control, following §2's *never applies to direct
+messages*; whether they should is open (§2, §7.9). **The local order is not built**: the list
+sorts by label (`Workspace::list`), not by the order things were joined and not by anything a
+member chose. A label sort does not reorder itself on activity, so the rule above holds, but a
+rename moves a row.
 
 ### 1.11 Closing a window is not leaving, and not going offline
 
@@ -615,6 +666,10 @@ that becomes two requirements rather than one:
   launch arrives, at the list (§1.13), because it is already there.
 - **The network window is closed rather than hidden**, and that distinction is the security
   half: a hidden window holds a network's drawn state behind a lock that did not clear it.
+- **Conversation windows are closed too**, for the same reason: each shows a conversation's
+  messages. The lock missed them until 2026-10-10, and once the shell counted unread (§1.3) it
+  cost twice — an open conversation window counts as being looked at, so whatever arrived
+  behind the lock would have been counted by nobody.
 - **The tray must show nothing a locked screen would not.** A tray menu listing this
   installation's networks would be a way to read which networks somebody belongs to without
   their password, which is one of the three things §6.3 says the lock protects. So while locked
@@ -701,7 +756,9 @@ DCUtR reason, so holding a connection past it needs traffic or a raised timeout 
 specifically — not a global change.
 
 **Cold poll interval is a user setting, defaulting to 10 minutes.** It never applies to
-direct messages, which are warm whenever the application is running.
+direct messages, which are warm whenever the application is running. *As built (2026-10-10) it
+is not a setting*: the interval is a constant, `kols_node::nodes::POLL_INTERVAL`, at ten
+minutes, and nothing in the interface changes it.
 
 **What this cost, and the half of it that is now fixed.** `MemberBehaviour` used to be a
 fixed struct: every node ran Kademlia, mDNS, identify, ping, relay client, DCUtR and every
@@ -756,6 +813,13 @@ says a conversation is warm whenever the application runs; `05` §4 says idle co
 "should be suspended and woken on demand rather than all held live" and flags that the threshold
 wants measurement. Defaulting everything to warm satisfies the first without having to settle the
 second, and a member who wants a conversation quiet sets it aside exactly as they would a server.
+
+**Flagged (2026-10-10): whether a conversation can be set aside is unsettled**, and the sentence
+above disagrees with this section's own *never applies to direct messages*. The supervisor would
+honour a set-aside conversation like a server (`nodes::tier_for`, whose comment now carries the
+flag), and the interface offers the control on network rows only (§1.10), following *never
+applies*. That choice was made while building the row rather than decided; §7.9 holds the
+question.
 
 **§7's fourth question is answered by asking rather than by inferring.** It asks what "recent"
 means for warm membership. It means nothing now: warm is the default and *set aside* is an
@@ -1243,6 +1307,14 @@ at a glance, and a number once you look. Driven by arrival rather than by scanni
 reports what it learned and a channel nobody is looking at gains a count — which is what makes
 it free and what makes it survive the application being closed, since the node was not running
 either and learns the backlog on the next start.
+
+**The count is kept by the shell, not by a window**, since 2026-10-10 (`kols_node::unread`;
+§1.3 has what counts and its limits). The network window used to count from the events it
+received and discard the rest as not its own. That was right while one node ran, for the
+network in view; once every network ran a node (§2), a message in any network the window was not
+showing was counted by nobody, and the paragraph above did not hold for the networks it most
+needed to. The shell receives every network's events, whichever window is open, so it is the
+one place that can count them. The network window now asks it for its channels' counts.
 
 **What you have not read** is a mark on the individual message, and it cannot be derived from
 the first. **A message is ordered by its author's clock, not by its arrival**, so one written
@@ -1822,3 +1894,8 @@ not a capability.
    subject and currently live in three places, with permissions parked in §4.2's settings
    sheet because nowhere better exists. What that surface is, and whether settings keeps a
    pointer to it or loses the section entirely, is undecided.
+9. **Can a conversation be set aside?** §2 says the cold poll never applies to direct messages,
+   and in the same section says a member who wants a conversation quiet sets it aside like a
+   server. The supervisor would honour it; the interface offers the control on network rows only
+   (§1.10), a choice made while building the row on 2026-10-10 rather than decided. Settling it
+   decides whether a conversation row gets the control or `nodes::tier_for` refuses the flag.

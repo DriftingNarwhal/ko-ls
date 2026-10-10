@@ -24,6 +24,31 @@ Kept because this project keeps re-learning the same lessons and paying for them
 
 ---
 
+- **2026-10-10** — **The workspace row's contents are built, and unread had not worked outside
+  the network in view since a node ran per network.** `design/09` §1.3 asked a row for unread,
+  a connection dot and its tier; the user chose to count unread in the shell rather than in the
+  webview, and approved the build order. Building it found nine things, most of them the same
+  mistake. (1) The network window counted unread from the events it heard and discarded the
+  rest as not its own — right while one node ran, and since 2026-09-10 it meant a message in any
+  other network was counted by nobody, so §1.3 and §4.3 had not held. (2) Backfill arrivals were
+  counted, which made recovered history read as news. (3) `<store>/connected` outlived its
+  node: reproduced, the old list was still there 20 s after a fresh node started; a starting
+  node now clears it, and every reader gates on `Nodes::is_live`. (4) Setting a network aside
+  was unreachable from the application — `Store::set_aside` had no caller outside tests. (5) The
+  workspace's forget wording still said only the open network is told, when every running node
+  publishes. (6) Found in review: forgetting a set-aside network would have reported its
+  departure as going out to the last poll's connected list; with no live node it now reports
+  *not told*. (7) The lock closed the network window and not conversation windows (§1.12), which
+  the shell's count made worse, since an open window counts as looking. (8) Setting a running
+  network aside left it reading as never checked, and the next tick woke it again. (9)
+  Switching the network window to a network with no channels left the old channel counted as
+  viewed. **The lesson worth keeping:** since per-network nodes, anything a window computes from
+  the events it receives is suspect for the networks it is not showing, because the shell is
+  the one place that hears all of them (`design/05` §1). One choice was made while building
+  rather than decided: conversations get no set-aside control, following §2's *never applies to
+  direct messages* over `nodes::tier_for`'s comment saying they could; flagged in the code and
+  in `09` §7.9. Old counts kept in the window's storage were dropped rather than migrated.
+
 - **2026-10-10** — **O28 is closed: an understated segment manifest is held to its declared
   length by the fetch, and the fix landed in storage rather than in chat.** Done at the user's
   request that day.
