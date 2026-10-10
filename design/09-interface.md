@@ -1,6 +1,6 @@
 # Interface
 
-**Document status:** v0.38 — §3 records that the address exchange it describes as the DM bootstrap is **E13, deferred by the user on 2026-10-05**, and is not built: direct messages reach each other through D39's borrowed rendezvous instead. §3 now says so where the mechanism is described, keeps the disclosure gate for if it is picked up, and marks the bounded-fallback paragraph as describing a circuit Core §5.2 no longer permits. Previously v0.37 — §3 gains relay *management*, which a network had none of: a relay
+**Document status:** v0.39 — §1.12's note that `05` §1.1 needed amending now says it was, in `05` v1.35 on 2026-10-10; the amendment had been owed since this section was written. Previously v0.38 — §3 records that the address exchange it describes as the DM bootstrap is **E13, deferred by the user on 2026-10-05**, and is not built: direct messages reach each other through D39's borrowed rendezvous instead. §3 now says so where the mechanism is described, keeps the disclosure gate for if it is picked up, and marks the bounded-fallback paragraph as describing a circuit Core §5.2 no longer permits. Previously v0.37 — §3 gains relay *management*, which a network had none of: a relay
 could be designated and never taken back out, so one that no longer existed was dialled by every
 member, carried in every invite, and fixable by nobody. Each designated relay now has a remove,
 gated on the capability and refusing the last one with the reason. **The client does not remove
@@ -583,8 +583,8 @@ different failures, which is D37's reasoning about theme reset applied to a diff
 mechanism: the tray is the ordinary path, and launching it again is the one that works when
 the desktop has no tray to put an icon in.
 
-**`05` §1.1 needs amending rather than discarding.** It says closing the window *is* the shutdown
-path, and that stops being true here — but everything it required stays required and the
+**`05` §1.1 is amended rather than discarded** (`05` v1.35, 2026-10-10). It said closing the
+window *is* the shutdown path, and that stopped being true here — but everything it required stays required and the
 justification gets broader rather than narrower. Durable writes must still be atomic, because a
 quit, a crash, an operating system ending the session and a power cut are all still ways a
 process stops between a truncate and a fill. What changes is that the ordinary way to stop is now

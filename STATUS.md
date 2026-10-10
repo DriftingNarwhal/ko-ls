@@ -243,13 +243,14 @@ them unlocked and served neither until they clicked one — against `09` §2, an
 reason a conversation nobody has open can be reached at all. Fixed with the events the node
 already emits plus a five-second poll that skips its redraw when nothing changed.
 
-Three consequences will shape the build. A window is a **view**: closing one neither sets a
-network aside nor stops its node, so the application keeps running until somebody quits —
-which makes `05` §1.1's "closing the window is the shutdown path" an amendment rather than a
-deletion, since atomic writes are still owed to a crash. A reused window must **clear its
-native title with its content**, or D36's spoof comes back as a temporal one. And the **tray
-may show nothing a locked screen would not**, or it reads out which networks this installation
-belongs to without the password. None of it is built.
+Three consequences shaped the build, and **all three are built** (2026-09-11, slices 1–2;
+this paragraph said otherwise until 2026-10-10). A window is a **view**: closing one neither
+sets a network aside nor stops its node, so the application keeps running until somebody quits
+— `05` §1.1 (v1.35) is amended rather than deleted, since atomic writes are still owed to a
+crash. A reused window **clears its native title before its content redraws**, or D36's spoof
+would come back as a temporal one (`show_network_window`). And the **tray shows nothing a locked
+screen would not**: its menu is *open* and *quit* and never lists a network, so there is nothing
+to keep in step with the lock.
 
 **The blocker was that the client could only run one node**, and nothing had written that down as
 blocking anything: `design/05` §4 described a node per network as the architecture while `09` §2
