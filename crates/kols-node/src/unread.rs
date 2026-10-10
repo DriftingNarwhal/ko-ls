@@ -56,8 +56,23 @@ impl Unread {
         if self.roots.contains_key(&network) {
             return;
         }
-        self.counts.insert(network, load(root));
+        let mut counts = load(root);
+        // A window may have said what it shows before this network was tracked;
+        // what it is looking at is read, whatever the file kept.
+        for (shown, channel) in self.viewing.values() {
+            if *shown != network {
+                continue;
+            }
+            match channel {
+                Some(channel) => {
+                    counts.remove(channel);
+                }
+                None => counts.clear(),
+            }
+        }
+        self.counts.insert(network, counts);
         self.roots.insert(network, root.to_path_buf());
+        self.persist(&network);
     }
 
     /// Stops tracking a network that has been forgotten. Its file went with its
@@ -316,8 +331,48 @@ mod tests {
         assert!(!unread.arrived(&network(1), "aa", 1), "untracked");
     }
 
+    fn message(author: &intranet_identity::PerNetworkIdentity, n: u32) -> kols_core::Record {
+        let channel = kols_core::server_channel_id(&NetworkId::from_bytes([42; 32]), &[9; 32]);
+        kols_core::Record::create(
+            author,
+            channel,
+            kols_core::Hlc::new(1_700_000_000_000, n),
+            kols_core::RecordBody::Message {
+                body: format!("message {n}"),
+                reply_to: None,
+                attachments: Vec::new(),
+            },
+        )
+    }
+
     #[test]
-    fn history_being_recovered_is_not_news() {
-        assert_eq!(news(&[], &kols_api::Arrival::Backfill { segments: 3 }), 0);
+    fn a_message_is_news_live_or_from_a_head_and_history_is_not() {
+        let author = intranet_identity::MasterSeed::from_entropy([7; 32])
+            .identity_for(&NetworkId::from_bytes([42; 32]))
+            .expect("an identity");
+        let two = vec![message(&author, 1), message(&author, 2)];
+        assert_eq!(news(&two, &kols_api::Arrival::Live), 2, "one per message");
+        assert_eq!(news(&two, &kols_api::Arrival::Head), 2);
+        assert_eq!(
+            news(&two, &kols_api::Arrival::Backfill { segments: 3 }),
+            0,
+            "history being recovered is not news"
+        );
+    }
+
+    #[test]
+    fn what_a_window_already_shows_is_read_when_its_network_is_tracked() {
+        // A window can say what it shows before the first reconcile tracks the
+        // network; the count the file kept for that channel is read.
+        let dir = root("early");
+        save(
+            dir.path(),
+            &[("aa".to_owned(), 5), ("bb".to_owned(), 1)].into(),
+        )
+        .unwrap();
+        let mut unread = Unread::default();
+        unread.viewing("network", Some((network(1), Some("aa".into()))));
+        unread.track(network(1), dir.path());
+        assert_eq!(unread.channels(&network(1)), [("bb".to_owned(), 1)].into());
     }
 }

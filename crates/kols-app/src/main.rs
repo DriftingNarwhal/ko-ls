@@ -622,6 +622,15 @@ fn lock(handle: tauri::AppHandle, _app: tauri::State<'_, App>) {
     if let Some(window) = handle.get_webview_window(NETWORK_WINDOW) {
         let _ = window.close();
     }
+    // Conversation windows too, for the same reason: each shows a conversation's
+    // messages. Missed when they were added, and it mattered twice over once the
+    // shell counted unread — an open one is "being looked at", so everything
+    // that arrived in it behind the lock would have been read by nobody.
+    for (label, window) in handle.webview_windows() {
+        if label.starts_with("conversation-") {
+            let _ = window.close();
+        }
+    }
     if let Some(window) = handle.get_webview_window(WORKSPACE_WINDOW) {
         let _ = window.set_focus();
     }
@@ -2088,10 +2097,11 @@ fn waiting(app: tauri::State<'_, App>) -> Result<Vec<dto::Waiting>, String> {
 /// a bare list of peers answers a question nobody asked: what a person wants to
 /// know is who is here, and the connection is an attribute of each one.
 ///
-/// The marker is honest about a narrow thing — `design/09` §2's hot/warm/cold
-/// tiering does not exist, so this node holds connections to the peers it had
-/// addresses for and not to every member. A member shown as not connected may
-/// be away, unreachable from here, or simply never dialled.
+/// The marker is honest about a narrow thing: this node holds connections to
+/// the peers it had addresses for and not to every member, and none at all
+/// while it is not running (a network set aside, between polls — `design/09`
+/// §2). A member shown as not connected may be away, unreachable from here, or
+/// simply never dialled.
 #[tauri::command]
 fn people(app: tauri::State<'_, App>) -> Result<Vec<dto::Member>, String> {
     app.with(|executor| {
@@ -2385,15 +2395,25 @@ async fn forget_network(
     // Scoped so that nothing holding the store crosses the await below.
     let (announced, reached) = {
         let app = handle.state::<App>();
-        match executor_for(&app, &network) {
-            Ok(executor) => match executor.submit(Command::LeaveNetwork) {
-                Ok(_) => (true, executor.store().connected().len()),
-                // Not fatal, and the reason matters to what is reported: a node
-                // that was never keyed in has nothing to revoke, and refusing
-                // to let it delete its own store would trap it there.
+        // **Only through a running node.** With none — a network set aside,
+        // between polls — nothing would carry the departure before the store is
+        // deleted, and the connected list on disk is the last poll's: reporting
+        // it would tell the member their departure reached people it never
+        // reached, after the dialog they confirmed said it would not be told.
+        let running = app.nodes.lock().is_ok_and(|nodes| nodes.is_live(&id));
+        if !running {
+            (false, 0)
+        } else {
+            match executor_for(&app, &network) {
+                Ok(executor) => match executor.submit(Command::LeaveNetwork) {
+                    Ok(_) => (true, executor.store().connected().len()),
+                    // Not fatal, and the reason matters to what is reported: a node
+                    // that was never keyed in has nothing to revoke, and refusing
+                    // to let it delete its own store would trap it there.
+                    Err(_) => (false, 0),
+                },
                 Err(_) => (false, 0),
-            },
-            Err(_) => (false, 0),
+            }
         }
     };
 
@@ -2448,9 +2468,12 @@ async fn forget_network(
         }
 
         app.workspace.forget(&id)?;
-        if let Ok(mut unread) = app.unread.lock() {
+        let total = app.unread.lock().ok().map(|mut unread| {
             unread.forget(&id);
-            title_workspace(&handle, unread.grand_total());
+            unread.grand_total()
+        });
+        if let Some(total) = total {
+            title_workspace(&handle, total);
         }
     }
 
@@ -2588,8 +2611,8 @@ fn live_of(
     root: &std::path::Path,
 ) -> dto::Live {
     let unread = app.unread.lock().map_or(0, |unread| unread.total(network));
-    let (running, polled) = app.nodes.lock().map_or((false, None), |nodes| {
-        (nodes.is_live(network), nodes.last_polled(network))
+    let (running, checked) = app.nodes.lock().map_or((false, None), |nodes| {
+        (nodes.is_live(network), nodes.last_checked(network))
     });
     let set_aside = kols_node::store::set_aside_in(root);
     dto::Live {
@@ -2597,15 +2620,12 @@ fn live_of(
         connected: running
             .then(|| u32::try_from(kols_node::store::connected_in(root).len()).unwrap_or(u32::MAX)),
         set_aside,
-        // The supervisor keeps a monotonic instant, which says how long ago and
-        // nothing about the clock; turned into a time here, rounded so that the
-        // few milliseconds between two reads cannot change a row's description.
-        checked_at: polled.filter(|_| set_aside).and_then(|at| {
-            let millis = std::time::SystemTime::now()
-                .checked_sub(at.elapsed())?
-                .duration_since(std::time::UNIX_EPOCH)
-                .ok()?
-                .as_millis();
+        // By the wall clock, which the supervisor records beside its monotonic
+        // schedule: an age taken from a monotonic instant after a laptop sleeps
+        // makes an hour-old look a few minutes old. Rounded so a row's
+        // description is stable between reads.
+        checked_at: checked.filter(|_| set_aside).and_then(|at| {
+            let millis = at.duration_since(std::time::UNIX_EPOCH).ok()?.as_millis();
             u64::try_from(millis / 10_000 * 10_000).ok()
         }),
     }
@@ -2673,13 +2693,22 @@ fn viewing(
         None => None,
     };
     let from = shown.as_ref().map(|(id, _)| id.short());
-    let mut unread = app
-        .unread
-        .lock()
-        .map_err(|_| "the unread lock is poisoned")?;
-    if unread.viewing(window.label(), shown) {
+    // The total is read and the lock let go before anything touches a window:
+    // a window closing takes this lock too (`WindowEvent::Destroyed`), and
+    // holding it across a call into the window manager is how two threads end
+    // up waiting on each other.
+    let changed = {
+        let mut unread = app
+            .unread
+            .lock()
+            .map_err(|_| "the unread lock is poisoned")?;
+        unread
+            .viewing(window.label(), shown)
+            .then(|| unread.grand_total())
+    };
+    if let Some(total) = changed {
         let _ = handle.emit("kols://unread", from.unwrap_or_default());
-        title_workspace(&handle, unread.grand_total());
+        title_workspace(&handle, total);
     }
     Ok(())
 }
@@ -2824,11 +2853,14 @@ fn reconcile_nodes(handle: &tauri::AppHandle, app: &tauri::State<'_, App>) {
         })
         .collect();
 
-    if let Ok(mut unread) = app.unread.lock() {
+    let total = app.unread.lock().ok().map(|mut unread| {
         for spec in &specs {
             unread.track(spec.network, &spec.root);
         }
-        title_workspace(handle, unread.grand_total());
+        unread.grand_total()
+    });
+    if let Some(total) = total {
+        title_workspace(handle, total);
     }
 
     let emitter = handle.clone();

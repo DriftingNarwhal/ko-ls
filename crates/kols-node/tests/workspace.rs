@@ -2059,6 +2059,51 @@ fn a_node_starting_clears_who_the_last_run_was_connected_to() {
 }
 
 #[test]
+fn setting_a_running_network_aside_counts_as_having_just_looked() {
+    use kols_node::nodes::{Nodes, POLL_SETTLE, Spec};
+
+    // A network running warm that the member sets aside was looking right up to
+    // that moment. It used to read as never checked, and the next reconcile
+    // woke it again straight away — set aside, then immediately running.
+    let dir = Dir::new("supervisor-set-aside-running");
+    let workspace = Workspace::at(dir.0.clone());
+    let store = workspace.create("was warm", Vec::new()).expect("creates");
+    let id = *store.network();
+    let spec = |set_aside| Spec {
+        network: id,
+        root: store.root().to_path_buf(),
+        set_aside,
+    };
+    let sink: kols_node::nodes::TaggedSink = std::sync::Arc::new(|_, _| {});
+    let seal = kols_node::serve::SEAL_TARGET_BYTES;
+
+    tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+        .expect("a runtime")
+        .block_on(async {
+            let start = std::time::Instant::now();
+            let mut nodes = Nodes::here();
+            nodes.reconcile(&[spec(false)], None, &sink, seal, start);
+            assert_eq!(nodes.running().len(), 1, "warm, and running");
+
+            let later = start + POLL_SETTLE * 2;
+            nodes.reconcile(&[spec(true)], None, &sink, seal, later);
+            assert!(nodes.running().is_empty(), "set aside, it stops");
+            assert!(
+                nodes.last_checked(&id).is_some(),
+                "and it counts as having just looked"
+            );
+
+            nodes.reconcile(&[spec(true)], None, &sink, seal, later);
+            assert!(
+                nodes.running().is_empty(),
+                "so the next tick does not wake it again"
+            );
+        });
+}
+
+#[test]
 fn a_network_the_member_set_aside_is_polled_rather_than_abandoned() {
     use kols_node::nodes::{Nodes, POLL_INTERVAL, POLL_SETTLE, Spec, Tier};
 

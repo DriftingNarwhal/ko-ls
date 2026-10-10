@@ -460,6 +460,8 @@ const viewedBefore = viewed.length;
   .find((b) => b.querySelector(".unread-count"))
   ?.dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
 await settled();
+say("switching networks tells the shell the old channel is no longer looked at",
+    viewed.some((args) => !args.network), JSON.stringify(viewed));
 say("opening a channel tells the shell it is being read",
     viewed.length > viewedBefore && viewed.at(-1)?.channel === "c2",
     JSON.stringify(viewed.slice(viewedBefore)));

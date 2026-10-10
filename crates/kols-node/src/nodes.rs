@@ -149,8 +149,12 @@ pub const POLL_SETTLE: std::time::Duration = std::time::Duration::from_secs(45);
 /// Note there is no case for conversations. §2 says a conversation is warm
 /// whenever the application runs and `05` §4 says idle ones should be suspended;
 /// defaulting everything to warm satisfies the first without having to settle the
-/// second, and a member who wants a conversation quiet sets it aside exactly as
-/// they would a server.
+/// second.
+///
+/// **Flagged:** whether a conversation can be set aside is unsettled. This
+/// function would honour it like a server's, but `09` §2 says the cold poll
+/// "never applies to direct messages", and the shell follows §2 by offering the
+/// control on network rows only (2026-10-10).
 pub fn tier_for(network: &NetworkId, set_aside: bool, in_view: Option<&NetworkId>) -> Tier {
     if in_view == Some(network) {
         return Tier::Hot;
@@ -182,6 +186,12 @@ pub struct Nodes {
     /// Kept for networks that are not running, which is the whole point: a poll
     /// schedule has to survive the node it starts and stops.
     polled: BTreeMap<NetworkId, std::time::Instant>,
+    /// The same moments by the wall clock, for saying *when* rather than *how
+    /// long ago*. Kept apart from `polled` because a monotonic instant does not
+    /// advance while a laptop sleeps on every platform, and an age computed from
+    /// one after a sleep says a poll an hour old happened two minutes ago — the
+    /// overstated freshness `design/09` §1.3 warns a row against.
+    checked: BTreeMap<NetworkId, std::time::SystemTime>,
     /// The runtime nodes are spawned onto.
     ///
     /// # Held rather than taken from the ambient context, and that is a fix
@@ -227,6 +237,7 @@ impl Nodes {
         Self {
             running: BTreeMap::new(),
             polled: BTreeMap::new(),
+            checked: BTreeMap::new(),
             runtime,
         }
     }
@@ -262,13 +273,20 @@ impl Nodes {
     }
 
     /// When a cold network was last woken for a poll, if it has been since this
-    /// supervisor started — `design/09` §1.3's *when it last looked*.
-    ///
-    /// A monotonic instant, so it says how long ago and nothing about the wall
-    /// clock, and it does not survive a restart; a cold network is polled on the
-    /// first reconcile after one, so "not yet" is a short state.
+    /// supervisor started. A monotonic instant, for scheduling; it says how long
+    /// ago and nothing about the wall clock.
     pub fn last_polled(&self, network: &NetworkId) -> Option<std::time::Instant> {
         self.polled.get(network).copied()
+    }
+
+    /// When this machine last looked at a cold network, by the wall clock —
+    /// `design/09` §1.3's *when it last looked*: the start of its last poll, or
+    /// the moment it stopped running when the member set it aside.
+    ///
+    /// It does not survive a restart; a cold network is polled on the first
+    /// reconcile after one, so "not yet" is a short state.
+    pub fn last_checked(&self, network: &NetworkId) -> Option<std::time::SystemTime> {
+        self.checked.get(network).copied()
     }
 
     /// The tier a network is currently being kept at.
@@ -300,6 +318,9 @@ impl Nodes {
     ) {
         let mut wanted: BTreeMap<NetworkId, (&Spec, Tier)> = BTreeMap::new();
         let mut polling: BTreeMap<NetworkId, &Spec> = BTreeMap::new();
+        // Networks that were running, not on a poll, when the member set them
+        // aside: they were looking right up to now, which is as good as a poll.
+        let mut just_set_aside: Vec<NetworkId> = Vec::new();
 
         for spec in specs {
             match tier_for(&spec.network, spec.set_aside, in_view) {
@@ -322,12 +343,22 @@ impl Nodes {
                         // Mid-poll. Leave it alone until it has settled.
                         if !settled {
                             wanted.insert(spec.network, (spec, Tier::Cold));
+                        } else if !self.polled.contains_key(&spec.network) {
+                            // Not a poll at all: a running network the member
+                            // has just set aside. Without this it read as never
+                            // checked, and was woken again on the next tick.
+                            just_set_aside.push(spec.network);
                         }
                     } else if due {
                         polling.insert(spec.network, spec);
                     }
                 }
             }
+        }
+
+        for network in just_set_aside {
+            self.polled.insert(network, now);
+            self.checked.insert(network, std::time::SystemTime::now());
         }
 
         // Stop first, so a network leaving the running set has released its
@@ -357,6 +388,7 @@ impl Nodes {
 
         for (network, spec) in polling {
             self.polled.insert(network, now);
+            self.checked.insert(network, std::time::SystemTime::now());
             self.start(spec, Tier::Cold, events, seal_bytes, now);
         }
     }

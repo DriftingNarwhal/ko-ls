@@ -632,6 +632,10 @@ listen("kols://keys", () => void drawNetworks());
 // The shell counted something, or something was read. Whichever network it
 // was, its row is in one of these two lists.
 listen("kols://unread", () => {
+  // Not while hidden, for the poll's reason below: the next tick after the
+  // window shows again catches up, and every counted message would otherwise
+  // open every store for a list nobody can see.
+  if (el("workspace").hidden) return;
   void drawNetworks();
   void drawConversations();
 });

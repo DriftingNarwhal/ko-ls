@@ -2100,9 +2100,8 @@ function rememberSeen() {
   try {
     localStorage.setItem(seenKey(), JSON.stringify(state.seen));
   } catch {
-    // Same as the unread counts: a window that cannot store this still marks
-    // what arrives while it is running. Losing it on restart is worth less than
-    // failing to draw anything.
+    // A window that cannot store this still marks what arrives while it is
+    // running. Losing it on restart is worth less than failing to draw anything.
   }
 }
 
@@ -2121,6 +2120,19 @@ function recallSeen() {
 /// everything that arrived in a network while the window showed another — and
 /// with a node per network (`design/09` §2), that was most of it. Still local
 /// to this machine: what somebody has read is not a fact about the network.
+/// Removes the counts this window used to keep in its own storage, before the
+/// shell kept them. Nothing reads them any more, and a record of somebody's
+/// reading habits is not worth keeping for nothing.
+function forgetOldUnread() {
+  try {
+    for (const key of Object.keys(localStorage)) {
+      if (key.startsWith("kols:unread:")) localStorage.removeItem(key);
+    }
+  } catch {
+    // Storage that cannot be read cannot be holding anything to remove either.
+  }
+}
+
 async function recallUnread() {
   const network = state.me?.network;
   try {
@@ -2193,7 +2205,10 @@ async function openChannel(id, { arriving = false } = {}) {
   // told. Cleared here too, before the render, so the count is gone by the time
   // the sidebar is drawn below rather than a round trip later.
   if (id !== state.current && state.me?.network) {
-    void invoke("viewing", { network: state.me.network, channel: id }).catch(() => {});
+    const network = state.me.network;
+    void Promise.resolve(state.unviewing)
+      .then(() => invoke("viewing", { network, channel: id }))
+      .catch(() => {});
   }
   if (state.unread[id]) {
     delete state.unread[id];
@@ -3450,7 +3465,17 @@ function clearNetworkView() {
   el("presence-count").textContent = "0";
   el("me-dot").classList.remove("live");
 
+  // Nothing is being looked at until a channel is opened here, and the shell has
+  // to know: a network with no channels yet never opens one, and the channel
+  // left behind would otherwise stay "read" while this window showed somewhere
+  // else (`kols_node::unread`).
+  // Unconditionally: the switch handler clears `state.current` before calling
+  // this, so a guard on it never fired. Kept as a promise that the next
+  // `viewing` waits on, because two calls in flight can land in either order,
+  // and this one landing second would leave the window viewing nothing.
+  state.unviewing = invoke("viewing", {}).catch(() => {});
   state.current = null;
+  state.unread = {};
   state.channels = [];
   state.sidebar = [];
   state.dragging = null;
@@ -3462,9 +3487,8 @@ function clearNetworkView() {
   state.designated = null;
   state.role = null;
   state.waiting = 0;
-  // Per network like the unread counts, and re-read from storage by `start`
-  // under the new network's key. Holding is a property of the visit, and the
-  // visit is over.
+  // Per network, and re-read from storage by `start` under the new network's
+  // key. Holding is a property of the visit, and the visit is over.
   state.seen = {};
   state.holding = null;
   clearTimeout(state.settle);
@@ -3501,6 +3525,7 @@ async function start() {
   // After `drawMe`, which is what puts the network id in `state.me` — the key
   // these are stored under.
   await recallUnread();
+  forgetOldUnread();
   recallSeen();
   void announce();
   watchRelay();
