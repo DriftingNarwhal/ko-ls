@@ -1,9 +1,8 @@
 //! What a running conversation costs while nobody is saying anything.
 //!
-//! `design/09` §2 keeps every conversation warm, and `05` §4 says idle ones
-//! "should be suspended and woken on demand" with a threshold that wants
-//! measuring. Whether a conversation nobody has written in for a week should be
-//! set aside depends on this number, and nobody had taken it.
+//! Written to answer whether every conversation can be kept running; what it
+//! measured fed D41, under which a conversation sleeps until somebody talks
+//! (`design/09` §2). The figures are recorded in `design/05` §4.
 //!
 //! Each run builds `N` two-member conversations the way the app does — Alice
 //! creates each one, Bob redeems a bearer invite for it — and then measures
@@ -30,7 +29,11 @@
 //!         -- --ignored --nocapture
 //!
 //! `KOLS_IDLE_COUNTS` (default `10,25,50`) sets the sizes and `KOLS_IDLE_SECS`
-//! (default 60) how long each idle window is watched.
+//! (default 60) how long each idle window is watched. `RUST_LOG` is honoured,
+//! to stderr, for finding out *what* the traffic is. That is how gossip was
+//! ruled out and the per-tick pull exchanges found to be nearly all of it
+//! (`05` §4). Bytes sent are counted with `ss`, so they need it installed and
+//! are Linux-only; the run stops rather than report zero without it.
 
 use kols_node::nodes::{Nodes, Spec, TaggedSink};
 use kols_node::store::{self, Store};
@@ -68,7 +71,7 @@ struct Sample {
     threads: u64,
     sockets: u64,
     cpu_ticks: u64,
-    loopback_bytes: u64,
+    sent_bytes: u64,
 }
 
 fn status_field(status: &str, key: &str) -> u64 {
@@ -104,22 +107,48 @@ fn sample() -> Sample {
             .and_then(|v| v.parse::<u64>().ok())
             .unwrap_or(0)
     };
-    // Both peers are in this process and dial each other on this machine, so
-    // their traffic is all loopback. Received bytes, since every byte sent
-    // here is also received here.
-    let loopback_bytes = std::fs::read_to_string("/proc/net/dev")
-        .unwrap_or_default()
-        .lines()
-        .find_map(|line| line.trim().strip_prefix("lo:").map(str::to_owned))
-        .and_then(|rest| rest.split_whitespace().next().and_then(|v| v.parse().ok()))
-        .unwrap_or(0);
+    // **This process's own sockets, not the machine's loopback.** Both peers
+    // dial each other here, so their traffic is all loopback — but so is
+    // everything else in the container, and on this dev container that
+    // background ran about 8.5 KB/s, more than a paired conversation itself
+    // (2026-10-10). `ss` reports each TCP socket's bytes sent, and with `-p`
+    // whose it is. A socket closed between two samples takes its count with
+    // it, so a window where connections churn reads low; an idle one does not
+    // churn. TCP alone is all of it because a node listens on TCP only
+    // (`serve.rs`, no QUIC); a QUIC listener would make this read low.
+    //
+    // **Stopped on, not read as zero.** Bob offline really does send nothing,
+    // so a missing `ss` would look exactly like a right answer.
+    let listing = std::process::Command::new("ss")
+        .args(["-tinpH"])
+        .output()
+        .ok()
+        .filter(|out| out.status.success())
+        .map(|out| String::from_utf8_lossy(&out.stdout).into_owned())
+        .expect("`ss` from iproute2 counts the bytes sent; install it to measure");
+    let owner = format!("pid={},", std::process::id());
+    let mut sent_bytes = 0;
+    let mut mine = false;
+    for line in listing.lines() {
+        // A socket's owner is on its first line and its counters on the
+        // indented line after it.
+        if !line.starts_with(char::is_whitespace) {
+            mine = line.contains(&owner);
+        } else if mine {
+            sent_bytes += line
+                .split_whitespace()
+                .find_map(|field| field.strip_prefix("bytes_sent:"))
+                .and_then(|v| v.parse::<u64>().ok())
+                .unwrap_or(0);
+        }
+    }
     Sample {
         at: Instant::now(),
         rss_kib: status_field(&status, "VmRSS:"),
         threads: status_field(&status, "Threads:"),
         sockets,
         cpu_ticks: tick(11) + tick(12),
-        loopback_bytes,
+        sent_bytes,
     }
 }
 
@@ -141,11 +170,8 @@ impl Watched {
         (self.end.cpu_ticks - self.start.cpu_ticks) as f64 / self.seconds()
     }
 
-    fn loopback_per_second(&self) -> f64 {
-        self.end
-            .loopback_bytes
-            .saturating_sub(self.start.loopback_bytes) as f64
-            / self.seconds()
+    fn sent_per_second(&self) -> f64 {
+        self.end.sent_bytes.saturating_sub(self.start.sent_bytes) as f64 / self.seconds()
     }
 }
 
@@ -202,7 +228,7 @@ fn report(
     println!(
         "{label:>7} N={count:<4} linked {linked:>4}/{count:<4} | rss {:>7.1} MiB ({:>6.0} KiB/side) \
          | threads {:>4} ({:>4.1}/side) | sockets {:>5} ({:>4.1}/side) \
-         | cpu {:>5.1}% of a core ({:>5.2}%/side) | loopback {:>9.0} B/s ({:>7.0} B/s/side)",
+         | cpu {:>5.1}% of a core ({:>5.2}%/side) | sent {:>9.0} B/s ({:>7.0} B/s/side)",
         end.rss_kib as f64 / 1024.0,
         per(end.rss_kib, base.rss_kib),
         end.threads,
@@ -211,8 +237,8 @@ fn report(
         per(end.sockets, base.sockets),
         watched.cpu_percent(),
         watched.cpu_percent() / sides.max(1) as f64,
-        watched.loopback_per_second(),
-        watched.loopback_per_second() / sides.max(1) as f64,
+        watched.sent_per_second(),
+        watched.sent_per_second() / sides.max(1) as f64,
     );
 }
 
@@ -349,6 +375,10 @@ fn what_an_idle_conversation_costs_to_keep_running() {
         .filter_map(|n| n.trim().parse().ok())
         .collect();
     let idle: u64 = setting("KOLS_IDLE_SECS", "60").parse().expect("seconds");
+    let _ = tracing_subscriber::fmt()
+        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+        .with_writer(std::io::stderr)
+        .try_init();
 
     tokio::runtime::Builder::new_multi_thread()
         .enable_all()

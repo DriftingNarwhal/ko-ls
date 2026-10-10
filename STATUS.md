@@ -247,12 +247,14 @@ next paragraph.
 (`design/00` §3): a conversation stays its own network but sleeps, with no node, until a knock
 through the shared network wakes it, and sleeps again after an idle timeout of about an hour that
 the user can change. It closes `09` §7.9. `design/09` §2 has the shape and what is still to be
-designed; `design/03` §4.5 the overlap it now needs. Next: find the idle traffic and the
-occasional ten-second delivery, then design the knock.
+designed; `design/03` §4.5 the overlap it now needs. The idle traffic is found: the two-second
+refresh pulls from every connected peer whether anything changed (`design/05` §4). Next: design
+the knock. The occasional ten-second delivery is not reproduced on loopback and wants a relayed,
+NATed setup.
 
 What led to it was **measuring what an idle conversation costs** (`design/05` §4,
 `tests/idle_cost.rs`, ignored by default): per side, about 12 MB, 0.1–0.3% of a core,
-1.8 KB/s each way and ten sockets, loopback only. Measuring found two bugs, both fixed the same
+0.6 KB/s each way and ten sockets, loopback only. Measuring found two bugs, both fixed the same
 day:
 
 - **CPU grew with the square of the networks held.** Every node walked every store in the

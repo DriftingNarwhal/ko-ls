@@ -24,6 +24,20 @@ Kept because this project keeps re-learning the same lessons and paying for them
 
 ---
 
+- **2026-10-10** — **The idle traffic was mostly somebody else's, and the rest is the
+  two-second pull.** The 1.8 KB/s per side measured earlier the same day was the machine's
+  loopback total from `/proc/net/dev`, which counts every process in the container; with
+  nothing of ours running it read about 8.5 KB/s. `tests/idle_cost.rs` now counts this
+  process's own TCP bytes sent through `ss`: about 0.6 KB/s each way per paired side (610 B/s
+  at one conversation, 566 at ten), and nothing when the peer is offline. The cause was
+  confirmed by switching it off rather than by reading: every refresh tick runs three pull
+  exchanges (`sync_with`, `sync_ledger_with`, `sync_pointers_with`) with each connected peer,
+  about 1.1 KB a tick a side whether or not anything changed. Without them, 24 B/s and 0.11% of
+  a core instead of 0.27%. Gossipsub was ruled out with `RUST_LOG=libp2p_gossipsub=debug`; its
+  "Mesh low, needs 6" heartbeat lines are local log noise from a one-peer mesh, not traffic. The
+  ten-second delivery the user saw did not reproduce on loopback and is still unexplained
+  (`design/05` §4 has the two unverified candidates).
+
 - **2026-10-10** — **An idle conversation was measured, the measuring found two bugs, and
   direct messages become ephemeral.** `05` §4 had flagged since before there was code that idle
   conversations "should be suspended and woken on demand" and that the threshold wanted
