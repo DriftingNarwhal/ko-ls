@@ -567,6 +567,8 @@ pub async fn serve(
         }]);
     }
     let mut last_beat = 0i64;
+    // Senders already reported for a beat dated too far ahead (`admit_beat`).
+    let mut reported_ahead = BTreeSet::new();
     let mut announced = BTreeSet::new();
     let mut fetched = BTreeSet::new();
     // Older segments discovered by walking a `previous` chain and not held yet.
@@ -1624,7 +1626,12 @@ pub async fn serve(
             NodeEvent::LiveReceived { topic, payload, .. }
                 if topic == kols_core::presence_topic(store.network()) =>
             {
-                match admit_beat(&store, &payload, crate::chat::now_millis()) {
+                match admit_beat(
+                    &store,
+                    &payload,
+                    crate::chat::now_millis(),
+                    &mut reported_ahead,
+                ) {
                     Ok(Some(beat)) => sink(&[Event::MemberPresence {
                         identity: intranet_crypto::to_hex(beat.who.verifying_key().as_bytes()),
                         state: beat.state.name().to_owned(),
@@ -1633,6 +1640,11 @@ pub async fn serve(
                     // Worth seeing and not worth stopping, the same as a refused
                     // record: either a peer is sending what it should not, or
                     // this node is missing a key it should have.
+                    //
+                    // **Flagged:** a beat that does not open, or is from a
+                    // non-member, is reported on every copy, so replaying one fills
+                    // the screen exactly as rule 5's silent drop exists to prevent.
+                    // Spec 07 §6.4 does not cover it, and it predates the floor.
                     Err(why) => sink(&[Event::Degraded {
                         reason: format!("refused a presence beat: {why}"),
                     }]),
@@ -1834,6 +1846,7 @@ fn publish_own_logs(
     let mut published = 0;
 
     let retention = kols_core::ChatPolicy::of(&state.policy).retain_messages();
+    let segment_max = kols_core::ChatPolicy::of(&state.policy).segment_max_bytes();
     let now = crate::chat::now_millis();
     let spec = ChunkSpec::from_target(64 * 1024);
 
@@ -1901,7 +1914,9 @@ fn publish_own_logs(
             // re-encrypting the whole segment each time, on every sync tick,
             // forever. A segment is encoded once now: when it is sealed, and
             // once more for the head at the end.
-            if should_seal(&log, seal_bytes) && !log.segment().records.is_empty() {
+            if should_seal(&log, seal_bytes, &record, segment_max)
+                && !log.segment().records.is_empty()
+            {
                 let complete = log
                     .publish_current(&identity, &state)
                     .map_err(|err| format!("a stored segment no longer publishes: {err}"))?;
@@ -1974,12 +1989,24 @@ fn publish_own_logs(
 /// republishes the identical chain, where "older than a day *now*" would seal
 /// somewhere new on every restart. It is also why sealing needs no persisted
 /// state of its own — the record sequence is the state.
-fn should_seal(log: &AuthorLog, seal_bytes: usize) -> bool {
+///
+/// **One threshold is not tuning**: a segment may never grow past the network's
+/// `chat:segment-max-bytes`, which readers refuse (spec 07 §2.2), so the open
+/// segment is sealed before a record that would take it over. Under the shipped
+/// values this never fires first — the 4 MiB target seals well inside the 8 MiB
+/// ceiling — so existing chains keep their boundaries; it matters on a network
+/// whose ceiling is lower than this node's target. So the chain is a pure
+/// function of the record sequence **and the ceiling**: a `define-policy`
+/// change to `chat:segment-max-bytes` re-cuts every chain on its next
+/// republish, and a network that had lowered it before readers enforced it
+/// re-cuts once, on upgrade.
+fn should_seal(log: &AuthorLog, seal_bytes: usize, next: &Record, segment_max: usize) -> bool {
     let segment = log.segment();
     if segment.records.is_empty() {
         return false;
     }
-    if segment.canonical_bytes().len() >= seal_bytes {
+    let size = segment.canonical_bytes().len();
+    if size >= seal_bytes || size + kols_core::framed(next).len() > segment_max {
         return true;
     }
     match (segment.records.first(), segment.records.last()) {
@@ -2176,6 +2203,9 @@ fn request_foreign_segments(
         return Ok(());
     };
     let (channels, _) = network::channels(store, &state).map_err(|e| e.to_string())?;
+    // Spec 07 §2.2's ceiling, applied before a chunk is asked for: a manifest
+    // declaring more wants nothing further (`kols_net::wanted_chunks`).
+    let segment_max = kols_core::ChatPolicy::of(&state.policy).segment_max_bytes();
 
     // Every member's log in every channel, computed rather than looked up. This
     // is what derived pointer ids buy: any member can work out where any other
@@ -2220,8 +2250,8 @@ fn request_foreign_segments(
         if node.fetch_in_progress() {
             break;
         }
-        if fetched.insert(cid) || !kols_net::wanted_chunks(node, cid).is_empty() {
-            plan_fetch(node, identity, cid, 4);
+        if fetched.insert(cid) || !kols_net::wanted_chunks(node, cid, segment_max).is_empty() {
+            plan_fetch(node, identity, cid, 4, segment_max);
         }
     }
     Ok(())
@@ -2247,6 +2277,7 @@ fn absorb_segments(
     };
     let (channels, _) = network::channels(store, &state).map_err(|e| e.to_string())?;
     let mut events = Vec::new();
+    let segment_max = kols_core::ChatPolicy::of(&state.policy).segment_max_bytes();
 
     // Loaded once. This reads and opens every stored epoch key, so calling it
     // per (channel, member) meant a long-lived network paid a full directory
@@ -2269,9 +2300,27 @@ fn absorb_segments(
             let Some((index_cid, index_dek)) = resolve(store, node, &mut keys, &index_id)? else {
                 continue;
             };
-            let Ok(index) = fetch_segment(node, index_cid, &index_dek) else {
-                backfill.insert(index_cid);
-                continue;
+            let index = match fetch_segment(node, index_cid, &index_dek, segment_max) {
+                Ok(index) => index,
+                // Refused rather than waited for: spec 07 §2.2's ceiling. Taken
+                // out of the queue too, since a pass that saw it before its
+                // manifest arrived put it there, and a refused object holding a
+                // history slot every tick starves the real backfill.
+                //
+                // **Flagged:** §2.2 says readers enforce the ceiling and not what
+                // refusing costs. Here, and at the head and the walk below, it is
+                // the whole segment — every record in it — and everything behind
+                // it, since the link to the previous segment is inside. The other
+                // reading, refusing the bytes and still walking on by the
+                // per-segment pointers, is possible and was not chosen.
+                Err(err) if err.refuses() => {
+                    backfill.remove(&index_cid);
+                    continue;
+                }
+                Err(_) => {
+                    backfill.insert(index_cid);
+                    continue;
+                }
             };
 
             let head_id = kols_core::author_segment_pointer(channel, &member, index.sequence);
@@ -2280,13 +2329,20 @@ fn absorb_segments(
             };
             // A segment we cannot assemble yet is not an error: the fetch runs
             // in rounds, and the manifest arrives before the chunks it names.
-            let Ok(segment) = fetch_segment(node, cid, &dek) else {
-                // Queued the same way a backfill hop is. Only the index CID is
-                // derivable from public information; everything past it — the
-                // head included — is learned by reading, so this is how a head
-                // segment gets asked for at all.
-                backfill.insert(cid);
-                continue;
+            let segment = match fetch_segment(node, cid, &dek, segment_max) {
+                Ok(segment) => segment,
+                Err(err) if err.refuses() => {
+                    backfill.remove(&cid);
+                    continue;
+                }
+                Err(_) => {
+                    // Queued the same way a backfill hop is. Only the index CID is
+                    // derivable from public information; everything past it — the
+                    // head included — is learned by reading, so this is how a head
+                    // segment gets asked for at all.
+                    backfill.insert(cid);
+                    continue;
+                }
             };
             let one = absorb_chain(
                 store,
@@ -2301,6 +2357,7 @@ fn absorb_segments(
                     keys: &mut keys,
                     backfill,
                     asked,
+                    segment_max,
                 },
             )?;
             took.absorb(one);
@@ -2847,6 +2904,8 @@ struct Walk<'a> {
     backfill: &'a mut BTreeSet<intranet_storage::Cid>,
     /// Whether a member went looking for this history.
     asked: bool,
+    /// The network's `chat:segment-max-bytes`, which every hop is held to.
+    segment_max: usize,
 }
 
 fn absorb_chain(
@@ -2919,9 +2978,15 @@ fn absorb_chain(
         let Some((_, dek)) = resolve(store, node, walk.keys, &previous_id)? else {
             continue;
         };
-        match fetch_segment(node, previous, &dek) {
+        match fetch_segment(node, previous, &dek, walk.segment_max) {
             // Already in the chunk store, so the walk continues for free.
             Ok(older) => current = Some((previous, older)),
+            // Past the ceiling, so refused (spec 07 §2.2). The walk stops here
+            // and takes it out of the queue: the link to what lies behind is
+            // inside the segment this reader will not fetch.
+            Err(err) if err.refuses() => {
+                walk.backfill.remove(&previous);
+            }
             // Not held yet. Queued rather than waited on, and the walk stops
             // here: this is the deepest point reached, so nothing below it
             // exists to keep walking towards.
@@ -3195,7 +3260,7 @@ fn beat_presence(
 /// Returns the beat when it taught this node something, so the caller can say so
 /// once rather than on every heartbeat.
 ///
-/// # The three refusals, and why none of them can move
+/// # The refusals, and why none of them can move
 ///
 /// - **A beat that does not open** is from outside the epoch, so it is not this
 ///   network's business. The seal is what keeps a derivable topic from being a
@@ -3208,6 +3273,14 @@ fn beat_presence(
 ///   because that is a question about replayed governance and `kols-core` holds
 ///   none. A removed member with a copy of the epoch key would otherwise go on
 ///   appearing in the roster.
+/// - **A beat dated outside the skew** (spec 07 §6.4 rule 6). Too far ahead, it
+///   would lift its sender's replay floor out of reach of their honest beats, so
+///   it is refused and said once per sender. Too far behind, it is not news, and
+///   refusing it silently is what stops a captured run being replayed in order
+///   to a receiver that missed it.
+/// - **A beat no later than one already accepted from its sender** (rule 5) is
+///   a copy or a straggler. Dropped without a word: reporting each would let
+///   whoever replays fill somebody's screen.
 ///
 /// A member beating about *themselves* is ignored: this node knows where it is,
 /// and a roster that counted its own beat would answer a different question from
@@ -3216,6 +3289,7 @@ fn admit_beat(
     store: &Store,
     payload: &[u8],
     now: i64,
+    reported_ahead: &mut BTreeSet<intranet_identity::PerNetworkIdentityId>,
 ) -> Result<Option<kols_core::PresenceBeat>, String> {
     let sealed = kols_core::SealedBeat::decode(payload).map_err(|e| e.to_string())?;
     let epoch = store.epoch_key().map_err(|e| e.to_string())?;
@@ -3235,14 +3309,69 @@ fn admit_beat(
         ));
     }
 
+    // **Not too far ahead of this clock.** `at` is what replays are told apart
+    // by, so the newest one accepted becomes a floor the sender's next beat has
+    // to clear. A beat dated next year would set that floor a year out and
+    // silence its sender's honest beats until then. Bounded by the same skew a
+    // record may claim (spec 07 §2.6, `chat:max-future-skew-millis`), so a clock
+    // that is corrected costs at most that much silence.
+    let skew = kols_core::ChatPolicy::of(&state.policy).max_future_skew_millis();
+    match dating(beat.at, now, skew) {
+        Dating::Current => {}
+        // Said once per sender per run, since a beat refused here sets no floor
+        // and every copy of it would otherwise be reported again.
+        Dating::Ahead if reported_ahead.insert(beat.who) => {
+            return Err(format!(
+                "{} sent a beat dated {} ms ahead of this clock",
+                beat.who.short(),
+                beat.at - now
+            ));
+        }
+        Dating::Ahead | Dating::Stale => return Ok(None),
+    }
+
     let who = intranet_crypto::to_hex(beat.who.verifying_key().as_bytes());
-    // **Heard-at rather than the beat's own timestamp.** Clocks disagree, and
-    // `at` is signed by the sender — so a member whose clock reads next year
-    // could pin themselves as present indefinitely with one message.
-    store
-        .record_beat(&who, beat.state, now)
+    // **Heard-at for freshness, `at` for order.** Freshness is judged by this
+    // node's clock, so a member whose clock reads next year cannot pin
+    // themselves present. And a beat no newer than one already accepted from
+    // them is a copy or a straggler, not news: it is dropped without a word,
+    // since saying so on every replay would hand whoever replays a way to fill
+    // somebody's screen.
+    let fresh = store
+        .record_beat(&who, beat.state, now, beat.at)
         .map_err(|e| e.to_string())?;
+    if !fresh {
+        return Ok(None);
+    }
     Ok(Some(beat))
+}
+
+/// Where a beat's own reading sits against this clock (spec 07 §6.4 rule 6).
+#[derive(Debug, PartialEq, Eq)]
+enum Dating {
+    /// Within `skew` either way, give or take one freshness window.
+    Current,
+    /// Further ahead than a record may claim to be (§2.6). Taken, it would
+    /// raise its sender's replay floor out of reach of their honest beats.
+    Ahead,
+    /// Older than any beat still worth hearing: past the skew, plus the window
+    /// a current beat is fresh for. Not news, and refusing it is what stops a
+    /// captured run of beats being replayed to a receiver that missed them.
+    Stale,
+}
+
+/// **Flagged:** `chat:max-future-skew-millis` has no lower bound in spec 07, and
+/// a negative value makes every beat ahead or stale, so nobody is heard. It
+/// predates this rule — the same value holds records — and is left as policy
+/// says rather than clamped here, where only presence would see the clamp.
+fn dating(at: i64, now: i64, skew: i64) -> Dating {
+    if at > now.saturating_add(skew) {
+        Dating::Ahead
+    } else if at < now.saturating_sub(skew.saturating_add(kols_core::FRESH_MILLIS)) {
+        Dating::Stale
+    } else {
+        Dating::Current
+    }
 }
 
 /// Broadcasts this node's own records that have not gone out live yet.
@@ -3575,6 +3704,95 @@ mod tests {
         // content the moment somebody's clock is fast.
         let now = 10 * DAY;
         assert!(!retires(&Retention::Days(1), now + 5 * DAY, now));
+    }
+}
+
+#[cfg(test)]
+mod beat_tests {
+    use super::{Dating, dating};
+    use kols_core::FRESH_MILLIS;
+
+    #[test]
+    fn a_beat_is_heard_only_within_the_skew_either_way() {
+        let (now, skew) = (10_000_000, 300_000);
+        assert_eq!(dating(now, now, skew), Dating::Current);
+        assert_eq!(
+            dating(now + skew, now, skew),
+            Dating::Current,
+            "at the bound ahead"
+        );
+        assert_eq!(dating(now + skew + 1, now, skew), Dating::Ahead);
+        let oldest = now - skew - FRESH_MILLIS;
+        assert_eq!(
+            dating(oldest, now, skew),
+            Dating::Current,
+            "at the bound behind"
+        );
+        assert_eq!(dating(oldest - 1, now, skew), Dating::Stale);
+        assert_eq!(
+            dating(i64::MAX - 1, i64::MAX - 1, skew),
+            Dating::Current,
+            "no overflow"
+        );
+        assert_eq!(
+            dating(i64::MIN + 1, i64::MIN + 1, skew),
+            Dating::Current,
+            "nor below"
+        );
+    }
+}
+
+#[cfg(test)]
+mod ceiling_tests {
+    use super::should_seal;
+    use intranet_identity::{MasterSeed, NetworkId};
+    use intranet_storage::{ChunkSpec, Dek};
+    use kols_core::{AuthorLog, Hlc, Record, RecordBody, framed, server_channel_id};
+
+    fn message(n: u32) -> RecordBody {
+        RecordBody::Message {
+            body: format!("message {n}"),
+            reply_to: None,
+            attachments: Vec::new(),
+        }
+    }
+
+    /// **The ceiling seals where the size target would not**, and only there:
+    /// the open segment is cut before a record that would take it past
+    /// `chat:segment-max-bytes`, and not one record earlier (spec 07 §2.2).
+    #[test]
+    fn a_segment_is_sealed_before_the_record_that_would_take_it_past_the_ceiling() {
+        let network = NetworkId::from_bytes([3u8; 32]);
+        let me = MasterSeed::from_entropy([1u8; 32])
+            .identity_for(&network)
+            .expect("derives");
+        let channel = server_channel_id(&network, &[2u8; 32]);
+        let mut log = AuthorLog::open(
+            &me,
+            channel,
+            Dek::from_bytes([4u8; 32]),
+            ChunkSpec::from_target(64 * 1024),
+        );
+        for n in 0..3 {
+            log.push(
+                &me,
+                Record::create(&me, channel, Hlc::new(1_000 + i64::from(n), 0), message(n)),
+            )
+            .expect("appends");
+        }
+        let next = Record::create(&me, channel, Hlc::new(2_000, 0), message(3));
+        let fits = log.segment().canonical_bytes().len() + framed(&next).len();
+        // A size target nowhere near, and a span of a second, so only the
+        // ceiling can be the reason.
+        let target = usize::MAX;
+        assert!(
+            !should_seal(&log, target, &next, fits),
+            "exactly at the ceiling still fits"
+        );
+        assert!(
+            should_seal(&log, target, &next, fits - 1),
+            "one byte past it seals first"
+        );
     }
 }
 

@@ -24,6 +24,69 @@ Kept because this project keeps re-learning the same lessons and paying for them
 
 ---
 
+- **2026-10-06** — **O27 is closed, and a replayed presence beat is refused**, both on the user's
+  decision that day.
+
+  **The segment ceiling, both halves.** A reader refused nothing by size: `chat:segment-max-bytes`
+  was read by no code, so spec 07 §2.2's "no author can compel every reader to fetch an
+  arbitrarily large object" was a promise about other implementations. `kols_net::fetch_segment`
+  and `wanted_chunks` take the ceiling now and judge it from the manifest's declared
+  `plaintext_len`, before a chunk is wanted. That is enough because storage's `decode` refuses a
+  length that does not match the bytes, and it has to come first for a second reason found while
+  reading it: `decode` reserves the declared length up front, so an unchecked manifest could
+  claim any allocation it liked. A refused segment is taken out of the backfill queue, where a pass
+  that saw it before its manifest arrived had put it; left there, it held one of the history
+  slots every tick and could starve real backfill at the disk ceiling. The walk stops at it,
+  because the link to what lies behind is inside.
+
+  **What it does not stop, said because the rule reads stronger: an understated length.** Storage
+  refuses a manifest whose bytes do not match, but only once every chunk is held, so a manifest
+  declaring one byte over a long list is fetched before it is refused. A list longer than its
+  byte count is refused outright now (`NetError::Implausible`), which bounds how many chunks;
+  how large each is, up to the transport's 16 MiB, needs a byte budget in the protocol's
+  `FetchPlan`, which is owed as O28 rather than improvised here.
+
+  The writer had the mirror problem: sealing consulted only the local 4 MiB target, so on a
+  network whose ceiling was lower, this node would publish segments its own readers refuse. It
+  seals before a record that would cross the ceiling now. Under the shipped values (4 MiB target,
+  8 MiB ceiling) that never fires first, so no existing chain's boundaries move. A record too
+  large to fit in any segment is refused when written, since sealing cannot help it.
+
+  **The presence floor.** A beat is accepted only if its signed `at` is later than the newest
+  accepted from that sender, kept in a file a restart does not clear, so a copy renews nothing
+  and an older beat cannot put back a state its sender left. A refused copy is dropped silently,
+  since reporting each one would let whoever replays fill a member's screen. And because the
+  floor makes one beat dated next year silence its sender until next year, a beat dated past
+  `chat:max-future-skew-millis` is refused outright, and said once per sender, since one refused
+  there sets no floor and every copy would otherwise be reported again.
+
+  **A floor alone was not enough, and the first version of the spec text said it was.** It
+  claimed a receiver that never heard a beat could be fed one copy. The review showed the real
+  case is a *run*: somebody holding a sender's beats can feed a receiver that missed them all of
+  them in rising order, each newer than the last and each renewing the sender. So a beat older
+  than the skew plus the freshness window is refused too, as not news, which leaves the last six
+  and a half minutes of beats replayable to such a receiver, and spec 07 v0.11 §6.4 says so. It
+  also states that a slow clock past that bound is not heard, and that two devices of one identity
+  share a floor and can silence each other, flagged against D17.
+
+  **What the tests cover, at the strength it holds.** Each new check has a test that fails with
+  the check disabled: the reader's ceiling and the implausible-manifest refusal in `kols-net`, the
+  seal before the ceiling and the executor's refusal, the store's floor (including across a
+  restart), and the three-way dating. Two wirings are covered only by reading: that `admit_beat`
+  acts on the dating and on the floor's answer, and that the three `serve` call sites take a
+  refused segment out of the queue. Testing those needs a keyed store and a second member's beats,
+  which the daemon suites have and these do not.
+
+  The spec check found the code matching rules 5 and 6 exactly, and the prose claiming more than it
+  should in places: v0.11's status line said the client "enforces" §2.2 when O28 means it does so
+  only from a manifest's declared length, and the honest limits left out a sender whose clock runs
+  fast and a receiver whose own clock is wrong. Both corrected. Five choices the specs leave open are
+  `**Flagged:**` where they are made: that refusing a segment costs the whole segment and the history
+  behind it; that the ceiling measures canonical plaintext; that a chunk is never empty; that a
+  negative skew policy silences presence (and holds records), unclamped; and that a beat which will
+  not open, or is from a non-member, is still reported on every copy — the screen-filling rule 5
+  avoids, which predates it and is not fixed here.
+
 - **2026-10-06** — **The window's nodes print nothing now, and the reason they must not was
   the wrong one.**
 

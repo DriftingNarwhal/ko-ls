@@ -27,6 +27,9 @@ const LAX: kols_core::ReaderLimits = kols_core::ReaderLimits::unbounded();
 
 const NETWORK: NetworkId = NetworkId::from_bytes([42u8; 32]);
 
+/// The shipped `chat:segment-max-bytes`, for tests about something else.
+const CEILING: usize = kols_core::defaults::SEGMENT_MAX_BYTES as usize;
+
 fn identity(n: u8) -> PerNetworkIdentity {
     MasterSeed::from_entropy([n; 32])
         .identity_for(&NETWORK)
@@ -213,7 +216,7 @@ async fn fetch_round(
     who: &PerNetworkIdentity,
     manifest: intranet_storage::Cid,
 ) -> bool {
-    plan_fetch(reader, who, manifest, 4);
+    plan_fetch(reader, who, manifest, 4, CEILING);
     if !reader.fetch_in_progress() {
         return true;
     }
@@ -301,8 +304,13 @@ async fn a_channel_crosses_the_wire_and_renders_identically() {
         "fetch timed out"
     );
 
-    let segment = fetch_segment(&b, pointer.current_cid, &Dek::from_bytes([5u8; 32]))
-        .expect("segment reassembles");
+    let segment = fetch_segment(
+        &b,
+        pointer.current_cid,
+        &Dek::from_bytes([5u8; 32]),
+        CEILING,
+    )
+    .expect("segment reassembles");
     segment
         .verify()
         .expect("every record verifies after the round trip");
@@ -377,7 +385,7 @@ async fn a_reader_refetches_only_the_tail_after_an_append() {
 
     // What the reader must now fetch, holding the previous version: the new
     // manifest plus whatever chunks actually changed — not the segment.
-    let outstanding = wanted_chunks(&b, second_outcome.manifest_cid);
+    let outstanding = wanted_chunks(&b, second_outcome.manifest_cid, CEILING);
     assert_eq!(
         outstanding,
         vec![second_outcome.manifest_cid],
@@ -388,7 +396,7 @@ async fn a_reader_refetches_only_the_tail_after_an_append() {
     // this is what an append actually costs a reader who holds the previous
     // version, and a fetch loop would have hidden it by completing both rounds.
     assert!(fetch_round(&mut b, &mut a, &peer, second_outcome.manifest_cid).await);
-    let after_manifest = wanted_chunks(&b, second_outcome.manifest_cid);
+    let after_manifest = wanted_chunks(&b, second_outcome.manifest_cid, CEILING);
     println!(
         "reader refetched {} chunk(s) of {} after an append",
         after_manifest.len(),
@@ -407,7 +415,110 @@ async fn a_reader_refetches_only_the_tail_after_an_append() {
 
     assert!(fetch_round(&mut b, &mut a, &peer, second_outcome.manifest_cid).await);
 
-    let segment = fetch_segment(&b, second_outcome.manifest_cid, &Dek::from_bytes([5u8; 32]))
-        .expect("reassembles from mostly-cached chunks");
+    let segment = fetch_segment(
+        &b,
+        second_outcome.manifest_cid,
+        &Dek::from_bytes([5u8; 32]),
+        CEILING,
+    )
+    .expect("reassembles from mostly-cached chunks");
     assert_eq!(segment.records.len(), 121);
+}
+
+#[tokio::test]
+async fn a_segment_past_the_ceiling_is_refused_from_its_manifest_alone() {
+    // Spec 07 §2.2: no author can make every reader fetch an arbitrarily large
+    // object, so the ceiling is applied to the manifest, before any chunk. The
+    // reader here holds the manifest and nothing else, which is the moment the
+    // decision has to be made.
+    let (mut a, founder, mut b, _) = pair().await;
+    let state = a.governance_log().replay_canonical().unwrap();
+    let mut log = AuthorLog::open(
+        &founder,
+        channel(),
+        Dek::from_bytes([5u8; 32]),
+        ChunkSpec::from_target(16 * 1024),
+    );
+    let mut published = None;
+    for i in 0..120u32 {
+        published = Some(
+            log.append(
+                &founder,
+                Record::create(
+                    &founder,
+                    channel(),
+                    Hlc::new(1_700_000_000_000, i),
+                    message(&format!("message {i} — a sentence of ordinary chat text")),
+                ),
+                &state,
+            )
+            .unwrap(),
+        );
+    }
+    let outcome = publish_segment(&mut a, &published.unwrap());
+    let size = published_len(&a, outcome.manifest_cid);
+    let manifest = a.chunk_store().get(&outcome.manifest_cid).unwrap().to_vec();
+    b.chunk_store_mut()
+        .insert(outcome.manifest_cid, manifest)
+        .unwrap();
+
+    let under = size - 1;
+    assert!(
+        wanted_chunks(&b, outcome.manifest_cid, under).is_empty(),
+        "a segment past the ceiling must want no chunks at all"
+    );
+    assert!(
+        !wanted_chunks(&b, outcome.manifest_cid, size).is_empty(),
+        "at exactly the ceiling it is valid and its chunks are wanted"
+    );
+    assert!(matches!(
+        fetch_segment(&a, outcome.manifest_cid, &Dek::from_bytes([5u8; 32]), under),
+        Err(NetError::TooLarge { claimed, limit }) if claimed == size as u64 && limit == under
+    ));
+    fetch_segment(&a, outcome.manifest_cid, &Dek::from_bytes([5u8; 32]), size)
+        .expect("a segment at the ceiling is read");
+}
+
+/// The plaintext length a published object's manifest declares.
+fn published_len(node: &MemberNode, manifest: intranet_storage::Cid) -> usize {
+    intranet_storage::Manifest::from_bytes(node.chunk_store().get(&manifest).unwrap())
+        .unwrap()
+        .plaintext_len as usize
+}
+
+#[tokio::test]
+async fn a_manifest_naming_more_chunks_than_bytes_is_refused_before_any_is_wanted() {
+    // The understated length: a manifest declaring one byte, listing many
+    // chunks. Storage would refuse the mismatch, but only once it held them all,
+    // so this is refused from the list instead.
+    let (_, _, mut b, _) = pair().await;
+    let chunk = |n: u8| intranet_storage::Cid::from_hash(Hash::from_bytes([n; 32]));
+    let manifest = intranet_storage::Manifest {
+        chunks: vec![chunk(1), chunk(2), chunk(3)],
+        plaintext_len: 1,
+    };
+    let cid = manifest.cid();
+    b.chunk_store_mut()
+        .insert(cid, manifest.canonical_bytes())
+        .unwrap();
+
+    assert!(
+        wanted_chunks(&b, cid, CEILING).is_empty(),
+        "no chunk of an implausible manifest is wanted"
+    );
+    let refusal = fetch_segment(&b, cid, &Dek::from_bytes([5u8; 32]), CEILING).unwrap_err();
+    assert!(
+        matches!(
+            refusal,
+            NetError::Implausible {
+                chunks: 3,
+                declared: 1
+            }
+        ),
+        "{refusal:?}"
+    );
+    assert!(
+        refusal.refuses(),
+        "and it is final, not a segment still arriving"
+    );
 }

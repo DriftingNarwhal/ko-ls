@@ -915,6 +915,29 @@ impl Executor {
         let hlc = next_hlc(readings.last, now_millis());
         self.require_within_rate(&channel, &body, hlc, &readings, state, channels)?;
         let record = Record::create(identity, channel, hlc, body);
+        // **A record no segment could hold is refused here**, because it could
+        // never be published validly: spec 07 §2.2's `chat:segment-max-bytes` is
+        // a reader's validity rule, so a segment carrying it would be refused by
+        // every reader, and sealing cannot help a record that is too large alone.
+        // Measured against the larger of the two segment headers (one naming a
+        // previous segment), so whichever position it lands in, it fits.
+        let ceiling = kols_core::ChatPolicy::of(&state.policy).segment_max_bytes();
+        let header = kols_core::Segment::new(
+            channel,
+            identity.id(),
+            0,
+            Some(intranet_storage::Cid::from_hash(
+                intranet_crypto::Hash::from_bytes([0; 32]),
+            )),
+        )
+        .header_bytes()
+        .len();
+        if header + kols_core::framed(&record).len() > ceiling {
+            return Err(ExecuteError::Rejected(format!(
+                "this is larger than a segment may be in this network ({ceiling} bytes), \
+                 so no member could read it"
+            )));
+        }
         let id = record.id();
         self.store.put_record(&channel, &record)?;
 

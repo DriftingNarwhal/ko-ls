@@ -47,4 +47,41 @@ pub enum NetError {
     /// No pointer for that author log is known yet.
     #[error("no pointer known for that author log")]
     NoSuchPointer,
+    /// The segment is larger than the network's `chat:segment-max-bytes`.
+    ///
+    /// Spec 07 §2.2: a reader refuses it, so no author can make every reader
+    /// fetch an arbitrarily large object. Judged from the manifest's declared
+    /// length, before a single chunk is wanted.
+    #[error("segment is {claimed} bytes, past this network's {limit}-byte ceiling")]
+    TooLarge {
+        /// The length the manifest declares.
+        claimed: u64,
+        /// The ceiling it exceeds.
+        limit: usize,
+    },
+    /// The manifest names more chunks than it declares bytes, which no honest
+    /// one does, since every chunk holds at least one.
+    ///
+    /// The cheap half of holding an *understated* length to the ceiling. Storage
+    /// refuses a length that does not match the bytes, but only once they are
+    /// all held, so a manifest declaring one byte over a long chunk list is
+    /// otherwise fetched in full before it is refused. This bounds the list. It
+    /// does not bound the chunks' own sizes, which only a byte budget in the
+    /// fetch itself could (`STATUS.md` O28).
+    #[error("segment manifest names {chunks} chunk(s) for {declared} byte(s)")]
+    Implausible {
+        /// How many chunks it names.
+        chunks: usize,
+        /// How many bytes it declares.
+        declared: u64,
+    },
+}
+
+impl NetError {
+    /// Whether this is a refusal of the segment itself, as opposed to a segment
+    /// not yet held. A refusal is final: nothing more about it is wanted, so a
+    /// caller stops waiting for it rather than queueing it again.
+    pub const fn refuses(&self) -> bool {
+        matches!(self, Self::TooLarge { .. } | Self::Implausible { .. })
+    }
 }

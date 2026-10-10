@@ -446,12 +446,8 @@ impl Record {
     /// An unknown kind's body is checked against nothing, as spec 07 §3.7
     /// requires: which of its fields a limit applies to is part of what this
     /// build does not know. §3.7 bounds it through the segment carrying it, by
-    /// `chat:segment-max-bytes`, and **this reader does not enforce that
-    /// ceiling yet.** `ChatPolicy::segment_max_bytes` has no caller outside the
-    /// tests, so a segment of any byte size is fetched and read, though
-    /// `MAX_RECORDS_PER_SEGMENT` still bounds how many records it holds. That is
-    /// a divergence from spec 07 §2.2 for every kind, not only unknown ones
-    /// (`STATUS.md` O27).
+    /// `chat:segment-max-bytes`, which `kols_net::fetch_segment` enforces from
+    /// the segment's manifest before any chunk is fetched (closed O27).
     pub fn check_bounds(&self, max_body: usize) -> Result<(), CoreError> {
         let too_large = |field, actual, limit| {
             Err(CoreError::TooLarge {

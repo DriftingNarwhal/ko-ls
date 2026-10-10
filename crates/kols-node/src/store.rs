@@ -1983,16 +1983,42 @@ impl Store {
         kols_core::Presence::from_name(raw.trim())
     }
 
-    /// Records a beat this node heard, replacing any earlier one from that member.
+    /// Records a beat this node heard, replacing any earlier one from that member
+    /// — **unless it is no newer than one already accepted from them**, in which
+    /// case nothing is recorded and this returns `false`.
     ///
     /// `heard_at` is **this node's** clock rather than the sender's, because
     /// that is what freshness is judged against (`kols_core::PresenceBeat`).
+    /// `said_at` is the sender's, signed inside the beat, and it is what makes a
+    /// replay recognisable: the beat frame is unsigned and its seal
+    /// deterministic, so anybody on the topic can republish one byte for byte,
+    /// and judged by heard time alone each copy would renew its sender for
+    /// another freshness window — or, replaying an older beat, restore a state
+    /// they had left. A sender's own beats carry ever-later readings; a copy
+    /// carries one already seen (spec 07 §6.4).
+    ///
+    /// The highest reading accepted per member is kept in its own file, which
+    /// [`Self::forget_beats`] leaves alone, since a floor forgotten at every
+    /// restart would reopen the replay at every restart.
     pub fn record_beat(
         &self,
         who: &str,
         state: kols_core::Beat,
         heard_at: i64,
-    ) -> Result<(), StoreError> {
+        said_at: i64,
+    ) -> Result<bool, StoreError> {
+        let mut floors = self.beat_floors();
+        if floors.get(who).is_some_and(|&floor| said_at <= floor) {
+            return Ok(false);
+        }
+        floors.insert(who.to_owned(), said_at);
+        let text = floors
+            .iter()
+            .map(|(who, at)| format!("{who} {at}"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        write_atomically(&self.root, self.root.join("beat-floors"), text.as_bytes())?;
+
         let mut heard: std::collections::BTreeMap<String, (String, i64)> = self
             .beats()
             .into_iter()
@@ -2005,7 +2031,20 @@ impl Store {
             .collect::<Vec<_>>()
             .join("\n");
         write_atomically(&self.root, self.root.join("beats"), text.as_bytes())?;
-        Ok(())
+        Ok(true)
+    }
+
+    /// The newest beat reading accepted from each member, by their own clock.
+    fn beat_floors(&self) -> std::collections::BTreeMap<String, i64> {
+        let Ok(text) = fs::read_to_string(self.root.join("beat-floors")) else {
+            return std::collections::BTreeMap::new();
+        };
+        text.lines()
+            .filter_map(|line| {
+                let mut parts = line.split_whitespace();
+                Some((parts.next()?.to_owned(), parts.next()?.parse().ok()?))
+            })
+            .collect()
     }
 
     /// The beats this node has heard, with when it heard each.

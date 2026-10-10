@@ -58,13 +58,19 @@ pub fn publish_segment(node: &mut MemberNode, published: &Published) -> PublishO
 /// while reassembly is a pure function of bytes already held. Keeping them apart
 /// means the decode path is testable without a network and the caller decides
 /// how long to wait for chunks.
-pub fn fetch_segment(node: &MemberNode, manifest_cid: Cid, dek: &Dek) -> Result<Segment, NetError> {
+pub fn fetch_segment(
+    node: &MemberNode,
+    manifest_cid: Cid,
+    dek: &Dek,
+    max_bytes: usize,
+) -> Result<Segment, NetError> {
     let manifest_bytes = node
         .chunk_store()
         .get(&manifest_cid)
         .ok_or(NetError::ChunksUnavailable(vec![manifest_cid]))?;
     let manifest =
         intranet_storage::Manifest::from_bytes(manifest_bytes).map_err(NetError::Storage)?;
+    within_ceiling(&manifest, max_bytes)?;
 
     let mut blobs = std::collections::BTreeMap::new();
     let mut missing = Vec::new();
@@ -84,17 +90,58 @@ pub fn fetch_segment(node: &MemberNode, manifest_cid: Cid, dek: &Dek) -> Result<
     Segment::decode(&plaintext).map_err(NetError::Malformed)
 }
 
+/// Refuses a segment whose manifest declares more than `max_bytes`.
+///
+/// Spec 07 §2.2 and §4.3: `chat:segment-max-bytes` is a validity rule readers
+/// enforce, and the reason it exists is the fetch — so it is applied to the
+/// manifest, which is one small object, before the chunks are asked for. It has
+/// to come first for a second reason too, since `decode` reserves the declared
+/// length up front.
+///
+/// **What it does not stop**, said here because the rule reads stronger than
+/// this holds: a manifest that *understates* its length. `decode` refuses one,
+/// since the bytes must match, but only once every chunk is held, so its chunks
+/// are fetched first. Refusing a list longer than its byte count bounds how
+/// many there are; how large each is, up to the transport's 16 MiB, only a
+/// byte budget in the fetch could bound (`STATUS.md` O28).
+///
+/// **Flagged, twice.** Spec 07 does not say what the ceiling measures; this reads
+/// it as the segment's canonical plaintext, which is what `plaintext_len` is and
+/// what the writer and the executor measure too, so all three agree. And the
+/// implausibility check assumes a chunk is never empty, which the storage spec
+/// does not state; an honest chunker never emits one.
+fn within_ceiling(manifest: &intranet_storage::Manifest, max_bytes: usize) -> Result<(), NetError> {
+    if manifest.chunks.len() as u64 > manifest.plaintext_len {
+        return Err(NetError::Implausible {
+            chunks: manifest.chunks.len(),
+            declared: manifest.plaintext_len,
+        });
+    }
+    if manifest.plaintext_len > max_bytes as u64 {
+        return Err(NetError::TooLarge {
+            claimed: manifest.plaintext_len,
+            limit: max_bytes,
+        });
+    }
+    Ok(())
+}
+
 /// Everything a reader must fetch to read one author's log.
 ///
 /// The manifest first, then the chunks it names — two rounds, because the
 /// chunk list lives inside the manifest. A reader that already holds the
 /// previous version's chunks fetches only what changed, which is the whole
 /// point of the segment model.
-pub fn wanted_chunks(node: &MemberNode, manifest_cid: Cid) -> Vec<Cid> {
+///
+/// A segment whose manifest declares more than `max_bytes` wants nothing more:
+/// the manifest is the last thing fetched for it (spec 07 §2.2), and
+/// [`fetch_segment`] refuses it with [`NetError::TooLarge`].
+pub fn wanted_chunks(node: &MemberNode, manifest_cid: Cid, max_bytes: usize) -> Vec<Cid> {
     match node.chunk_store().get(&manifest_cid) {
         None => vec![manifest_cid],
         Some(bytes) => match intranet_storage::Manifest::from_bytes(bytes) {
             Err(_) => Vec::new(),
+            Ok(manifest) if within_ceiling(&manifest, max_bytes).is_err() => Vec::new(),
             Ok(manifest) => manifest
                 .chunks
                 .into_iter()
@@ -118,8 +165,9 @@ pub fn plan_fetch(
     reader: &PerNetworkIdentity,
     manifest_cid: Cid,
     concurrency: usize,
+    max_bytes: usize,
 ) {
-    let wanted = wanted_chunks(node, manifest_cid);
+    let wanted = wanted_chunks(node, manifest_cid, max_bytes);
     if !wanted.is_empty() {
         node.fetch_chunks(wanted, reader, concurrency);
     }

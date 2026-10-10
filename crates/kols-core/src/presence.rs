@@ -226,8 +226,10 @@ impl PresenceBeat {
     /// spelling out: clocks disagree, and treating a far-future timestamp as
     /// current would let one member pin themselves as present indefinitely with
     /// a single beat. Freshness is judged against when this node *heard* it,
-    /// which is a clock this node controls; `at` is carried for the signature
-    /// and for display, never for this decision.
+    /// which is a clock this node controls; `at` is never used for this
+    /// decision. It is used for order: spec 07 §6.4 rules 5 and 6 refuse a beat
+    /// no later than one already accepted from its sender, or dated outside the
+    /// skew, which is how a replayed beat is told apart.
     pub fn fresh_at(heard_at: i64, now: i64) -> bool {
         now >= heard_at && now.saturating_sub(heard_at) < FRESH_MILLIS
     }
