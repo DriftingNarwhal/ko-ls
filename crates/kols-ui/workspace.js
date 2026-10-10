@@ -63,10 +63,10 @@ function said(outcome) {
 /// Draws the list.
 ///
 /// One row per network, carrying what `09` §1.3 specifies as the shell comes to
-/// know it: **unread**, counted by the shell (`kols_node::unread`), and **whether
-/// this node holds a connection** there. The tier, and when a cold one last
-/// looked, are still to come — and a row that displayed a zero it had not earned
-/// would be making exactly the claim that section forbids.
+/// know it: **unread**, counted by the shell (`kols_node::unread`), **whether
+/// this node holds a connection** there, and **whether it is set aside** — and
+/// if so, when this machine last looked, because a set-aside row's count is only
+/// as new as that (§1.3). A row never shows a zero it has not earned.
 async function draw() {
   await drawNetworks();
   await drawConversations();
@@ -106,7 +106,7 @@ async function drawNetworks() {
     // normal place to be, and saying so beats an empty channel list.
     note.textContent = network.keyed ? "" : "not keyed in yet";
 
-    item.append(button, note, forgetButton(network));
+    item.append(button, note, asideNote(network), asideButton(network), forgetButton(network));
     list.append(item);
   }
 
@@ -166,6 +166,58 @@ async function drawConversations() {
     list.append(item);
   }
   el("conversations-empty").hidden = found.length > 0;
+}
+
+/// What a set-aside row says about itself — `09` §1.3, §1.10.
+///
+/// **Polled, not off**, so it never says off or offline: it says the network is
+/// set aside and when this machine last looked, because a count on a row like
+/// this is only as new as that. The age is filled in by `ageNotes`, so the row
+/// is not rebuilt every time a minute passes.
+function asideNote(network) {
+  const note = document.createElement("span");
+  note.className = "workspace-aside-note";
+  if (!network.set_aside) return note;
+  note.dataset.checkedAt = network.checked_at ?? "";
+  note.textContent = asideText(network.checked_at);
+  return note;
+}
+
+function asideText(checkedAt) {
+  if (!checkedAt) return "set aside · checked periodically, not yet since starting";
+  const minutes = Math.floor((Date.now() - Number(checkedAt)) / 60000);
+  const ago = minutes < 1 ? "just now" : minutes === 1 ? "1 min ago" : `${minutes} min ago`;
+  return `set aside · last checked ${ago}`;
+}
+
+/// Keeps every set-aside row's age current without redrawing the rows.
+function ageNotes() {
+  for (const note of document.querySelectorAll(".workspace-aside-note[data-checked-at]")) {
+    note.textContent = asideText(note.dataset.checkedAt);
+  }
+}
+
+/// The control that sets a network aside or brings it back — `09` §1.10, which
+/// puts it on the row because that is where a member is deciding which of these
+/// they still care about.
+function asideButton(network) {
+  const toggle = document.createElement("button");
+  toggle.className = "aside";
+  toggle.textContent = network.set_aside ? "bring back" : "set aside";
+  toggle.title = network.set_aside
+    ? "keep this network running again, so what arrives reaches you straight away"
+    : "stop keeping this network running — it is still checked every ten minutes, " +
+      "and goes on holding what it took for others";
+  toggle.addEventListener("click", async (event) => {
+    event.stopPropagation();
+    try {
+      await invoke("set_network_aside", { network: network.id, aside: !network.set_aside });
+      await drawNetworks();
+    } catch (err) {
+      fail(err);
+    }
+  });
+  return toggle;
 }
 
 /// A row's connection dot — `09` §1.3, §4.1's dot at network scale.
@@ -335,8 +387,12 @@ async function openConversation(it) {
 function forgetButton(network) {
   const forget = document.createElement("button");
   forget.className = "forget";
-  forget.textContent = network.open ? "leave" : "forget";
-  forget.title = network.open
+  // **Told whenever a node is running for it**, which is every network not set
+  // aside — not only the open one. `forget_network` publishes through whichever
+  // node runs (since every network gained one), and this said otherwise.
+  const told = network.connected !== null && network.connected !== undefined;
+  forget.textContent = told ? "leave" : "forget";
+  forget.title = told
     ? "tell this network you are leaving, then remove this installation's copy"
     : "remove this installation's copy — with no node running, the network is not told";
 
@@ -349,19 +405,19 @@ function forgetButton(network) {
       "\n\nThis deletes the seed, which is your identity here. You cannot come " +
       "back as the same member — a later join would arrive as a stranger, and the " +
       "log would still name the member you were.";
-    const told = network.open
-      ? "\n\nThis network is open, so it is told: your departure is written and " +
-        "published before anything is deleted. Members who are connected right now " +
-        "hear it; anybody offline learns of it from them."
-      : "\n\nThis network is not open, so **it is not told** — no node is running to " +
-        "publish anything, and to every other member you stay a member who is simply " +
-        "never connected. Open it first if you would rather it knew.";
+    const notice = told
+      ? "\n\nA node is running for this network, so it is told: your departure is " +
+        "written and published before anything is deleted. Members who are connected " +
+        "right now hear it; anybody offline learns of it from them."
+      : "\n\nNo node is running for this network, so **it is not told** — nothing is " +
+        "there to publish anything, and to every other member you stay a member who is " +
+        "simply never connected. Bring it back first if you would rather it knew.";
     const loss = network.keyed
-      ? gone + told
+      ? gone + notice
       : "\n\nYou were never keyed into this one, so there is nothing to lose but the " +
         "attempt.";
     const name = network.label || network.id.slice(0, 12);
-    if (!confirm(`${network.open ? "Leave" : "Forget"} ${name}?${loss}`)) return;
+    if (!confirm(`${told ? "Leave" : "Forget"} ${name}?${loss}`)) return;
     try {
       const outcome = await invoke("forget_network", { network: network.id });
       await draw();
@@ -585,6 +641,10 @@ listen("kols://joins", () => void drawNetworks());
 /// because this window's rows change on the scale of somebody joining a network
 /// rather than somebody typing.
 const TICK_MILLIS = 5000;
+
+// A minute is the finest a set-aside row's age is told in, so it is refreshed
+// that often, in place.
+setInterval(ageNotes, 30000);
 
 setInterval(() => {
   // Only while the list is what is showing. Polling behind the lock screen

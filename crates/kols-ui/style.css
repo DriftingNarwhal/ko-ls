@@ -1952,6 +1952,35 @@ dialog::backdrop { background: var(--veil); }
 .workspace-row:has(.accept) .workspace-note { padding-right: 116px; }
 .workspace-list .forget.accept { right: 62px; }
 
+/* The set-aside control shares the row with forget, like accept does. */
+.workspace-row:has(.aside) .workspace-open { padding-right: 130px; }
+.workspace-row:has(.aside) .workspace-note { padding-right: 130px; }
+.workspace-list .aside {
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--radius);
+  color: var(--dim);
+  cursor: pointer;
+  font: inherit;
+  font-size: 10px;
+  padding: 3px 7px;
+  position: absolute;
+  right: 62px;
+  top: 8px;
+}
+.workspace-list .aside:hover { border-color: var(--line); color: var(--text); }
+
+/* A set-aside row's line about itself: dim, because it is a description of a
+   choice the member made rather than a warning. */
+.workspace-aside-note {
+  color: var(--dim);
+  display: block;
+  font-size: 10px;
+  padding: 0 130px 4px 10px;
+}
+
+.workspace-aside-note:empty { display: none; }
+
 /* ---- what this window has to say about itself ----------------------------
  *
  * The network window's own line, which used to be the picker's and did double

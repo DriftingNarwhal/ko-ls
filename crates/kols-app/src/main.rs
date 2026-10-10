@@ -2265,6 +2265,8 @@ fn create_network(
         // Nothing has arrived in a network that did not exist a moment ago.
         unread: 0,
         connected: None,
+        set_aside: false,
+        checked_at: None,
     };
     let id = *executor.store().network();
     *app.open
@@ -2586,12 +2588,51 @@ fn live_of(
     root: &std::path::Path,
 ) -> dto::Live {
     let unread = app.unread.lock().map_or(0, |unread| unread.total(network));
-    let running = app.nodes.lock().is_ok_and(|nodes| nodes.is_live(network));
+    let (running, polled) = app.nodes.lock().map_or((false, None), |nodes| {
+        (nodes.is_live(network), nodes.last_polled(network))
+    });
+    let set_aside = kols_node::store::set_aside_in(root);
     dto::Live {
         unread,
         connected: running
             .then(|| u32::try_from(kols_node::store::connected_in(root).len()).unwrap_or(u32::MAX)),
+        set_aside,
+        // The supervisor keeps a monotonic instant, which says how long ago and
+        // nothing about the clock; turned into a time here, rounded so that the
+        // few milliseconds between two reads cannot change a row's description.
+        checked_at: polled.filter(|_| set_aside).and_then(|at| {
+            let millis = std::time::SystemTime::now()
+                .checked_sub(at.elapsed())?
+                .duration_since(std::time::UNIX_EPOCH)
+                .ok()?
+                .as_millis();
+            u64::try_from(millis / 10_000 * 10_000).ok()
+        }),
     }
+}
+
+/// Sets a network aside, or brings it back — `design/09` §1.10, §2.
+///
+/// Set aside means **polled, not off**: its node stops, and is woken on the
+/// poll interval to catch up and to keep holding the replica duty it took
+/// (`05` §5.1). The network in view stays running while it is in view, because
+/// that is what being in view means; it goes quiet when the member looks away.
+///
+/// Local, like every other per-network preference: nobody else learns how live
+/// this machine keeps a network.
+#[tauri::command]
+fn set_network_aside(
+    handle: tauri::AppHandle,
+    app: tauri::State<'_, App>,
+    network: String,
+    aside: bool,
+) -> Result<(), String> {
+    app.workspace
+        .open(&network)?
+        .set_aside(aside)
+        .map_err(|err| err.to_string())?;
+    reconcile_nodes(&handle, &app);
+    Ok(())
 }
 
 /// Unread counts for one network, per channel hex — `kols_node::unread`.
@@ -3043,6 +3084,7 @@ fn main() {
             sidebar,
             unread_counts,
             viewing,
+            set_network_aside,
             reorg,
             create_category,
             rename_category,

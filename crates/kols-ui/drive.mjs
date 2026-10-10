@@ -1224,22 +1224,47 @@ say("and waiting to be admitted is reported as the success it is",
 // Leaving says which of the two acts it is about to do (`02` §6.5).
 const rowFor = (label) =>
   [...wsEl("networks").querySelectorAll("li")].find((li) => li.textContent.includes(label));
+// **Told whenever a node runs for it**, not only when it is open: every
+// network not set aside runs a node, and `forget_network` publishes through
+// whichever one does. A third row, running but not open, is the case the old
+// wording got wrong.
 networksAnswer = [
-  { id: "aa".repeat(32), label: "the workshop", keyed: true, open: true },
-  { id: "bb".repeat(32), label: "book club", keyed: true, open: false },
+  { id: "aa".repeat(32), label: "the workshop", keyed: true, open: true, connected: 1 },
+  { id: "bb".repeat(32), label: "book club", keyed: true, open: false, connected: null,
+    set_aside: true, checked_at: Date.now() - 4 * 60000 },
+  { id: "dd".repeat(32), label: "garden", keyed: true, open: false, connected: 0 },
 ];
 await wsWindow.eval("draw()");
 await settled();
-say("the open network offers *leave* and a closed one offers *forget*",
+say("a network with a running node offers *leave*, open or not, and one without offers *forget*",
     rowFor("the workshop").querySelector(".forget").textContent === "leave" &&
+      rowFor("garden").querySelector(".forget").textContent === "leave" &&
       rowFor("book club").querySelector(".forget").textContent === "forget");
 
 wsAnswering = false;
 wsConfirmed.length = 0;
 rowFor("book club").querySelector(".forget").dispatchEvent(new wsWindow.MouseEvent("click", { bubbles: true }));
 await settled();
-say("and forgetting one that is not open says it will not be told",
+say("and forgetting one with no node running says it will not be told",
     /it is not told/.test(wsConfirmed[0] ?? ""), (wsConfirmed[0] ?? "").slice(0, 60));
+
+// ── setting a network aside, `09` §1.10 ────────────────────────────────
+say("a set-aside row says so, and when this machine last looked",
+    rowFor("book club").querySelector(".workspace-aside-note")?.textContent
+      === "set aside · last checked 4 min ago",
+    rowFor("book club").querySelector(".workspace-aside-note")?.textContent);
+say("and never that it is off or offline",
+    !/\boff\b|offline/i.test(wsEl("networks").textContent), wsEl("networks").textContent.slice(0, 80));
+say("a running row offers to set it aside, and a set-aside one to bring it back",
+    rowFor("garden").querySelector(".aside")?.textContent === "set aside" &&
+      rowFor("book club").querySelector(".aside")?.textContent === "bring back");
+const asideAsked = [];
+wsAnswers.set_network_aside = (args) => { asideAsked.push(args); return null; };
+rowFor("garden").querySelector(".aside").dispatchEvent(new wsWindow.MouseEvent("click", { bubbles: true }));
+await settled();
+say("and the control asks the shell for it",
+    asideAsked.length === 1 && asideAsked[0].network === "dd".repeat(32) && asideAsked[0].aside === true,
+    JSON.stringify(asideAsked));
 
 // ── the conversations group ─────────────────────────────────────────────
 //

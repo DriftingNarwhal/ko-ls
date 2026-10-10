@@ -386,6 +386,19 @@ pub struct Network {
     /// nobody saying anything (§4.1). `None` is kept apart from zero because a
     /// node that is not running has not looked.
     pub connected: Option<u32>,
+    /// Whether the member set it aside — `design/09` §1.10, §2. Set aside means
+    /// **polled, not off**: no node runs between polls, and one is woken on the
+    /// interval to catch up and to go on holding up its replica duty.
+    pub set_aside: bool,
+    /// When this machine last woke it to look, as Unix milliseconds rounded to
+    /// ten seconds, for a network set aside that has been polled since the
+    /// application started — §1.3's *when it last looked*. A cold row's count is
+    /// only as new as this.
+    ///
+    /// A time rather than an age, so that a row's description does not change
+    /// every second and rebuild the row under a pointer; the interface says how
+    /// long ago.
+    pub checked_at: Option<u64>,
 }
 
 /// What the shell knows about a network's node, for a row.
@@ -395,6 +408,10 @@ pub struct Live {
     pub unread: u32,
     /// Other members connected to, when a node is running.
     pub connected: Option<u32>,
+    /// Whether the member set it aside.
+    pub set_aside: bool,
+    /// When it was last polled, for one set aside.
+    pub checked_at: Option<u64>,
 }
 
 impl Network {
@@ -407,6 +424,8 @@ impl Network {
             open: open == Some(known.id.as_str()),
             unread: live.unread,
             connected: live.connected,
+            set_aside: live.set_aside,
+            checked_at: live.checked_at,
         }
     }
 }

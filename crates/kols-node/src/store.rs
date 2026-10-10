@@ -1614,7 +1614,7 @@ impl Store {
 
     /// Whether the member has set this network aside.
     pub fn is_set_aside(&self) -> bool {
-        self.root.join("set-aside").exists()
+        set_aside_in(&self.root)
     }
 
     /// Records where a conversation was arranged, and with whom.
@@ -3144,9 +3144,15 @@ fn remove_if_present(path: impl AsRef<Path>) -> Result<(), StoreError> {
     }
 }
 
+/// Whether the member set aside the network whose store is at `root`, without
+/// opening the store — which reads its seed, and is far more than a list of
+/// rows wants (see [`Store::set_aside`]).
+pub fn set_aside_in(root: &Path) -> bool {
+    root.join("set-aside").exists()
+}
+
 /// Who the daemon last saw the node for the store at `root` connected to,
-/// without opening the store — which reads its seed, and is far more than a
-/// list of rows wants (see [`Store::connected`] for what it means).
+/// without opening the store (see [`Store::connected`] for what it means).
 pub fn connected_in(root: &Path) -> Vec<String> {
     fs::read_to_string(root.join("connected"))
         .map(|text| {
