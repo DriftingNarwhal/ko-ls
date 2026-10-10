@@ -1,6 +1,6 @@
 # Confidentiality: Channel Keying, Private Channels and Direct Messages
 
-**Document status:** v1.3 — §4.5's delivery states are two, *sent* and *delivered*, by the user's decision of 2026-10-10. *Read* was a third: it is now local state that is never published (`01` §9), and a read receipt is a possible later opt-in that each recipient's client would choose to send, not a state the interface owes. Previously v1.2 — §4.6 points at `09` §1.1, which settled on 2026-09-11 what the direct-message surface actually is: the workspace as a **window** listing every network and every conversation, a network drawn in a second window, and each conversation in a small window of its own (D40) — since a conversation *is* a network and the member is holding both. What stays this document's is the presentation split §4.1's table fixes — a server is a place, a contact is a person — and the pointer is here because §4.6 is where a reader looks for the surface and it described one sentence of it. Previously v1.1 — §3.5 is new and carries the durability constraint the storage work turned up: a node holds only what it can read, so a private channel is replicated by its roster and nobody else — and placement must therefore rank over the roster rather than over the ledger, or the effective replica set becomes *roster ∩ top-k* and can be empty. An obligation on whoever builds §3, written before the work rather than discovered after it. Previously v1.0 — design reviewed. Only the network tier is implemented; channel and session tiers are P2/P3
+**Document status:** v1.4 — §4.3's fifth step says who lets the recipient in, which it did not: the node that issued the invite admits the accepter to `everyone` and as a `Founder`, citing the invite (spec 07 v0.13 §6.2). A conversation is created with auto-admit off, and until 2026-10-10 nothing admitted anybody, so an accepter waited in the issuer's waiting room with no key. §4.5 notes that once D41 is built the overlap it requires is reached through a knock on the shared network, since a sleeping conversation runs no node. Previously v1.3 — §4.5's delivery states are two, *sent* and *delivered*, by the user's decision of 2026-10-10. *Read* was a third: it is now local state that is never published (`01` §9), and a read receipt is a possible later opt-in that each recipient's client would choose to send, not a state the interface owes. Previously v1.2 — §4.6 points at `09` §1.1, which settled on 2026-09-11 what the direct-message surface actually is: the workspace as a **window** listing every network and every conversation, a network drawn in a second window, and each conversation in a small window of its own (D40) — since a conversation *is* a network and the member is holding both. What stays this document's is the presentation split §4.1's table fixes — a server is a place, a contact is a person — and the pointer is here because §4.6 is where a reader looks for the surface and it described one sentence of it. Previously v1.1 — §3.5 is new and carries the durability constraint the storage work turned up: a node holds only what it can read, so a private channel is replicated by its roster and nobody else — and placement must therefore rank over the roster rather than over the ledger, or the effective replica set becomes *roster ∩ top-k* and can be empty. An obligation on whoever builds §3, written before the work rather than discovered after it. Previously v1.0 — design reviewed. Only the network tier is implemented; channel and session tiers are P2/P3
 **Depends on:** Core Protocol Spec §3 (epoch keying), Storage Spec §5 (envelope encryption), Search Spec §3, Real-Time Spec §3.5
 **Consumed by:** `01-messaging-model`, `04-realtime`, `05-client-architecture`
 
@@ -271,8 +271,20 @@ a DM with someone you can already reach, so **the shared network is the rendezvo
    Core §1.2 defines exactly this mechanism — provable common ownership at the user's
    discretion, derivable by nobody otherwise — and this is its first real use.
 5. The recipient's client verifies the link, shows "Alice wants to message you", and on
-   acceptance joins the new network. From then on it is an ordinary network that the UI
-   happens to render as a conversation.
+   acceptance joins the new network. **The issuing node then admits the accepter**, to
+   `everyone` and as a `Founder` (spec 07 §1.2 and §6.2), with the admission citing the
+   redeemed invite so that a single-use invite is spent (Core §5.6). Auto-admit is off (step
+   1), so a redeem is answered with a waiting-room place, and this admission is what takes the
+   accepter out of it. From then on it is an ordinary network that the UI happens to render as
+   a conversation.
+
+   *Until 2026-10-10 nothing did this.* Accepting left the accepter in the issuer's waiting
+   room, holding no key, able to read and write nothing. Spec 07 v0.13 §6.2 now requires the
+   admission, and the client makes it (`kols-node`'s `serve::admit_redeemers`). A participant
+   in `everyone` whose `Founders` entry has not landed is retried, across a restart too. *Not*
+   retried across a restart: a redeemer answered *waiting* whose admission had not yet been
+   written when the process ended, since the node's waiting room is in memory and the file kept
+   of it holds no invite. They stay waiting.
 
 **Honest limitation:** direct delivery requires both parties to be reachable. An
 undelivered DM request stays queued in the sender's client and retries; it does not sit
@@ -339,6 +351,13 @@ else holding a copy yet. The recipient fetches it whenever they next sync.
 the one node that holds it, so the *sender* must be reachable when the recipient comes
 back. Message someone at midnight, close your laptop, and they receive it the next time
 you are both online — not the next time they open the app.
+
+**Under D41 that overlap runs through a knock** (`00` §3, `09` §2; decided 2026-10-10, not
+built). A conversation will sleep, with no node running, until a knock sent through the shared
+network wakes the other side. So being online at the same time is no longer enough on its own:
+the two must also still share that network, and a message written while the other side was
+offline needs a knock retried once they appear in it. How that retry works is still to be
+designed.
 
 This gives two honest states the UI must distinguish, because collapsing them is the
 kind of small lie that erodes trust in a messenger:

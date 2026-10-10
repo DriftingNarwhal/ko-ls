@@ -240,7 +240,34 @@ since a node ran per network**: the window counted the events it heard and dropp
 nobody counted them. That rule, and a store's connected list outliving its node, are in
 `design/05` §1; what the count covers and does not is `09` §1.3; the lock closing conversation
 windows is §1.12. **Flagged rather than decided:** whether a conversation can be set aside
-(`09` §7.9) — the interface offers it on network rows only.
+(`09` §7.9) — the interface offers it on network rows only. **Superseded 2026-10-10 by D41**,
+next paragraph.
+
+**Direct messages become ephemeral: decided 2026-10-10, not built.** The user's decision, **D41**
+(`design/00` §3): a conversation stays its own network but sleeps, with no node, until a knock
+through the shared network wakes it, and sleeps again after an idle timeout of about an hour that
+the user can change. It closes `09` §7.9. `design/09` §2 has the shape and what is still to be
+designed; `design/03` §4.5 the overlap it now needs. Next: find the idle traffic and the
+occasional ten-second delivery, then design the knock.
+
+What led to it was **measuring what an idle conversation costs** (`design/05` §4,
+`tests/idle_cost.rs`, ignored by default): per side, about 12 MB, 0.1–0.3% of a core,
+1.8 KB/s each way and ten sockets, loopback only. Measuring found two bugs, both fixed the same
+day:
+
+- **CPU grew with the square of the networks held.** Every node walked every store in the
+  installation on every tick. The walk is now shared per process: 147% of a core became 22% at
+  fifty paired conversations (`design/05` §5.1).
+- **Accepting a conversation request left the accepter in the issuer's waiting room**, with no
+  key, so a request could be accepted and never used. Reproduced with the real
+  start, deliver, receive and accept path. The issuing node now admits the accepter as a
+  `Founder`, citing the invite (`design/03` §4.3, spec 07 v0.13 §6.2);
+  `workspace.rs::accepting_a_conversation_request_makes_the_accepter_a_member`.
+
+And one upstream: **a node never cleared its waiting room after an admission**, only on restart,
+so every accepted network replayed governance on every tick. Fixed in `intranet-transport`
+(`MemberNode::append_entry` and the sync path), asserted in `join.rs`. Giving `AdmitMember` the
+invite it cites left one gap, now O29 (§2).
 
 **Launching it found three defects the suite could not see, and all three were the same
 mistake**: a window drawn once and then trusted. The workspace window had no poll and no
@@ -442,7 +469,11 @@ fourth.
 
 **`v0.13.4` was tested on two machines, and the window model is confirmed**, 2026-09-11: the
 §1.5 reuse rule with two networks — the central promise nothing here could check — and §1.11's
-Dock door on macOS. A DM request was started from a roster, delivered and accepted. Offline
+Dock door on macOS. A DM request was started from a roster, delivered and accepted, and both
+sides then sent. **Qualified 2026-10-10:** accepting admitted nobody until that date (the
+accepter stayed in the issuer's waiting room, below), and no `kols admit` was run, so how the
+accepter got in that day is unexplained. A guess, unverified: the network window's
+waiting-room Admit button as it was before 2026-09-11. Offline
 catch-up works in both the *application closed* and the *machine asleep* cases, which is the
 fetch fix below doing its job.
 
@@ -591,6 +622,7 @@ not, the dependency is named in the owning document.
 |---|---|---|
 | O1 | Commands for search, voice and stage — each has a line in `design/05` §3's boundary *grammar* and nothing in `kols-api`. **The direct-message half is done and was never going to be commands**, which is the more useful correction: `05` §3.1 settled on 2026-09-10 that the flow is a workspace-level module and that what crosses the boundary is the inbound event alone, since creating a network is `§5.1`'s named example of an act above the per-network boundary. Built 2026-09-11, interface and all. What is left here waits on things that do not exist: `Search` on `03` §6's two indexes, and the voice and stage set on `kols-media`, which has no code and therefore no crate. A NAT'd conversation connects through D39's borrowed relay where the pair can hole-punch; E13 is deferred (`design/06` §13), which states the limit | `design/05` §3, `design/00` §5 |
 | O26 | **`a_joiner_is_admitted_keyed_and_reads_what_was_written_before_they_arrived` does not reproduce, and the row that said it failed deterministically was contradicted by measurement rather than by argument.** Measured 2026-09-10: green alone five times running — the shape it had failed in five times running — green across all twelve of that file at full width, and green across all twelve starved under `taskset -c 0,1`. So the trigger was machine state that did not survive the session, which is what the original attribution already suspected and could not name; the orphans, ports, scratch, disk and fd limit it checked were all clean, so it is still unnamed. **What the session's attribution was pointing at was real, and is fixed** (`design/05` §4): the request for a key was gated on `ready(..).is_ok()` — advertise *and* publish every author log — as a proxy for *am I a member yet*. That is strictly stronger than the question, so a transient failure in the publish half suppressed the ask on every tick for as long as it lasted, which is the same permanent strand the retry schedule was written to remove, reached through the precondition instead of the cadence. The ask now asks replayed state directly, and the startup line reports what actually failed instead of saying *not a member of this network yet* whichever half did — a line that named a cause it had not established, and the reason a session went looking at membership. **Not closed**, because the trigger is unexplained and one green day is not evidence against a state-dependent fault; it no longer precedes the two-machine test | `tests/two_nodes.rs`, `CONTRIBUTING.md` |
+| O29 | **An invite admitted by hand is not counted as used.** Core §5.6 attaches an invite's provenance to the membership record it produces, and the use count is computed from those records. `Command::AdmitMember` carries `via_invite` since 2026-10-10, but `kols admit` and the window's waiting-room Admit pass none, because they see no provenance: the waiting file holds identities only. So on an explicit-intake server a single-use invite admitted by hand stays unspent, and since the upstream waiting-room fix of the same day it can be redeemed into the waiting room again straight away. Each such redeem is still screened by hand, so this is not an automatic admission. Conversations are unaffected: their admission cites the invite (`design/03` §4.3) | `kols-api` `Command::AdmitMember`, Core §5.6 |
 | O20 | **The daemon suite run starved is unreliable**, and `CONTRIBUTING.md` asks for exactly that run. One or two of eleven time out in `wait_for` under `taskset -c 0,1`; each passes alone. Measured at `main` on 2026-08-29, so it is the suite rather than any change — but it makes the starved run a signal to isolate rather than a gate, which is weaker than what it was added for | `CONTRIBUTING.md`, `tests/common::patience` |
 
 O2, O3, O4, O5, O6, O7, O8, O9, O10, O12, O13, O14, O15, O17, O18, O21, O22, O23, O24, O27 and O28
@@ -629,7 +661,7 @@ as a fix nobody had got round to.
 | `kols-core` | Encoding, author logs, merge, collision recovery, chat policy, channel structure, `sidebar_order`, reader-side limits, and `Scope` — the one construction of a capability's name, used by the writer and the resolver alike, and the direct-message request payload with the identity-link check no platform can make for it. 158 tests |
 | `kols-net` | Publish and fetch over a running node, refusing a segment past the network's ceiling from its manifest alone, and holding one that understates its length to what it declares through the fetch (`design/06` §17). Five two-node tests |
 | `kols-api` | The whole boundary — all three of `design/05` §3's properties held. 25 commands, 11 events, 50 tests, and the consent drift test is guarded at both ends: a new command stops the suite compiling until it is sampled, which is how `LeaveNetwork` was caught unsampled the moment it existed |
-| `kols-node` | `kols`, its node daemon, the executor, the store, the workspace and the unread counts the shell keeps for every network — the window's entire backend, and the largest crate here at 232 tests. Seventeen of them run over a live wire between separate processes (`two_nodes`, `three_nodes`, `relay`); the rest cover the workspace, the store, roles and grants, invites, names, records and the paged read |
+| `kols-node` | `kols`, its node daemon, the executor, the store, the workspace and the unread counts the shell keeps for every network — the window's entire backend, and the largest crate here at 233 tests, plus four ignored measurements (`cost`, `idle_cost`). Seventeen of them run over a live wire between separate processes (`two_nodes`, `three_nodes`, `relay`); the rest cover the workspace, the store, roles and grants, invites, names, records and the paged read |
 | `kols-app` | The Tauri shell, holding a workspace, an executor for whichever network is open, **the supervisor running a node for every network** (`design/09` §2), and the unread counts, since it is the one place that hears every network's events (`design/05` §1). Builds `kols-desktop`. 11 tests, one of which resolves the webview's ACL against the real configuration — the boundary whose failure produces no output |
 | `kols-ui` | The interface: a page and a script per window (`app.js`, `workspace.js`, `conversation.js`) and one stylesheet, holding no keys, no sockets and no files |
 | `kols-store` | The read-side projection, **built and switched on**: the schema, the range and target queries, the stored rate verdict and its fingerprint. 14 tests — six compare its verdicts against `kols_core::withheld` itself rather than a second implementation of the fold, and eight walk a channel whose records share a reading, which is the boundary a bare clock reading cannot cut. This row said 19 until 2026-09-09, while its own breakdown summed to 14 |

@@ -24,6 +24,48 @@ Kept because this project keeps re-learning the same lessons and paying for them
 
 ---
 
+- **2026-10-10** — **An idle conversation was measured, the measuring found two bugs, and
+  direct messages become ephemeral.** `05` §4 had flagged since before there was code that idle
+  conversations "should be suspended and woken on demand" and that the threshold wanted
+  measuring; nobody had measured it. `tests/idle_cost.rs` does, through the window's own
+  supervisor, release build, both sides in one process on loopback: about 12 MB, 0.1–0.3% of a
+  core, 1.8 KB/s each way and ten sockets per side. Three things it did not explain are left
+  open in `05` §4 rather than reasoned away: traffic far above a thirty-second presence beat,
+  the occasional ten-second delivery the user saw live, and whether macOS's default of 256 open
+  files is reached at twenty-odd networks.
+
+  The first run's CPU figure was the first bug. Every node's duty pass walked every store in
+  the installation each two-second tick to budget its duty, so N nodes did N walks of N stores:
+  147% of a core at fifty paired conversations. Found by removing the walk and measuring again,
+  not by reading. The walk is shared per process now (`05` §5.1), at 22%. Sharing it brought a
+  hazard the per-node copy did not have: a node that shed from its own copy alone would leave
+  every other node reading the old total and shedding again, so shedding and newly adopted duty
+  both correct the shared figure as they happen.
+
+  The second was found by building the test's conversations the way the application does.
+  **Accepting a conversation request had never admitted anybody**: a conversation is created
+  with auto-admit off, nothing on the issuer's side admitted the redeemer, and spec 07 said
+  nothing about who should. 85 of 85 redeems landed as *waiting*. The user's live test on
+  2026-09-11 had both sides sending with no `kols admit` run, so the fix waited until the real
+  start, deliver, receive and accept path had been reproduced; it never admits unaided. How the
+  live test got through is still unexplained. The issuing node now admits whoever redeems its
+  own invite to a conversation, to `everyone` and `Founders`, citing the invite so a single-use
+  one is spent, and retries a half-done admission, across a restart too. Spec 07 v0.13 §6.2
+  requires it. Citing the invite needed `AdmitMember` to carry one, and the two hand paths have
+  none to give, which is O29.
+
+  Upstream, the same session found that **a node's waiting room was emptied only by a restart**:
+  admission is a governance entry and nothing on that path reached the room, so `record_waiting`
+  replayed governance every tick for every network that had ever had somebody waiting. The test
+  that claimed to check it reconciled a copy by hand. `MemberNode` now reconciles as entries land
+  and as sync brings them, and the test asserts the node's own room.
+
+  With the cost in hand, the user decided the shape rather than a threshold: **D41**. "Let's
+  treat each 'DM' connection as an ephemeral thing." A conversation stays its own network and
+  sleeps until a knock through the shared network wakes it, with an idle timeout of about an
+  hour that the user can change. Two ideas from earlier the same day were dropped for it:
+  keeping a conversation awake for a week after the last send, and a manual *keep running*
+  override. `09` §7.9 (can a conversation be set aside?) went with them. Not built.
 - **2026-10-10** — **Read state is local only, and a direct message owes two delivery states,
   not three.** The user: "Read should be a local only state I think. Delivered should be
   tracked, but I don't care about read. That's something that's most relevant to the local user

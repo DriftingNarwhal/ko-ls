@@ -2187,7 +2187,10 @@ fn admit(app: tauri::State<'_, App>, identity: String) -> Result<(), String> {
     let identity = kols_node::parse_identity(&identity)?;
     app.with(|executor| {
         executor
-            .submit(Command::AdmitMember { identity })
+            .submit(Command::AdmitMember {
+                identity,
+                via_invite: None,
+            })
             .map(|_| ())
             .map_err(|err| err.to_string())
     })

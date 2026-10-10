@@ -375,12 +375,13 @@ impl Executor {
                 Ok(Outcome::BootstrapRelaysSet { relays })
             }
 
-            Command::AdmitMember { identity: who } => {
-                self.change_membership(who, true, identity, GroupId::everyone())
-            }
+            Command::AdmitMember {
+                identity: who,
+                via_invite,
+            } => self.change_membership(who, true, identity, GroupId::everyone(), via_invite),
 
             Command::RevokeMember { identity: who } => {
-                self.change_membership(who, false, identity, GroupId::everyone())
+                self.change_membership(who, false, identity, GroupId::everyone(), None)
             }
 
             // Written and not acted on: the daemon holds the node and honours
@@ -455,7 +456,7 @@ impl Executor {
                 group,
                 identity: who,
                 member,
-            } => self.change_membership(who, member, identity, group),
+            } => self.change_membership(who, member, identity, group, None),
         }
     }
 
@@ -1242,6 +1243,7 @@ impl Executor {
         admit: bool,
         identity: &intranet_identity::PerNetworkIdentity,
         group: GroupId,
+        via_invite: Option<intranet_governance::InviteProvenance>,
     ) -> Result<Outcome, ExecuteError> {
         // **Removing yourself is ordinary, and was refused outright.** Core
         // §2.5.1 makes a membership removal naming its own author valid without
@@ -1279,7 +1281,7 @@ impl Executor {
                 group: group.clone(),
                 identity: target,
                 action: if admit {
-                    MembershipAction::Add { via_invite: None }
+                    MembershipAction::Add { via_invite }
                 } else {
                     // Non-cascading, the protocol's default and the right one:
                     // anyone this member admitted was validly admitted at the

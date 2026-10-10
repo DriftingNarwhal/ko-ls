@@ -78,8 +78,11 @@ impl Lab {
             .expect("derives")
             .id();
         if !self.state().is_member(&who) {
-            self.run(Command::AdmitMember { identity: who })
-                .expect("admits");
+            self.run(Command::AdmitMember {
+                identity: who,
+                via_invite: None,
+            })
+            .expect("admits");
         }
         who
     }

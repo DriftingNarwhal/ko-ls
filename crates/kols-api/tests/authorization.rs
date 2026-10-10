@@ -311,7 +311,8 @@ fn admission_is_the_protocols_own_capability() {
             &without,
             &member,
             Command::AdmitMember {
-                identity: joiner.id()
+                identity: joiner.id(),
+                via_invite: None,
             },
         ),
         Err(Refusal::NotPermitted {
@@ -326,7 +327,8 @@ fn admission_is_the_protocols_own_capability() {
             &with,
             &member,
             Command::AdmitMember {
-                identity: joiner.id()
+                identity: joiner.id(),
+                via_invite: None,
             },
         )
         .is_ok()
@@ -897,6 +899,7 @@ fn every_command() -> Vec<Command> {
         },
         Command::AdmitMember {
             identity: person(3).id(),
+            via_invite: None,
         },
         Command::RevokeMember {
             identity: person(3).id(),

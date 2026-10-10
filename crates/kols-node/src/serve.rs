@@ -35,7 +35,7 @@ use kols_core::{AuthorLog, Authority, ChannelId, Placement, Segment, StateAuthor
 use kols_net::{fetch_segment, known_pointer, plan_fetch, publish_segment};
 use libp2p::multiaddr::Protocol;
 use libp2p::{Multiaddr, PeerId};
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::time::Instant;
 
 /// How much this node offers other members when nobody has said.
@@ -355,6 +355,10 @@ pub async fn serve(
         taken: Instant::now() - DISK_MEASURE_EVERY,
     };
     let mut said_unkeyed = false;
+    // Participants admitted to a conversation and not yet in `Founders`, so a
+    // half-finished admission is finished on a later tick — including one a
+    // restart interrupted, which is what reading it from replay is for.
+    let mut admissions = Admissions::owed_from(&store, &identity);
     // When this node last asked to be keyed in, so the ask can be repeated on a
     // schedule rather than being a single chance.
     let mut last_asked: Option<Instant> = None;
@@ -731,11 +735,13 @@ pub async fn serve(
                 continue;
             }
             _ = refresh.tick() => {
+                admit_redeemers(&store, &node, &identity, &mut admissions, sink);
                 adopt_local_changes(&store, &mut node, &identity, seal_bytes, sink)?;
                 // Recomputed on the tick rather than only when somebody knocks.
-                // Admission is a governance entry, and no path from one reaches
-                // the waiting room — so this is where an admitted member stops
-                // being shown at the door, whoever admitted them and whichever
+                // Admission is a governance entry, and the node drops whoever
+                // its log now names a member from its room as the entry lands
+                // (since 2026-10-10); writing the room down here is what lets
+                // `kols waiting` see that, whoever admitted them and whichever
                 // process wrote the entry.
                 record_waiting(&store, &node, &identity, sink);
                 // Both halves of the live path, together. Spec 07 §6.1 requires
@@ -809,6 +815,7 @@ pub async fn serve(
                         // dropped, and believing it would shed the same objects
                         // again on the next pass.
                         disk.used = disk.used.saturating_sub(shed.bytes);
+                        installation_shed(&workspace_of(&store), shed.bytes);
                     }
                     if shed.still_over > 0 {
                         // Cache is exhausted, so this starts giving back what it
@@ -834,6 +841,7 @@ pub async fn serve(
                             node.forget_chunk(cid);
                         }
                         disk.used = disk.used.saturating_sub(evicted.bytes);
+                        installation_shed(&workspace_of(&store), evicted.bytes);
 
                         // Asked about directly rather than waiting for the
                         // background census to reach them. These are the objects
@@ -928,7 +936,18 @@ pub async fn serve(
                     }
                 }
 
-                if let Some(duty) = duty_pass(&store, &node, &identity, &census, now) {
+                if let Some(duty) = duty_pass(&store, &node, &identity, &census, &disk, now) {
+                    // **What was just taken on is counted now, not at the next
+                    // walk.** The figure the next pass budgets from may be up to
+                    // `DISK_MEASURE_EVERY` old and is shared by every node, so
+                    // bytes promised here and not yet fetched would otherwise be
+                    // promised again — by this node on its next tick and by
+                    // every other one in the installation — until a walk saw
+                    // them arrive.
+                    if duty.adopted_bytes > 0 {
+                        disk.used = disk.used.saturating_add(duty.adopted_bytes);
+                        installation_took(&workspace_of(&store), duty.adopted_bytes);
+                    }
                     // Said once per change rather than per tick: this is a
                     // standing condition, and a loop reporting it every two
                     // seconds would train somebody to ignore the one time it
@@ -1603,6 +1622,9 @@ pub async fn serve(
                         // The membership entry, if the network auto-admits, is
                         // in the node's log and not yet in the store.
                         persist_governance(&store, &node)?;
+                        if matches!(response, intranet_invite::JoinResponse::Waiting) {
+                            admit_redeemers(&store, &node, &identity, &mut admissions, sink);
+                        }
                         record_waiting(&store, &node, &identity, sink);
                         sink(&[Event::JoinAnswered {
                             joiner,
@@ -2437,6 +2459,200 @@ fn resolve(
     Ok(Some((pointer.current_cid, dek)))
 }
 
+/// What [`admit_redeemers`] still owes, and what it last said about it.
+#[derive(Default)]
+struct Admissions {
+    /// Participants in `everyone` and not yet in `Founders`.
+    owed: BTreeSet<intranet_identity::PerNetworkIdentityId>,
+    /// The last failure reported, so a failure that persists is said once
+    /// rather than on every tick — the same rule the duty report follows.
+    said: Option<String>,
+}
+
+impl Admissions {
+    /// What a previous run left owed, read from replay rather than remembered.
+    ///
+    /// A participant admitted through one of this node's invites whose
+    /// `Founders` entry never landed — the process ended between the two — is
+    /// a member of `everyone` whose record cites an invite this node issued,
+    /// and is not a `Founder`. Replay says that after any restart.
+    fn owed_from(store: &Store, identity: &intranet_identity::PerNetworkIdentity) -> Self {
+        let mut admissions = Self::default();
+        let Ok(state) = store.state() else {
+            return admissions;
+        };
+        if kols_core::ChatPolicy::of(&state.policy).profile()
+            != kols_core::NetworkProfile::Conversation
+        {
+            return admissions;
+        }
+        let founders = state.groups.get(&intranet_governance::GroupId::founders());
+        if let Some(everyone) = state.groups.get(&intranet_governance::GroupId::everyone()) {
+            for (member, record) in &everyone.members {
+                let mine = record
+                    .via_invite
+                    .is_some_and(|provenance| provenance.issuer == identity.id());
+                let founder = founders.is_some_and(|group| group.members.contains_key(member));
+                if mine && !founder {
+                    admissions.owed.insert(*member);
+                }
+            }
+        }
+        admissions
+    }
+
+    fn fail(&mut self, sink: &Sink, reason: String) {
+        if self.said.as_ref() != Some(&reason) {
+            sink(&[Event::Degraded {
+                reason: reason.clone(),
+            }]);
+            self.said = Some(reason);
+        }
+    }
+}
+
+/// Admits whoever redeemed one of this node's own invites to a conversation,
+/// as a `Founder` — spec 07 §6.2.
+///
+/// **Accepting a conversation request is joining it.** A conversation is
+/// created with auto-admit off (`design/03` §4.3), so the protocol answers a
+/// valid redeem with a waiting-room place, and until 2026-10-10 nothing took
+/// the participant out of it: they held no key and could neither read nor write
+/// (`tests/workspace.rs`,
+/// `accepting_a_conversation_request_makes_the_accepter_a_member`). Auto-admit
+/// would not do instead, because it adds to `everyone` only, and spec 07 §1.2
+/// makes every participant a `Founder`.
+///
+/// Three things keep this from admitting anybody it should not:
+///
+/// - **Only redeems of this node's own invites.** A waiting entry whose
+///   invite another participant issued is that participant's to answer.
+/// - **The admission cites the invite** (Core §5.6). An invite's use count is
+///   computed from the membership records that cite it, so an admission that
+///   did not would leave a single-use invite unspent and redeemable again — by
+///   anybody else holding the payload, into a pairwise conversation as a third
+///   `Founder`.
+/// - **Conversations only.** A server's waiting room is an admin's to decide
+///   (Core §2.4).
+///
+/// **Flagged:** "this node's own invites" is wider than "the request's invite".
+/// A participant who designates a relay can mint an ordinary invite on a
+/// conversation (`CreateInvite` refuses one only for want of a relay to put in
+/// it), and its redeemers are admitted here as `Founders` too. `design/03`
+/// §4.4 lets any participant of a group conversation add people and says a
+/// pairwise one cannot be added to — and nothing enforces the second, here or
+/// at `CreateInvite`. Tying admission to the request's invite id instead would
+/// need the conversation to remember every invite `dm::deliverable` mints.
+///
+/// **Run on every tick, and costs nothing when there is nothing to do.** The
+/// node drops admitted joiners from its room as their entries land, so once
+/// everybody is in, nothing is waiting and nothing is owed and this returns
+/// before any replay. A conversation node is the one built without discovery,
+/// which is checked before replaying anything.
+///
+/// Two entries are written, one per group, and they are not atomic. A
+/// participant admitted whose `Founders` entry failed stays owed and is
+/// retried, across a restart too ([`Admissions::owed_from`]). **Flagged:** spec
+/// 07 does not say what a partial admission is owed; this retries until it
+/// lands. *What is not retried across a restart:* a redeemer answered *waiting*
+/// whose admission had not been written when the process ended. The node's
+/// room is in memory and the file `record_waiting` keeps holds no provenance, so
+/// they stay waiting, and their client does not ask again. The window between
+/// the answer and the admission is one call in the same arm.
+fn admit_redeemers(
+    store: &Store,
+    node: &MemberNode,
+    identity: &intranet_identity::PerNetworkIdentity,
+    admissions: &mut Admissions,
+    sink: &Sink,
+) {
+    if node.discovery() != intranet_transport::Discovery::Off {
+        return;
+    }
+    let mine: Vec<(
+        intranet_identity::PerNetworkIdentityId,
+        intranet_governance::InviteProvenance,
+    )> = node
+        .waiting_room()
+        .occupants()
+        .into_iter()
+        .filter(|entry| entry.provenance.issuer == identity.id())
+        .map(|entry| (entry.identity, entry.provenance))
+        .collect();
+    if mine.is_empty() && admissions.owed.is_empty() {
+        admissions.said = None;
+        return;
+    }
+    let Ok(state) = store.state() else {
+        return;
+    };
+    if kols_core::ChatPolicy::of(&state.policy).profile() != kols_core::NetworkProfile::Conversation
+    {
+        admissions.owed.clear();
+        return;
+    }
+    let executor = match crate::executor::Executor::open(store.root().to_path_buf()) {
+        Ok(executor) => executor,
+        Err(err) => {
+            admissions.fail(sink, format!("could not admit to this conversation: {err}"));
+            return;
+        }
+    };
+
+    for (joiner, provenance) in mine {
+        if !state.is_member(&joiner) {
+            if let Err(err) = executor.submit(kols_api::Command::AdmitMember {
+                identity: joiner,
+                via_invite: Some(provenance),
+            }) {
+                admissions.fail(
+                    sink,
+                    format!(
+                        "{} accepted this conversation and could not be admitted: {err}",
+                        joiner.short()
+                    ),
+                );
+                continue;
+            }
+        }
+        admissions.owed.insert(joiner);
+    }
+
+    let founders = intranet_governance::GroupId::founders();
+    let Ok(state) = store.state() else {
+        return;
+    };
+    let is_founder = |who: &intranet_identity::PerNetworkIdentityId| {
+        state
+            .groups
+            .get(&founders)
+            .is_some_and(|group| group.members.contains_key(who))
+    };
+    for joiner in admissions.owed.clone() {
+        // Somebody who has since left, or was removed, is owed nothing.
+        if !state.is_member(&joiner) || is_founder(&joiner) {
+            admissions.owed.remove(&joiner);
+            continue;
+        }
+        match executor.submit(kols_api::Command::SetRoleMember {
+            group: founders.clone(),
+            identity: joiner,
+            member: true,
+        }) {
+            Ok(_) => {
+                admissions.owed.remove(&joiner);
+            }
+            Err(err) => admissions.fail(
+                sink,
+                format!(
+                    "{} is in this conversation and could not be made a Founder yet: {err}",
+                    joiner.short()
+                ),
+            ),
+        }
+    }
+}
+
 /// Writes down who is waiting, so a one-shot command can see it.
 ///
 /// The waiting room is live state in the running node (Core §2.4) — a valid
@@ -2469,13 +2685,13 @@ fn record_waiting(
         return;
     }
 
-    // **Anybody already admitted is no longer waiting.**
-    //
-    // **Anybody already admitted is no longer waiting.** The node's room is
-    // populated when a join is answered and emptied by nothing that admission
-    // goes through — admitting writes a governance entry, and no path from one
-    // reaches this room — so a founder who admitted somebody kept being shown
-    // them at the door, with an `admit` button that had already been pressed.
+    // **Anybody already admitted is no longer waiting.** The node's room was
+    // populated when a join was answered and, until 2026-10-10, emptied by
+    // nothing that admission goes through, so a founder who admitted somebody
+    // kept being shown them at the door, with an `admit` button that had
+    // already been pressed. The node now reconciles its room as entries land;
+    // this filter stays because the file below is a union with what an earlier
+    // run wrote, which no node's room covers.
     // **The union of what this node knows now and what was written down, not a
     // replacement.** The waiting room is in-memory state on the node — a fresh
     // `WaitingRoom` at construction — so a restart empties it, and writing the
@@ -4066,6 +4282,67 @@ fn workspace_of(store: &Store) -> crate::workspace::Workspace {
 /// inside one segment.
 const DISK_MEASURE_EVERY: std::time::Duration = std::time::Duration::from_secs(30);
 
+/// Every installation's last measurement in this process: when it was taken,
+/// and the bytes it found, corrected for anything given up since.
+static MEASURED: std::sync::Mutex<BTreeMap<std::path::PathBuf, (Instant, u64)>> =
+    std::sync::Mutex::new(BTreeMap::new());
+
+/// Locks [`MEASURED`]. A poisoned lock means another node panicked mid-update;
+/// the numbers in it are still numbers, so measuring carries on.
+fn measured() -> std::sync::MutexGuard<'static, BTreeMap<std::path::PathBuf, (Instant, u64)>> {
+    MEASURED
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+}
+
+/// The installation's stored bytes and when they were measured, walked at most
+/// once per [`DISK_MEASURE_EVERY`] **for every node in this process together**.
+///
+/// The walk is over the whole installation, and every network's node wants the
+/// same answer. Each walking it for itself made the cost grow with the square
+/// of the networks held, since each of N nodes visits N stores; sharing it makes
+/// it one walk per interval. Keyed by the workspace's root, so two
+/// installations in one process (the test suites) never see each other's.
+///
+/// The measurement's own time is returned so a caller's staleness is counted
+/// from it rather than from when the caller copied it — otherwise a copy of a
+/// copy could be twice [`DISK_MEASURE_EVERY`] old. The lock is not held across
+/// the walk, so nodes refreshing together do not park every worker on it; two
+/// may both walk when an entry expires, which costs a walk and nothing else.
+fn installation_used(workspace: &crate::workspace::Workspace) -> (Instant, u64) {
+    let root = workspace.root().to_path_buf();
+    if let Some(&(at, used)) = measured().get(&root) {
+        if at.elapsed() < DISK_MEASURE_EVERY {
+            return (at, used);
+        }
+    }
+    let used = workspace.stored_bytes();
+    let at = Instant::now();
+    measured().insert(root, (at, used));
+    (at, used)
+}
+
+/// Adds what a node just took on to the shared measurement, before the bytes
+/// arrive — the counterpart of [`installation_shed`].
+fn installation_took(workspace: &crate::workspace::Workspace, bytes: u64) {
+    if let Some(entry) = measured().get_mut(workspace.root()) {
+        entry.1 = entry.1.saturating_add(bytes);
+    }
+}
+
+/// Takes what a node just gave up off the shared measurement.
+///
+/// **Every node reads the same figure, so every node must see the correction.**
+/// A node that shed only from its own copy would leave the others reading the
+/// pre-shed total until the next walk, each finding the installation as far
+/// over its ceiling as before and each shedding that much again from its own
+/// store — up to N times what was needed, and duty as well as cache.
+fn installation_shed(workspace: &crate::workspace::Workspace, bytes: u64) {
+    if let Some(entry) = measured().get_mut(workspace.root()) {
+        entry.1 = entry.1.saturating_sub(bytes);
+    }
+}
+
 /// What the disk looked like when it was last measured.
 struct DiskWatch {
     used: u64,
@@ -4078,9 +4355,8 @@ impl DiskWatch {
     fn refresh(&mut self, store: &Store) -> &Self {
         if self.taken.elapsed() >= DISK_MEASURE_EVERY {
             let workspace = workspace_of(store);
-            self.used = workspace.stored_bytes();
+            (self.taken, self.used) = installation_used(&workspace);
             self.ceiling = workspace.ceiling();
-            self.taken = Instant::now();
         }
         self
     }
@@ -4108,6 +4384,7 @@ fn duty_pass(
     node: &MemberNode,
     identity: &intranet_identity::PerNetworkIdentity,
     census: &crate::replica::Census,
+    disk: &DiskWatch,
     now: i64,
 ) -> Option<crate::replica::Duty> {
     let state = replayable(store)?;
@@ -4124,24 +4401,20 @@ fn duty_pass(
     // bounds the disk at nothing, which stops being academic at P2 where every
     // conversation is its own network.
     //
-    // A store opened directly — `kols --home` at one network — has no workspace
-    // above it, and `Workspace::at` on that path lists the single store it is.
-    // So this reads the same number either way rather than special-casing the
-    // shape somebody launched.
-    let workspace = crate::workspace::Workspace::at(
-        store
-            .root()
-            .parent()
-            .map_or_else(|| store.root().to_path_buf(), std::path::Path::to_path_buf),
-    );
+    // **From the node's last measurement, not a fresh walk.** This runs every
+    // tick in every node, and the walk visits every store in the installation,
+    // so walking here made a tick's cost grow with the square of the networks
+    // held: measured 2026-10-10 at fifty idle conversations a side, 147% of a
+    // core against 22% once it read the shared figure (`tests/idle_cost.rs`). `DiskWatch` already
+    // bounds how stale the figure may be and explains why that bound is safe.
     let offer = store
         .contribution()
         .unwrap_or(DEFAULT_CONTRIBUTION)
         .storage_offered;
     let budget = crate::replica::Budget {
         offered: offer,
-        installation: workspace.ceiling(),
-        installation_used: workspace.stored_bytes(),
+        installation: disk.ceiling,
+        installation_used: disk.used,
     };
     crate::replica::evaluate(
         store,

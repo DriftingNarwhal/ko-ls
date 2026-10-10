@@ -1,6 +1,6 @@
 # Interface
 
-**Document status:** v0.41 — §1.6's per-message delivery state is two states, *sent* and *delivered*, by the user's decision of 2026-10-10; *read* is no longer owed, and a read receipt is a possible later opt-in. §4.3 and §7.7 say read state is local only and never published, and §7.7 no longer says it becomes shared when multi-device lands — only that whether one person's devices share it is open. Previously v0.40 — §1.3's row contents are **built**, 2026-10-10: unread per network and conversation, the workspace window's total in its title, the connection dot, and the tier with a set-aside row's *last checked*. Building them found that §1.3 and §4.3 had not held since a node ran per network: unread was counted by the network window from the events it heard, so a message in any network it was not showing was counted by nobody. **§4.3's mechanism moves to the shell**, which hears every network's events, and §1.3 states the limits of what it counts. §1.10's set-aside control is placed on network rows and not on conversations, following §2, against a code comment that said otherwise — recorded in §2 and as §7's ninth question rather than settled. §1.12's lock closes conversation windows too, which it had not. §1's *leave or forget* follows the node per network: *leave* wherever a node runs, and a set-aside network's departure is never reported as told. §1.10 says the local order is not built. §1.9's heading, printed twice, is printed once. Previously v0.39 — §1.12's note that `05` §1.1 needed amending now says it was, in `05` v1.35 on 2026-10-10; the amendment had been owed since this section was written. Previously v0.38 — §3 records that the address exchange it describes as the DM bootstrap is **E13, deferred by the user on 2026-10-05**, and is not built: direct messages reach each other through D39's borrowed rendezvous instead. §3 now says so where the mechanism is described, keeps the disclosure gate for if it is picked up, and marks the bounded-fallback paragraph as describing a circuit Core §5.2 no longer permits. Previously v0.37 — §3 gains relay *management*, which a network had none of: a relay
+**Document status:** v0.42 — §2 records D41, the user's decision of 2026-10-10: a direct conversation **sleeps**, with no node running, until a knock sent through the shared network wakes it, and goes back to sleep after an idle timeout of about an hour that the user can change. Designed in outline and **not built**; what it leaves open is listed there. It supersedes §7's ninth question, whether a conversation can be set aside, and §2's flag that carried it, and the paragraph saying a conversation needs no case of its own. §2 also points at what an idle conversation was measured to cost on 2026-10-10 (`05` §4). §1.10's conversation rows follow. Previously v0.41 — §1.6's per-message delivery state is two states, *sent* and *delivered*, by the user's decision of 2026-10-10; *read* is no longer owed, and a read receipt is a possible later opt-in. §4.3 and §7.7 say read state is local only and never published, and §7.7 no longer says it becomes shared when multi-device lands — only that whether one person's devices share it is open. Previously v0.40 — §1.3's row contents are **built**, 2026-10-10: unread per network and conversation, the workspace window's total in its title, the connection dot, and the tier with a set-aside row's *last checked*. Building them found that §1.3 and §4.3 had not held since a node ran per network: unread was counted by the network window from the events it heard, so a message in any network it was not showing was counted by nobody. **§4.3's mechanism moves to the shell**, which hears every network's events, and §1.3 states the limits of what it counts. §1.10's set-aside control is placed on network rows and not on conversations, following §2, against a code comment that said otherwise — recorded in §2 and as §7's ninth question rather than settled. §1.12's lock closes conversation windows too, which it had not. §1's *leave or forget* follows the node per network: *leave* wherever a node runs, and a set-aside network's departure is never reported as told. §1.10 says the local order is not built. §1.9's heading, printed twice, is printed once. Previously v0.39 — §1.12's note that `05` §1.1 needed amending now says it was, in `05` v1.35 on 2026-10-10; the amendment had been owed since this section was written. Previously v0.38 — §3 records that the address exchange it describes as the DM bootstrap is **E13, deferred by the user on 2026-10-05**, and is not built: direct messages reach each other through D39's borrowed rendezvous instead. §3 now says so where the mechanism is described, keeps the disclosure gate for if it is picked up, and marks the bounded-fallback paragraph as describing a circuit Core §5.2 no longer permits. Previously v0.37 — §3 gains relay *management*, which a network had none of: a relay
 could be designated and never taken back out, so one that no longer existed was dialled by every
 member, carried in every invite, and fixable by nobody. Each designated relay now has a remove,
 gated on the capability and refusing the last one with the reason. **The client does not remove
@@ -590,7 +590,8 @@ it is choosing slower, not absent, and their machine goes on holding up the repl
 through a `set_network_aside` command, which sets the flag and reconciles the nodes. Before it,
 `Store::set_aside` had no caller outside tests, so the cold tier was reachable only by creating
 a file by hand. Conversation rows have no such control, following §2's *never applies to direct
-messages*; whether they should is open (§2, §7.9). **The local order is not built**: the list
+messages*. Whether they should was §7.9, superseded on 2026-10-10 by D41: a conversation
+will sleep rather than be set aside (§2), and that is not built. **The local order is not built**: the list
 sorts by label (`Workspace::list`), not by the order things were joined and not by anything a
 member chose. A label sort does not reorder itself on activity, so the rule above holds, but a
 rename moves a row.
@@ -814,13 +815,47 @@ says a conversation is warm whenever the application runs; `05` §4 says idle co
 "should be suspended and woken on demand rather than all held live" and flags that the threshold
 wants measurement. Defaulting everything to warm satisfies the first without having to settle the
 second, and a member who wants a conversation quiet sets it aside exactly as they would a server.
+**Superseded 2026-10-10 by D41**, below: a conversation does get a case of its own, and it is
+not *set aside*.
 
 **Flagged (2026-10-10): whether a conversation can be set aside is unsettled**, and the sentence
 above disagrees with this section's own *never applies to direct messages*. The supervisor would
 honour a set-aside conversation like a server (`nodes::tier_for`, whose comment now carries the
 flag), and the interface offers the control on network rows only (§1.10), following *never
 applies*. That choice was made while building the row rather than decided; §7.9 holds the
-question.
+question. **Superseded 2026-10-10 by D41**: a conversation sleeps rather than being set aside,
+and §7.9 is closed by it. Until the sleeping state is built, conversations stay warm and their
+rows keep no set-aside control.
+
+**A conversation sleeps until somebody talks: decided 2026-10-10 (D41), not built.** The user's
+decision, in `00` §3. A direct conversation is an ephemeral connection:
+
+- It **stays its own network** (D10), with its keys, history, sync and groups, and is **asleep by
+  default**: no node runs for it.
+- A **knock** sent through the shared network, whose node is already running, wakes the other
+  side.
+- It goes back to sleep after an **idle timeout**, about an hour by default and adjustable by the
+  user. Any message, sent or received, resets it.
+- History stays on both machines between sessions.
+- **Accepted cost:** if either person leaves the shared network, they can no longer reach each
+  other this way. To be mitigated later. This is wider than D39's limit, which stopped only a
+  pair who could not reach each other directly.
+
+Asleep is a new state, not a fourth reading of the table above. It is not *cold*, which polls,
+and not *set aside*, which is cold chosen by the member. What it replaces is this section's *a
+conversation is warm whenever the application runs*, which stays the behaviour until it is built.
+
+**Still to be designed, and open:** the knock's payload (on E10's carrier, namespace `chat`,
+carrying the identity link and current addresses); what the shared network's node does on
+receiving one; retrying a knock when the peer appears in the shared network, for messages
+written while they were offline; the idle timer; the tier this adds to `nodes::tier_for`; whether
+a sleeping conversation's history needs anything beyond sync on connect to catch up after a
+wake (expected not, to be checked by running); and the timeout's maximum and where the user
+sets it. These will be written into spec 07 §6.2, here, and `03` §4.5.
+
+**What it replaces was measured first**, 2026-10-10: one side of an idle, connected conversation
+costs about 12 MB of memory, 0.1–0.3% of a core, about 1.8 KB/s each way and 10–11 sockets.
+`05` §4 has the figures, at what scale they were taken, and what they do not cover.
 
 **§7's fourth question is answered by asking rather than by inferring.** It asks what "recent"
 means for warm membership. It means nothing now: warm is the default and *set aside* is an
@@ -1898,7 +1933,10 @@ not a capability.
    subject and currently live in three places, with permissions parked in §4.2's settings
    sheet because nowhere better exists. What that surface is, and whether settings keeps a
    pointer to it or loses the section entirely, is undecided.
-9. **Can a conversation be set aside?** §2 says the cold poll never applies to direct messages,
+9. ~~**Can a conversation be set aside?**~~ **Superseded 2026-10-10 by D41**, the user's
+   decision: a conversation is neither warm forever nor set aside. It sleeps, with no node, until a
+   knock through the shared network wakes it, and sleeps again after an idle timeout (§2). The
+   question as it was asked: §2 says the cold poll never applies to direct messages,
    and in the same section says a member who wants a conversation quiet sets it aside like a
    server. The supervisor would honour it; the interface offers the control on network rows only
    (§1.10), a choice made while building the row on 2026-10-10 rather than decided. Settling it

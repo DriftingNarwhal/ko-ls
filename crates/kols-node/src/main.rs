@@ -535,6 +535,7 @@ fn submit(root: std::path::PathBuf, command: Command) -> Result<(), String> {
         },
         Command::Admit { identity } => ApiCommand::AdmitMember {
             identity: kols_node::parse_identity(&identity)?,
+            via_invite: None,
         },
         Command::Revoke { identity } => ApiCommand::RevokeMember {
             identity: kols_node::parse_identity(&identity)?,

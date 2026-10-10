@@ -2954,3 +2954,158 @@ fn a_conversation_can_be_spoken_in_without_anybody_defining_a_channel() {
         "the only thing left to stop it should be the missing key: {refusal}"
     );
 }
+
+#[test]
+fn accepting_a_conversation_request_makes_the_accepter_a_member() {
+    use kols_node::nodes::{Nodes, Spec};
+
+    // The whole request flow with real nodes, minus the carrier: Alice starts a
+    // conversation, her node records where it listens, the request is built and
+    // received, and Bob accepts it. Accepting is meant to leave both people able
+    // to read and write, so Bob must end up a member of the conversation.
+    let (_a, _b, alice_ws, alice, bob_ws, bob) = two_sides("dm-accept");
+    let bob_id = bob.identity().expect("identity").id();
+    let alice_id = alice.identity().expect("identity").id();
+    let shared = *alice.network();
+
+    let started = kols_node::dm::start(&alice_ws, &alice, &bob_id, None).expect("starts");
+    let conversation = started.conversation;
+    let alice_root = alice_ws.path_for(&conversation);
+    let sink: kols_node::nodes::TaggedSink = std::sync::Arc::new(|_, _| {});
+    let seal = kols_node::serve::SEAL_TARGET_BYTES;
+
+    tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+        .expect("a runtime")
+        .block_on(async {
+            let mut alice_nodes = Nodes::here();
+            alice_nodes.reconcile(
+                &[Spec {
+                    network: conversation,
+                    root: alice_root.clone(),
+                    set_aside: false,
+                }],
+                None,
+                &sink,
+                seal,
+                std::time::Instant::now(),
+            );
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+            let ready = loop {
+                let now = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .expect("after 1970")
+                    .as_millis() as i64;
+                let ready = kols_node::dm::deliverable(&alice_ws, &alice, now).expect("builds");
+                if !ready.is_empty() {
+                    break ready;
+                }
+                assert!(
+                    std::time::Instant::now() < deadline,
+                    "the conversation never listened"
+                );
+                tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+            };
+            match kols_node::dm::receive(&bob, &alice_id, &ready[0].payload) {
+                kols_node::dm::Arrived::Request { .. } => {}
+                other => panic!("the request should be kept: {other:?}"),
+            }
+
+            let spent = kols_core::DmInvite::decode(&ready[0].payload)
+                .expect("decodes")
+                .invite()
+                .clone();
+            let joined = kols_node::dm::accept(&bob_ws, &shared, &alice_id)
+                .await
+                .expect("accepts");
+            assert_eq!(joined, conversation);
+
+            let mut bob_nodes = Nodes::here();
+            bob_nodes.reconcile(
+                &[Spec {
+                    network: conversation,
+                    root: bob_ws.path_for(&conversation),
+                    set_aside: false,
+                }],
+                None,
+                &sink,
+                seal,
+                std::time::Instant::now(),
+            );
+
+            let his = Store::open(bob_ws.path_for(&conversation))
+                .expect("his store")
+                .identity()
+                .expect("his identity")
+                .id();
+            // A member, a `Founder` (spec 07 §1.2: every participant is one),
+            // and keyed — membership without the epoch key is a member who can
+            // read nothing and write nothing.
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+            let member = loop {
+                let state = Store::open(alice_root.clone())
+                    .expect("her store")
+                    .state()
+                    .expect("replays");
+                let founder = state
+                    .groups
+                    .get(&intranet_governance::GroupId::founders())
+                    .is_some_and(|group| group.members.contains_key(&his));
+                let keyed = Store::open(bob_ws.path_for(&conversation))
+                    .expect("his store")
+                    .epoch_key()
+                    .is_ok();
+                if state.is_member(&his) && founder && keyed {
+                    break true;
+                }
+                if std::time::Instant::now() > deadline {
+                    break false;
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+            };
+
+            // **The invite is spent.** Somebody else holding the same payload —
+            // which a bearer invite cannot stop being handed on — redeems it
+            // after Bob. Admission cites the invite (Core §5.6), so its single
+            // use is counted and Carol must not become a third Founder of a
+            // two-person conversation.
+            let carol_dir = Dir::new("dm-accept-carol");
+            let carol_root = Workspace::at(carol_dir.0.clone()).path_for(&conversation);
+            let _ = kols_node::join::redeem(
+                carol_root.clone(),
+                spent,
+                10,
+                &kols_node::quiet(),
+                kols_core::NetworkProfile::Conversation,
+            )
+            .await;
+            tokio::time::sleep(std::time::Duration::from_secs(3)).await;
+            let carol_in = Store::open(carol_root.clone())
+                .ok()
+                .and_then(|store| store.identity().ok())
+                .is_some_and(|carol| {
+                    Store::open(alice_root.clone())
+                        .expect("her store")
+                        .state()
+                        .expect("replays")
+                        .is_member(&carol.id())
+                });
+
+            for task in alice_nodes
+                .stop_all()
+                .into_iter()
+                .chain(bob_nodes.stop_all())
+            {
+                let _ = task.await;
+            }
+            assert!(!carol_in, "a spent invite admits nobody else");
+            assert!(
+                member,
+                "Bob accepted, so he must be a keyed Founder of the conversation; waiting room: {:?}",
+                Store::open(alice_root.clone())
+                    .expect("her store")
+                    .waiting()
+            );
+        });
+}

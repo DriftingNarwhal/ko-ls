@@ -1,6 +1,6 @@
 # Client Architecture
 
-**Document status:** v1.37 — §5's projection no longer lists read watermarks, and §6's second point no longer promises read state keyed by (device, channel) and synced as a merge of watermarks. Read state is local only and never published, by the user's decision of 2026-10-10 (`01` §9); what exists is an unread count per network and channel kept by the shell and a record of what was on screen kept by the window, neither keyed by device. Previously v1.36 — §1 records what a node per network did to state a window had been computing for itself: **anything a window derived from the events it received is suspect for networks it is not showing**, and unread had been exactly that — counted by nobody outside the network in view since 2026-09-10. The shell now keeps it (`kols_node::unread`, `09` §1.3, §4.3), since the shell is the one place that hears every network. It also records that a store's connected list outlives its node and is believed only behind `Nodes::is_live`. §8's supervision row gains the two tests that came with it. Previously v1.35 — §1.1's heading said closing the window is the shutdown path, which stopped being true on 2026-09-11 when a window became a view (`09` §1.1, §1.12): closing one neither stops a node nor sets a network aside, the workspace window hides into the tray, and the application ends on an explicit quit, or on closing the last window only where no tray could be built. What §1.1 requires is unchanged, because it was always about the process ending rather than about which gesture ends it — a crash, a kill or a power cut still ends it mid-write — so the section is renamed and its opening says so. Previously v1.34 — §1 stops saying the window would crash on Windows if a node printed. The reason was reasoned rather than run and std does not behave that way; the rule stands for a smaller reason (any other write error does panic), every line now goes through `Report`, and a source test keeps it so. Previously v1.33 — §1's drawing, §2's crate table and §3's listing describe what was built rather than what was planned: `kols-store` exists and has been switched on since 2026-09-09 (`573c2dc`), so it is no longer "not built" with `kols-node` "standing in" for it, and `OpenChannel` carries a `Window` of `Cursor`s, which is the fix §5 records for `before: Option<Hlc>`. §5's paragraph that said none of the projection existed yet is marked as written before it did. §5.1 names `FetchHistory` as the command that asks for stopped history, where it named `OpenChannel`'s `before`, which no longer exists. The drawing stops naming a protocol version, which had stayed at v1.0 while the specs moved; each spec's status line is where its version lives. Previously v1.32 — §8's closing gate paragraph includes `cargo fmt --all --check`, which both repositories' gates now require (`CONTRIBUTING.md`). Previously v1.31 — §5.1's own rule — *nobody answered* and *nobody holds it* must never collapse into one answer — turns out to have been violated by the fetch that implements it: a provider lookup naming nobody marked the chunk **exhausted**, so two members who both wrote while partitioned never reconciled after meeting, each holding a pointer it had just fetched *from the other*. A lookup that reached no peers is not an answer about the content, so a connected peer is now a candidate, with the holder count left at what the lookup produced. And a fetch that completed with nothing was re-planned immediately, which spun thousands of times a second and flooded the peer until Kademlia evicted it from the routing table — after which every lookup answered "nobody" without asking, and the node could not recover. Recorded in Storage §4.4 as a requirement rather than left as client policy. Previously v1.30 — §1 records the **third** shell trap, and the first that is a
+**Document status:** v1.38 — §4's suspend/wake threshold is measured rather than guessed, 2026-10-10 (`tests/idle_cost.rs`): what one side of an idle conversation costs, at what scale, and what the figure does not cover. The measuring found that **CPU grew with the square of the networks held**, because every node walked the whole installation's stores on every two-second tick to budget its replica duty; §5.1 now says installation use is measured once per process and shared, and how the shared figure is kept honest between walks. The decision the measurement fed is D41: a conversation sleeps until somebody talks (`09` §2), not built. Previously v1.37 — §5's projection no longer lists read watermarks, and §6's second point no longer promises read state keyed by (device, channel) and synced as a merge of watermarks. Read state is local only and never published, by the user's decision of 2026-10-10 (`01` §9); what exists is an unread count per network and channel kept by the shell and a record of what was on screen kept by the window, neither keyed by device. Previously v1.36 — §1 records what a node per network did to state a window had been computing for itself: **anything a window derived from the events it received is suspect for networks it is not showing**, and unread had been exactly that — counted by nobody outside the network in view since 2026-09-10. The shell now keeps it (`kols_node::unread`, `09` §1.3, §4.3), since the shell is the one place that hears every network. It also records that a store's connected list outlives its node and is believed only behind `Nodes::is_live`. §8's supervision row gains the two tests that came with it. Previously v1.35 — §1.1's heading said closing the window is the shutdown path, which stopped being true on 2026-09-11 when a window became a view (`09` §1.1, §1.12): closing one neither stops a node nor sets a network aside, the workspace window hides into the tray, and the application ends on an explicit quit, or on closing the last window only where no tray could be built. What §1.1 requires is unchanged, because it was always about the process ending rather than about which gesture ends it — a crash, a kill or a power cut still ends it mid-write — so the section is renamed and its opening says so. Previously v1.34 — §1 stops saying the window would crash on Windows if a node printed. The reason was reasoned rather than run and std does not behave that way; the rule stands for a smaller reason (any other write error does panic), every line now goes through `Report`, and a source test keeps it so. Previously v1.33 — §1's drawing, §2's crate table and §3's listing describe what was built rather than what was planned: `kols-store` exists and has been switched on since 2026-09-09 (`573c2dc`), so it is no longer "not built" with `kols-node` "standing in" for it, and `OpenChannel` carries a `Window` of `Cursor`s, which is the fix §5 records for `before: Option<Hlc>`. §5's paragraph that said none of the projection existed yet is marked as written before it did. §5.1 names `FetchHistory` as the command that asks for stopped history, where it named `OpenChannel`'s `before`, which no longer exists. The drawing stops naming a protocol version, which had stayed at v1.0 while the specs moved; each spec's status line is where its version lives. Previously v1.32 — §8's closing gate paragraph includes `cargo fmt --all --check`, which both repositories' gates now require (`CONTRIBUTING.md`). Previously v1.31 — §5.1's own rule — *nobody answered* and *nobody holds it* must never collapse into one answer — turns out to have been violated by the fetch that implements it: a provider lookup naming nobody marked the chunk **exhausted**, so two members who both wrote while partitioned never reconciled after meeting, each holding a pointer it had just fetched *from the other*. A lookup that reached no peers is not an answer about the content, so a connected peer is now a candidate, with the holder count left at what the lookup produced. And a fetch that completed with nothing was re-planned immediately, which spun thousands of times a second and flooded the peer until Kademlia evicted it from the routing table — after which every lookup answered "nobody" without asking, and the node could not recover. Recorded in Storage §4.4 as a requirement rather than left as client policy. Previously v1.30 — §1 records the **third** shell trap, and the first that is a
 platform rather than a default: a synchronous `#[tauri::command]` runs inline in the IPC
 handler, which on Windows is the message-loop thread, so building a window there deadlocks
 (Tauri's own *Known issues*, wry#583). `v0.13.2` shipped it — a blank white network window that
@@ -599,6 +599,36 @@ conversations is running fifty of them. They are cheap (two members, no relay du
 governance log of a handful of entries) but they are not free, so node lifecycle is a
 real concern: idle DM networks should be suspended and woken on demand rather than all
 held live. *Flagged: the suspend/wake threshold wants measurement, not a guess.*
+
+**Measured 2026-10-10, and decided.** `tests/idle_cost.rs` (ignored by default; a measurement to
+read rather than a pass to trust) builds paired two-member conversations the way the application
+does and holds them through the same supervisor the window uses. Release build, both peers in one
+process on loopback, so **no relay and no NAT**: a conversation that borrows a relay (D39) pays
+for a circuit on top, and none of the window's own cost is included. One side of one idle,
+connected conversation costs:
+
+| | Per side | At fifty conversations |
+|---|---|---|
+| Memory (resident) | about 12 MB, 10–14 across runs | about 600–700 MB |
+| CPU | 0.1–0.3% of a core | about 15–22% of a core; 22% with both sides in one process |
+| Traffic | about 1.8 KB/s each way | about 90 KB/s each way |
+| Sockets | about 10–11 | — |
+
+The fifty-conversation figures are after the fix in §5.1 below. Before it, fifty paired
+conversations took 147% of a core.
+
+**Not explained, and recorded as open rather than reasoned away:**
+
+- **The idle traffic.** About 1.8 KB/s per conversation is far above what a presence beat every
+  thirty seconds (`01` §9) accounts for.
+- **Occasional delivery taking about ten seconds**, which the user saw in a live session.
+- **The open-file limit.** At about ten sockets a node, macOS's default limit of 256 open files
+  may be reached at around twenty to twenty-five networks. Unverified: nothing here has run on
+  macOS at that scale.
+
+With these figures in hand the user decided D41 (`00` §3, `09` §2): a conversation sleeps, with
+no node, until a knock through the shared network wakes it, and sleeps again after an idle
+timeout. Not built, so until it is every conversation is held live as above.
 
 **Exactly one process may run a node for a given network, and the store enforces it.** The
 MLS group is live state, so two nodes would each advance it without seeing the other, after
@@ -1212,6 +1242,29 @@ network and this is a fact about the workspace above them.
 
 **The arithmetic saturates.** A ceiling can be lowered below what is already held, and a plain
 subtraction underflows into an enormous allowance exactly then.
+
+**What the installation holds is measured once for the process, not once per node.** The figure
+is a walk over every store in the installation, and every network's node wants the same answer.
+Until 2026-10-10 each node's duty pass walked it for itself on every two-second tick, so N nodes
+each visited N stores and **CPU grew with the square of the networks held**. Measured at fifty
+paired idle conversations (`tests/idle_cost.rs`, §4): 147% of a core became 22%, and with the
+other side stopped, 34% became 4.6%. Now the walk is shared by every node in the process, keyed
+by the installation's root, and taken at most once per `DISK_MEASURE_EVERY` (thirty seconds);
+the duty pass reads its node's last copy of it rather than walking.
+
+A shared figure can be wrong between walks in two ways, and both are corrected at the moment they
+happen rather than left for the next walk:
+
+- **Shed bytes are taken off the shared figure**, not only the shedding node's copy. Otherwise
+  every other node would go on reading the pre-shed total, find the installation as far over its
+  ceiling as before, and shed that much again from its own store: up to N times what was needed,
+  duty included.
+- **Newly adopted duty is added to it at once**, before the bytes arrive. Otherwise bytes promised
+  and not yet fetched would be promised again, by the same node on its next tick and by every
+  other node, until a walk saw them land.
+
+Two nodes refreshing together may both walk when the figure expires, which costs a walk and
+nothing else.
 
 ### Under pressure, in order
 

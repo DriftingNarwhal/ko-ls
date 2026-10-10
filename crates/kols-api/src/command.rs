@@ -155,6 +155,17 @@ pub enum Command {
     AdmitMember {
         /// Who.
         identity: intranet_identity::PerNetworkIdentityId,
+        /// The invite they redeemed, when it is known.
+        ///
+        /// **Core §5.6: an invite's provenance is attached to the membership
+        /// record it produces**, and an invite's use count is computed from
+        /// exactly those records (`GovernanceState::invite_use_count`). An
+        /// admission written without it leaves a single-use invite counting no
+        /// uses, so it can be redeemed again. `None` where the admitting side
+        /// has only an identity to go on — `kols admit` and the window's
+        /// waiting-room list, which see no provenance — and that is a known
+        /// divergence from Core §5.6 rather than a choice (`STATUS.md` O29).
+        via_invite: Option<intranet_governance::InviteProvenance>,
     },
     /// Remove an identity from the network.
     RevokeMember {
