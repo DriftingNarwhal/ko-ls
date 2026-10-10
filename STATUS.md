@@ -223,11 +223,11 @@ pair — so there is no name box in this client and could not be. What the asker
 §1.8's half of the decline rule, and saying it required the line it lands on to stop being an
 error line: a request sent is the flow working.
 
-**Not built and owed: per-message delivery state** (`03` §4.5, which `09` §1.6 lists). The
-three states need evidence nothing currently collects — *delivered* is provable only because
-the recipient became a holder, and *read* is a claim their client may withhold — and a window
-drawing two ticks it had not earned would be making the exact claim §1.8 spends its length
-refusing to make about a decline. Also not built: group conversations (`03` §4.4), the second
+**Not built and owed: per-message delivery state** (`03` §4.5, which `09` §1.6 lists) — *sent*
+and *delivered*; *read* is local only and not owed (the user, 2026-10-10, D19). *Delivered*
+needs evidence nothing currently collects — it is provable only because the recipient became
+a holder — and a window drawing two ticks it had not earned would be making the exact claim
+§1.8 spends its length refusing to make about a decline. Also not built: group conversations (`03` §4.4), the second
 network window §1.5 allows on request, `09` §1.10's local order (the list sorts by label), and
 §2's cold-poll interval as a setting (it is a constant).
 

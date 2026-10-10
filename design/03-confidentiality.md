@@ -1,6 +1,6 @@
 # Confidentiality: Channel Keying, Private Channels and Direct Messages
 
-**Document status:** v1.2 — §4.6 points at `09` §1.1, which settled on 2026-09-11 what the direct-message surface actually is: the workspace as a **window** listing every network and every conversation, a network drawn in a second window, and each conversation in a small window of its own (D40) — since a conversation *is* a network and the member is holding both. What stays this document's is the presentation split §4.1's table fixes — a server is a place, a contact is a person — and the pointer is here because §4.6 is where a reader looks for the surface and it described one sentence of it. Previously v1.1 — §3.5 is new and carries the durability constraint the storage work turned up: a node holds only what it can read, so a private channel is replicated by its roster and nobody else — and placement must therefore rank over the roster rather than over the ledger, or the effective replica set becomes *roster ∩ top-k* and can be empty. An obligation on whoever builds §3, written before the work rather than discovered after it. Previously v1.0 — design reviewed. Only the network tier is implemented; channel and session tiers are P2/P3
+**Document status:** v1.3 — §4.5's delivery states are two, *sent* and *delivered*, by the user's decision of 2026-10-10. *Read* was a third: it is now local state that is never published (`01` §9), and a read receipt is a possible later opt-in that each recipient's client would choose to send, not a state the interface owes. Previously v1.2 — §4.6 points at `09` §1.1, which settled on 2026-09-11 what the direct-message surface actually is: the workspace as a **window** listing every network and every conversation, a network drawn in a second window, and each conversation in a small window of its own (D40) — since a conversation *is* a network and the member is holding both. What stays this document's is the presentation split §4.1's table fixes — a server is a place, a contact is a person — and the pointer is here because §4.6 is where a reader looks for the surface and it described one sentence of it. Previously v1.1 — §3.5 is new and carries the durability constraint the storage work turned up: a node holds only what it can read, so a private channel is replicated by its roster and nobody else — and placement must therefore rank over the roster rather than over the ledger, or the effective replica set becomes *roster ∩ top-k* and can be empty. An obligation on whoever builds §3, written before the work rather than discovered after it. Previously v1.0 — design reviewed. Only the network tier is implemented; channel and session tiers are P2/P3
 **Depends on:** Core Protocol Spec §3 (epoch keying), Storage Spec §5 (envelope encryption), Search Spec §3, Real-Time Spec §3.5
 **Consumed by:** `01-messaging-model`, `04-realtime`, `05-client-architecture`
 
@@ -340,14 +340,22 @@ the one node that holds it, so the *sender* must be reachable when the recipient
 back. Message someone at midnight, close your laptop, and they receive it the next time
 you are both online — not the next time they open the app.
 
-This gives three honest states the UI must distinguish, because collapsing them is the
+This gives two honest states the UI must distinguish, because collapsing them is the
 kind of small lie that erodes trust in a messenger:
 
 | State | Means |
 |---|---|
 | **Sent** | Written and published locally. Nobody else holds it yet |
 | **Delivered** | The recipient's node has fetched it. Provable — they became a holder |
-| **Read** | The recipient's client says so. Trust-based, and disable-able by them |
+
+**Read is not a delivery state, and is not owed** — decided by the user on 2026-10-10. What
+somebody has read is local to them and never published (`01` §9). This document used to list
+*Read* as a third state, "the recipient's client says so — trust-based, and disable-able by
+them", and that description is why it is not owed: unlike *delivered*, nothing makes it
+provable, and it exists only if the recipient's client chooses to send it. So if it is ever
+built, it is an **opt-in read receipt** in the way WhatsApp does it — each recipient's client
+deciding whether to send one — and a feature in its own right rather than a third state every
+message must show. It is not wanted now.
 
 **Multi-device materially improves this**, which is worth knowing before P5 is scoped: a
 person with a phone and a desktop both enrolled in a DM network has two nodes that can

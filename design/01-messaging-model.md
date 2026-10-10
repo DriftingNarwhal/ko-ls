@@ -1,6 +1,6 @@
 # Messaging Model
 
-**Document status:** v1.8 — §3 qualifies the segment ceiling. Readers judge it from the manifest's declared length, and the fetch holds a manifest that understates its length to what it declares (spec 07 v0.12 §2.2, Storage v1.3 §4.4 step 6, `design/06` §17). What that bounds is bytes kept, not bytes received. Previously v1.7 — §9 points at spec 07 v0.11, whose receiver also refuses a replayed beat by its signed reading. Previously v1.6 — §9's presence beat is now specified normatively, in spec 07 v0.10 §6.4: the encoding, the key, the topic, the thirty-second cadence and ninety-second window, and the receiver's checks, all as built. §9 keeps the design and its reasons and points there for the wire. Previously v1.5 — §5's "a UI would bound this by pages" now points at `09` §4.4, which is that UI, and the two kinds of *older* are named apart: this walk is history the machine does not hold, and the one a reader meets first is history it holds and has not drawn. Previously v1.4 — §9's presence is built, and the section records what building it settled: the states are `here | idle | busy | invisible` rather than the `online`/`dnd` this once said, `invisible` has no wire form at all, a beat is signed as well as sealed, and freshness is judged by when a beat was heard rather than by the time it carries. Typing is still unbuilt. Previously v1.3 — §6's redaction rule is enforced as of the cited governance head, which it had not been: `may_moderate_at` took the head and answered from current state, so a demotion reached backwards and un-hid every message that moderator had ever redacted. Both halves are asserted together — a demotion stops new redactions and leaves past ones standing. Previously v1.2 — §2.3 makes categories nameable and ordered, §2.4 fixes the sidebar's two-level order. Both are implemented in `kols-core`; spec 07 is normative where they overlap
+**Document status:** v1.9 — §9's read state is local only and never published, by the user's decision of 2026-10-10, and is no longer described as an HLC watermark: it is an unread count kept by the shell as messages arrive and a record of what was on screen, both per machine, for the reason `09` §4.3 gives. Previously v1.8 — §3 qualifies the segment ceiling. Readers judge it from the manifest's declared length, and the fetch holds a manifest that understates its length to what it declares (spec 07 v0.12 §2.2, Storage v1.3 §4.4 step 6, `design/06` §17). What that bounds is bytes kept, not bytes received. Previously v1.7 — §9 points at spec 07 v0.11, whose receiver also refuses a replayed beat by its signed reading. Previously v1.6 — §9's presence beat is now specified normatively, in spec 07 v0.10 §6.4: the encoding, the key, the topic, the thirty-second cadence and ninety-second window, and the receiver's checks, all as built. §9 keeps the design and its reasons and points there for the wire. Previously v1.5 — §5's "a UI would bound this by pages" now points at `09` §4.4, which is that UI, and the two kinds of *older* are named apart: this walk is history the machine does not hold, and the one a reader meets first is history it holds and has not drawn. Previously v1.4 — §9's presence is built, and the section records what building it settled: the states are `here | idle | busy | invisible` rather than the `online`/`dnd` this once said, `invisible` has no wire form at all, a beat is signed as well as sealed, and freshness is judged by when a beat was heard rather than by the time it carries. Typing is still unbuilt. Previously v1.3 — §6's redaction rule is enforced as of the cited governance head, which it had not been: `may_moderate_at` took the head and answered from current state, so a demotion reached backwards and un-hid every message that moderator had ever redacted. Both halves are asserted together — a demotion stops new redactions and leaves past ones standing. Previously v1.2 — §2.3 makes categories nameable and ordered, §2.4 fixes the sidebar's two-level order. Both are implemented in `kols-core`; spec 07 is normative where they overlap
 **Depends on:** Core Protocol Spec §2 (governance log), Storage Spec §1–§5, Search Spec §3
 **Consumed by:** `02-membership-and-permissions`, `03-confidentiality`, `05-client-architecture`
 
@@ -666,11 +666,18 @@ At larger scales presence is subscribed **per channel currently in view**, not
 network-wide, so a 5,000-member server does not gossip a full roster heartbeat to
 everybody. `00` §4 names this as a known scaling pressure.
 
-**Read state is local**, per (device, channel): the HLC watermark up to which the user
-has read, plus mention counts derived locally. It is deliberately not a network object in
-P1. When multi-device lands (`05` §6) it becomes a small private object owned by the
-user, encrypted to themselves — the shape is already compatible; only the storage
-location changes.
+**Read state is local only**, per machine, and never published — decided by the user on
+2026-10-10: what somebody has read matters to them and to nobody else on the network. It is
+**not** an HLC watermark, which this section used to say. A message is ordered by its author's
+clock rather than by its arrival, so one written by somebody whose node was offline lands
+behind any watermark the reader could have set and would be filed as read without ever being
+seen (`09` §4.3 has the argument in full). What is kept instead is two things, both on this
+machine: an **unread count per channel**, counted by the shell as messages arrive
+(`kols_node::unread`, one small file in each network's store), and **which messages were on
+screen** the last time the channel was looked at, kept by the window. Mention counts, when
+they are drawn, are derived locally in the same way; nothing counts them yet. Whether read state
+should follow one person across their own devices is a question for when multi-device lands
+(`05` §6); if it does, it stays private to that person and is never a network object.
 
 ---
 

@@ -1,6 +1,6 @@
 # Interface
 
-**Document status:** v0.40 — §1.3's row contents are **built**, 2026-10-10: unread per network and conversation, the workspace window's total in its title, the connection dot, and the tier with a set-aside row's *last checked*. Building them found that §1.3 and §4.3 had not held since a node ran per network: unread was counted by the network window from the events it heard, so a message in any network it was not showing was counted by nobody. **§4.3's mechanism moves to the shell**, which hears every network's events, and §1.3 states the limits of what it counts. §1.10's set-aside control is placed on network rows and not on conversations, following §2, against a code comment that said otherwise — recorded in §2 and as §7's ninth question rather than settled. §1.12's lock closes conversation windows too, which it had not. §1's *leave or forget* follows the node per network: *leave* wherever a node runs, and a set-aside network's departure is never reported as told. §1.10 says the local order is not built. §1.9's heading, printed twice, is printed once. Previously v0.39 — §1.12's note that `05` §1.1 needed amending now says it was, in `05` v1.35 on 2026-10-10; the amendment had been owed since this section was written. Previously v0.38 — §3 records that the address exchange it describes as the DM bootstrap is **E13, deferred by the user on 2026-10-05**, and is not built: direct messages reach each other through D39's borrowed rendezvous instead. §3 now says so where the mechanism is described, keeps the disclosure gate for if it is picked up, and marks the bounded-fallback paragraph as describing a circuit Core §5.2 no longer permits. Previously v0.37 — §3 gains relay *management*, which a network had none of: a relay
+**Document status:** v0.41 — §1.6's per-message delivery state is two states, *sent* and *delivered*, by the user's decision of 2026-10-10; *read* is no longer owed, and a read receipt is a possible later opt-in. §4.3 and §7.7 say read state is local only and never published, and §7.7 no longer says it becomes shared when multi-device lands — only that whether one person's devices share it is open. Previously v0.40 — §1.3's row contents are **built**, 2026-10-10: unread per network and conversation, the workspace window's total in its title, the connection dot, and the tier with a set-aside row's *last checked*. Building them found that §1.3 and §4.3 had not held since a node ran per network: unread was counted by the network window from the events it heard, so a message in any network it was not showing was counted by nobody. **§4.3's mechanism moves to the shell**, which hears every network's events, and §1.3 states the limits of what it counts. §1.10's set-aside control is placed on network rows and not on conversations, following §2, against a code comment that said otherwise — recorded in §2 and as §7's ninth question rather than settled. §1.12's lock closes conversation windows too, which it had not. §1's *leave or forget* follows the node per network: *leave* wherever a node runs, and a set-aside network's departure is never reported as told. §1.10 says the local order is not built. §1.9's heading, printed twice, is printed once. Previously v0.39 — §1.12's note that `05` §1.1 needed amending now says it was, in `05` v1.35 on 2026-10-10; the amendment had been owed since this section was written. Previously v0.38 — §3 records that the address exchange it describes as the DM bootstrap is **E13, deferred by the user on 2026-10-05**, and is not built: direct messages reach each other through D39's borrowed rendezvous instead. §3 now says so where the mechanism is described, keeps the disclosure gate for if it is picked up, and marks the bounded-fallback paragraph as describing a circuit Core §5.2 no longer permits. Previously v0.37 — §3 gains relay *management*, which a network had none of: a relay
 could be designated and never taken back out, so one that no longer existed was dialled by every
 member, carried in every invite, and fixable by nobody. Each designated relay now has a remove,
 gated on the capability and refusing the last one with the reason. **The client does not remove
@@ -384,9 +384,11 @@ What it does carry is what a conversation actually has:
 
 - The person, named per §1.8's rule, with enough identity beside the name to tell two
   lookalikes apart (spec 07 §8).
-- **Delivery state per message** — `03` §4.5's three honest states, *sent*, *delivered* and
-  *read*, which must stay three: delivered is provable because the recipient became a holder,
-  and read is what their client says and is theirs to withhold.
+- **Delivery state per message** — `03` §4.5's two honest states, *sent* and *delivered*,
+  which must stay two: delivered is provable because the recipient became a holder. *Read* is
+  not one of them (the user, 2026-10-10): what somebody has read stays on their machine, and a
+  read receipt — which their client would choose to send — is a possible later opt-in, not
+  owed now.
 - §1.9's sentence when the conversation has nowhere to meet.
 
 **Several at once is expected**, which is the shape's whole advantage; they are small, they are
@@ -398,11 +400,10 @@ here" becomes a question again. It is the only thing that grows.
 **Built 2026-09-11 — `conversation.html`, and the one thing on that list it does not have.**
 The window carries the person with their identity beside the name, the messages, a composer and
 §1.9's sentence. **Per-message delivery state is not built**, and the honest version of that is
-that `03` §4.5's three states need something the shell has no record of: *delivered* is
-provable only because the recipient became a holder, which nothing currently asks, and *read*
-is a claim their client makes and may withhold. A window that drew two ticks it had not earned
-would be making exactly the claim §1.8 spends its length refusing to make about a decline. It
-is owed.
+that `03` §4.5's *delivered* needs something the shell has no record of: it is provable only
+because the recipient became a holder, which nothing currently asks. A window that drew two
+ticks it had not earned would be making exactly the claim §1.8 spends its length refusing to
+make about a decline. It is owed.
 
 What the window knows about itself comes from **its address** rather than from asking the
 shell, which is what makes several at once work: the shell's "open network" is one network, and
@@ -1348,8 +1349,10 @@ Three properties it commits to:
   redraw, or a busy channel would never settle, which is the case where the marks are worth
   least. Left standing, a mark stops being a signal and becomes state to be dismissed.
 - **It is local, and says so.** What somebody has read is not a fact about the network, and
-  writing it to the log would publish a reading habit to every member. §7.7 is what to revisit:
-  read state becomes shared when multi-device lands, and this is per device until it does.
+  writing it to the log would publish a reading habit to every member. The user decided on
+  2026-10-10 that it stays local only — never published, and no read receipts owed (`03`
+  §4.5). It is per machine; §7.7 is what to revisit if one person's own devices should share
+  it.
 
 **Outside the window there are two signals and deliberately no third.** §1.3 extends both to
 several windows — a network window's title carries its own network and never a cross-network
@@ -1888,8 +1891,9 @@ not a capability.
 6. **Search surface** — `05` §3 has the command; where results live is undecided. What a result
    does when opened is no longer part of that question: §4.4 opens a range *around* a cursor, so a
    result has somewhere to land, and this narrows to where the list of them lives.
-7. **Multi-device** (`05` §6) is designed and unbuilt; read state becomes shared when it
-   lands, and the interface should not assume it is local forever.
+7. **Multi-device** (`05` §6) is designed and unbuilt. Whether read state should then follow
+   one person across their own devices is open; it would stay private to them, since read
+   state is never published (`01` §9, the user, 2026-10-10).
 8. **A governance surface.** Roles, membership, moderation and the waiting room are one
    subject and currently live in three places, with permissions parked in §4.2's settings
    sheet because nowhere better exists. What that surface is, and whether settings keeps a

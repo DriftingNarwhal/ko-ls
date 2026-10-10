@@ -24,6 +24,19 @@ Kept because this project keeps re-learning the same lessons and paying for them
 
 ---
 
+- **2026-10-10** — **Read state is local only, and a direct message owes two delivery states,
+  not three.** The user: "Read should be a local only state I think. Delivered should be
+  tracked, but I don't care about read. That's something that's most relevant to the local user
+  anyway. If we want we could always implement something similar to the way that whatsapp does
+  it where each individual user sends a read receipt but I don't really care about that for
+  now." So D19 is amended: `design/03` §4.5 owes *sent* and *delivered*, and a read receipt is a
+  possible later opt-in rather than a third state. The design documents also still described
+  read state as an HLC watermark keyed by (device, channel) — `design/01` §9, `design/02` §6.3,
+  `design/05` §5 and §6 — which was never built and which `design/09` §4.3 had already argued
+  against: a message is ordered by its author's clock, so a late arrival lands behind any
+  watermark and is filed as read unseen. What exists is the shell's unread count
+  (`kols_node::unread`) and the window's record of what was on screen, both per machine. Docs
+  only; *delivered* is still owed and still not built.
 - **2026-10-10** — **The workspace row's contents are built, and unread had not worked outside
   the network in view since a node ran per network.** `design/09` §1.3 asked a row for unread,
   a connection dot and its tier; the user chose to count unread in the shell rather than in the
