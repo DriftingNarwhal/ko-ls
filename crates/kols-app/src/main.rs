@@ -687,6 +687,7 @@ fn conversations(app: tauri::State<'_, App>) -> Result<Vec<dto::Conversation>, S
                 state: "asked".to_owned(),
                 label: name_in(store, &who),
                 unread: 0,
+                connected: None,
             });
         }
         // One this member offered and the daemon has not delivered, or has
@@ -700,6 +701,7 @@ fn conversations(app: tauri::State<'_, App>) -> Result<Vec<dto::Conversation>, S
                 state: "offered".to_owned(),
                 label: name_in(store, &who),
                 unread: 0,
+                connected: None,
             });
         }
     }
@@ -726,6 +728,7 @@ fn conversations(app: tauri::State<'_, App>) -> Result<Vec<dto::Conversation>, S
                     state: "joined".to_owned(),
                     label: store.label().unwrap_or_default(),
                     unread: 0,
+                    connected: None,
                 });
                 continue;
             }
@@ -742,19 +745,22 @@ fn conversations(app: tauri::State<'_, App>) -> Result<Vec<dto::Conversation>, S
             state: "joined".to_owned(),
             label,
             unread: 0,
+            connected: None,
         });
     }
 
-    // Counted by the shell, like a network's (`kols_node::unread`). Only a
-    // conversation that exists has a network to count in.
-    let unread = app
-        .unread
-        .lock()
-        .map_err(|_| "the unread lock is poisoned")?;
+    // What the shell knows about each one's node, like a network's row. Only a
+    // conversation that exists has a network to know about.
     for conversation in &mut found {
-        if let Ok(id) = kols_node::parse_network(&conversation.network) {
-            conversation.unread = unread.total(&id);
-        }
+        let Ok(id) = kols_node::parse_network(&conversation.network) else {
+            continue;
+        };
+        let Some(store) = stores.iter().find(|store| *store.network() == id) else {
+            continue;
+        };
+        let live = live_of(&app, &id, store.root());
+        conversation.unread = live.unread;
+        conversation.connected = live.connected;
     }
     Ok(found)
 }
@@ -947,6 +953,7 @@ fn conversation_who(
         },
         label,
         unread: 0,
+        connected: None,
     })
 }
 
@@ -2092,7 +2099,17 @@ fn people(app: tauri::State<'_, App>) -> Result<Vec<dto::Member>, String> {
         let me = store.identity().map_err(|e| e.to_string())?.id();
         let state = store.state().map_err(|e| e.to_string())?;
         let names = executor.names(&state).map_err(|e| e.to_string())?;
-        let connected: std::collections::BTreeSet<String> = store.connected().into_iter().collect();
+        // Only while this network's node is running: the list is the last one a
+        // node wrote, and one that stopped could not clear it (`live_of`).
+        let running = app
+            .nodes
+            .lock()
+            .is_ok_and(|nodes| nodes.is_live(store.network()));
+        let connected: std::collections::BTreeSet<String> = if running {
+            store.connected().into_iter().collect()
+        } else {
+            std::collections::BTreeSet::new()
+        };
         // **Freshness is applied here rather than in the store**, because this
         // is the layer that is answering a question. The store keeps
         // observations, and an observation that has gone stale is still an
@@ -2191,10 +2208,6 @@ fn networks(app: tauri::State<'_, App>) -> Result<Vec<dto::Network>, String> {
         .map_err(|_| "the workspace lock is poisoned")?
         .as_ref()
         .map(|executor| to_hex(executor.store().network().as_bytes()));
-    let totals = app
-        .unread
-        .lock()
-        .map_err(|_| "the unread lock is poisoned")?;
 
     Ok(app
         .workspace
@@ -2211,10 +2224,10 @@ fn networks(app: tauri::State<'_, App>) -> Result<Vec<dto::Network>, String> {
         // the member who began a conversation found it filed as a server.
         .filter(|known| known.profile != kols_core::NetworkProfile::Conversation)
         .map(|known| {
-            let unread = kols_node::parse_network(&known.id)
-                .ok()
-                .map_or(0, |id| totals.total(&id));
-            dto::Network::of(&known, open.as_deref(), unread)
+            let live = kols_node::parse_network(&known.id)
+                .map(|id| live_of(&app, &id, &known.path))
+                .unwrap_or_default();
+            dto::Network::of(&known, open.as_deref(), live)
         })
         .collect())
 }
@@ -2251,6 +2264,7 @@ fn create_network(
         open: true,
         // Nothing has arrived in a network that did not exist a moment ago.
         unread: 0,
+        connected: None,
     };
     let id = *executor.store().network();
     *app.open
@@ -2558,6 +2572,26 @@ fn show_network_window(
     .build()
     .map_err(|err| format!("could not open a window for this network: {err}"))?;
     Ok(())
+}
+
+/// What the shell knows about one network's node, for a row — `design/09` §1.3.
+///
+/// **Connected only while a node is running**, because the list on disk is the
+/// last one a node wrote and a stopped node could not clear it: read without
+/// asking, a network set aside or refused its claim would go on claiming the
+/// peers it had when it stopped.
+fn live_of(
+    app: &tauri::State<'_, App>,
+    network: &intranet_identity::NetworkId,
+    root: &std::path::Path,
+) -> dto::Live {
+    let unread = app.unread.lock().map_or(0, |unread| unread.total(network));
+    let running = app.nodes.lock().is_ok_and(|nodes| nodes.is_live(network));
+    dto::Live {
+        unread,
+        connected: running
+            .then(|| u32::try_from(kols_node::store::connected_in(root).len()).unwrap_or(u32::MAX)),
+    }
 }
 
 /// Unread counts for one network, per channel hex — `kols_node::unread`.

@@ -378,17 +378,35 @@ pub struct Network {
     /// How many unread messages it holds across every channel, counted by the
     /// shell (`kols_node::unread`, `design/09` §1.3).
     pub unread: u32,
+    /// How many other members this machine's node for it is connected to, or
+    /// `None` when no node for it is running — `design/09` §1.3's dot.
+    ///
+    /// Not presence, and never "offline": it says this machine is talking to
+    /// somebody there, which is the state that otherwise looks exactly like
+    /// nobody saying anything (§4.1). `None` is kept apart from zero because a
+    /// node that is not running has not looked.
+    pub connected: Option<u32>,
+}
+
+/// What the shell knows about a network's node, for a row.
+#[derive(Debug, Default, Clone, Copy)]
+pub struct Live {
+    /// Unread messages, across every channel.
+    pub unread: u32,
+    /// Other members connected to, when a node is running.
+    pub connected: Option<u32>,
 }
 
 impl Network {
     /// Converts one known network.
-    pub fn of(known: &kols_node::workspace::Known, open: Option<&str>, unread: u32) -> Self {
+    pub fn of(known: &kols_node::workspace::Known, open: Option<&str>, live: Live) -> Self {
         Self {
             id: known.id.clone(),
             label: known.label.clone(),
             keyed: known.keyed,
             open: open == Some(known.id.as_str()),
-            unread,
+            unread: live.unread,
+            connected: live.connected,
         }
     }
 }
@@ -1012,4 +1030,8 @@ pub struct Conversation {
     /// How many unread messages it holds, counted by the shell
     /// (`kols_node::unread`). Zero for a request, which has no network yet.
     pub unread: u32,
+    /// Whether this machine is connected to the other person, as
+    /// [`Network::connected`]: `None` when no node is running for it, which
+    /// includes a request with no network yet.
+    pub connected: Option<u32>,
 }

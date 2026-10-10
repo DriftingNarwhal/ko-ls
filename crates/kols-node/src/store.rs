@@ -1938,16 +1938,12 @@ impl Store {
     }
 
     /// Who the daemon last saw this node connected to.
+    ///
+    /// **A statement about a running node only.** A node that stopped could not
+    /// clear it; the next one to start does. So a reader asks whether the node
+    /// is running first (`nodes::Nodes::is_live`).
     pub fn connected(&self) -> Vec<String> {
-        fs::read_to_string(self.root.join("connected"))
-            .map(|text| {
-                text.lines()
-                    .map(str::trim)
-                    .filter(|line| !line.is_empty())
-                    .map(str::to_owned)
-                    .collect()
-            })
-            .unwrap_or_default()
+        connected_in(&self.root)
     }
 
     /// What this member has chosen to tell the network about themselves.
@@ -3146,6 +3142,21 @@ fn remove_if_present(path: impl AsRef<Path>) -> Result<(), StoreError> {
         Err(err) if err.kind() == io::ErrorKind::NotFound => Ok(()),
         Err(err) => Err(StoreError::Io(err)),
     }
+}
+
+/// Who the daemon last saw the node for the store at `root` connected to,
+/// without opening the store — which reads its seed, and is far more than a
+/// list of rows wants (see [`Store::connected`] for what it means).
+pub fn connected_in(root: &Path) -> Vec<String> {
+    fs::read_to_string(root.join("connected"))
+        .map(|text| {
+            text.lines()
+                .map(str::trim)
+                .filter(|line| !line.is_empty())
+                .map(str::to_owned)
+                .collect()
+        })
+        .unwrap_or_default()
 }
 
 pub(crate) fn write_atomically(

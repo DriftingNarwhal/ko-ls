@@ -2007,6 +2007,58 @@ fn a_supervisor_runs_every_joined_network_at_once() {
 }
 
 #[test]
+fn a_node_starting_clears_who_the_last_run_was_connected_to() {
+    use kols_node::nodes::{Nodes, Spec};
+
+    // The list of connected members is written on each connect and disconnect,
+    // and a node that stops gets no chance to clear it — so a stopped network
+    // went on claiming the peers it had when it stopped, in the roster's rings
+    // and in anything else that read it. Starting is the one moment the node
+    // can say the past is past.
+    let dir = Dir::new("supervisor-stale-connected");
+    let workspace = Workspace::at(dir.0.clone());
+    let store = workspace
+        .create("left behind", Vec::new())
+        .expect("creates");
+    let id = *store.network();
+    store
+        .set_connected(&["a peer from the last run".to_owned()])
+        .expect("writes");
+    let specs = vec![Spec {
+        network: id,
+        root: store.root().to_path_buf(),
+        set_aside: false,
+    }];
+    let sink: kols_node::nodes::TaggedSink = std::sync::Arc::new(|_, _| {});
+
+    tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+        .expect("a runtime")
+        .block_on(async {
+            let mut nodes = Nodes::here();
+            assert!(!nodes.is_live(&id), "nothing is running before a reconcile");
+            nodes.reconcile(
+                &specs,
+                None,
+                &sink,
+                kols_node::serve::SEAL_TARGET_BYTES,
+                std::time::Instant::now(),
+            );
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+            while !store.connected().is_empty() && std::time::Instant::now() < deadline {
+                tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+            }
+            assert!(
+                store.connected().is_empty(),
+                "the last run's peers are not this run's: {:?}",
+                store.connected()
+            );
+            assert!(nodes.is_live(&id), "and the node is running");
+        });
+}
+
+#[test]
 fn a_network_the_member_set_aside_is_polled_rather_than_abandoned() {
     use kols_node::nodes::{Nodes, POLL_INTERVAL, POLL_SETTLE, Spec, Tier};
 
@@ -2049,6 +2101,11 @@ fn a_network_the_member_set_aside_is_polled_rather_than_abandoned() {
                 "a cold network is woken to catch up"
             );
             assert_eq!(nodes.tier(&quiet_id), Tier::Cold, "woken, and still cold");
+            assert_eq!(
+                nodes.last_polled(&quiet_id),
+                Some(start),
+                "and the poll is remembered, which is what a row says it looked at"
+            );
 
             // Mid-poll it is left alone rather than restarted on every tick.
             nodes.reconcile(

@@ -63,9 +63,9 @@ function said(outcome) {
 /// Draws the list.
 ///
 /// One row per network, carrying what `09` §1.3 specifies as the shell comes to
-/// know it. **Unread** is here, counted by the shell (`kols_node::unread`).
-/// Whether this node holds a connection, the tier, and when a cold one last
-/// looked are still to come — and a row that displayed a zero it had not earned
+/// know it: **unread**, counted by the shell (`kols_node::unread`), and **whether
+/// this node holds a connection** there. The tier, and when a cold one last
+/// looked, are still to come — and a row that displayed a zero it had not earned
 /// would be making exactly the claim that section forbids.
 async function draw() {
   await drawNetworks();
@@ -96,7 +96,7 @@ async function drawNetworks() {
 
     const button = document.createElement("button");
     button.className = "workspace-open";
-    button.textContent = network.label || network.id.slice(0, 12);
+    button.append(...connectionDot(network.connected), network.label || network.id.slice(0, 12));
     button.addEventListener("click", () => void open(network.id));
     button.append(...unreadBadge(network.unread));
 
@@ -145,7 +145,7 @@ async function drawConversations() {
     // spec 07 §8, and this is the place it matters most: a contact list is
     // where somebody decides who they are talking to, and the uniqueness key
     // deliberately does not fold confusables (§3.9.1).
-    open.textContent = it.label || (it.who ? it.who.slice(0, 8) : "a conversation");
+    open.append(...connectionDot(it.connected), it.label || (it.who ? it.who.slice(0, 8) : "a conversation"));
     if (it.who) {
       const id = document.createElement("span");
       id.className = "workspace-id";
@@ -166,6 +166,23 @@ async function drawConversations() {
     list.append(item);
   }
   el("conversations-empty").hidden = found.length > 0;
+}
+
+/// A row's connection dot — `09` §1.3, §4.1's dot at network scale.
+///
+/// `connected` is how many other members this machine's node there is connected
+/// to, or null when no node is running for it. **Not presence**: lit says this
+/// machine is talking to somebody, which otherwise looks exactly like nobody
+/// saying anything. Unlit is a ring, never "offline". And null draws nothing,
+/// because a node that is not running has not looked — the row's tier says why.
+function connectionDot(connected) {
+  if (connected === null || connected === undefined) return [];
+  const dot = document.createElement("span");
+  dot.className = connected > 0 ? "workspace-dot live" : "workspace-dot";
+  dot.title = connected > 0
+    ? `connected to ${connected} other member${connected === 1 ? "" : "s"} from here`
+    : "running, and connected to nobody from here right now";
+  return [dot];
 }
 
 /// A row's unread count, or nothing at all when there is none.

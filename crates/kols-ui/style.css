@@ -1503,6 +1503,26 @@ body {
 
 .workspace-note:empty { display: none; }
 
+/* `09` §1.3's dot: lit means this machine's node is talking to somebody in that
+   network, the same mark and the same ring-when-unlit as the network window's
+   own (#me-dot), for the same reason — an unlit ring is missing information, not
+   a claim that anybody is away. No ring at all when no node is running, since
+   then nothing has looked. */
+.workspace-dot {
+  border: 1px solid var(--dim);
+  border-radius: 50%;
+  display: inline-block;
+  height: 7px;
+  margin-right: 7px;
+  vertical-align: 1px;
+  width: 7px;
+}
+
+.workspace-dot.live {
+  background: var(--good);
+  border-color: var(--good);
+}
+
 .workspace-list .forget {
   background: transparent;
   border: 1px solid transparent;

@@ -1125,6 +1125,32 @@ networksAnswer = networksAnswer.map((n) => ({ ...n, unread: 0 }));
 await wsListeners["kols://unread"]({ payload: "bbbbbbbb" });
 await settled();
 say("and stops once it is read", badges().every((b) => b === ""), JSON.stringify(badges()));
+
+// ── whether this machine holds a connection there, `09` §1.3 ───────────
+//
+// Three answers, and the one that matters is the difference between the last
+// two: a node with nobody connected draws a ring, and no node at all draws
+// nothing, because it has not looked.
+const dots = () =>
+  [...wsEl("networks").querySelectorAll("li")].map((li) => {
+    const dot = li.querySelector(".workspace-dot");
+    return dot ? (dot.classList.contains("live") ? "lit" : "ring") : "none";
+  });
+networksAnswer = networksAnswer.map((n, i) => ({ ...n, connected: [2, null][i] }));
+await wsListeners["kols://unread"]({ payload: "bbbbbbbb" });
+await settled();
+say("a node talking to somebody lights its row, and no node draws nothing",
+    JSON.stringify(dots()) === JSON.stringify(["lit", "none"]), JSON.stringify(dots()));
+networksAnswer = networksAnswer.map((n, i) => ({ ...n, connected: [0, null][i] }));
+await wsListeners["kols://unread"]({ payload: "bbbbbbbb" });
+await settled();
+say("a running node with nobody connected is a ring, never 'offline'",
+    JSON.stringify(dots()) === JSON.stringify(["ring", "none"])
+      && !/offline/i.test(wsEl("networks").innerHTML),
+    JSON.stringify(dots()));
+say("and the row still reads as the network's name",
+    wsEl("networks").querySelector(".workspace-open").textContent === "the workshop",
+    wsEl("networks").querySelector(".workspace-open").textContent);
 say("and a network not yet keyed into says so rather than looking broken",
     [...wsEl("networks").querySelectorAll(".workspace-note")].some((n) => n.textContent.includes("not keyed")),
     "");

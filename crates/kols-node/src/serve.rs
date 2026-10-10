@@ -548,6 +548,18 @@ pub async fn serve(
     }
 
     let mut connected: BTreeSet<PeerId> = BTreeSet::new();
+    // **Whatever the last run left is not true now.** The list is written on
+    // each connect and disconnect, and a node that stops — aborted by its
+    // supervisor, a cold network's poll ending, the process quitting — gets no
+    // chance to clear it. So it is cleared here, as the node starts, before any
+    // reader could take the previous run's peers for this one's. Written
+    // directly rather than through `record_connected`, which writes nothing
+    // until the governance log replays.
+    if let Err(err) = store.set_connected(&[]) {
+        sink(&[Event::Degraded {
+            reason: format!("could not clear who this node was connected to: {err}"),
+        }]);
+    }
     // Records already broadcast, so republishing does not rebroadcast history
     // every couple of seconds.
     // Voided entries already reported, so a heal is announced once rather than

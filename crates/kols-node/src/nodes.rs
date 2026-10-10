@@ -249,6 +249,28 @@ impl Nodes {
             .collect()
     }
 
+    /// Whether a node for `network` is running right now.
+    ///
+    /// Not the same as being in the running set: a node whose task ended — a
+    /// refused store claim, a startup failure — stays in the set until the next
+    /// reconcile, and anything it wrote while it ran is now a statement about
+    /// the past. This is what a reader of a node's live state asks first.
+    pub fn is_live(&self, network: &NetworkId) -> bool {
+        self.running
+            .get(network)
+            .is_some_and(|run| !run.handle.is_finished())
+    }
+
+    /// When a cold network was last woken for a poll, if it has been since this
+    /// supervisor started — `design/09` §1.3's *when it last looked*.
+    ///
+    /// A monotonic instant, so it says how long ago and nothing about the wall
+    /// clock, and it does not survive a restart; a cold network is polled on the
+    /// first reconcile after one, so "not yet" is a short state.
+    pub fn last_polled(&self, network: &NetworkId) -> Option<std::time::Instant> {
+        self.polled.get(network).copied()
+    }
+
     /// The tier a network is currently being kept at.
     ///
     /// `Cold` for one that is not running, which is the same answer as "not
