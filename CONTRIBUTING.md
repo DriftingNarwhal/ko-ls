@@ -165,12 +165,14 @@ Three things about the suite that are not obvious, each learned by getting them 
   and re-run the full gate before believing either result.
 - **Kill orphaned daemons before believing a red suite**: the harness first, then the daemons,
   with a bracketed character in every pattern for the reason below —
-  `for p in $(pgrep -f 'deps/two_node[s]-') $(pgrep -f 'deps/three_node[s]-'); do kill -9 $p; done`,
-  then the same over `pgrep -f 'debug/kol[s] --home'`.
+  `for p in $(pgrep -f 'target/debug/dep[s]/[a-z_]+-[0-9a-f]{16}'); do kill -9 $p; done`,
+  then the same over `pgrep -f 'debug/kol[s] --home'`. That pattern matches every test binary
+  in the workspace, not only the ones that spawn daemons, so if another run may be in flight,
+  read `pgrep -af` with the same pattern before killing.
   `Daemon::drop` kills its child, and `Drop` does not run when the *harness itself* is killed
   — a Ctrl-C, a timeout, a `pkill` on cargo. The orphans keep listening on their fixed
-  ports — 45101–45172 (`two_nodes`), 45301–45334 (`three_nodes`), and the 452xx, 454xx and
-  455xx of `flow`, `names` and `invites` — indefinitely, and every later run fails to bind.
+  ports — 45101–45244 (`two_nodes`), 45201–45221 (`flow`), 45301–45334 (`three_nodes`),
+  45301–45310 (`records`), 45401–45405 (`names`) and 45501–45507 (`invites`) — indefinitely, and every later run fails to bind.
   It presents as two or three tests failing in ways that read as distributed-systems faults,
   and it is not one.
 
@@ -191,7 +193,7 @@ Three things about the suite that are not obvious, each learned by getting them 
   list looks busy again a second later and the PIDs are new each time you look — which reads
   as a kill that is not working. Kill the harness first, then the daemons.
 
-  Then check rather than assume: `pgrep -f 'deps/two_node[s]-'` and
+  Then check rather than assume: `pgrep -f 'target/debug/dep[s]/[a-z_]+-[0-9a-f]{16}'` and
   `pgrep -f 'debug/kol[s] --home'` both empty, `ss -ltn | grep -E ':45[1-5][0-9]{2}'` empty, and `/tmp/kols-*`
   removed.
 

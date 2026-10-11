@@ -1,7 +1,9 @@
 # Record Encoding — Implementation and Conformance
 
-**Document status:** v1.3 — **not normative.** `distributed-intranet/specs/07` §3 and §6.4
-are the contract; this document is where the client's obligations against them live. §2's table names the direct-message knock (spec 07 §6.2, D41), built 2026-10-11, beside the invitation in `kols-core::dm`, with its frozen bytes in `kols-core/tests/dm_knock.rs`. Previously v1.2 — §2's presence row
+**Document status:** v1.4 — **not normative.** `distributed-intranet/specs/07` §3 and §6.4
+are the contract; this document is where the client's obligations against them live. §2's vector row
+names `kols-core/tests/channel_entries.rs`, which has frozen the channel-structure entries
+(spec 07 §3.8) since ko-ls `67730a0` and was missing from the list. Previously v1.3 — §2's table names the direct-message knock (spec 07 §6.2, D41), built 2026-10-11, beside the invitation in `kols-core::dm`, with its frozen bytes in `kols-core/tests/dm_knock.rs`. Previously v1.2 — §2's presence row
 no longer says the spec does not cover presence: spec 07 v0.10 §6.4 specifies the beat's
 encoding, key, topic, cadence and receiver checks, and `kols-core/tests/presence.rs` now
 carries its frozen vectors, so §2's vector row and §3 name both files. Those vectors have not
@@ -49,7 +51,7 @@ what, and what the client must prove about its own implementation.
 | The live-delivery payload and its content key, spec §5.2, §6.1 | `kols-core::live` |
 | Presence beats, their key and topic, spec §6.4 (`design/01` §9 is the design) | `kols-core::presence` |
 | Capability names and their tiers | `kols-core::capabilities` |
-| Frozen test vectors | `kols-core/tests/encoding.rs`; presence's in `kols-core/tests/presence.rs`; the knock's in `kols-core/tests/dm_knock.rs` |
+| Frozen test vectors | `kols-core/tests/encoding.rs`; presence's in `kols-core/tests/presence.rs`; the knock's in `kols-core/tests/dm_knock.rs`; channel-structure entries' (spec §3.8) in `kols-core/tests/channel_entries.rs` |
 
 ---
 

@@ -48,7 +48,8 @@ Each of these is load-bearing and none is enforced by anything that will shout a
   recognised and versioned, never a value to re-bless because a test went red.
   `crates/kols-core/tests/encoding.rs` for records and segments,
   `crates/kols-core/tests/presence.rs` for presence beats,
-  `crates/kols-core/tests/dm_knock.rs` for the direct-message knock.
+  `crates/kols-core/tests/dm_knock.rs` for the direct-message knock,
+  `crates/kols-core/tests/channel_entries.rs` for channel-structure entries.
 - **A command's consent class follows the tier of the capability it needs**, not how
   consequential the action looks — so pinning prompts harder than posting. A drift test
   resolves every command's verb against the vocabulary's own tier table.
