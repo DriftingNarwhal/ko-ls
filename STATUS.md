@@ -243,19 +243,25 @@ windows is §1.12. **Flagged rather than decided:** whether a conversation can b
 (`09` §7.9) — the interface offers it on network rows only. **Superseded 2026-10-10 by D41**,
 next paragraph.
 
-**Direct messages become ephemeral: decided 2026-10-10, not built.** The user's decision, **D41**
+**Direct messages become ephemeral: decided 2026-10-10, ~~not built~~ built 2026-10-11.** The user's decision, **D41**
 (`design/00` §3): a conversation stays its own network but sleeps, with no node, until a knock
 through the shared network wakes it, and sleeps again after an idle timeout of about an hour that
 the user can change. It closes `09` §7.9. `design/09` §2 has the shape and what is still to be
 designed; `design/03` §4.5 the overlap it now needs. The idle traffic is found: the two-second
 refresh pulls from every connected peer whether anything changed (`design/05` §4). **The knock
-is designed, 2026-10-11, not built** (`design/09` §2): what wakes a conversation, the knock and
+is designed, 2026-10-11, ~~not built~~** (`design/09` §2): what wakes a conversation, the knock and
 its checks, retrying, the idle timer and the *asleep* tier; `design/03` §4.5 has the limit on the
 request sender's side, and `design/06` §13 why E13 stays deferred. **The two fixes it needed
 first are done**, 2026-10-11: acks name the send they answer and `Received` is answered only to a
 declared kind (**E18**, `design/06` §18), and `dm::accept` reports a failed `origin` write
-(`design/09` §2). **Next, in order:** (1) the knock, with spec 07 §6.2's text; (2) the tier and
-the idle timer; (3) re-run `tests/idle_cost.rs`. The occasional ten-second delivery is not reproduced on loopback
+(`design/09` §2). ~~**Next, in order:** (1) the knock, with spec 07 §6.2's text; (2) the tier and
+the idle timer; (3) re-run `tests/idle_cost.rs`.~~ **Built 2026-10-11**, with spec 07 v0.15 §6.2's
+text: the knock, the *asleep* tier and the idle timer, and `Event::ConversationWoken` at the
+boundary. `tests/idle_cost.rs` was not re-run, since an asleep conversation runs no node.
+`design/09` §2 has where the build departs from the design and what it leaves out: the timeout
+as a setting, the early resend on a presence beat, `09` §1.9's *waiting for them* line, and the
+limits of reading activity from file mtimes, one of which can wake a conversation on opening it.
+The occasional ten-second delivery is not reproduced on loopback
 and wants a relayed, NATed setup.
 
 What led to it was **measuring what an idle conversation costs** (`design/05` §4,
@@ -666,10 +672,10 @@ as a fix nobody had got round to.
 
 | Crate | State |
 |---|---|
-| `kols-core` | Encoding, author logs, merge, collision recovery, chat policy, channel structure, `sidebar_order`, reader-side limits, and `Scope` — the one construction of a capability's name, used by the writer and the resolver alike, and the direct-message request payload with the identity-link check no platform can make for it. 158 tests |
+| `kols-core` | Encoding, author logs, merge, collision recovery, chat policy, channel structure, `sidebar_order`, reader-side limits, and `Scope` — the one construction of a capability's name, used by the writer and the resolver alike, the direct-message request payload with the identity-link check no platform can make for it, and the knock that wakes a sleeping conversation. 163 tests |
 | `kols-net` | Publish and fetch over a running node, refusing a segment past the network's ceiling from its manifest alone, and holding one that understates its length to what it declares through the fetch (`design/06` §17). Five two-node tests |
-| `kols-api` | The whole boundary — all three of `design/05` §3's properties held. 25 commands, 11 events, 50 tests, and the consent drift test is guarded at both ends: a new command stops the suite compiling until it is sampled, which is how `LeaveNetwork` was caught unsampled the moment it existed |
-| `kols-node` | `kols`, its node daemon, the executor, the store, the workspace and the unread counts the shell keeps for every network — the window's entire backend, and the largest crate here at 233 tests, plus four ignored measurements (`cost`, `idle_cost`). Seventeen of them run over a live wire between separate processes (`two_nodes`, `three_nodes`, `relay`); the rest cover the workspace, the store, roles and grants, invites, names, records and the paged read |
+| `kols-api` | The whole boundary — all three of `design/05` §3's properties held. 25 commands, 12 events, 50 tests, and the consent drift test is guarded at both ends: a new command stops the suite compiling until it is sampled, which is how `LeaveNetwork` was caught unsampled the moment it existed |
+| `kols-node` | `kols`, its node daemon, the executor, the store, the workspace and the unread counts the shell keeps for every network — the supervisor's tiers including D41's *asleep*, the window's entire backend, and the largest crate here at 238 tests, plus four ignored measurements (`cost`, `idle_cost`). Seventeen of them run over a live wire between separate processes (`two_nodes`, `three_nodes`, `relay`); the rest cover the workspace, the store, roles and grants, invites, names, records and the paged read |
 | `kols-app` | The Tauri shell, holding a workspace, an executor for whichever network is open, **the supervisor running a node for every network** (`design/09` §2), and the unread counts, since it is the one place that hears every network's events (`design/05` §1). Builds `kols-desktop`. 11 tests, one of which resolves the webview's ACL against the real configuration — the boundary whose failure produces no output |
 | `kols-ui` | The interface: a page and a script per window (`app.js`, `workspace.js`, `conversation.js`) and one stylesheet, holding no keys, no sockets and no files |
 | `kols-store` | The read-side projection, **built and switched on**: the schema, the range and target queries, the stored rate verdict and its fingerprint. 14 tests — six compare its verdicts against `kols_core::withheld` itself rather than a second implementation of the fold, and eight walk a channel whose records share a reading, which is the boundary a bare clock reading cannot cut. This row said 19 until 2026-09-09, while its own breakdown summed to 14 |

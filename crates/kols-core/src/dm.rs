@@ -173,3 +173,51 @@ impl DmInvite {
         Ok(Self { invite, link })
     }
 }
+
+/// The kind a knock travels under on Core §5.1's carrier, in [`DM_NAMESPACE`].
+pub const DM_KNOCK_KIND: &str = "dm-knock";
+
+/// Domain tag for a knock — spec 07 §3.2.
+const DM_KNOCK_DOMAIN: &str = "intranet.wire.chat-dm-knock.v1";
+
+/// A request to wake a sleeping conversation — spec 07 §6.2 (`design/09` §2,
+/// D41).
+///
+/// # Why it carries so little
+///
+/// **No identity link.** The binding between the sender's identity in the
+/// shared network and the conversation was checked once, when the request was
+/// accepted, and each side keeps it as the conversation's origin. A knock is
+/// checked against that record rather than proving the binding again.
+///
+/// **No addresses.** Handing somebody a network's addresses is E13's address
+/// exchange, which is deferred, and E13's gate (only to a verified member of
+/// that network) cannot be met by the person who *sent* the request: nothing
+/// proves which identity redeemed a bearer invite. The woken side dials the way
+/// a conversation already does, through the borrowed relay (D39).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct DmKnock {
+    /// The conversation to wake.
+    pub conversation: NetworkId,
+}
+
+impl DmKnock {
+    /// Encodes the payload.
+    pub fn encode(&self) -> Vec<u8> {
+        let mut e = intranet_crypto::Enc::domain(DM_KNOCK_DOMAIN);
+        self.conversation.encode(&mut e);
+        e.finish()
+    }
+
+    /// Decodes a payload.
+    ///
+    /// **This says nothing about whether the sender may wake it.** That needs
+    /// the receiver's own record of where the conversation was arranged, which a
+    /// decoder does not have.
+    pub fn decode(bytes: &[u8]) -> Result<Self, CoreError> {
+        let mut d = intranet_crypto::Dec::domain(bytes, DM_KNOCK_DOMAIN)?;
+        let conversation = NetworkId::from_bytes(d.fixed::<32>()?);
+        d.finish()?;
+        Ok(Self { conversation })
+    }
+}

@@ -24,6 +24,25 @@ Kept because this project keeps re-learning the same lessons and paying for them
 
 ---
 
+- **2026-10-11** — **A conversation sleeps, and a knock wakes it (D41, built).** Built on the
+  user's go-ahead, with spec 07 v0.15 §6.2's text. `design/09` §2 records the result. Three things
+  were learned building it.
+  **A conversation waiting for its second member must not sleep.** The review caught it: a
+  request carries the issuing node's addresses, and accepting it is a redeem that node answers.
+  So a request accepted more than an hour after it was sent would have named a stopped node, and
+  accepting would have timed out. The asleep rule's "nothing pending" became "the other member
+  has joined".
+  **Reading activity from file mtimes has an edge against the user's rule.** A stale re-fold
+  during a read rewrites `arrivals`, which counts as activity, so opening a conversation can
+  occasionally wake it. That goes against *opening does not wake*. It is recorded as a limit, and
+  storing times rather than reading mtimes is the likely fix.
+  **The *not blocked* check has nothing to consult.** The client has no block list, for knocks or
+  for requests, so spec 07 §6.2's blocking clauses are met vacuously.
+  The knock is also left as soon as the conversation's node runs, not after its relay
+  reservation as designed. The woken side redials every 15 seconds, so the two converge.
+  `tests/idle_cost.rs` was not re-run: an asleep conversation runs no node, so there is nothing
+  idle to measure.
+
 - **2026-10-11** — **An ack now names the send it answers, and `Received` means a consumer took
   it (E18).** The two fixes the knock's design found were built before the knock, on the user's
   go-ahead. Upstream, Core v1.8 §5.1: `DirectDelivered` carries the request id `send_direct`

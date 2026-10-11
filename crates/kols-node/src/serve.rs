@@ -272,6 +272,7 @@ pub async fn serve(
     // §5.1); anything else is answered `Unsupported`. Declared on every node
     // because the receiving arm below runs on every node.
     node.handle_direct(kols_core::DM_NAMESPACE, kols_core::DM_KIND);
+    node.handle_direct(kols_core::DM_NAMESPACE, kols_core::DM_KNOCK_KIND);
     // **Dual-stack unless told otherwise, and this is load-bearing.**
     //
     // This bound `/ip4/0.0.0.0/tcp/0` and nothing else: no IPv6, no QUIC. Core
@@ -344,6 +345,11 @@ pub async fn serve(
     // Set on every attempt rather than on success, so an unreachable
     // recipient is retried on the interval rather than on every tick.
     let mut last_offered: Option<Instant> = None;
+    // Every direct message this node sends, by recipient, whatever its kind.
+    let mut directs = Directs::default();
+    // When this conversation's node last wrote that the other side is connected
+    // (D41), so a long connection is not a write every tick.
+    let mut peer_seen_written: Option<Instant> = None;
     // Conversation requests in flight, by the send the carrier's answer will
     // name, so an offer is forgotten only on the answer to *it* (Core v1.8
     // §5.1). Matching on who answered cleared an offer on the answer to any
@@ -554,6 +560,26 @@ pub async fn serve(
     for remembered in store.peers() {
         if !dialling.contains(&remembered) {
             dialling.push(remembered);
+        }
+    }
+
+    // **Through the borrowed relay, to the other member's conversation identity**
+    // — how a conversation woken by a knock finds the side that knocked (D41).
+    // The knock carries no addresses (that would be E13's deferred exchange),
+    // and the side that sent the original request has no invite addresses for
+    // the other at all. Its peer id is in the conversation's log, and the relay
+    // is the one this start was just permitted to borrow, so the address is
+    // computed here rather than told. Retried with everything else on the
+    // redial interval while the conversation is awake.
+    if borrowed && let Some(state) = replayable(&store) {
+        let me = identity.id();
+        for member in members(&state).into_iter().filter(|member| *member != me) {
+            for relay in &designated {
+                let circuit = format!("{relay}/p2p-circuit/p2p/{}", member.peer_id());
+                if !dialling.contains(&circuit) {
+                    dialling.push(circuit);
+                }
+            }
         }
     }
 
@@ -1138,6 +1164,13 @@ pub async fn serve(
                     node.sync_pointers_with(peer);
                 }
 
+                // **A conversation's own half of D41's knock.** Kept here, on the
+                // conversation's node, because only it knows whether the other
+                // side is connected; sending is the shared network's node's.
+                if node.discovery() == intranet_transport::Discovery::Off {
+                    keep_knock(&store, &identity.id(), &connected, &mut peer_seen_written);
+                }
+
                 // Conversation requests this member has offered — spec 07 §6.2.
                 //
                 // **On a schedule rather than once, and the offer is what
@@ -1151,12 +1184,15 @@ pub async fn serve(
                 // anything and an undelivered one keeps trying, which is what
                 // `03` §4.3 makes the sender's job.
                 if last_offered.is_none_or(|at: Instant| at.elapsed() >= OFFER_RETRY) {
-                    last_offered = Some(Instant::now());
+                    let round = Instant::now();
+                    last_offered = Some(round);
                     if let Some(workspace) = crate::workspace::Workspace::containing(&store) {
                         match crate::dm::deliverable(&workspace, &store, crate::chat::now_millis()) {
                             Ok(ready) => {
                                 for request in ready {
-                                    if offers_unsupported.contains(&request.to) {
+                                    if offers_unsupported.contains(&request.to)
+                                        || !directs.may_send(&request.to, round)
+                                    {
                                         continue;
                                     }
                                     // Unreachable is the ordinary case rather
@@ -1172,6 +1208,7 @@ pub async fn serve(
                                         kols_core::DM_KIND,
                                         request.payload,
                                     ) {
+                                        directs.sent(round, request.to);
                                         offers_in_flight.insert(sent, request.to);
                                         crate::say!(
                                             report,
@@ -1185,6 +1222,15 @@ pub async fn serve(
                                 reason: format!("could not build a conversation request: {err}"),
                             }]),
                         }
+                        send_knocks(
+                            &store,
+                            &workspace,
+                            &mut node,
+                            &identity,
+                            &mut directs,
+                            round,
+                            report,
+                        );
                     }
                 }
 
@@ -1384,6 +1430,31 @@ pub async fn serve(
                 crate::say!(report, "connected to {peer}");
                 connected.insert(peer);
                 record_connected(&store, &connected, sink);
+                // **Somebody with a knock waiting for them just arrived** (D41).
+                // A knock for a conversation whose node is running goes now
+                // rather than at the next round, still spaced by `Directs`. One
+                // whose conversation went back to sleep is woken first, once,
+                // here on the arrival rather than on every round they stay:
+                // knocking would have them dial a node that is not running.
+                for (conversation, to) in store.pending_knocks() {
+                    if to.peer_id() != peer || directs.cannot_be_knocked.contains(&to) {
+                        continue;
+                    }
+                    let Some(workspace) = crate::workspace::Workspace::containing(&store) else {
+                        break;
+                    };
+                    let Ok(theirs) = Store::open(workspace.path_for(&conversation)) else {
+                        continue;
+                    };
+                    if theirs.is_being_served() {
+                        last_offered = None;
+                    } else if theirs.mark_awake().is_ok() {
+                        sink(&[Event::ConversationWoken {
+                            network: conversation,
+                        }]);
+                    }
+                }
+                note_peer_seen(&store, &node, &identity.id(), peer, &mut peer_seen_written);
                 // A new peer is a new place to walk from. The routing table is
                 // filled from peers this node connects to and nothing else, so
                 // until it is walked it is one hop deep — and a provider query
@@ -1397,6 +1468,9 @@ pub async fn serve(
             NodeEvent::Disconnected { peer } => {
                 connected.remove(&peer);
                 record_connected(&store, &connected, sink);
+                // At the moment they left, so that anything written after it is
+                // owed a knock and nothing written before it is.
+                note_peer_seen(&store, &node, &identity.id(), peer, &mut peer_seen_written);
             }
 
             // Governance first. Everything else is gated on it, so a peer's
@@ -1758,12 +1832,63 @@ pub async fn serve(
                 }
             }
 
+            // Somebody wants a sleeping conversation awake — D41, spec 07 §6.2.
+            // Checked against this side's own record of where the conversation
+            // was arranged; refused only in this node's log, since the carrier
+            // already answered and a refusal must not distinguish itself.
+            NodeEvent::DirectReceived { message }
+                if message.namespace == kols_core::DM_NAMESPACE
+                    && message.kind == kols_core::DM_KNOCK_KIND =>
+            {
+                match crate::dm::knocked(&store, &message.sender, &message.payload) {
+                    Ok(conversation) => {
+                        crate::say!(
+                            report,
+                            "{} knocked: waking conversation {}",
+                            message.sender.short(),
+                            conversation.short()
+                        );
+                        sink(&[Event::ConversationWoken {
+                            network: conversation,
+                        }]);
+                    }
+                    Err(why) => crate::say!(
+                        report,
+                        "refused a knock from {}: {why}",
+                        message.sender.short()
+                    ),
+                }
+            }
+
             // A conversation request reached the other end — Core §5.1's
             // acknowledgement, which is delivery-level and says nothing about
             // anybody agreeing. So the offer stops being retried and nothing
             // else happens: whether they accept is theirs, and arrives later as
             // a join or not at all.
             NodeEvent::DirectDelivered { request, ack, .. } => {
+                if let Some(to) = directs.knocks_in_flight.remove(&request) {
+                    // A knock answered `Unsupported`: their software cannot be
+                    // woken, which knocking again will not change (D41). Any
+                    // other answer means nothing — a knock is answered by
+                    // connecting, never by the carrier.
+                    if matches!(
+                        ack,
+                        intranet_transport::direct::DirectAck::Refused(
+                            intranet_transport::direct::DirectRefusal::Unsupported
+                        )
+                    ) && directs.cannot_be_knocked.insert(to)
+                    {
+                        sink(&[Event::Degraded {
+                            reason: format!(
+                                "{} is running software that cannot be woken by a knock, so what \
+                                 is written in your conversation reaches them only while both \
+                                 sides of it happen to be running",
+                                to.short()
+                            ),
+                        }]);
+                    }
+                    continue;
+                }
                 let Some(to) = offers_in_flight.remove(&request) else {
                     continue;
                 };
@@ -1805,6 +1930,7 @@ pub async fn serve(
             // stays and the next interval tries again.
             NodeEvent::DirectFailed { request, .. } => {
                 offers_in_flight.remove(&request);
+                directs.knocks_in_flight.remove(&request);
             }
 
             _ => {}
@@ -2889,6 +3015,9 @@ fn render(events: &[Event]) {
                 &intranet_crypto::to_hex(from.verifying_key().as_bytes())[..8],
                 intranet_crypto::to_hex(from.verifying_key().as_bytes())
             ),
+            Event::ConversationWoken { network } => {
+                println!("woke conversation {}", network.short())
+            }
         }
     }
 }
@@ -3865,6 +3994,185 @@ fn founder_of(
         .groups
         .get(&intranet_governance::GroupId::founders())
         .is_some_and(|group| group.members.contains_key(identity))
+}
+
+/// The direct messages a node sends, across kinds — Core §5.1, spec 07 §6.2.
+///
+/// **At most one to a person every [`OFFER_RETRY`], whatever it is.** The
+/// recipient's node meters every kind from one identity together, five a
+/// minute on the reference carrier, so an offer and a knock each on their own
+/// cadence, or a round brought forward by a connection, would otherwise exceed
+/// it and be refused.
+#[derive(Default)]
+struct Directs {
+    /// When each person was last sent something: the start of the round it
+    /// went in, so the next regular round is never a hair too early.
+    last: BTreeMap<intranet_identity::PerNetworkIdentityId, Instant>,
+    /// Knocks awaiting the carrier's answer, by the send it will name.
+    knocks_in_flight: BTreeMap<
+        libp2p::request_response::OutboundRequestId,
+        intranet_identity::PerNetworkIdentityId,
+    >,
+    /// People whose node answered a knock `Unsupported`; not knocked again by
+    /// this run.
+    cannot_be_knocked: BTreeSet<intranet_identity::PerNetworkIdentityId>,
+}
+
+impl Directs {
+    fn may_send(&self, to: &intranet_identity::PerNetworkIdentityId, now: Instant) -> bool {
+        self.last
+            .get(to)
+            .is_none_or(|at| now.duration_since(*at) >= OFFER_RETRY)
+    }
+
+    fn sent(&mut self, round: Instant, to: intranet_identity::PerNetworkIdentityId) {
+        self.last.insert(to, round);
+    }
+}
+
+/// How often a conversation's node rewrites that the other side is still
+/// connected, so a crash loses at most this much of D41's record.
+const PEER_SEEN_EVERY: std::time::Duration = std::time::Duration::from_secs(30);
+
+/// Records, for a conversation, that its other member is connected or has just
+/// left — D41.
+///
+/// Called on connect and on disconnect, at the moment either happens, and
+/// from [`keep_knock`] while connected. A peer that is not a member (the
+/// relay, say) is not the other side and records nothing.
+fn note_peer_seen(
+    store: &Store,
+    node: &MemberNode,
+    me: &intranet_identity::PerNetworkIdentityId,
+    peer: PeerId,
+    written: &mut Option<Instant>,
+) {
+    if node.discovery() != intranet_transport::Discovery::Off {
+        return;
+    }
+    if peer_identity(peer, store)
+        .ok()
+        .flatten()
+        .is_some_and(|member| member != *me)
+        && store.set_peer_seen().is_ok()
+    {
+        *written = Some(Instant::now());
+    }
+}
+
+/// A conversation's side of D41's knock, run on its node every tick.
+///
+/// While the other member is connected there is nothing to knock for: the
+/// record of when they were last seen is kept current, and a pending knock is
+/// forgotten. Once they are not, a knock is left for the shared network's node
+/// to send **only if this member has written something since they were last
+/// connected**. A node merely being awake is not a reason, or two people with
+/// different idle timers would keep waking each other.
+///
+/// The knock is left in the origin network's store, which is this machine's
+/// own and never replicated (`want_knock`).
+fn keep_knock(
+    store: &Store,
+    me: &intranet_identity::PerNetworkIdentityId,
+    connected: &BTreeSet<PeerId>,
+    written: &mut Option<Instant>,
+) {
+    let Some((shared, them)) = store.origin() else {
+        return;
+    };
+    // By path rather than through the workspace's listing, which opens every
+    // store it has; this runs every tick.
+    let Some(origin) = crate::workspace::Workspace::containing(store)
+        .and_then(|workspace| Store::open(workspace.path_for(&shared)).ok())
+    else {
+        return;
+    };
+    let here = connected.iter().any(|peer| {
+        peer_identity(*peer, store)
+            .ok()
+            .flatten()
+            .is_some_and(|member| member != *me)
+    });
+    if here {
+        if written.is_none_or(|at| at.elapsed() >= PEER_SEEN_EVERY) && store.set_peer_seen().is_ok()
+        {
+            *written = Some(Instant::now());
+        }
+        if origin.knock_pending(store.network()) {
+            let _ = origin.forget_knock(store.network());
+        }
+        return;
+    }
+    // **Flagged:** "connected when it was written" is taken to mean "received
+    // it". Nothing records what the other side holds (delivery state is
+    // deferred, D19), so a record written while a connection was half-open —
+    // their laptop asleep, say — or just before they left, before gossip or
+    // sync carried it, is owed nothing here and waits until one of them sends
+    // again. The weaker guarantee, stated: a knock is left for what was written
+    // while they were *not connected*, not for everything they do not have.
+    let owed = match (store.last_own_write(), store.peer_seen()) {
+        (Some(wrote), Some(seen)) => wrote > seen,
+        (Some(_), None) => true,
+        (None, _) => false,
+    };
+    if owed && !origin.knock_pending(store.network()) {
+        let _ = origin.want_knock(store.network(), &them);
+    }
+}
+
+/// The shared network's side of D41's knock: send what is pending.
+///
+/// For each knock this machine left here: if the conversation's node is
+/// running, the knock goes to the other person, spaced by [`Directs`]. If the
+/// conversation has gone back to sleep, sending would wake them to dial a node
+/// that is not there, so nothing is sent; the `Connected` arm wakes it when
+/// they next arrive here, and its knock goes on a later round. A knock for a
+/// conversation no longer on this disk is forgotten.
+///
+/// **Only a connection here counts as their being around.** A member of a big
+/// server this node is not connected to, or one whose presence is invisible,
+/// is not noticed, and what was written waits for one of them to send in the
+/// conversation.
+#[allow(clippy::too_many_arguments)]
+fn send_knocks(
+    store: &Store,
+    workspace: &crate::workspace::Workspace,
+    node: &mut MemberNode,
+    identity: &intranet_identity::PerNetworkIdentity,
+    directs: &mut Directs,
+    round: Instant,
+    report: &crate::Report,
+) {
+    for (conversation, to) in store.pending_knocks() {
+        // Opened by path rather than through the workspace's listing, which
+        // opens every store it has; this runs every round.
+        let Ok(theirs) = Store::open(workspace.path_for(&conversation)) else {
+            let _ = store.forget_knock(&conversation);
+            continue;
+        };
+        if theirs.is_being_served() {
+            if directs.cannot_be_knocked.contains(&to) || !directs.may_send(&to, round) {
+                continue;
+            }
+            let knock = kols_core::DmKnock { conversation }.encode();
+            if let Ok(sent) = node.send_direct(
+                to,
+                identity,
+                kols_core::DM_NAMESPACE,
+                kols_core::DM_KNOCK_KIND,
+                knock,
+            ) {
+                directs.sent(round, to);
+                directs.knocks_in_flight.insert(sent, to);
+                crate::say!(
+                    report,
+                    "knocked {} for conversation {}",
+                    to.short(),
+                    conversation.short()
+                );
+            }
+        }
+    }
 }
 
 /// The member behind a peer id, if this node's replayed state knows one.

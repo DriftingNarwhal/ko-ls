@@ -1666,6 +1666,119 @@ impl Store {
         Some((shared, PerNetworkIdentityId::from_verifying_key(key)))
     }
 
+    /// Notes that this conversation was just woken, or just begun — D41.
+    ///
+    /// Counts as activity for [`last_activity`](Self::last_activity), so a
+    /// conversation woken by a knock, or created and not yet written in, gets a
+    /// full idle window before it goes back to sleep.
+    pub fn mark_awake(&self) -> Result<(), StoreError> {
+        write_atomically(
+            &self.root,
+            self.root.join("awake"),
+            now_millis().to_string().as_bytes(),
+        )
+    }
+
+    /// When anything last happened here: a record written or arrived, or the
+    /// network woken — the clock D41's idle timeout runs against.
+    ///
+    /// **Read from files that are written anyway**: each channel's arrival log
+    /// is appended for every new record, whoever wrote it, so its modification
+    /// time is when the last message landed, at the cost of a `stat` per
+    /// channel and no write. `None` for a network where nothing has happened.
+    pub fn last_activity(&self) -> Option<std::time::SystemTime> {
+        let awake = modified(self.root.join("awake"));
+        self.newest_in_channels("arrivals").max(awake)
+    }
+
+    /// When this member last wrote a record here.
+    ///
+    /// The own-readings index is rewritten for every record this member
+    /// writes, so its modification time is that moment. What a conversation's
+    /// node compares with [`peer_seen`](Self::peer_seen) to decide whether the
+    /// other person has anything to be woken for.
+    pub fn last_own_write(&self) -> Option<std::time::SystemTime> {
+        self.newest_in_channels("own-readings")
+    }
+
+    /// When the other side of this conversation was last seen connected.
+    pub fn peer_seen(&self) -> Option<std::time::SystemTime> {
+        modified(self.root.join("peer-seen"))
+    }
+
+    /// Records that the other side is connected now.
+    pub fn set_peer_seen(&self) -> Result<(), StoreError> {
+        write_atomically(
+            &self.root,
+            self.root.join("peer-seen"),
+            now_millis().to_string().as_bytes(),
+        )
+    }
+
+    /// The newest modification time of one named file across every channel.
+    fn newest_in_channels(&self, name: &str) -> Option<std::time::SystemTime> {
+        fs::read_dir(self.root.join("channels"))
+            .ok()?
+            .filter_map(Result::ok)
+            .filter_map(|channel| modified(channel.path().join(name)))
+            .max()
+    }
+
+    /// Leaves a knock to be sent to `to` for `conversation` — D41.
+    ///
+    /// **Kept in the shared network's store and never replicated**, like an
+    /// offer: it is this machine's own note of something to retry, and Core
+    /// §5.1 forbids queuing a direct payload on any third node. One per
+    /// conversation, so asking again changes nothing.
+    pub fn want_knock(
+        &self,
+        conversation: &NetworkId,
+        to: &PerNetworkIdentityId,
+    ) -> Result<(), StoreError> {
+        let dir = self.root.join("conversations").join("knock");
+        fs::create_dir_all(&dir)?;
+        write_atomically(
+            &self.root,
+            dir.join(to_hex(conversation.as_bytes())),
+            hex_id(to).as_bytes(),
+        )
+    }
+
+    /// Whether a knock for `conversation` is waiting to be sent.
+    pub fn knock_pending(&self, conversation: &NetworkId) -> bool {
+        self.root
+            .join("conversations")
+            .join("knock")
+            .join(to_hex(conversation.as_bytes()))
+            .exists()
+    }
+
+    /// The knocks waiting to be sent, as (conversation, to whom).
+    pub fn pending_knocks(&self) -> Vec<(NetworkId, PerNetworkIdentityId)> {
+        let Ok(entries) = fs::read_dir(self.root.join("conversations").join("knock")) else {
+            return Vec::new();
+        };
+        entries
+            .filter_map(Result::ok)
+            .filter_map(|entry| {
+                let name = entry.file_name().into_string().ok()?;
+                let raw: [u8; 32] = intranet_crypto::from_hex(&name)?.try_into().ok()?;
+                let to = id_from_hex(fs::read_to_string(entry.path()).ok()?.trim())?;
+                Some((NetworkId::from_bytes(raw), to))
+            })
+            .collect()
+    }
+
+    /// Forgets a knock: the other side connected, or the conversation is gone.
+    pub fn forget_knock(&self, conversation: &NetworkId) -> Result<(), StoreError> {
+        remove_if_present(
+            self.root
+                .join("conversations")
+                .join("knock")
+                .join(to_hex(conversation.as_bytes())),
+        )
+    }
+
     /// Records what this machine contributes to this network — Core §4.3.
     ///
     /// One file rather than four, written whole. The four values are set
@@ -3095,6 +3208,11 @@ fn append_to(path: impl AsRef<Path>, bytes: &[u8]) -> Result<(), StoreError> {
         .open(path)?;
     file.write_all(bytes)?;
     Ok(())
+}
+
+/// A file's modification time, or `None` if it is not there.
+fn modified(path: impl AsRef<Path>) -> Option<std::time::SystemTime> {
+    fs::metadata(path).and_then(|meta| meta.modified()).ok()
 }
 
 /// How long that file is, or zero when it is not there yet.

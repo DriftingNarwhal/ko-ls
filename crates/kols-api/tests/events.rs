@@ -299,6 +299,9 @@ fn every_event() -> Vec<Event> {
             others: 0,
         },
         Event::DirectMessageRequest { from: who },
+        Event::ConversationWoken {
+            network: intranet_identity::NetworkId::from_bytes([7; 32]),
+        },
     ]
 }
 
@@ -328,6 +331,7 @@ fn name_of(event: &Event) -> &'static str {
         Event::Degraded { .. } => "Degraded",
         Event::GovernanceReorg { .. } => "GovernanceReorg",
         Event::DirectMessageRequest { .. } => "DirectMessageRequest",
+        Event::ConversationWoken { .. } => "ConversationWoken",
     }
 }
 
@@ -348,7 +352,7 @@ fn every_event_has_a_sample() {
     }
     assert_eq!(
         seen.len(),
-        11,
+        12,
         "every_event samples {} of Event's variants — update this count, the \
          list, and `design/05` §3 when the boundary grows",
         seen.len()

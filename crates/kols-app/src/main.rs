@@ -988,6 +988,7 @@ fn conversation_read(
 /// Says something in a conversation.
 #[tauri::command]
 fn conversation_send(
+    handle: tauri::AppHandle,
     app: tauri::State<'_, App>,
     network: String,
     body: String,
@@ -1002,7 +1003,14 @@ fn conversation_send(
             attachments: Vec::new(),
         })
         .map(|_| ())
-        .map_err(|err| err.to_string())
+        .map_err(|err| err.to_string())?;
+    // **Sending is what wakes a sleeping conversation** (D41), and the record
+    // just written is the activity that does it. Reconciled now rather than on
+    // the supervisor's next pass, so its node starts, and asks the network it
+    // was arranged in to knock, while the person is still looking at what they
+    // wrote.
+    reconcile_nodes(&handle, &app);
+    Ok(())
 }
 
 /// Raises the window listing everything this installation belongs to.
@@ -2852,8 +2860,15 @@ fn reconcile_nodes(handle: &tauri::AppHandle, app: &tauri::State<'_, App>) {
             let store = kols_node::store::Store::open(known.path.clone()).ok()?;
             Some(kols_node::nodes::Spec {
                 network: *store.network(),
-                root: known.path,
                 set_aside: store.is_set_aside(),
+                // D41: a conversation nobody has talked in for the idle
+                // timeout runs no node until a send or a knock wakes it.
+                asleep: kols_node::nodes::should_sleep(
+                    known.profile,
+                    &store,
+                    std::time::SystemTime::now(),
+                ),
+                root: known.path,
             })
         })
         .collect();
@@ -2942,6 +2957,18 @@ fn reconcile_nodes(handle: &tauri::AppHandle, app: &tauri::State<'_, App>) {
                     // (`09` §1.8): without it a verified request sat on the disk
                     // until something else happened to redraw that list.
                     kols_api::Event::DirectMessageRequest { .. } => "kols://conversations",
+                    // A knock checked out, or the other person showed up while
+                    // this side had something waiting (D41). The store is marked
+                    // awake already; this only saves waiting for the next pass.
+                    // Spawned rather than called: this runs inside a node's event
+                    // loop, and reconciling starts and stops nodes.
+                    kols_api::Event::ConversationWoken { .. } => {
+                        let handle = emitter.clone();
+                        tauri::async_runtime::spawn(async move {
+                            reconcile_nodes(&handle, &handle.state::<App>());
+                        });
+                        "kols://conversations"
+                    }
                     kols_api::Event::GovernanceReorg { mine, others } => {
                         // Recorded before it is emitted, like the relay standing:
                         // the emit makes it prompt, the record makes it reliable.

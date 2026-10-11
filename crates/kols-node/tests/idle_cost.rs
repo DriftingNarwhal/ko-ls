@@ -191,6 +191,7 @@ fn specs_for(stores: &[(intranet_identity::NetworkId, PathBuf)]) -> Vec<Spec> {
             network: *network,
             root: root.clone(),
             set_aside: false,
+            asleep: false,
         })
         .collect()
 }

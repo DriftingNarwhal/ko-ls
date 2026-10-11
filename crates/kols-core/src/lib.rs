@@ -43,7 +43,7 @@ pub use channel::{
     SidebarChannel, SidebarRow, admit, sidebar_order,
 };
 pub use cursor::{Cursor, Window};
-pub use dm::{DM_KIND, DM_NAMESPACE, DmInvite};
+pub use dm::{DM_KIND, DM_KNOCK_KIND, DM_NAMESPACE, DmInvite, DmKnock};
 pub use hlc::Hlc;
 pub use ids::{
     ChannelId, MessageId, author_log_pointer, author_segment_pointer, category_id,

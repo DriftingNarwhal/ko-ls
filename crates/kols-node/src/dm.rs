@@ -105,6 +105,9 @@ pub fn start(
     conversation
         .set_origin(shared.network(), with)
         .map_err(|err| err.to_string())?;
+    // Awake from the start (D41), so it runs long enough to be offered and
+    // answered rather than sleeping before anybody has written in it.
+    conversation.mark_awake().map_err(|err| err.to_string())?;
 
     shared
         .offer_conversation(with, conversation.network())
@@ -382,10 +385,9 @@ pub async fn accept(
     // end recomputes for itself.
     //
     // **And said if it fails, never discarded.** Without it the conversation
-    // cannot borrow a relay, and once D41's knock is built (designed, not yet)
-    // this record is what a knock will be checked against, so losing it would
-    // leave a conversation that joined correctly and could never be woken,
-    // with nothing anywhere saying why. Reported after the request is
+    // cannot borrow a relay, and it is what a knock is checked against (D41),
+    // so losing it leaves a conversation that joined correctly and can never
+    // be woken, with nothing anywhere saying why. Reported after the request is
     // forgotten, because by then the join has happened and the invite is
     // spent: accepting again could not help.
     let recorded = workspace
@@ -394,6 +396,7 @@ pub async fn accept(
         .and_then(|store| {
             store
                 .set_origin(shared_network, from)
+                .and_then(|()| store.mark_awake())
                 .map_err(|err| err.to_string())
         });
 
@@ -437,4 +440,56 @@ pub fn decline(shared: &Store, from: &PerNetworkIdentityId) -> Result<(), String
         return Err("there is no conversation request from them".to_owned());
     }
     shared.forget_request(from).map_err(|err| err.to_string())
+}
+
+/// Checks a knock and wakes the conversation it names — spec 07 §6.2 (D41).
+///
+/// Returns the conversation to start, or why the knock was refused, for this
+/// node's own log only. A refusal is never answered: the carrier has already
+/// said `Received`, so to the sender a refused knock looks like any other, as
+/// §6.2 requires of a refused request.
+///
+/// # What is checked, and against what
+///
+/// The knock carries only a conversation id. Everything else is this side's
+/// own record:
+///
+/// 1. The sender is a current member of the shared network, replayed now.
+/// 2. This member has that conversation.
+/// 3. Its origin names this network and this sender. The origin was written
+///    when the request was sent or accepted, so a member of the shared network
+///    who is not in the conversation cannot wake it, and neither can anybody
+///    knocking through a different network.
+///
+/// **One honest limit**, on the side that *sent* the request: its origin names
+/// the person it was sent to, and a bearer invite can be passed on. Whoever it
+/// was sent to can therefore knock even if somebody else redeemed it. That
+/// costs a woken node and a dial that fails to authenticate, and tells the
+/// knocker this member is online (`design/03` §4.5).
+///
+/// **Not checked: a block list**, which spec 07 §6.2 makes a client-side list
+/// and which this client does not have yet. When it does, a blocked sender's
+/// knock is refused here like anything else.
+pub fn knocked(
+    shared: &Store,
+    from: &PerNetworkIdentityId,
+    payload: &[u8],
+) -> Result<NetworkId, &'static str> {
+    let knock = kols_core::DmKnock::decode(payload).map_err(|_| "it does not decode as a knock")?;
+    let state = shared
+        .state()
+        .map_err(|_| "this node cannot replay its own log to check who is a member")?;
+    if !state.is_member(from) {
+        return Err("its sender is not a current member of this network");
+    }
+    let conversation = Workspace::containing(shared)
+        .and_then(|workspace| workspace.store_for(&knock.conversation))
+        .ok_or("this member has no such conversation")?;
+    if conversation.origin() != Some((*shared.network(), *from)) {
+        return Err("that conversation was not arranged with its sender in this network");
+    }
+    conversation
+        .mark_awake()
+        .map_err(|_| "the conversation could not be marked awake")?;
+    Ok(knock.conversation)
 }

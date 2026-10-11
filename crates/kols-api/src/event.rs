@@ -215,6 +215,17 @@ pub enum Event {
         /// Who asked, as the carrier bound them to the connection.
         from: PerNetworkIdentityId,
     },
+    /// A sleeping conversation should run now — D41.
+    ///
+    /// Raised by the node of the network the conversation was arranged in:
+    /// when a knock for it arrived and checked out, or when the other person
+    /// showed up there while this side had something waiting for them. The
+    /// conversation's store is already marked awake; this only asks whoever
+    /// supervises nodes not to wait for its next pass.
+    ConversationWoken {
+        /// The conversation network to start.
+        network: intranet_identity::NetworkId,
+    },
 }
 
 /// One action reconciliation undid.

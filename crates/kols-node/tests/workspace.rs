@@ -1936,16 +1936,19 @@ fn a_supervisor_runs_every_joined_network_at_once() {
             network: a_id,
             root: a.root().to_path_buf(),
             set_aside: false,
+            asleep: false,
         },
         Spec {
             network: b_id,
             root: b.root().to_path_buf(),
             set_aside: false,
+            asleep: false,
         },
         Spec {
             network: c_id,
             root: c.root().to_path_buf(),
             set_aside: false,
+            asleep: false,
         },
     ];
 
@@ -2028,6 +2031,7 @@ fn a_node_starting_clears_who_the_last_run_was_connected_to() {
         network: id,
         root: store.root().to_path_buf(),
         set_aside: false,
+        asleep: false,
     }];
     let sink: kols_node::nodes::TaggedSink = std::sync::Arc::new(|_, _| {});
 
@@ -2073,6 +2077,7 @@ fn setting_a_running_network_aside_counts_as_having_just_looked() {
         network: id,
         root: store.root().to_path_buf(),
         set_aside,
+        asleep: false,
     };
     let sink: kols_node::nodes::TaggedSink = std::sync::Arc::new(|_, _| {});
     let seal = kols_node::serve::SEAL_TARGET_BYTES;
@@ -2121,6 +2126,7 @@ fn a_network_the_member_set_aside_is_polled_rather_than_abandoned() {
         network: quiet_id,
         root: quiet.root().to_path_buf(),
         set_aside: true,
+        asleep: false,
     }];
     let sink: kols_node::nodes::TaggedSink = std::sync::Arc::new(|_, _| {});
 
@@ -2223,11 +2229,13 @@ fn reconciling_twice_changes_nothing_and_a_tier_change_is_not_a_restart() {
             network: a_id,
             root: a.root().to_path_buf(),
             set_aside: false,
+            asleep: false,
         },
         Spec {
             network: b_id,
             root: b.root().to_path_buf(),
             set_aside: false,
+            asleep: false,
         },
     ];
     let sink: kols_node::nodes::TaggedSink = std::sync::Arc::new(|_, _| {});
@@ -2321,6 +2329,7 @@ fn reconciling_from_a_synchronous_caller_does_not_panic() {
         network: *network.network(),
         root: network.root().to_path_buf(),
         set_aside: false,
+        asleep: false,
     }];
     let sink: kols_node::nodes::TaggedSink = std::sync::Arc::new(|_, _| {});
 
@@ -2985,6 +2994,7 @@ fn accepting_a_conversation_request_makes_the_accepter_a_member() {
                     network: conversation,
                     root: alice_root.clone(),
                     set_aside: false,
+                    asleep: false,
                 }],
                 None,
                 &sink,
@@ -3027,6 +3037,7 @@ fn accepting_a_conversation_request_makes_the_accepter_a_member() {
                     network: conversation,
                     root: bob_ws.path_for(&conversation),
                     set_aside: false,
+                    asleep: false,
                 }],
                 None,
                 &sink,
@@ -3108,4 +3119,278 @@ fn accepting_a_conversation_request_makes_the_accepter_a_member() {
                     .waiting()
             );
         });
+}
+
+#[test]
+fn a_message_written_to_a_sleeping_conversation_wakes_the_other_side() {
+    use kols_node::nodes::{Nodes, Spec};
+
+    // D41 end to end, with real nodes and the real carrier. Alice and Bob share
+    // a network and have a conversation. Bob's side of it goes to sleep — no
+    // node at all. Alice writes. Her conversation's node leaves a knock, her
+    // shared network's node sends it, Bob's shared network's node checks it and
+    // asks for the conversation to be woken, and the message arrives.
+    let (_a, _b, alice_ws, alice, bob_ws, bob) = two_sides("dm-knock");
+    let bob_id = bob.identity().expect("identity").id();
+    let alice_id = alice.identity().expect("identity").id();
+    let shared = *alice.network();
+    let started = kols_node::dm::start(&alice_ws, &alice, &bob_id, None).expect("starts");
+    let conversation = started.conversation;
+    let channel = kols_core::conversation_channel_id(&conversation);
+    let alice_root = alice_ws.path_for(&conversation);
+    let bob_root = bob_ws.path_for(&conversation);
+    let seal = kols_node::serve::SEAL_TARGET_BYTES;
+    let quiet: kols_node::nodes::TaggedSink = std::sync::Arc::new(|_, _| {});
+
+    // What Bob's supervisor is asked to wake, which is all the window does with
+    // the event.
+    let woken = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let bob_sink: kols_node::nodes::TaggedSink = {
+        let woken = std::sync::Arc::clone(&woken);
+        std::sync::Arc::new(move |_, events: &[kols_api::Event]| {
+            for event in events {
+                if let kols_api::Event::ConversationWoken { network } = event {
+                    woken.lock().expect("lock").push(*network);
+                }
+            }
+        })
+    };
+    let spec = |network, root: &std::path::Path, asleep| Spec {
+        network,
+        root: root.to_path_buf(),
+        set_aside: false,
+        asleep,
+    };
+    let within = |secs| std::time::Instant::now() + std::time::Duration::from_secs(secs);
+
+    tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+        .expect("a runtime")
+        .block_on(async {
+            // The conversation, accepted and keyed, as the accept test does it.
+            let mut alice_nodes = Nodes::here();
+            let alice_specs = [
+                spec(conversation, &alice_root, false),
+                spec(shared, alice.root(), false),
+            ];
+            alice_nodes.reconcile(&alice_specs, None, &quiet, seal, std::time::Instant::now());
+            let deadline = within(30);
+            let ready = loop {
+                let now = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .expect("after 1970")
+                    .as_millis() as i64;
+                let ready = kols_node::dm::deliverable(&alice_ws, &alice, now).expect("builds");
+                if !ready.is_empty() && !alice.addresses().is_empty() {
+                    break ready;
+                }
+                assert!(std::time::Instant::now() < deadline, "never listened");
+                tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+            };
+            match kols_node::dm::receive(&bob, &alice_id, &ready[0].payload) {
+                kols_node::dm::Arrived::Request { .. } => {}
+                other => panic!("the request should be kept: {other:?}"),
+            }
+            kols_node::dm::accept(&bob_ws, &shared, &alice_id)
+                .await
+                .expect("accepts");
+
+            // Bob's shared node is told where Alice's listens, as an invite
+            // would have told it.
+            bob.set_peers(&alice.addresses()).expect("peers");
+            let mut bob_nodes = Nodes::here();
+            bob_nodes.reconcile(
+                &[
+                    spec(conversation, &bob_root, false),
+                    spec(shared, bob.root(), false),
+                ],
+                None,
+                &bob_sink,
+                seal,
+                std::time::Instant::now(),
+            );
+            let keyed = within(30);
+            while Store::open(bob_root.clone())
+                .expect("his store")
+                .epoch_key()
+                .is_err()
+            {
+                assert!(std::time::Instant::now() < keyed, "Bob was never keyed in");
+                tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+            }
+
+            // Bob's side goes to sleep.
+            bob_nodes.reconcile(
+                &[
+                    spec(conversation, &bob_root, true),
+                    spec(shared, bob.root(), false),
+                ],
+                None,
+                &bob_sink,
+                seal,
+                std::time::Instant::now(),
+            );
+            let asleep = within(20);
+            while Store::open(bob_root.clone())
+                .expect("his store")
+                .is_being_served()
+            {
+                assert!(
+                    std::time::Instant::now() < asleep,
+                    "Bob's node never stopped"
+                );
+                tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+            }
+
+            // Alice writes, while Bob's side has no node.
+            kols_node::executor::Executor::open(alice_root.clone())
+                .expect("opens")
+                .submit(kols_api::Command::SendMessage {
+                    channel,
+                    body: "are you there?".to_owned(),
+                    reply_to: None,
+                    attachments: Vec::new(),
+                })
+                .expect("Alice is keyed and may speak");
+
+            // The knock arrives and Bob's supervisor is asked to wake it.
+            let knocked = within(60);
+            while !woken.lock().expect("lock").contains(&conversation) {
+                assert!(
+                    std::time::Instant::now() < knocked,
+                    "Bob's side was never asked to wake"
+                );
+                tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+            }
+            let his = Store::open(bob_root.clone()).expect("his store");
+            assert!(
+                !kols_node::nodes::is_asleep(
+                    kols_core::NetworkProfile::Conversation,
+                    his.last_activity(),
+                    std::time::SystemTime::now(),
+                    kols_node::nodes::IDLE_TIMEOUT,
+                ),
+                "a knock marks the conversation awake"
+            );
+            bob_nodes.reconcile(
+                &[
+                    spec(conversation, &bob_root, false),
+                    spec(shared, bob.root(), false),
+                ],
+                None,
+                &bob_sink,
+                seal,
+                std::time::Instant::now(),
+            );
+
+            // And the message arrives.
+            let her = Store::open(alice_root.clone())
+                .expect("her store")
+                .identity()
+                .expect("her identity")
+                .id();
+            let arrived = within(60);
+            loop {
+                let records = his.records(&channel).unwrap_or_default();
+                if records.iter().any(|record| record.author == her) {
+                    break;
+                }
+                assert!(
+                    std::time::Instant::now() < arrived,
+                    "the message never reached the woken side"
+                );
+                tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+            }
+
+            for task in alice_nodes
+                .stop_all()
+                .into_iter()
+                .chain(bob_nodes.stop_all())
+            {
+                let _ = task.await;
+            }
+        });
+}
+
+#[test]
+fn only_the_person_a_conversation_was_arranged_with_can_wake_it() {
+    // D41's knock carries only a conversation id, so everything about who may
+    // send one is the receiver's own record of where it was arranged. Checked
+    // here on the side that started the conversation, whose origin names Bob.
+    let (_a, _b, alice_ws, alice, _bob_ws, bob) = two_sides("dm-knock-who");
+    let bob_id = bob.identity().expect("identity").id();
+    let founder = alice.identity().expect("identity");
+    let started = kols_node::dm::start(&alice_ws, &alice, &bob_id, None).expect("starts");
+    let knock = kols_core::DmKnock {
+        conversation: started.conversation,
+    }
+    .encode();
+
+    // Carol is a member of the shared network and not in the conversation.
+    let carol_dir = Dir::new("dm-knock-who-carol");
+    let carol = attach_in(
+        &Workspace::at(carol_dir.0.clone()),
+        alice.network(),
+        "the workshop",
+    );
+    let carol_id = carol.identity().expect("identity").id();
+    admit_to(&alice, &founder, &carol_id);
+    assert!(
+        kols_node::dm::knocked(&alice, &carol_id, &knock).is_err(),
+        "a member who is not the other side must not wake it"
+    );
+
+    // Bob for a conversation Alice does not have.
+    let elsewhere = kols_core::DmKnock {
+        conversation: intranet_identity::NetworkId::from_bytes([9; 32]),
+    }
+    .encode();
+    assert!(kols_node::dm::knocked(&alice, &bob_id, &elsewhere).is_err());
+
+    // Not a knock at all.
+    assert!(kols_node::dm::knocked(&alice, &bob_id, b"wake up").is_err());
+
+    // Bob, for this one: woken, and marked awake. Starting it marked it awake
+    // too, so that mark is removed first; otherwise this could not fail.
+    let root = alice_ws.path_for(&started.conversation);
+    std::fs::remove_file(root.join("awake")).expect("start marked it awake");
+    assert!(
+        Store::open(root.clone())
+            .expect("hers")
+            .last_activity()
+            .is_none()
+    );
+    assert_eq!(
+        kols_node::dm::knocked(&alice, &bob_id, &knock),
+        Ok(started.conversation)
+    );
+    assert!(Store::open(root).expect("hers").last_activity().is_some());
+}
+
+#[test]
+fn a_conversation_waiting_for_its_second_member_does_not_sleep() {
+    // Its request carries this node's addresses, and accepting it is a redeem
+    // this node must answer (spec 07 §6.2). Asleep, a request accepted more
+    // than an idle timeout after it was sent would name a node that is not
+    // running.
+    let (_a, _b, alice_ws, alice, _bob_ws, bob) = two_sides("dm-sleep-waiting");
+    let bob_id = bob.identity().expect("identity").id();
+    let started = kols_node::dm::start(&alice_ws, &alice, &bob_id, None).expect("starts");
+    let hers = Store::open(alice_ws.path_for(&started.conversation)).expect("hers");
+    let later = std::time::SystemTime::now() + std::time::Duration::from_secs(2 * 3600);
+
+    assert!(
+        kols_node::nodes::is_asleep(
+            kols_core::NetworkProfile::Conversation,
+            hers.last_activity(),
+            later,
+            kols_node::nodes::IDLE_TIMEOUT
+        ),
+        "two hours of nothing is past the idle timeout"
+    );
+    assert!(
+        !kols_node::nodes::should_sleep(kols_core::NetworkProfile::Conversation, &hers, later),
+        "but nobody has joined it yet, so it must stay up to be joined"
+    );
 }

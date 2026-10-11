@@ -56,14 +56,14 @@
 //! dialable is what a relay reservation provides. The saving is connections and
 //! gossip meshes, not processes.
 //!
-//! # A conversation is no longer a special case
+//! # A conversation sleeps
 //!
-//! §2 says a conversation is warm whenever the application runs, and `05` §4
-//! says idle conversations "should be suspended and woken on demand rather than
-//! all held live" — a tension nobody had to resolve while neither was built.
-//! Defaulting *everything* to warm resolves it without choosing a side: a
-//! conversation is warm because every joined network is, and a member who wants
-//! one quiet sets it aside exactly as they would a server.
+//! `05` §4 says idle conversations "should be suspended and woken on demand
+//! rather than all held live", and D41 (2026-10-10) settles how: a conversation
+//! nobody has talked in for [`IDLE_TIMEOUT`] runs no node at all
+//! ([`Tier::Asleep`]), and is woken by this member sending in it or by a knock
+//! from the other side through the network it was arranged in. An awake one is
+//! warm like anything else. Setting one aside is not offered.
 //!
 //! # The claim still does the enforcing
 //!
@@ -88,8 +88,9 @@ pub enum Tier {
     /// Running and reachable, without the connections a hot node holds.
     ///
     /// The default for everything a member has joined. What it buys is being
-    /// **dialable**, so the dial itself is the wake signal and there is no
-    /// wake-up message to design (`09` §2).
+    /// **dialable**, so the dial itself is the wake signal (`09` §2). Not for an
+    /// asleep conversation, which has no node to dial and is woken by a knock
+    /// instead (D41).
     Warm,
     /// Woken on the poll interval rather than held running.
     ///
@@ -99,6 +100,15 @@ pub enum Tier {
     /// network with no node running serves nothing and quietly stops holding up
     /// this machine's replica duty (`05` §5.1).
     Cold,
+    /// No node at all, and no poll: a direct conversation nobody has talked in
+    /// for the idle timeout — D41.
+    ///
+    /// Unlike cold, nothing wakes it on a schedule. It is woken by this member
+    /// sending in it, or by a knock arriving through the network it was
+    /// arranged in, whose node is running. Sleeping strands nobody's data, which
+    /// is what made "no node" wrong for a cold server: a conversation has two
+    /// members, and each holds the whole history.
+    Asleep,
 }
 
 impl Tier {
@@ -116,6 +126,7 @@ impl Tier {
             Self::Hot => "hot",
             Self::Warm => "warm",
             Self::Cold => "cold",
+            Self::Asleep => "asleep",
         }
     }
 }
@@ -135,10 +146,60 @@ pub const POLL_INTERVAL: std::time::Duration = std::time::Duration::from_secs(60
 /// deliver nothing.
 pub const POLL_SETTLE: std::time::Duration = std::time::Duration::from_secs(45);
 
+/// How long a conversation stays awake after the last message either way — D41.
+///
+/// The user's default, "an hour or something", meant to become a setting
+/// (`design/09` §2). Until it is one, this is the value.
+pub const IDLE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(3600);
+
+/// Whether a network is a conversation that has gone to sleep — D41.
+///
+/// Asleep once nothing has been sent or received in it, and it has not been
+/// woken, for `timeout`. A conversation where nothing has ever happened is
+/// asleep too: creating or accepting one marks it awake, so this is only a
+/// conversation from before that, which is the safe direction to read it.
+/// An activity time in the future reads as now rather than as asleep.
+pub fn is_asleep(
+    profile: kols_core::NetworkProfile,
+    last_activity: Option<std::time::SystemTime>,
+    now: std::time::SystemTime,
+    timeout: std::time::Duration,
+) -> bool {
+    profile == kols_core::NetworkProfile::Conversation
+        && last_activity.is_none_or(|at| now.duration_since(at).is_ok_and(|idle| idle >= timeout))
+}
+
+/// Whether the network at `store` should be asleep now — [`is_asleep`], plus
+/// the one thing that must keep a quiet conversation awake.
+///
+/// **A conversation still waiting for its second member never sleeps.** Its
+/// request carries this node's addresses, and accepting it is a redeem the
+/// issuing node must answer and admit (spec 07 §6.2). A request delivered to
+/// somebody who was away for longer than the idle timeout would otherwise name
+/// a node that is not running, and accepting would time out. The membership is
+/// replayed only when the conversation would otherwise sleep, so an active one
+/// costs nothing extra.
+pub fn should_sleep(
+    profile: kols_core::NetworkProfile,
+    store: &crate::store::Store,
+    now: std::time::SystemTime,
+) -> bool {
+    is_asleep(profile, store.last_activity(), now, IDLE_TIMEOUT)
+        && store.state().is_ok_and(|state| {
+            state
+                .groups
+                .get(&intranet_governance::GroupId::everyone())
+                .is_some_and(|everyone| everyone.members.len() >= 2)
+        })
+}
+
 /// What tier a network should be kept at — `design/09` §2's policy, applied.
 ///
 /// `in_view` is the network the member is looking at, if any. `set_aside` is
-/// whether the member has asked for this one to be kept cold.
+/// whether the member has asked for this one to be kept cold. `asleep` is
+/// [`is_asleep`]'s answer, and wins over being in view: reading what somebody
+/// sent is not a reason to hold a connection open to them (the user,
+/// 2026-10-10), and the history being read is already on this machine.
 ///
 /// **Everything joined is warm unless the member says otherwise**, which is the
 /// decision taken over two narrower policies. The narrow ones save resources by
@@ -146,16 +207,18 @@ pub const POLL_SETTLE: std::time::Duration = std::time::Duration::from_secs(45);
 /// member in a dozen networks would be receiving in one and have no way to tell
 /// that was why the rest were quiet.
 ///
-/// Note there is no case for conversations. §2 says a conversation is warm
-/// whenever the application runs and `05` §4 says idle ones should be suspended;
-/// defaulting everything to warm satisfies the first without having to settle the
-/// second.
-///
-/// **Flagged:** whether a conversation can be set aside is unsettled. This
-/// function would honour it like a server's, but `09` §2 says the cold poll
-/// "never applies to direct messages", and the shell follows §2 by offering the
-/// control on network rows only (2026-10-10).
-pub fn tier_for(network: &NetworkId, set_aside: bool, in_view: Option<&NetworkId>) -> Tier {
+/// A conversation that is awake is warm like anything else. Setting one aside
+/// is not offered (`09` §1.10, D41); this function would honour it like a
+/// server's if a caller passed it.
+pub fn tier_for(
+    network: &NetworkId,
+    set_aside: bool,
+    asleep: bool,
+    in_view: Option<&NetworkId>,
+) -> Tier {
+    if asleep {
+        return Tier::Asleep;
+    }
     if in_view == Some(network) {
         return Tier::Hot;
     }
@@ -229,6 +292,8 @@ pub struct Spec {
     pub root: std::path::PathBuf,
     /// Whether the member has asked for this network to be kept cold.
     pub set_aside: bool,
+    /// Whether this is a conversation asleep under D41 ([`is_asleep`]).
+    pub asleep: bool,
 }
 
 impl Nodes {
@@ -323,9 +388,15 @@ impl Nodes {
         let mut just_set_aside: Vec<NetworkId> = Vec::new();
 
         for spec in specs {
-            match tier_for(&spec.network, spec.set_aside, in_view) {
+            match tier_for(&spec.network, spec.set_aside, spec.asleep, in_view) {
                 tier if tier.runs() => {
                     wanted.insert(spec.network, (spec, tier));
+                }
+                // Neither wanted nor polled, so a running one is stopped below.
+                // Its poll schedule is dropped: it is woken by a send or a
+                // knock, never by the clock.
+                Tier::Asleep => {
+                    self.polled.remove(&spec.network);
                 }
                 // **Cold is a schedule, not an absence.** A network the member
                 // set aside is woken when its poll comes round and put back to
@@ -508,7 +579,7 @@ mod tests {
     #[test]
     fn the_network_in_view_is_hot() {
         let server = net(1);
-        assert_eq!(tier_for(&server, false, Some(&server)), Tier::Hot);
+        assert_eq!(tier_for(&server, false, false, Some(&server)), Tier::Hot);
     }
 
     #[test]
@@ -517,14 +588,14 @@ mod tests {
         // receives in all of them, because the alternative makes the other
         // eleven silently unreachable — and "silently" is the objection, not the
         // resource use.
-        assert_eq!(tier_for(&net(2), false, Some(&net(1))), Tier::Warm);
-        assert_eq!(tier_for(&net(3), false, None), Tier::Warm);
+        assert_eq!(tier_for(&net(2), false, false, Some(&net(1))), Tier::Warm);
+        assert_eq!(tier_for(&net(3), false, false, None), Tier::Warm);
     }
 
     #[test]
     fn only_a_network_the_member_set_aside_is_cold() {
-        assert_eq!(tier_for(&net(4), true, Some(&net(1))), Tier::Cold);
-        assert_eq!(tier_for(&net(4), true, None), Tier::Cold);
+        assert_eq!(tier_for(&net(4), true, false, Some(&net(1))), Tier::Cold);
+        assert_eq!(tier_for(&net(4), true, false, None), Tier::Cold);
     }
 
     #[test]
@@ -532,18 +603,15 @@ mod tests {
         // Opening something you had set aside is as clear a statement as setting
         // it aside was, and the later one wins.
         let aside = net(5);
-        assert_eq!(tier_for(&aside, true, Some(&aside)), Tier::Hot);
+        assert_eq!(tier_for(&aside, true, false, Some(&aside)), Tier::Hot);
     }
 
     #[test]
-    fn a_conversation_needs_no_case_of_its_own() {
-        // `09` §2 wants conversations warm whenever the application runs; `05`
-        // §4 wants idle ones suspended. Defaulting everything to warm satisfies
-        // the first without settling the second, and a member who wants one
-        // quiet sets it aside exactly as they would a server. There is no
-        // `is_conversation` argument here, and that absence is the resolution.
-        assert_eq!(tier_for(&net(6), false, None), Tier::Warm);
-        assert_eq!(tier_for(&net(6), true, None), Tier::Cold);
+    fn an_awake_conversation_is_warm_like_anything_else() {
+        // D41 gives a conversation one state of its own, asleep; awake, it is
+        // tiered exactly like a server.
+        assert_eq!(tier_for(&net(6), false, false, None), Tier::Warm);
+        assert_eq!(tier_for(&net(6), true, false, None), Tier::Cold);
     }
 
     #[test]
@@ -569,5 +637,40 @@ mod tests {
         let nodes = Nodes::new(runtime.handle().clone());
         assert_eq!(nodes.tier(&net(1)), Tier::Cold);
         assert!(nodes.running().is_empty());
+    }
+
+    #[test]
+    fn an_asleep_conversation_runs_nothing_even_in_view() {
+        // D41 and the user's point of 2026-10-10: opening a conversation to read
+        // it is not a reason to hold a connection to the other person.
+        let conversation = net(7);
+        let tier = tier_for(&conversation, false, true, Some(&conversation));
+        assert_eq!(tier, Tier::Asleep);
+        assert!(!tier.runs());
+    }
+
+    #[test]
+    fn a_conversation_sleeps_after_the_idle_timeout_and_a_server_never_does() {
+        use kols_core::NetworkProfile::{Conversation, Server};
+        let now = std::time::SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(100_000);
+        let ago = |secs| Some(now - std::time::Duration::from_secs(secs));
+
+        assert!(!is_asleep(Conversation, ago(10), now, IDLE_TIMEOUT));
+        assert!(is_asleep(
+            Conversation,
+            ago(IDLE_TIMEOUT.as_secs()),
+            now,
+            IDLE_TIMEOUT
+        ));
+        assert!(is_asleep(Conversation, None, now, IDLE_TIMEOUT));
+        // A clock that moved back reads as activity now, not as long ago.
+        assert!(!is_asleep(
+            Conversation,
+            Some(now + std::time::Duration::from_secs(60)),
+            now,
+            IDLE_TIMEOUT
+        ));
+        assert!(!is_asleep(Server, ago(1_000_000), now, IDLE_TIMEOUT));
+        assert!(!is_asleep(Server, None, now, IDLE_TIMEOUT));
     }
 }
