@@ -1,6 +1,6 @@
 # Required Protocol Extensions
 
-**Document status:** v3.0 — §13 records that E13 stays deferred under D41: the knock designed in `09` §2 on 2026-10-11 (not built) carries no addresses precisely so as not to be E13's address exchange, whose gate the request's sender cannot meet. Previously v2.9 — **E17 added and landed, in generalised form**, 2026-10-10. The client judged spec 07 §2.2's segment ceiling from a manifest's declared length, and a manifest that understated it had every chunk fetched and kept before storage refused the mismatch (O28). Asked for as a byte budget on the segment fetch; landed as a rule of every object fetch, Storage v1.3 §4.4 step 6, with the budget derived from the manifest itself rather than passed in by the caller. That is the fourth chat-shaped need to become a platform-shaped mechanism, after E2, E9 and E10. §17 records it and states what it does not bound. The sections after it are renumbered: Sequencing is now §18. Previously v2.8 — **E13 is deferred by the user, 2026-10-05: not withdrawn as unnecessary, and not landed.** Direct messages work well enough without it — D39's borrowed rendezvous lets a conversation meet at the shared network's relay and ordinary Core §5.2 tier 2 does the punch, and the `v0.13.6` field test had conversations working end to end across two networks — so what was left of it, address exchange over E10's carrier and the disclosure gate, is not going to be built for now. §13 keeps its reasoning and its gate so that neither is re-derived or forgotten if it is picked up, corrects the claim that without it there are no direct messages across NAT at all (D39 made that false), and states what not building it costs. Previously v2.7 — §12 records that **E12's obligation on E10 is discharged**: the join
+**Document status:** v3.1 — **E18 added and landed**, 2026-10-11, as Core v1.8 §5.1: a direct acknowledgement names the send it answers, and a node answers `Received` only to a namespace and kind it has declared it handles, `Unsupported` otherwise. Found designing D41's knock (`09` §2), which puts a second kind in flight to a person a conversation request may be pending for. §18 records it; Sequencing is now §19 and what this design does not ask for §20. Previously v3.0 — §13 records that E13 stays deferred under D41: the knock designed in `09` §2 on 2026-10-11 (not built) carries no addresses precisely so as not to be E13's address exchange, whose gate the request's sender cannot meet. Previously v2.9 — **E17 added and landed, in generalised form**, 2026-10-10. The client judged spec 07 §2.2's segment ceiling from a manifest's declared length, and a manifest that understated it had every chunk fetched and kept before storage refused the mismatch (O28). Asked for as a byte budget on the segment fetch; landed as a rule of every object fetch, Storage v1.3 §4.4 step 6, with the budget derived from the manifest itself rather than passed in by the caller. That is the fourth chat-shaped need to become a platform-shaped mechanism, after E2, E9 and E10. §17 records it and states what it does not bound. The sections after it are renumbered: Sequencing is now §18. Previously v2.8 — **E13 is deferred by the user, 2026-10-05: not withdrawn as unnecessary, and not landed.** Direct messages work well enough without it — D39's borrowed rendezvous lets a conversation meet at the shared network's relay and ordinary Core §5.2 tier 2 does the punch, and the `v0.13.6` field test had conversations working end to end across two networks — so what was left of it, address exchange over E10's carrier and the disclosure gate, is not going to be built for now. §13 keeps its reasoning and its gate so that neither is re-derived or forgotten if it is picked up, corrects the claim that without it there are no direct messages across NAT at all (D39 made that false), and states what not building it costs. Previously v2.7 — §12 records that **E12's obligation on E10 is discharged**: the join
 path takes a network profile rather than inferring one from a store whose log has not arrived.
 It came with a half nobody had written down — the profile is needed on every later launch too,
 and replay cannot answer any sooner then than it could at join — so a store caches what it was
@@ -47,6 +47,7 @@ Two rules govern this list:
 | E15 | ✅ **Landed 2026-09-09** as Core v1.2. §1.1–§1.3 admit both identity models; §1.2's properties are requirements on the *result*, which independent generation meets by other means. Harness §5 amended with it | Nothing; conformance rather than function | Landed |
 | ~~E16~~ | Self-removal from a group — **landed**, Core §2.5.1. Asked as a capability exemption; landed with a fork-choice exclusion the proposal had not seen, because an entry needing no capability must carry no branch weight | — | Done |
 | ~~E17~~ | A fetch held to its manifest's declared length — **landed, in generalised form**, Storage §4.4 step 6. Asked as a byte budget for the segment fetch; landed as a rule of every object fetch, derived from the manifest rather than supplied by the caller. Bounds bytes kept, not bytes received | — | Done |
+| ~~E18~~ | A direct acknowledgement correlated to its send, and `Received` only for a kind the node handles — **landed**, Core v1.8 §5.1. Found designing D41's knock. A kind is declared with `MemberNode::handle_direct`; anything undeclared is answered `Unsupported` | — | Done |
 
 ---
 
@@ -1073,7 +1074,55 @@ on 2026-10-10.
 
 ---
 
-## 18. Sequencing
+## 18. E18 — A Direct Acknowledgement Names Its Send, and `Received` Is True ✅ **landed**
+
+**Two gaps in E10's carrier, found designing D41's knock** (`09` §2, 2026-10-11). A knock is a
+second kind (`chat`/`dm-knock`) in flight to the same person a conversation request may be
+pending for, and neither gap mattered while there was only one kind.
+
+- **An answer named only who answered.** `NodeEvent::DirectDelivered` carried the recipient and
+  the ack, and no request id, namespace or kind. The offer loop (`serve.rs`) cleared a pending
+  conversation request on **any** `Received` from that person, so a knock's ack would have
+  dropped an unsent request.
+- **`Received` was answered to every kind, before any consumer.** Core §5.1 says `Received` means
+  a consumer that understands the payload got it. `intranet-transport` answered it once the
+  sender binding and the meter passed, and never sent `DirectRefusal::Unsupported`. A recipient
+  whose software predates a kind looked exactly like one that took it. Recorded as a divergence
+  in `distributed-intranet/CLAUDE.md` on 2026-10-11 and fixed the same day.
+
+**What landed**, as Core v1.8 §5.1 and spec 07 v0.14 §7's E18 row:
+
+- An acknowledgement MUST be correlated to the send it answers. `DirectDelivered` gains
+  `request: OutboundRequestId`, the id `send_direct` returned.
+- A node MUST answer `Received` only to a (namespace, kind) declared with the new
+  `MemberNode::handle_direct`, and `Unsupported` to anything else, which reaches no consumer. The
+  declaration MUST NOT depend on the sender.
+- `NodeEvent::DirectFailed { request, to, error }` reports an outbound failure on the direct
+  protocol, which was swallowed before, so a sender can stop tracking a send nobody answered.
+- Spec 07 §6.2 says a recipient MUST declare `chat`/`dm-invite`.
+
+**Honest limit:** which kinds a node handles fingerprints its software, since anybody who can
+send it a direct message can ask.
+
+**Client side.** `serve` declares `chat`/`dm-invite` on every node, because the receiving arm
+runs on every node. Offers are tracked by request id (`offers_in_flight`): one is forgotten only
+on the `Received` answer to its own send, and its tracking is dropped on `DirectFailed`. An
+`Unsupported` answer is reported once ("running software that does not accept conversation
+requests"), and that recipient is not offered again by this run. The offer itself is kept, so a
+restart after they update tries again. Tests, upstream in `intranet-transport`'s
+`tests/direct_delivery.rs`: `a_kind_nothing_handles_is_answered_unsupported_not_received`,
+`each_answer_names_the_send_it_answers`, `a_send_nobody_answers_is_reported_as_failed`.
+
+**Not a generalisation this time.** The carrier was already generic (§10); this completes it.
+It is the shape §10 records again: the carrier completed by the next consumer that tried to use
+it, here the second kind to travel on it.
+
+**Acceptance:** Core states both obligations; the reference implementation answers per declared
+kind and names the send; the client tracks offers by send. Met on 2026-10-11.
+
+---
+
+## 19. Sequencing
 
 ```
 P0   — nothing; E3 turned out to need no protocol change
@@ -1089,6 +1138,7 @@ P4   E8
           release gate and `02` §6.3 shapes, which is what it describes)
 —    E16 ✅ (landed; the client half of leaving a network is O22 and waits on nothing)
 —    E17 ✅ (landed 2026-10-10 as Storage §4.4 step 6; found by O28, which it closed)
+—    E18 ✅ (landed 2026-10-11 as Core v1.8 §5.1; found designing D41's knock, which needs it)
 ```
 
 E9 is small and unblocks the rest. E2 is the first item requiring real spec work.
@@ -1108,7 +1158,7 @@ consumer written against the old shape would have been another thing to migrate.
 
 ---
 
-## 19. What This Design Deliberately Does Not Ask For
+## 20. What This Design Deliberately Does Not Ask For
 
 Recorded so the boundary is visible, and so nobody adds them under the impression they
 were oversights:

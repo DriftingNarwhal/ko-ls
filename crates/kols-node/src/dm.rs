@@ -380,9 +380,22 @@ pub async fn accept(
     // from *both* parties' membership — which needs to know which network and
     // which peer. Written on this side as well as the sender's, because each
     // end recomputes for itself.
-    if let Some(store) = workspace.store_for(&conversation) {
-        let _ = store.set_origin(shared_network, from);
-    }
+    //
+    // **And said if it fails, never discarded.** Without it the conversation
+    // cannot borrow a relay, and once D41's knock is built (designed, not yet)
+    // this record is what a knock will be checked against, so losing it would
+    // leave a conversation that joined correctly and could never be woken,
+    // with nothing anywhere saying why. Reported after the request is
+    // forgotten, because by then the join has happened and the invite is
+    // spent: accepting again could not help.
+    let recorded = workspace
+        .store_for(&conversation)
+        .ok_or_else(|| "the joined conversation is not on this disk".to_owned())
+        .and_then(|store| {
+            store
+                .set_origin(shared_network, from)
+                .map_err(|err| err.to_string())
+        });
 
     // Only now. A request forgotten before the join completed would leave
     // somebody with no way to accept and nothing on screen explaining why —
@@ -390,6 +403,12 @@ pub async fn accept(
     if let Some(shared) = workspace.store_for(shared_network) {
         shared.forget_request(from).map_err(|err| err.to_string())?;
     }
+    recorded.map_err(|err| {
+        format!(
+            "joined the conversation, but could not record which network it was arranged in \
+             ({err}), so it cannot borrow that network's relay"
+        )
+    })?;
     Ok(conversation)
 }
 

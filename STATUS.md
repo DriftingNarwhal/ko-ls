@@ -87,7 +87,7 @@ sequencing.
 | Keying tiers, private channels, direct messages, search leakage | [`design/03`](design/03-confidentiality.md) |
 | Voice, video, stage, media transport | [`design/04`](design/04-realtime.md) |
 | Crate layout, the `kols-api` boundary, the node loop, local state, testing | [`design/05`](design/05-client-architecture.md) |
-| Every change the protocol still owes, with acceptance criteria — E1–E17 | [`design/06`](design/06-protocol-extensions.md) |
+| Every change the protocol still owes, with acceptance criteria — E1–E18 | [`design/06`](design/06-protocol-extensions.md) |
 | How the project got from a finished design to first code — F/S items, P0 | [`design/07`](design/07-build-plan.md) |
 | Encoding conformance obligations and the `kols-core` module map | [`design/08`](design/08-record-encoding.md) |
 | Navigation, liveness tiers, presence honesty, settings, theming | [`design/09`](design/09-interface.md) |
@@ -251,13 +251,11 @@ designed; `design/03` §4.5 the overlap it now needs. The idle traffic is found:
 refresh pulls from every connected peer whether anything changed (`design/05` §4). **The knock
 is designed, 2026-10-11, not built** (`design/09` §2): what wakes a conversation, the knock and
 its checks, retrying, the idle timer and the *asleep* tier; `design/03` §4.5 has the limit on the
-request sender's side, and `design/06` §13 why E13 stays deferred. **Next, in order:** (1) in
-`distributed-intranet`, match a direct message's ack to the send it answers (`DirectDelivered`
-carries no request id or kind, so the offer loop clears a pending request on any `Received` from that person),
-and resolve `Received` being answered before any consumer reads the message, which Core §5.1
-does not allow, by sending `Unsupported` or amending the spec; (2) make `dm::accept`'s `origin`
-write fail loudly; (3) the knock, with spec 07 §6.2's text; (4) the tier and the idle timer;
-(5) re-run `tests/idle_cost.rs`. The occasional ten-second delivery is not reproduced on loopback
+request sender's side, and `design/06` §13 why E13 stays deferred. **The two fixes it needed
+first are done**, 2026-10-11: acks name the send they answer and `Received` is answered only to a
+declared kind (**E18**, `design/06` §18), and `dm::accept` reports a failed `origin` write
+(`design/09` §2). **Next, in order:** (1) the knock, with spec 07 §6.2's text; (2) the tier and
+the idle timer; (3) re-run `tests/idle_cost.rs`. The occasional ten-second delivery is not reproduced on loopback
 and wants a relayed, NATed setup.
 
 What led to it was **measuring what an idle conversation costs** (`design/05` §4,
@@ -679,7 +677,7 @@ as a fix nobody had got round to.
 
 **Protocol extensions.** [`design/06`](design/06-protocol-extensions.md) §0 carries the table
 and is the one place their state is kept. In summary: E1 and E3 withdrawn as unnecessary;
-**E2, E4, E5, E9, E10, E11, E12, E14, E15, E16 and E17 landed**; E7 is P2, E13 is deferred by the user
+**E2, E4, E5, E9, E10, E11, E12, E14, E15, E16, E17 and E18 landed**; E7 is P2, E13 is deferred by the user
 (2026-10-05), E6 is P3 and E8 is P4. E10 landed on 2026-09-10 as a generic carrier rather than
 the chat-named protocol it was
 asked as, which is the third time that has happened and is now recorded in `design/06` §10 as a

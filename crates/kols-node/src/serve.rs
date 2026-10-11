@@ -268,6 +268,10 @@ pub async fn serve(
         .unwrap_or(intranet_transport::Discovery::Full);
     let mut node = MemberNode::with_discovery(&identity, discovery)
         .map_err(|err| format!("could not start: {err}"))?;
+    // What this node answers `Received` to on the direct carrier (Core v1.8
+    // §5.1); anything else is answered `Unsupported`. Declared on every node
+    // because the receiving arm below runs on every node.
+    node.handle_direct(kols_core::DM_NAMESPACE, kols_core::DM_KIND);
     // **Dual-stack unless told otherwise, and this is load-bearing.**
     //
     // This bound `/ip4/0.0.0.0/tcp/0` and nothing else: no IPv6, no QUIC. Core
@@ -340,6 +344,17 @@ pub async fn serve(
     // Set on every attempt rather than on success, so an unreachable
     // recipient is retried on the interval rather than on every tick.
     let mut last_offered: Option<Instant> = None;
+    // Conversation requests in flight, by the send the carrier's answer will
+    // name, so an offer is forgotten only on the answer to *it* (Core v1.8
+    // §5.1). Matching on who answered cleared an offer on the answer to any
+    // other message sent to the same person.
+    let mut offers_in_flight: BTreeMap<
+        libp2p::request_response::OutboundRequestId,
+        intranet_identity::PerNetworkIdentityId,
+    > = BTreeMap::new();
+    // Recipients whose node answered a request `Unsupported`, not asked again
+    // by this run.
+    let mut offers_unsupported: BTreeSet<intranet_identity::PerNetworkIdentityId> = BTreeSet::new();
     // Reported on change rather than on every tick — see the duty pass below.
     let mut last_under_replicated = 0usize;
     // Likewise for the ceiling: a standing condition announced every two seconds
@@ -1141,22 +1156,23 @@ pub async fn serve(
                         match crate::dm::deliverable(&workspace, &store, crate::chat::now_millis()) {
                             Ok(ready) => {
                                 for request in ready {
+                                    if offers_unsupported.contains(&request.to) {
+                                        continue;
+                                    }
                                     // Unreachable is the ordinary case rather
                                     // than a fault: this is a two-person network
                                     // being arranged, and the other person is
                                     // frequently not there. The retry above is
                                     // the answer, and saying so every interval
                                     // would train somebody to ignore it.
-                                    if node
-                                        .send_direct(
-                                            request.to,
-                                            &identity,
-                                            kols_core::DM_NAMESPACE,
-                                            kols_core::DM_KIND,
-                                            request.payload,
-                                        )
-                                        .is_ok()
-                                    {
+                                    if let Ok(sent) = node.send_direct(
+                                        request.to,
+                                        &identity,
+                                        kols_core::DM_NAMESPACE,
+                                        kols_core::DM_KIND,
+                                        request.payload,
+                                    ) {
+                                        offers_in_flight.insert(sent, request.to);
                                         crate::say!(
                                             report,
                                             "offered a conversation to {}",
@@ -1747,16 +1763,48 @@ pub async fn serve(
             // anybody agreeing. So the offer stops being retried and nothing
             // else happens: whether they accept is theirs, and arrives later as
             // a join or not at all.
-            NodeEvent::DirectDelivered { to, ack } => {
-                if matches!(ack, intranet_transport::direct::DirectAck::Received)
-                    && let Err(err) = store.forget_offer(&to)
-                {
-                    sink(&[Event::Degraded {
-                        reason: format!(
-                            "a conversation request was delivered and this node could not stop retrying it: {err}"
-                        ),
-                    }]);
+            NodeEvent::DirectDelivered { request, ack, .. } => {
+                let Some(to) = offers_in_flight.remove(&request) else {
+                    continue;
+                };
+                match ack {
+                    intranet_transport::direct::DirectAck::Received => {
+                        if let Err(err) = store.forget_offer(&to) {
+                            sink(&[Event::Degraded {
+                                reason: format!(
+                                    "a conversation request was delivered and this node could not stop retrying it: {err}"
+                                ),
+                            }]);
+                        }
+                    }
+                    // **Their software does not take conversation requests**,
+                    // which retrying cannot change (Core v1.8 §5.1). Said once and
+                    // not sent again by this run; the offer is kept, so a restart
+                    // after they update tries again.
+                    intranet_transport::direct::DirectAck::Refused(
+                        intranet_transport::direct::DirectRefusal::Unsupported,
+                    ) => {
+                        if offers_unsupported.insert(to) {
+                            sink(&[Event::Degraded {
+                                reason: format!(
+                                    "{} is running software that does not accept conversation \
+                                     requests, so the request will not be sent again until this \
+                                     network is restarted",
+                                    to.short()
+                                ),
+                            }]);
+                        }
+                    }
+                    // Rate limited or rejected: the retry is the answer.
+                    intranet_transport::direct::DirectAck::Refused(_) => {}
                 }
+            }
+
+            // Unreachable, which for a two-person network being arranged is the
+            // ordinary case. Nothing to do but stop tracking the send; the offer
+            // stays and the next interval tries again.
+            NodeEvent::DirectFailed { request, .. } => {
+                offers_in_flight.remove(&request);
             }
 
             _ => {}

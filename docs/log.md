@@ -24,6 +24,23 @@ Kept because this project keeps re-learning the same lessons and paying for them
 
 ---
 
+- **2026-10-11** — **An ack now names the send it answers, and `Received` means a consumer took
+  it (E18).** The two fixes the knock's design found were built before the knock, on the user's
+  go-ahead. Upstream, Core v1.8 §5.1: `DirectDelivered` carries the request id `send_direct`
+  returned, a node answers `Received` only to a (namespace, kind) declared with
+  `MemberNode::handle_direct` and `Unsupported` to anything else, and a failed outbound send is
+  reported as `DirectFailed` rather than swallowed. Matching on who answered had been enough while
+  only conversation requests travelled; a knock is a second kind to the same person, and its ack
+  would have cleared an unsent request. Here, `serve` declares `chat`/`dm-invite` on every node
+  and tracks offers by request id. An `Unsupported` answer is said once and that person is not
+  offered again by this run, since retrying cannot change their software; the offer is kept for
+  after a restart. Which kinds a node declares fingerprints its software, which is stated as the
+  limit. Separately, `dm::accept` stopped discarding its `origin` write. It now forgets the
+  request first, because the join has happened and the invite is spent, then returns the error,
+  and the shell reconciles its nodes before reading the result so the joined conversation still
+  runs. A lost `origin` would have left a conversation no knock could ever wake, with nothing
+  saying why. The knock itself is next (`design/09` §2, `design/06` §18).
+
 - **2026-10-11** — **The knock carries a conversation id and nothing else, and designing it
   found that an ack does not say which message it answers.** D41's knock is designed in
   `design/09` §2 and not built. Two things the outline had it carry were dropped. The identity

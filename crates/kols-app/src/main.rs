@@ -825,12 +825,14 @@ async fn accept_conversation(
         let app = handle.state::<App>();
         Workspace::at(app.workspace.root().to_path_buf())
     };
-    let conversation = kols_node::dm::accept(&workspace, &shared, &from).await?;
+    let accepted = kols_node::dm::accept(&workspace, &shared, &from).await;
     // The new network is one this installation belongs to, so it is warm like
     // every other (`09` §2) — and a conversation neither party has open is
-    // exactly the case that has to keep running.
+    // exactly the case that has to keep running. Reconciled before the result
+    // is looked at, because `accept` can report a failure *after* joining (its
+    // origin record), and that conversation still needs its node.
     reconcile_nodes(&handle, &handle.state::<App>());
-    Ok(to_hex(conversation.as_bytes()))
+    Ok(to_hex(accepted?.as_bytes()))
 }
 
 /// Declines a request, which tells nobody — spec 07 §6.2.
