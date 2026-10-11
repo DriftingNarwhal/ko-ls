@@ -57,7 +57,7 @@ tag's major and minor track the Core spec's own version at the moment it is cut,
 existed only between commits and was never tagged. **`DI-Relay` no longer waits on a tag.** It
 follows the protocol's `main`, pinned by its `Cargo.lock`, and a daily workflow opens a pull
 request whenever `main` changes anything it builds from; merging that is the redeploy (the user's
-decision of 2026-10-10, workspace `docs/decisions/0004`). It had sat on `v1.2.0` for a month,
+decision of 2026-10-10). It had sat on `v1.2.0` for a month,
 missing the link-local fix a field test needed, because the tag route had three manual steps and
 nothing prompted any of them. Tags are now for consumers outside this workspace.
 
