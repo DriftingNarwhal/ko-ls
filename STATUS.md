@@ -104,7 +104,7 @@ sequencing.
 |---|---|
 | **Milestone** | A client that can be handed to somebody else, so two people **on entirely separate networks** can talk, using a bootstrap relay and no VPS. The first test is two of the user's own laptops, one on a mobile hotspot |
 | **Blocked on** | Nothing |
-| **Next decision needed** | Nothing. **O26 no longer stands in front of the two-machine test** — it does not reproduce on 2026-09-10 in any of the three shapes it was seen in, including the one it failed in five times running, so the trigger was machine state that is gone rather than a fault the suite can still show. What that session's attribution was pointing at *is* fixed, and it was on the client: the ask for a key was gated on publishing succeeding, so anything transient there stranded a joiner permanently and the log called it non-membership. §2's row carries the measurements |
+| **Next decision needed** | Two, both the user's, from the sleeping conversation (D41). **Whether the two-second refresh should back off when nothing has changed**: it is what an awake idle conversation's traffic is (`design/05` §4). **How long the idle timeout may be at most, and where it is set**, when the setting is built: today it is the constant `IDLE_TIMEOUT`, one hour (`design/09` §2). **O26 no longer stands in front of the two-machine test** — it does not reproduce on 2026-09-10 in any of the three shapes it was seen in, including the one it failed in five times running, so the trigger was machine state that is gone rather than a fault the suite can still show. What that session's attribution was pointing at *is* fixed, and it was on the client: the ask for a key was gated on publishing succeeding, so anything transient there stranded a joiner permanently and the log called it non-membership. §2's row carries the measurements |
 
 **What P2 starts with** — and the order changed on 2026-09-10, because the thing blocking direct
 messages turned out not to be on the list at all.
@@ -246,8 +246,8 @@ next paragraph.
 **Direct messages become ephemeral: decided 2026-10-10, ~~not built~~ built 2026-10-11.** The user's decision, **D41**
 (`design/00` §3): a conversation stays its own network but sleeps, with no node, until a knock
 through the shared network wakes it, and sleeps again after an idle timeout of about an hour that
-the user can change. It closes `09` §7.9. `design/09` §2 has the shape and what is still to be
-designed; `design/03` §4.5 the overlap it now needs. The idle traffic is found: the two-second
+the user can change. It closes `09` §7.9. `design/09` §2 has the design and, since the build, what
+was built and what was left out; `design/03` §4.5 the overlap it now needs. The idle traffic is found: the two-second
 refresh pulls from every connected peer whether anything changed (`design/05` §4). **The knock
 is designed, 2026-10-11, ~~not built~~** (`design/09` §2): what wakes a conversation, the knock and
 its checks, retrying, the idle timer and the *asleep* tier; `design/03` §4.5 has the limit on the
@@ -262,7 +262,9 @@ boundary. `tests/idle_cost.rs` was not re-run, since an asleep conversation runs
 as a setting, the early resend on a presence beat, `09` §1.9's *waiting for them* line, and the
 limits of reading activity from file mtimes, one of which can wake a conversation on opening it.
 The occasional ten-second delivery is not reproduced on loopback
-and wants a relayed, NATed setup.
+and wants a relayed, NATed setup. Also still open (`design/05` §4): whether about ten sockets a node reaches
+macOS's default limit of 256 open files at twenty to twenty-five networks, which nothing here has
+run on macOS to see.
 
 What led to it was **measuring what an idle conversation costs** (`design/05` §4,
 `tests/idle_cost.rs`, ignored by default): per side, about 12 MB, 0.1–0.3% of a core,
