@@ -1,6 +1,6 @@
 # ko-ls — Status
 
-**Updated:** 2026-10-10
+**Updated:** 2026-10-11
 **Phase:** P2 has started. P1's register was cleared, both working branches merged on 2026-09-09,
 and the client now **runs a node per network** rather than one for whichever is in view — which is
 what direct messages were actually waiting on, and what `v0.13.1` carries. The flow itself was
@@ -248,9 +248,17 @@ next paragraph.
 through the shared network wakes it, and sleeps again after an idle timeout of about an hour that
 the user can change. It closes `09` §7.9. `design/09` §2 has the shape and what is still to be
 designed; `design/03` §4.5 the overlap it now needs. The idle traffic is found: the two-second
-refresh pulls from every connected peer whether anything changed (`design/05` §4). Next: design
-the knock. The occasional ten-second delivery is not reproduced on loopback and wants a relayed,
-NATed setup.
+refresh pulls from every connected peer whether anything changed (`design/05` §4). **The knock
+is designed, 2026-10-11, not built** (`design/09` §2): what wakes a conversation, the knock and
+its checks, retrying, the idle timer and the *asleep* tier; `design/03` §4.5 has the limit on the
+request sender's side, and `design/06` §13 why E13 stays deferred. **Next, in order:** (1) in
+`distributed-intranet`, match a direct message's ack to the send it answers (`DirectDelivered`
+carries no request id or kind, so the offer loop clears a pending request on any `Received` from that person),
+and resolve `Received` being answered before any consumer reads the message, which Core §5.1
+does not allow, by sending `Unsupported` or amending the spec; (2) make `dm::accept`'s `origin`
+write fail loudly; (3) the knock, with spec 07 §6.2's text; (4) the tier and the idle timer;
+(5) re-run `tests/idle_cost.rs`. The occasional ten-second delivery is not reproduced on loopback
+and wants a relayed, NATed setup.
 
 What led to it was **measuring what an idle conversation costs** (`design/05` §4,
 `tests/idle_cost.rs`, ignored by default): per side, about 12 MB, 0.1–0.3% of a core,

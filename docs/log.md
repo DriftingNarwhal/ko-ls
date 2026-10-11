@@ -24,6 +24,27 @@ Kept because this project keeps re-learning the same lessons and paying for them
 
 ---
 
+- **2026-10-11** — **The knock carries a conversation id and nothing else, and designing it
+  found that an ack does not say which message it answers.** D41's knock is designed in
+  `design/09` §2 and not built. Two things the outline had it carry were dropped. The identity
+  link: the receiver already holds the binding in the conversation's `origin` record, checked
+  when the request was accepted, so the knock is checked against that. The addresses: sending a
+  network's addresses is E13's address exchange, deferred by the user on 2026-10-05, and its gate
+  cannot be met by whoever *sent* the request, since nothing proves who redeemed a bearer invite.
+  The woken side dials through D39's borrowed relay as a conversation already does. Opening a
+  conversation does not wake it; only a send or a knock does (the user, 2026-10-10). Reading the
+  code for where the knock would go found three things that must come first. `DirectDelivered`
+  carries no request id, namespace or kind, so ko-ls's offer loop forgets a pending conversation
+  request on *any* `Received` from that person (`serve.rs`), and a knock's ack would have dropped
+  one unsent. The transport answers `Received` once the sender binding and the meter pass, before
+  any consumer has seen the message (`intranet-transport` `node.rs`), and never sends
+  `Unsupported`; Core §5.1 says `Received` means a consumer that understands the payload got it.
+  That divergence had not been written down anywhere. And `dm::accept` discards its `origin`
+  write (`let _`), which would leave every knock for that conversation refused for good. So the
+  knock is cleared when the peer connects to the conversation, never on the ack. A limit stays
+  on the request sender's side: their `origin` names who the request was sent to, who may have
+  passed the invite on and can still knock (`design/03` §4.5).
+
 - **2026-10-10** — **The idle traffic was mostly somebody else's, and the rest is the
   two-second pull.** The 1.8 KB/s per side measured earlier the same day was the machine's
   loopback total from `/proc/net/dev`, which counts every process in the container; with

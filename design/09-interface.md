@@ -1,6 +1,6 @@
 # Interface
 
-**Document status:** v0.43 — §2's measured idle traffic is corrected from 1.8 to about 0.6 KB/s each way; `05` §4 has why. Previously v0.42 — §2 records D41, the user's decision of 2026-10-10: a direct conversation **sleeps**, with no node running, until a knock sent through the shared network wakes it, and goes back to sleep after an idle timeout of about an hour that the user can change. Designed in outline and **not built**; what it leaves open is listed there. It supersedes §7's ninth question, whether a conversation can be set aside, and §2's flag that carried it, and the paragraph saying a conversation needs no case of its own. §2 also points at what an idle conversation was measured to cost on 2026-10-10 (`05` §4). §1.10's conversation rows follow. Previously v0.41 — §1.6's per-message delivery state is two states, *sent* and *delivered*, by the user's decision of 2026-10-10; *read* is no longer owed, and a read receipt is a possible later opt-in. §4.3 and §7.7 say read state is local only and never published, and §7.7 no longer says it becomes shared when multi-device lands — only that whether one person's devices share it is open. Previously v0.40 — §1.3's row contents are **built**, 2026-10-10: unread per network and conversation, the workspace window's total in its title, the connection dot, and the tier with a set-aside row's *last checked*. Building them found that §1.3 and §4.3 had not held since a node ran per network: unread was counted by the network window from the events it heard, so a message in any network it was not showing was counted by nobody. **§4.3's mechanism moves to the shell**, which hears every network's events, and §1.3 states the limits of what it counts. §1.10's set-aside control is placed on network rows and not on conversations, following §2, against a code comment that said otherwise — recorded in §2 and as §7's ninth question rather than settled. §1.12's lock closes conversation windows too, which it had not. §1's *leave or forget* follows the node per network: *leave* wherever a node runs, and a set-aside network's departure is never reported as told. §1.10 says the local order is not built. §1.9's heading, printed twice, is printed once. Previously v0.39 — §1.12's note that `05` §1.1 needed amending now says it was, in `05` v1.35 on 2026-10-10; the amendment had been owed since this section was written. Previously v0.38 — §3 records that the address exchange it describes as the DM bootstrap is **E13, deferred by the user on 2026-10-05**, and is not built: direct messages reach each other through D39's borrowed rendezvous instead. §3 now says so where the mechanism is described, keeps the disclosure gate for if it is picked up, and marks the bounded-fallback paragraph as describing a circuit Core §5.2 no longer permits. Previously v0.37 — §3 gains relay *management*, which a network had none of: a relay
+**Document status:** v0.44 — §2 designs D41's knock, 2026-10-11, not built: a send or a knock wakes a sleeping conversation and opening it does not; the knock (`chat`/`dm-knock` on E10) carries only the conversation id: no identity link, since the receiver checks it against the conversation's stored origin, and no addresses, since that would be E13's deferred address exchange with a gate the request's sender cannot meet, so the woken side dials through the borrowed relay as now; it is cleared when the peer connects, never on the carrier's ack; it is resent every 15 s and when the peer is seen; an asleep tier with no node; a per-side idle timer. It records what the knock needs first (acks matched to their send, a protocol change; the accepter's `origin` write failing loudly), an honest limit on the request sender's side, the protocol's `Received` divergence from Core §5.1, and that the dial is no longer the wake signal for a conversation. Previously v0.43 — §2's measured idle traffic is corrected from 1.8 to about 0.6 KB/s each way; `05` §4 has why. Previously v0.42 — §2 records D41, the user's decision of 2026-10-10: a direct conversation **sleeps**, with no node running, until a knock sent through the shared network wakes it, and goes back to sleep after an idle timeout of about an hour that the user can change. Designed in outline and **not built**; what it leaves open is listed there. It supersedes §7's ninth question, whether a conversation can be set aside, and §2's flag that carried it, and the paragraph saying a conversation needs no case of its own. §2 also points at what an idle conversation was measured to cost on 2026-10-10 (`05` §4). §1.10's conversation rows follow. Previously v0.41 — §1.6's per-message delivery state is two states, *sent* and *delivered*, by the user's decision of 2026-10-10; *read* is no longer owed, and a read receipt is a possible later opt-in. §4.3 and §7.7 say read state is local only and never published, and §7.7 no longer says it becomes shared when multi-device lands — only that whether one person's devices share it is open. Previously v0.40 — §1.3's row contents are **built**, 2026-10-10: unread per network and conversation, the workspace window's total in its title, the connection dot, and the tier with a set-aside row's *last checked*. Building them found that §1.3 and §4.3 had not held since a node ran per network: unread was counted by the network window from the events it heard, so a message in any network it was not showing was counted by nobody. **§4.3's mechanism moves to the shell**, which hears every network's events, and §1.3 states the limits of what it counts. §1.10's set-aside control is placed on network rows and not on conversations, following §2, against a code comment that said otherwise — recorded in §2 and as §7's ninth question rather than settled. §1.12's lock closes conversation windows too, which it had not. §1's *leave or forget* follows the node per network: *leave* wherever a node runs, and a set-aside network's departure is never reported as told. §1.10 says the local order is not built. §1.9's heading, printed twice, is printed once. Previously v0.39 — §1.12's note that `05` §1.1 needed amending now says it was, in `05` v1.35 on 2026-10-10; the amendment had been owed since this section was written. Previously v0.38 — §3 records that the address exchange it describes as the DM bootstrap is **E13, deferred by the user on 2026-10-05**, and is not built: direct messages reach each other through D39's borrowed rendezvous instead. §3 now says so where the mechanism is described, keeps the disclosure gate for if it is picked up, and marks the bounded-fallback paragraph as describing a circuit Core §5.2 no longer permits. Previously v0.37 — §3 gains relay *management*, which a network had none of: a relay
 could be designated and never taken back out, so one that no longer existed was dialled by every
 member, carried in every invite, and fixable by nobody. Each designated relay now has a remove,
 gated on the capability and refusing the last one with the reason. **The client does not remove
@@ -845,13 +845,110 @@ Asleep is a new state, not a fourth reading of the table above. It is not *cold*
 and not *set aside*, which is cold chosen by the member. What it replaces is this section's *a
 conversation is warm whenever the application runs*, which stays the behaviour until it is built.
 
-**Still to be designed, and open:** the knock's payload (on E10's carrier, namespace `chat`,
-carrying the identity link and current addresses); what the shared network's node does on
-receiving one; retrying a knock when the peer appears in the shared network, for messages
-written while they were offline; the idle timer; the tier this adds to `nodes::tier_for`; whether
-a sleeping conversation's history needs anything beyond sync on connect to catch up after a
-wake (expected not, to be checked by running); and the timeout's maximum and where the user
-sets it. These will be written into spec 07 §6.2, here, and `03` §4.5.
+**The knock, designed 2026-10-11, not built.** Spec 07 §6.2's normative half lands with the code,
+as spec changes here do; this is the client design it will follow.
+
+*What wakes a conversation.* Exactly two things: this member **sends** in it, or a **knock**
+arrives for it. Opening its window does not. Somebody reading what was sent to them without
+answering is not a reason to hold a connection (the user, 2026-10-10), and the history they are
+reading is already on their machine.
+
+*The sequence*, with A writing to a sleeping conversation with B:
+
+1. A's message is written to the conversation's store as now. The shell sees a sleeping
+   conversation holding something unsent and starts its node.
+2. That node, once it holds its reservation on the borrowed relay (D39), leaves a knock pending in
+   the **origin** network's local directory. The origin is the shared network the conversation
+   came from, which its `origin` record names together with B's identity there. The directory is
+   this machine's and is never replicated: nothing enters the shared network's log or storage
+   (spec 07 §1.5), and no third node queues it (Core §5.1). There is one pending knock per
+   conversation.
+3. A's node in the shared network sends it on E10's carrier, namespace `chat`, kind `dm-knock`,
+   with its own domain tag, added to spec 07 §3.2's list. The payload is
+   `DmKnock { conversation }` and nothing else.
+   **No addresses travel.** Sending a network's addresses to somebody is E13's address exchange,
+   which the user deferred on 2026-10-05, and E13's gate (only to a verified member of that
+   network) cannot be met by the person who *sent* the request: nothing proves which identity
+   redeemed a bearer invite. The woken side dials as a conversation already does, through the
+   borrowed relay to the peer's conversation identity (`/p2p-circuit/p2p/<their PeerId>`, read
+   from the conversation's log), plus whatever addresses its store already holds. A pair whose
+   shared network has no relay to borrow is left with those stored addresses, which is D39's
+   limit as it stands. **No identity link travels either.** The
+   binding between B's identity in the shared network and the conversation was checked when the
+   request was accepted and is held in B's `origin` record, so a knock is checked against that
+   rather than proving it again.
+4. B's shared node checks, in order: the sender is a current member of the shared network
+   (replayed, as a request is); B has a conversation with that id; its `origin` names this network
+   and this sender; the sender is not blocked. Anything else is refused and logged on B's side
+   only, as a refused request is. The transport has already answered `Received`, so a refusal
+   looks to the sender like a delivery, as §6.2 requires of requests. Then it tells the shell,
+   which starts the conversation's node **at once** rather than on its 60-second tick.
+5. B's node dials A's, which is authenticated by A's conversation identity and so can reach
+   nobody else. Sync on connect brings the message across, which is the path every
+   reconnect already takes. Whether it needs anything more after a long sleep is still to be
+   checked by running.
+6. **A's knock is cleared when B connects to the conversation**, never on the carrier's ack.
+   Core §5.1's `Received` is sent by the transport before anything reads the message, and a
+   client from before this design drops an unknown kind without saying so. So an ack proves only
+   that B's machine is up. *That is a divergence in the protocol's implementation:* Core §5.1
+   says `Received` means a consumer that understands the payload got it, and `Unsupported` is
+   never sent. It is to be fixed or the spec amended before this is built (`STATUS.md` §1).
+
+*Retrying.* While a knock is pending, A's shared node resends it every 15 seconds, the cadence
+offers use (`OFFER_RETRY`), and early when B is seen in the shared network: a connection from
+B, or a presence beat. **At most one direct message goes to a given person every 15 seconds,
+whatever triggered it.** B's node meters every kind from A together, five a minute
+(`direct_limits.rs`), so an offer and a knock each on its own cadence, or two conversations
+with the same person, would already exceed it. If B stays
+away past A's idle timeout, A's conversation goes back to sleep with the knock still pending, and
+resending stops, since a woken B would dial a node that is not running. When B next shows up,
+A's shared node asks the shell to wake the conversation first, and sends the knock once that
+node holds its relay reservation again. **What is written while the
+other person is offline arrives the next time both are online at once, and not before.** Core
+§5.1 queues nothing on any third node, and this adds none. While a knock is unanswered, the
+conversation says it is waiting for them (§1.9), since a client too old to understand a knock
+looks exactly like somebody offline.
+
+*The idle timer* is each side's own. A conversation goes back to sleep once nothing has been
+sent or received in it for the timeout: an hour by default, a *this machine* setting (§4.2),
+whose ceiling is still to be chosen when the setting is built. Arriving by knock counts as
+activity. The two sides time out independently. When one sleeps, the other's connection drops,
+and its next send knocks again, so neither needs to know the other's timer.
+
+*The tier.* `nodes::tier_for` gains **asleep**, meaning no node at all, for a conversation outside
+its idle window with nothing pending. Running is warm, as now. Being in view never makes a
+conversation hot, and *set aside* never applies to one (§1.10). Sleeping strands nobody else's
+data, which is what made *no node* wrong for a cold server: a conversation has two members, and
+each holds the whole history.
+
+*The shared network's node changes in two places:* it sends and receives knocks, and it asks the
+shell to wake a conversation. Both follow the conversation-request path as built
+(`serve.rs`, `dm.rs`).
+
+*Fixes this needs first:*
+- **Acks are not matched to their message.** The offer loop clears a pending request on **any**
+  `Received` ack from that person (`serve.rs`, `DirectDelivered`), so a knock's ack would silently
+  drop an unsent conversation request. The fix is in the protocol, not here:
+  `NodeEvent::DirectDelivered` carries no request id, namespace or kind, so the client cannot tell
+  which send an ack answers. Core §5.1's ack obligation should say "correlated to the send it
+  answers".
+- **The accepter's `origin` write must fail loudly.** `dm::accept` discards it (`let _`). A lost
+  write means every knock for that conversation is refused for good, and D39's relay borrow is
+  lost too.
+
+*Honest limit on the request's sender.* B's binding was verified when B accepted. A's was not:
+A's `origin` names the person A *sent* the request to, and a bearer invite can be passed on. If
+B handed it to C, B can still knock on a conversation B is not in. What that costs A is a woken
+node, a failed dial, and B learning that A is online. Griefing, at five a minute, not access.
+
+*Still open:* the timeout's ceiling and where its control sits; whether catching up after a long
+sleep needs more than sync on connect (to check by running); whether `send_direct` reaches a
+member of a server network who is not already connected (to check by running, since it decides
+whether the 15-second resend works there or only the presence-triggered one does).
+
+**For a conversation the dial is no longer the wake signal.** The paragraph above that says so
+assumes a node is running to be dialled, and an asleep conversation has none. The knock goes to
+the node that is running, the shared network's. For everything warm the paragraph still holds.
 
 **What it replaces was measured first**, 2026-10-10: one side of an idle, connected conversation
 costs about 12 MB of memory, 0.1–0.3% of a core, about 0.6 KB/s each way and 10–11 sockets.
