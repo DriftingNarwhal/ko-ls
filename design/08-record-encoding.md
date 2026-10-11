@@ -3,7 +3,8 @@
 **Document status:** v1.4 — **not normative.** `distributed-intranet/specs/07` §3 and §6.4
 are the contract; this document is where the client's obligations against them live. §2's vector row
 names `kols-core/tests/channel_entries.rs`, which has frozen the channel-structure entries
-(spec 07 §3.8) since ko-ls `67730a0` and was missing from the list. Previously v1.3 — §2's table names the direct-message knock (spec 07 §6.2, D41), built 2026-10-11, beside the invitation in `kols-core::dm`, with its frozen bytes in `kols-core/tests/dm_knock.rs`. Previously v1.2 — §2's presence row
+(spec 07 §3.8) since ko-ls `67730a0` and was missing from the list; §3 names it and the knock's
+`dm_knock.rs` beside the other two vector files. Previously v1.3 — §2's table names the direct-message knock (spec 07 §6.2, D41), built 2026-10-11, beside the invitation in `kols-core::dm`, with its frozen bytes in `kols-core/tests/dm_knock.rs`. Previously v1.2 — §2's presence row
 no longer says the spec does not cover presence: spec 07 v0.10 §6.4 specifies the beat's
 encoding, key, topic, cadence and receiver checks, and `kols-core/tests/presence.rs` now
 carries its frozen vectors, so §2's vector row and §3 name both files. Those vectors have not
@@ -74,8 +75,9 @@ Required of any implementation, and permanent once written:
 6. **Cross-platform.** Vectors verified on a big-endian target, so that "the encoding is
    host-independent" is demonstrated rather than argued.
 
-**All six are met.** Obligations 1–5 by `kols-core/tests/encoding.rs`, and presence's frozen
-vectors (spec 07 §6.4) by `kols-core/tests/presence.rs`; obligation 6 by
+**All six are met.** Obligations 1–5 by `kols-core/tests/encoding.rs`, and the other frozen
+vectors by `kols-core/tests/presence.rs` (presence, spec 07 §6.4), `dm_knock.rs` (the knock,
+§6.2) and `channel_entries.rs` (channel structure, §3.8); obligation 6 by
 `scripts/cross-check.sh`, which cross-compiles to `s390x-unknown-linux-gnu` and runs the
 suite under emulation — the whole `kols-core` suite, frozen vectors included. All 30 tests it
 had when this was first written passed there; the suite has grown since, so the count is

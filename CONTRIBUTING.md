@@ -171,8 +171,10 @@ Three things about the suite that are not obvious, each learned by getting them 
   read `pgrep -af` with the same pattern before killing.
   `Daemon::drop` kills its child, and `Drop` does not run when the *harness itself* is killed
   — a Ctrl-C, a timeout, a `pkill` on cargo. The orphans keep listening on their fixed
-  ports — 45101–45244 (`two_nodes`), 45201–45221 (`flow`), 45301–45334 (`three_nodes`),
-  45301–45310 (`records`), 45401–45405 (`names`) and 45501–45507 (`invites`) — indefinitely, and every later run fails to bind.
+  ports — 45101–45172 and 45241–45244 (`two_nodes`), 45201–45221 (`flow`), 45301–45334
+  (`three_nodes`), 45301–45310 (`records`, sharing 45301–45304 with `three_nodes`, which is
+  harmless only because Cargo runs test binaries one at a time), 45401–45405 (`names`) and
+  45501–45507 (`invites`) — indefinitely, and every later run fails to bind.
   It presents as two or three tests failing in ways that read as distributed-systems faults,
   and it is not one.
 
