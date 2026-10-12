@@ -77,6 +77,28 @@ struct Counters {
     decoded: std::sync::atomic::AtomicU64,
 }
 
+/// One of D41's activity-clock stamps: when something happened here, and where
+/// it falls in this store's order of such things.
+///
+/// **Ordered by `sequence`, never by `at`.** The sequence is a number per
+/// store, one more for every stamp written, so "did this happen after that" is
+/// right whatever the wall clock did between them. A comparison by time would
+/// leave no knock for a message written after the clock stepped back, and that
+/// message would wait until somebody sent again. `at` is for the idle timer,
+/// which needs a duration and has nothing better than the wall clock across
+/// restarts.
+///
+/// **Flagged:** local client state that spec 07 does not cover; nothing sends
+/// it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub struct Stamp {
+    /// Where this falls in the store's order. First, so the derived order is
+    /// this one's.
+    pub sequence: u64,
+    /// The wall-clock time it was stamped at, to the millisecond.
+    pub at: std::time::SystemTime,
+}
+
 /// Everything one network's node keeps on this disk.
 pub struct Store {
     root: PathBuf,
@@ -1690,26 +1712,36 @@ impl Store {
         self.write_stamp("awake", std::time::SystemTime::now())
     }
 
-    /// Notes that this conversation was put to sleep at `at` — D41.
+    /// Notes that this conversation was put to sleep, decided from `since`, the
+    /// [`activity`](Self::activity) read before the decision — D41.
     ///
-    /// Dated at the moment the sleep was decided *from* (the idle deadline),
-    /// not at the moment it was written, so anything that happened after that
-    /// moment, including a send or an arrival racing the decision, is newer and
-    /// wakes it.
+    /// Recorded as the sequence of that activity, not as a time, so anything
+    /// stamped after the read, including a send or an arrival racing the
+    /// decision, is newer and wakes it, whatever the wall clock did.
     ///
     /// What makes a sleep stick: [`slept_since_activity`](Self::slept_since_activity)
     /// holds it asleep until something newer happens, so **raising the idle
     /// timeout wakes nothing** (the user, 2026-10-11). Only a send or a knock
     /// does, as D41 says; the new timeout applies from the next time a
     /// conversation goes quiet.
-    pub fn mark_asleep(&self, at: std::time::SystemTime) -> Result<(), StoreError> {
-        self.write_stamp("asleep", at)
+    ///
+    /// Written as a stamp, `<millis> <sequence>`, with that activity's sequence
+    /// and the time of writing, so it parses with the others. The bare number
+    /// an earlier build wrote does not parse, and reads as no sleep rather than
+    /// as one nothing can end.
+    pub fn mark_asleep(&self, since: Option<Stamp>) -> Result<(), StoreError> {
+        let sequence = since.map_or(0, |stamp| stamp.sequence);
+        let millis = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |since| since.as_millis());
+        write_atomically(
+            &self.root,
+            self.root.join("asleep"),
+            format!("{millis} {sequence}").as_bytes(),
+        )
     }
 
     /// Forgets a recorded sleep, once the conversation is awake again.
-    ///
-    /// So a marker left dated in the future by a clock step back cannot come
-    /// back into force later, after the conversation has been woken and used.
     pub fn clear_asleep(&self) -> Result<(), StoreError> {
         match fs::remove_file(self.root.join("asleep")) {
             Err(err) if err.kind() != io::ErrorKind::NotFound => Err(err.into()),
@@ -1718,30 +1750,43 @@ impl Store {
     }
 
     /// Whether this conversation was put to sleep and nothing has happened
-    /// since: the recorded sleep is newer than [`last_activity`](Self::last_activity).
+    /// since: no [`activity`](Self::activity) has been stamped after the one
+    /// the sleep was decided from.
     ///
-    /// Strictly newer, so a wake stamped in the same millisecond as the sleep
-    /// reads as awake, which is the safe direction. **A sleep dated after
-    /// `now` is ignored**: after the clock steps back, a send would otherwise
-    /// stamp activity older than the sleep and could not wake the conversation
-    /// until the clock caught up.
-    pub fn slept_since_activity(&self, now: std::time::SystemTime) -> bool {
+    /// Compared by sequence, so a clock step cannot hold a woken conversation
+    /// asleep or wake a sleeping one.
+    pub fn slept_since_activity(&self) -> bool {
         self.stamp("asleep").is_some_and(|slept| {
-            slept <= now && self.last_activity().is_none_or(|active| slept > active)
+            self.activity().map_or(0, |stamp| stamp.sequence) <= slept.sequence
         })
     }
 
-    /// When anything last happened here: a record written or arrived, or the
-    /// network woken — the clock D41's idle timeout runs against.
+    /// The latest thing that happened here: a record written or arrived, or the
+    /// network woken.
     ///
     /// **Stored, not read from modification times.** [`put_record`](Self::put_record)
     /// stamps a new record's arrival and [`mark_awake`](Self::mark_awake) a
     /// wake, and nothing else writes either, so rebuilding the arrival log
-    /// during a re-fold is not activity. Wall-clock times all the same: a clock
-    /// step still misjudges the timer (`design/09` §2). `None` for a network
-    /// where nothing has happened.
-    pub fn last_activity(&self) -> Option<std::time::SystemTime> {
+    /// during a re-fold is not activity. `None` for a network where nothing has
+    /// happened.
+    pub fn activity(&self) -> Option<Stamp> {
         self.stamp("last-arrival").max(self.stamp("awake"))
+    }
+
+    /// When anything last happened here — the time D41's idle timeout runs
+    /// against: the later of [`activity`](Self::activity)'s two times.
+    ///
+    /// **Wall-clock**, so a clock step misjudges the timer: a step forward can
+    /// put a conversation in use to sleep early, until its next send wakes it,
+    /// and a step back holds one awake for the step and a timeout more
+    /// (`design/09` §2). The order of things never depends on this time; see
+    /// [`Stamp`].
+    pub fn last_activity(&self) -> Option<std::time::SystemTime> {
+        [self.stamp("last-arrival"), self.stamp("awake")]
+            .into_iter()
+            .flatten()
+            .map(|stamp| stamp.at)
+            .max()
     }
 
     /// When this member last wrote a record here.
@@ -1751,12 +1796,12 @@ impl Store {
     /// cannot leave a knock. What a conversation's node compares with
     /// [`peer_seen`](Self::peer_seen) to decide whether the other person has
     /// anything to be woken for.
-    pub fn last_own_write(&self) -> Option<std::time::SystemTime> {
+    pub fn last_own_write(&self) -> Option<Stamp> {
         self.stamp("last-own-write")
     }
 
     /// When the other side of this conversation was last seen connected.
-    pub fn peer_seen(&self) -> Option<std::time::SystemTime> {
+    pub fn peer_seen(&self) -> Option<Stamp> {
         self.stamp("peer-seen")
     }
 
@@ -1765,28 +1810,54 @@ impl Store {
         self.write_stamp("peer-seen", std::time::SystemTime::now())
     }
 
-    /// One of the activity clock's times, stored as milliseconds since the
-    /// epoch in a file of its own. `None` when it was never written or does
-    /// not parse.
-    fn stamp(&self, name: &str) -> Option<std::time::SystemTime> {
-        let millis = fs::read_to_string(self.root.join(name))
-            .ok()?
-            .trim()
-            .parse()
-            .ok()?;
-        std::time::UNIX_EPOCH.checked_add(std::time::Duration::from_millis(millis))
+    /// One of the activity clock's stamps: `<millis> <sequence>` in a file of
+    /// its own. `None` when it was never written or does not parse.
+    fn stamp(&self, name: &str) -> Option<Stamp> {
+        let text = fs::read_to_string(self.root.join(name)).ok()?;
+        let (millis, sequence) = text.trim().split_once(' ')?;
+        Some(Stamp {
+            sequence: sequence.parse().ok()?,
+            at: std::time::UNIX_EPOCH
+                .checked_add(std::time::Duration::from_millis(millis.parse().ok()?))?,
+        })
     }
 
-    /// Stores one of the activity clock's times. A time before the epoch is
-    /// stored as the epoch.
+    /// Stores one of the activity clock's stamps, numbered one more than the
+    /// highest stamp here. A time before the epoch is stored as the epoch.
+    ///
+    /// **Numbered from the stamps themselves**, not from a counter of its own,
+    /// so the number cannot fall behind them: a counter restored from a backup
+    /// or left older by a crash would hand out numbers that read as older than
+    /// what already happened. Four small reads per stamp.
+    ///
+    /// **One lock for the process**, held from reading the stamps to writing
+    /// this one, so two handles on one store cannot take the same number. The
+    /// window runs every node in-process. A second process stamping the same
+    /// store at the same moment could take the same number; equal numbers then
+    /// compare by time, and a wake numbered the same as the sleep it should end
+    /// reads as asleep until the next stamp.
     fn write_stamp(&self, name: &str, at: std::time::SystemTime) -> Result<(), StoreError> {
+        static NUMBERING: std::sync::Mutex<()> = std::sync::Mutex::new(());
+        let _held = NUMBERING
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+
+        // `asleep` is left out: it holds an activity's number, never a new one.
+        let sequence = ["last-arrival", "last-own-write", "awake", "peer-seen"]
+            .into_iter()
+            .filter_map(|name| self.stamp(name))
+            .map(|stamp| stamp.sequence)
+            .max()
+            .unwrap_or(0)
+            + 1;
+
         let millis = at
             .duration_since(std::time::UNIX_EPOCH)
             .map_or(0, |since| since.as_millis());
         write_atomically(
             &self.root,
             self.root.join(name),
-            millis.to_string().as_bytes(),
+            format!("{millis} {sequence}").as_bytes(),
         )
     }
 

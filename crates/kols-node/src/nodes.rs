@@ -214,7 +214,7 @@ pub fn should_sleep(
     timeout: std::time::Duration,
 ) -> bool {
     (is_asleep(profile, store.last_activity(), now, timeout)
-        || (profile == kols_core::NetworkProfile::Conversation && store.slept_since_activity(now)))
+        || (profile == kols_core::NetworkProfile::Conversation && store.slept_since_activity()))
         && second_member_joined(store)
 }
 
@@ -235,32 +235,28 @@ pub fn second_member_joined(store: &crate::store::Store) -> bool {
 
 /// [`should_sleep`], recorded: what a supervisor asks each pass — D41.
 ///
-/// A newly decided sleep is recorded dated at its idle deadline (the last
-/// activity plus `timeout`), not at now, so a send or an arrival that races
-/// the decision is newer than it and wakes the conversation. A conversation
-/// found awake has any old record cleared. A failed write only loses the
-/// stickiness and is retried next pass; the answer is unaffected.
-///
-/// Take `now` before calling: the deadline is capped at it, which is what
-/// keeps a send landing during the call newer than the record.
+/// A newly decided sleep is recorded against the activity read *before* the
+/// decision, so a send or an arrival that races it is stamped later and wakes
+/// the conversation. A conversation found awake has any old record cleared. A
+/// failed write only loses the stickiness and is retried next pass; the
+/// answer is unaffected.
 pub fn settle_sleep(
     profile: kols_core::NetworkProfile,
     store: &crate::store::Store,
     now: std::time::SystemTime,
     timeout: std::time::Duration,
 ) -> bool {
+    // Read before deciding, and it must stay first: read after, a send landing
+    // during the decision would be counted in it and slept through.
+    let since = store.activity();
     let asleep = should_sleep(profile, store, now, timeout);
     if profile != kols_core::NetworkProfile::Conversation {
         return asleep;
     }
     if !asleep {
         let _ = store.clear_asleep();
-    } else if !store.slept_since_activity(now) {
-        let deadline = store
-            .last_activity()
-            .map_or(std::time::UNIX_EPOCH, |active| active + timeout)
-            .min(now);
-        let _ = store.mark_asleep(deadline);
+    } else if !store.slept_since_activity() {
+        let _ = store.mark_asleep(since);
     }
     asleep
 }

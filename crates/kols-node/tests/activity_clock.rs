@@ -1,11 +1,14 @@
 //! D41's activity clock — `design/09` §2.
 //!
-//! The idle timer, a recorded sleep and "wrote since last seen" are times the
-//! store keeps, stamped when a record is new or a conversation is woken. These
-//! check the two paths that rewrite files without anything having happened: a
-//! stale re-fold, which rebuilds a channel's arrival log, and a rebuilt
-//! own-readings index. While the clock read modification times, the first woke
-//! a conversation on opening it and the second could leave a spurious knock.
+//! The idle timer, a recorded sleep and "wrote since last seen" are stamps the
+//! store keeps, written when a record is new or a conversation is woken. The
+//! first two tests check the paths that rewrite files without anything having
+//! happened: a stale re-fold, which rebuilds a channel's arrival log, and a
+//! rebuilt own-readings index. While the clock read modification times, the
+//! first woke a conversation on opening it and the second could leave a
+//! spurious knock. The last two check a clock stepped back: while stamps were
+//! ordered by time, a write after the step left no knock and a wake after it
+//! did not wake.
 
 mod common;
 
@@ -85,12 +88,8 @@ fn a_stale_refold_on_opening_is_not_activity() {
         .load(&channel, &limits(0), &kols_core::Window::opening(10))
         .expect("folds");
 
-    let active = store.last_activity().expect("records landed");
-    std::thread::sleep(std::time::Duration::from_millis(20));
-    store
-        .mark_asleep(std::time::SystemTime::now())
-        .expect("records the sleep");
-    std::thread::sleep(std::time::Duration::from_millis(20));
+    let active = store.activity().expect("records landed");
+    store.mark_asleep(Some(active)).expect("records the sleep");
 
     // Different limits make every verdict stale, so this read re-folds the
     // channel and rewrites its arrival log.
@@ -98,13 +97,9 @@ fn a_stale_refold_on_opening_is_not_activity() {
         .load(&channel, &limits(30), &kols_core::Window::opening(10))
         .expect("re-folds");
 
-    assert_eq!(
-        store.last_activity(),
-        Some(active),
-        "a re-fold moves nothing"
-    );
+    assert_eq!(store.activity(), Some(active), "a re-fold moves nothing");
     assert!(
-        store.slept_since_activity(std::time::SystemTime::now()),
+        store.slept_since_activity(),
         "and the recorded sleep still holds"
     );
 }
@@ -117,7 +112,6 @@ fn a_rebuilt_own_readings_index_is_not_a_write() {
     let store = executor.store();
     let wrote = store.last_own_write().expect("wrote three");
 
-    std::thread::sleep(std::time::Duration::from_millis(20));
     store.set_peer_seen().expect("seen after the writes");
     let path = store
         .root()
@@ -125,7 +119,6 @@ fn a_rebuilt_own_readings_index_is_not_a_write() {
         .join(intranet_crypto::to_hex(channel.as_bytes()))
         .join("own-readings");
     std::fs::remove_file(&path).expect("removes the index");
-    std::thread::sleep(std::time::Duration::from_millis(20));
     store.own_readings(&channel).expect("rebuilds it");
     assert!(path.exists(), "the index was written back");
 
@@ -138,4 +131,78 @@ fn a_rebuilt_own_readings_index_is_not_a_write() {
         store.last_own_write() < store.peer_seen(),
         "so nothing is owed a knock"
     );
+}
+
+/// Moves the time a stamp file records by `by` (later when positive), leaving
+/// the rest of the file alone: what a stamp written before the clock stepped
+/// back looks like next to one written after.
+fn shift(path: &std::path::Path, by: i64) {
+    let text = std::fs::read_to_string(path).expect("a stamp");
+    let (millis, rest) = text.split_once(' ').unwrap_or((text.trim(), ""));
+    let millis: i64 = millis.trim().parse().expect("millis");
+    let shifted = if rest.is_empty() {
+        (millis + by).to_string()
+    } else {
+        format!("{} {rest}", millis + by)
+    };
+    std::fs::write(path, shifted).expect("rewrites the stamp");
+}
+
+const HOUR: i64 = 3600 * 1000;
+
+#[test]
+fn a_write_after_the_clock_steps_back_still_owes_a_knock() {
+    // The other side was seen, the clock stepped back an hour, and this member
+    // wrote. The write is newer than the sighting whatever the clock says, so
+    // a knock is owed; comparing times would leave the message waiting until
+    // somebody sent again.
+    let (_dir, executor, channel) = written("knock-step");
+    let store = executor.store();
+    store.set_peer_seen().expect("seen");
+    shift(&store.root().join("peer-seen"), HOUR);
+
+    executor
+        .submit(Command::SendMessage {
+            channel,
+            body: "after the step".to_owned(),
+            reply_to: None,
+            attachments: Vec::new(),
+        })
+        .expect("posts");
+    assert!(
+        store.last_own_write() > store.peer_seen(),
+        "written after they were last seen, so a knock is owed"
+    );
+}
+
+#[test]
+fn a_wake_after_the_clock_steps_back_still_wakes() {
+    // Put to sleep, then the clock stepped back an hour and a knock or a send
+    // woke it. The wake is newer than the sleep whatever the clock says.
+    let (_dir, executor, _channel) = written("wake-step");
+    let store = executor.store();
+    store
+        .mark_asleep(store.activity())
+        .expect("records the sleep");
+    store.mark_awake().expect("a knock or a send");
+    shift(&store.root().join("awake"), -HOUR);
+    assert!(
+        !store.slept_since_activity(),
+        "woken after the sleep, so it is awake"
+    );
+}
+
+#[test]
+fn a_sleep_recorded_by_an_earlier_build_is_not_a_sleep() {
+    // Earlier builds wrote the sleep as bare milliseconds. Read as a number,
+    // that would outrank every activity for good and nothing could wake the
+    // conversation; it must read as no sleep instead.
+    let (_dir, executor, _channel) = written("old-sleep");
+    let store = executor.store();
+    let millis = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("after the epoch")
+        .as_millis();
+    std::fs::write(store.root().join("asleep"), millis.to_string()).expect("an old record");
+    assert!(!store.slept_since_activity(), "not a sleep");
 }

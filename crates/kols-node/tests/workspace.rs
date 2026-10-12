@@ -3335,7 +3335,8 @@ fn a_message_written_to_a_sleeping_conversation_wakes_the_other_side() {
         .block_on(async {
             // Accepted more than an idle timeout after it was asked: the
             // creator's activity clock is as old as the request.
-            // The activity clock stores milliseconds (`Store::mark_awake`).
+            // A stamp is `<millis> <sequence>` (`Store::mark_awake`); only
+            // the time moves, so its place in the order is kept.
             let two_hours_ago = std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .expect("after the epoch")
@@ -3345,8 +3346,13 @@ fn a_message_written_to_a_sleeping_conversation_wakes_the_other_side() {
                 alice_root.join("awake").exists(),
                 "starting it marked it awake"
             );
-            std::fs::write(alice_root.join("awake"), two_hours_ago.to_string())
-                .expect("dates it back");
+            let stamp = std::fs::read_to_string(alice_root.join("awake")).expect("her marker");
+            let (_, sequence) = stamp.split_once(' ').expect("millis and sequence");
+            std::fs::write(
+                alice_root.join("awake"),
+                format!("{two_hours_ago} {sequence}"),
+            )
+            .expect("dates it back");
 
             // The conversation, accepted and keyed, as the accept test does it.
             let mut alice_nodes = Nodes::here();
@@ -3434,15 +3440,21 @@ fn a_message_written_to_a_sleeping_conversation_wakes_the_other_side() {
             // window's supervisor records it, after an hour and more of quiet;
             // Bob's `Founders` entry may not have reached his replay yet, so
             // his is recorded and asked directly.
-            // The activity clock stores milliseconds (`Store::mark_awake`).
+            // A stamp is `<millis> <sequence>` (`Store::mark_awake`); only
+            // the time moves, so its place in the order is kept.
             let two_hours_ago = std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .expect("after the epoch")
                 .as_millis()
                 - 2 * 3600 * 1000;
             assert!(alice_root.join("awake").exists(), "her marker");
-            std::fs::write(alice_root.join("awake"), two_hours_ago.to_string())
-                .expect("dates it back");
+            let stamp = std::fs::read_to_string(alice_root.join("awake")).expect("her marker");
+            let (_, sequence) = stamp.split_once(' ').expect("millis and sequence");
+            std::fs::write(
+                alice_root.join("awake"),
+                format!("{two_hours_ago} {sequence}"),
+            )
+            .expect("dates it back");
             assert!(
                 kols_node::nodes::settle_sleep(
                     kols_core::NetworkProfile::Conversation,
@@ -3463,13 +3475,8 @@ fn a_message_written_to_a_sleeping_conversation_wakes_the_other_side() {
             );
             {
                 let his = Store::open(bob_root.clone()).expect("his store");
-                std::thread::sleep(std::time::Duration::from_millis(20));
-                his.mark_asleep(std::time::SystemTime::now())
-                    .expect("records his sleep");
-                assert!(
-                    his.slept_since_activity(std::time::SystemTime::now()),
-                    "his sleep is recorded"
-                );
+                his.mark_asleep(his.activity()).expect("records his sleep");
+                assert!(his.slept_since_activity(), "his sleep is recorded");
             }
 
             bob_nodes.reconcile(
@@ -3534,7 +3541,7 @@ fn a_message_written_to_a_sleeping_conversation_wakes_the_other_side() {
                 "a knock marks the conversation awake"
             );
             assert!(
-                !his.slept_since_activity(std::time::SystemTime::now()),
+                !his.slept_since_activity(),
                 "and the knock ends his recorded sleep"
             );
             bob_nodes.reconcile(
@@ -3805,55 +3812,41 @@ fn a_recorded_sleep_holds_until_something_happens_in_the_conversation() {
     let bob_id = bob.identity().expect("identity").id();
     let started = kols_node::dm::start(&alice_ws, &alice, &bob_id, None).expect("starts");
     let hers = Store::open(alice_ws.path_for(&started.conversation)).expect("hers");
-    let now = std::time::SystemTime::now;
     assert!(
-        !hers.slept_since_activity(now()),
+        !hers.slept_since_activity(),
         "starting it marks it awake, and nothing has put it to sleep"
     );
 
-    // 20 ms apart: the activity clock stores milliseconds, so this orders the
-    // two on any filesystem.
-    std::thread::sleep(std::time::Duration::from_millis(20));
-    hers.mark_asleep(now()).expect("records the sleep");
+    hers.mark_asleep(hers.activity())
+        .expect("records the sleep");
     assert!(
-        hers.slept_since_activity(now()),
+        hers.slept_since_activity(),
         "asleep, whatever the timeout is now"
     );
 
-    // After the clock steps back, the sleep is dated in the future. It is
-    // ignored, or a send (written at the earlier time) could not wake it.
-    let ahead = now() + std::time::Duration::from_secs(3600);
-    hers.mark_asleep(ahead).expect("dated ahead");
-    assert!(
-        !hers.slept_since_activity(now()),
-        "a sleep dated after now is ignored"
-    );
-    assert!(
-        hers.slept_since_activity(ahead),
-        "and holds again once the clock has passed it"
-    );
-
-    std::thread::sleep(std::time::Duration::from_millis(20));
-    hers.mark_asleep(now()).expect("records the sleep");
-    std::thread::sleep(std::time::Duration::from_millis(20));
+    // Decided from an activity read before a wake landed: the wake is newer,
+    // which is what keeps a send racing the decision from being slept through.
+    let before = hers.activity();
     hers.mark_awake().expect("a knock or a send");
+    hers.mark_asleep(before).expect("records the raced sleep");
     assert!(
-        !hers.slept_since_activity(now()),
+        !hers.slept_since_activity(),
         "anything newer than the sleep wakes it"
     );
 
-    // Found awake, the supervisor clears the record, so a marker a clock step
-    // left in the future cannot come back into force after a wake. (Still
-    // waiting for its second member, so `settle_sleep` finds it awake.)
-    hers.mark_asleep(ahead).expect("dated ahead again");
+    // Found awake, the supervisor clears the record. (Still waiting for its
+    // second member, so `settle_sleep` finds it awake.)
     assert!(!kols_node::nodes::settle_sleep(
         kols_core::NetworkProfile::Conversation,
         &hers,
-        now(),
+        std::time::SystemTime::now(),
         kols_node::nodes::IDLE_TIMEOUT,
     ));
     assert!(
-        !hers.slept_since_activity(ahead),
-        "cleared, so it does not hold once the clock passes it"
+        !alice_ws
+            .path_for(&started.conversation)
+            .join("asleep")
+            .exists(),
+        "cleared"
     );
 }

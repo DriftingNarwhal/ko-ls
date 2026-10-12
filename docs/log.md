@@ -24,6 +24,25 @@ Kept because this project keeps re-learning the same lessons and paying for them
 
 ---
 
+- **2026-10-12** — **A clock step back lost a knock, so the activity clock is ordered by sequence, not by time.**
+  The clock-step limit was recorded as being about the idle timer, and the open question was
+  whether it mattered before a two-machine test. It did, for delivery: a failing test showed that
+  after the clock stepped back past a `peer-seen` stamp, a later own write compared older than
+  it, so no knock was owed and the message waited until somebody sent again. A second showed a
+  wake stamped after a step back could compare older than the recorded sleep and not end it. Each
+  stamp now carries a sequence, one more than the highest stamp in the store, and is ordered by
+  it; the recorded sleep holds the sequence of the activity read before the decision, which
+  replaces dating it at the idle deadline and ignoring a sleep dated after now. The user chose to
+  leave the idle timer wall-clock and state its limits, and declined a monotonic idle measure:
+  `Instant` stops while a laptop is suspended on Linux and macOS, so conversations would stay
+  awake a full timeout after a suspend, it does not survive a restart, and it would mean two
+  timer behaviours to document. A first draft kept a counter file; review dropped it, because a
+  counter can fall behind the stamps it numbers (a backup restore, a crash reordering writes)
+  and then hand out numbers older than what already happened, so the sequence is read from the
+  stamps under a lock for the process. Review also found that an `asleep` file from the earlier
+  build, a bare number, would have outranked all activity forever if read as a sequence; it now
+  fails to parse and reads as no sleep.
+
 - **2026-10-12** — **The activity clock stores its times, because a modification time records a rewrite, not an event.**
   D41's idle timer read file mtimes, so anything that rewrote a file without anything happening
   counted: a stale re-fold during a read rewrites the arrival log, which woke a conversation on

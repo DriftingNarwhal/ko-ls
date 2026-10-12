@@ -4126,6 +4126,9 @@ fn keep_knock(
     // sync carried it, is owed nothing here and waits until one of them sends
     // again. The weaker guarantee, stated: a knock is left for what was written
     // while they were *not connected*, not for everything they do not have.
+    // `Stamp`s compare by sequence, not time: compared by `at`, a write made
+    // after the clock stepped back would read as older than the sighting and
+    // be owed nothing (`design/09` §2).
     let owed = match (store.last_own_write(), store.peer_seen()) {
         (Some(wrote), Some(seen)) => wrote > seen,
         (Some(_), None) => true,
