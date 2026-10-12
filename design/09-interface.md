@@ -977,7 +977,10 @@ other side over real nodes, and only the person a conversation was arranged with
 - **The knock is left as soon as the conversation's node runs**, not once it holds its relay
   reservation (step 2). The woken side redials every 15 seconds, so the two converge.
 - **"Nothing pending" in the asleep rule is read as "the other member has joined".** A
-  conversation whose `everyone` group has fewer than two members never sleeps. Its request
+  conversation whose `Founders` group has fewer than two members never sleeps: every participant
+  is a `Founder` (spec 07 §1.2), and the creator is never in `everyone`. Until 2026-10-12 the
+  code counted `everyone`, which holds one member forever in a pairwise conversation, so no
+  accepted conversation slept. Its request
   carries this node's addresses, and a request accepted more than an hour later would otherwise
   name a node that is not running.
 - **Who was last seen** is taken from the conversation's own connections. A message written while

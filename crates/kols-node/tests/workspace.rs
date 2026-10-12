@@ -3220,6 +3220,20 @@ fn a_message_written_to_a_sleeping_conversation_wakes_the_other_side() {
                 tokio::time::sleep(std::time::Duration::from_millis(500)).await;
             }
 
+            // Accepted, so it sleeps once quiet past the timeout. Asked on
+            // Alice's side, through `should_sleep` as the window asks it: two
+            // `Founders` now, while `everyone` still holds only Bob, which is
+            // why counting `everyone` kept every accepted conversation awake.
+            let hers = Store::open(alice_root.clone()).expect("her store");
+            assert!(
+                kols_node::nodes::should_sleep(
+                    kols_core::NetworkProfile::Conversation,
+                    &hers,
+                    std::time::SystemTime::now() + std::time::Duration::from_secs(2 * 3600),
+                ),
+                "an accepted conversation quiet past the timeout sleeps"
+            );
+
             // Bob's side goes to sleep.
             bob_nodes.reconcile(
                 &[

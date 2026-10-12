@@ -179,6 +179,12 @@ pub fn is_asleep(
 /// a node that is not running, and accepting would time out. The membership is
 /// replayed only when the conversation would otherwise sleep, so an active one
 /// costs nothing extra.
+///
+/// **Joined means two `Founders`**, not two in `everyone`: every participant in
+/// a conversation is a `Founder` (spec 07 §1.2, §6.2), while the creator is in
+/// `Founders` only and never in `everyone` (Core §2.3; DI governance genesis).
+/// Counting `everyone` saw one member forever in a pairwise conversation, so
+/// until 2026-10-12 no accepted conversation ever slept.
 pub fn should_sleep(
     profile: kols_core::NetworkProfile,
     store: &crate::store::Store,
@@ -188,8 +194,8 @@ pub fn should_sleep(
         && store.state().is_ok_and(|state| {
             state
                 .groups
-                .get(&intranet_governance::GroupId::everyone())
-                .is_some_and(|everyone| everyone.members.len() >= 2)
+                .get(&intranet_governance::GroupId::founders())
+                .is_some_and(|founders| founders.members.len() >= 2)
         })
 }
 
