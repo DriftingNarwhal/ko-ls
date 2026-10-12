@@ -888,6 +888,21 @@ impl Store {
         if self.is_own(&record.author) {
             self.note_own_reading(channel, record)?;
         }
+
+        // **D41's activity clock: a message landing is stamped here and
+        // nowhere else**, so a rebuilt arrival log or a rebuilt own-readings
+        // index, which rewrite files without anything having happened, cannot
+        // wake a conversation or leave a knock (`design/09` §2).
+        //
+        // **Last, and best-effort.** The record is stored by now, and a retry
+        // stops at "already there", so a failure here must not fail the put:
+        // it would leave the index behind for good. A missed stamp only
+        // shortens an idle window or skips a knock until the next record.
+        let now = std::time::SystemTime::now();
+        let _ = self.write_stamp("last-arrival", now);
+        if self.is_own(&record.author) {
+            let _ = self.write_stamp("last-own-write", now);
+        }
         Ok(true)
     }
 
@@ -1672,11 +1687,7 @@ impl Store {
     /// conversation woken by a knock, or created and not yet written in, gets a
     /// full idle window before it goes back to sleep.
     pub fn mark_awake(&self) -> Result<(), StoreError> {
-        write_atomically(
-            &self.root,
-            self.root.join("awake"),
-            now_millis().to_string().as_bytes(),
-        )
+        self.write_stamp("awake", std::time::SystemTime::now())
     }
 
     /// Notes that this conversation was put to sleep at `at` — D41.
@@ -1692,17 +1703,7 @@ impl Store {
     /// does, as D41 says; the new timeout applies from the next time a
     /// conversation goes quiet.
     pub fn mark_asleep(&self, at: std::time::SystemTime) -> Result<(), StoreError> {
-        let path = self.root.join("asleep");
-        write_atomically(
-            &self.root,
-            path.clone(),
-            now_millis().to_string().as_bytes(),
-        )?;
-        fs::File::options()
-            .write(true)
-            .open(path)?
-            .set_modified(at)?;
-        Ok(())
+        self.write_stamp("asleep", at)
     }
 
     /// Forgets a recorded sleep, once the conversation is awake again.
@@ -1717,16 +1718,15 @@ impl Store {
     }
 
     /// Whether this conversation was put to sleep and nothing has happened
-    /// since: the `asleep` marker is newer than [`last_activity`](Self::last_activity).
+    /// since: the recorded sleep is newer than [`last_activity`](Self::last_activity).
     ///
-    /// Strictly newer, so a wake landing in the same mtime tick as the sleep
-    /// reads as awake, which is the safe direction. **A marker dated after
+    /// Strictly newer, so a wake stamped in the same millisecond as the sleep
+    /// reads as awake, which is the safe direction. **A sleep dated after
     /// `now` is ignored**: after the clock steps back, a send would otherwise
-    /// write activity older than the sleep and could not wake the conversation
-    /// until the clock caught up. Read from mtimes like the rest of the
-    /// activity clock, with the same limits (`design/09` §2).
+    /// stamp activity older than the sleep and could not wake the conversation
+    /// until the clock caught up.
     pub fn slept_since_activity(&self, now: std::time::SystemTime) -> bool {
-        modified(self.root.join("asleep")).is_some_and(|slept| {
+        self.stamp("asleep").is_some_and(|slept| {
             slept <= now && self.last_activity().is_none_or(|active| slept > active)
         })
     }
@@ -1734,46 +1734,60 @@ impl Store {
     /// When anything last happened here: a record written or arrived, or the
     /// network woken — the clock D41's idle timeout runs against.
     ///
-    /// **Read from files that are written anyway**: each channel's arrival log
-    /// is appended for every new record, whoever wrote it, so its modification
-    /// time is when the last message landed, at the cost of a `stat` per
-    /// channel and no write. `None` for a network where nothing has happened.
+    /// **Stored, not read from modification times.** [`put_record`](Self::put_record)
+    /// stamps a new record's arrival and [`mark_awake`](Self::mark_awake) a
+    /// wake, and nothing else writes either, so rebuilding the arrival log
+    /// during a re-fold is not activity. Wall-clock times all the same: a clock
+    /// step still misjudges the timer (`design/09` §2). `None` for a network
+    /// where nothing has happened.
     pub fn last_activity(&self) -> Option<std::time::SystemTime> {
-        let awake = modified(self.root.join("awake"));
-        self.newest_in_channels("arrivals").max(awake)
+        self.stamp("last-arrival").max(self.stamp("awake"))
     }
 
     /// When this member last wrote a record here.
     ///
-    /// The own-readings index is rewritten for every record this member
-    /// writes, so its modification time is that moment. What a conversation's
-    /// node compares with [`peer_seen`](Self::peer_seen) to decide whether the
-    /// other person has anything to be woken for.
+    /// Stamped by [`put_record`](Self::put_record) for a new record of this
+    /// member's, and not by rebuilding the own-readings index, so a rebuild
+    /// cannot leave a knock. What a conversation's node compares with
+    /// [`peer_seen`](Self::peer_seen) to decide whether the other person has
+    /// anything to be woken for.
     pub fn last_own_write(&self) -> Option<std::time::SystemTime> {
-        self.newest_in_channels("own-readings")
+        self.stamp("last-own-write")
     }
 
     /// When the other side of this conversation was last seen connected.
     pub fn peer_seen(&self) -> Option<std::time::SystemTime> {
-        modified(self.root.join("peer-seen"))
+        self.stamp("peer-seen")
     }
 
     /// Records that the other side is connected now.
     pub fn set_peer_seen(&self) -> Result<(), StoreError> {
-        write_atomically(
-            &self.root,
-            self.root.join("peer-seen"),
-            now_millis().to_string().as_bytes(),
-        )
+        self.write_stamp("peer-seen", std::time::SystemTime::now())
     }
 
-    /// The newest modification time of one named file across every channel.
-    fn newest_in_channels(&self, name: &str) -> Option<std::time::SystemTime> {
-        fs::read_dir(self.root.join("channels"))
+    /// One of the activity clock's times, stored as milliseconds since the
+    /// epoch in a file of its own. `None` when it was never written or does
+    /// not parse.
+    fn stamp(&self, name: &str) -> Option<std::time::SystemTime> {
+        let millis = fs::read_to_string(self.root.join(name))
             .ok()?
-            .filter_map(Result::ok)
-            .filter_map(|channel| modified(channel.path().join(name)))
-            .max()
+            .trim()
+            .parse()
+            .ok()?;
+        std::time::UNIX_EPOCH.checked_add(std::time::Duration::from_millis(millis))
+    }
+
+    /// Stores one of the activity clock's times. A time before the epoch is
+    /// stored as the epoch.
+    fn write_stamp(&self, name: &str, at: std::time::SystemTime) -> Result<(), StoreError> {
+        let millis = at
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |since| since.as_millis());
+        write_atomically(
+            &self.root,
+            self.root.join(name),
+            millis.to_string().as_bytes(),
+        )
     }
 
     /// Leaves a knock to be sent to `to` for `conversation` — D41.
@@ -3260,11 +3274,6 @@ fn append_to(path: impl AsRef<Path>, bytes: &[u8]) -> Result<(), StoreError> {
         .open(path)?;
     file.write_all(bytes)?;
     Ok(())
-}
-
-/// A file's modification time, or `None` if it is not there.
-fn modified(path: impl AsRef<Path>) -> Option<std::time::SystemTime> {
-    fs::metadata(path).and_then(|meta| meta.modified()).ok()
 }
 
 /// How long that file is, or zero when it is not there yet.

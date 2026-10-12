@@ -3335,13 +3335,17 @@ fn a_message_written_to_a_sleeping_conversation_wakes_the_other_side() {
         .block_on(async {
             // Accepted more than an idle timeout after it was asked: the
             // creator's activity clock is as old as the request.
-            std::fs::File::options()
-                .write(true)
-                .open(alice_root.join("awake"))
-                .expect("starting it marked it awake")
-                .set_modified(
-                    std::time::SystemTime::now() - std::time::Duration::from_secs(2 * 3600),
-                )
+            // The activity clock stores milliseconds (`Store::mark_awake`).
+            let two_hours_ago = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("after the epoch")
+                .as_millis()
+                - 2 * 3600 * 1000;
+            assert!(
+                alice_root.join("awake").exists(),
+                "starting it marked it awake"
+            );
+            std::fs::write(alice_root.join("awake"), two_hours_ago.to_string())
                 .expect("dates it back");
 
             // The conversation, accepted and keyed, as the accept test does it.
@@ -3430,13 +3434,14 @@ fn a_message_written_to_a_sleeping_conversation_wakes_the_other_side() {
             // window's supervisor records it, after an hour and more of quiet;
             // Bob's `Founders` entry may not have reached his replay yet, so
             // his is recorded and asked directly.
-            std::fs::File::options()
-                .write(true)
-                .open(alice_root.join("awake"))
-                .expect("her marker")
-                .set_modified(
-                    std::time::SystemTime::now() - std::time::Duration::from_secs(2 * 3600),
-                )
+            // The activity clock stores milliseconds (`Store::mark_awake`).
+            let two_hours_ago = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("after the epoch")
+                .as_millis()
+                - 2 * 3600 * 1000;
+            assert!(alice_root.join("awake").exists(), "her marker");
+            std::fs::write(alice_root.join("awake"), two_hours_ago.to_string())
                 .expect("dates it back");
             assert!(
                 kols_node::nodes::settle_sleep(
@@ -3806,8 +3811,8 @@ fn a_recorded_sleep_holds_until_something_happens_in_the_conversation() {
         "starting it marks it awake, and nothing has put it to sleep"
     );
 
-    // 20 ms apart, which orders the markers on a filesystem with finer mtimes
-    // than that (not on one with 1–2 s mtimes, where equal times read awake).
+    // 20 ms apart: the activity clock stores milliseconds, so this orders the
+    // two on any filesystem.
     std::thread::sleep(std::time::Duration::from_millis(20));
     hers.mark_asleep(now()).expect("records the sleep");
     assert!(

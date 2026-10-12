@@ -24,6 +24,23 @@ Kept because this project keeps re-learning the same lessons and paying for them
 
 ---
 
+- **2026-10-12** — **The activity clock stores its times, because a modification time records a rewrite, not an event.**
+  D41's idle timer read file mtimes, so anything that rewrote a file without anything happening
+  counted: a stale re-fold during a read rewrites the arrival log, which woke a conversation on
+  opening it against *opening does not wake* and could clear a recorded sleep, and rebuilding
+  the own-readings index could leave a knock nobody had written for. Each time is now a file of
+  milliseconds that `put_record` stamps for a new record, so only a record arriving or being
+  written, or a wake, moves the clock. Two tests reproduced the re-fold and the rebuilt index
+  against the old code first. Opening
+  a store with different `ReaderLimits` forces a stale re-fold, which is a cheap way to make an
+  integration test run `rebuild_arrivals`. A fallback to mtimes for stores from earlier builds
+  was proposed and rejected by the user: nothing during development is kept compatible with what
+  earlier builds stored, so such a store reads as no activity until something new happens. The
+  review moved the stamps to the end of the put and made them best-effort: the record is already
+  stored there and a retry stops at "already there", so a failed stamp that failed the put would
+  leave the own-readings index behind for good. Still wall-clock, so a clock step still
+  misjudges the timer; `design/09` §2 keeps that limit.
+
 - **2026-10-12** — **The workspace row never said a conversation was adrift, so it could not say "waiting" alone.**
   Putting `design/09` §1.9's *waiting for them* line on the workspace row looked like a UI-only
   change. It was not: the shell's `conversations` list and `conversation_who` each had their own
