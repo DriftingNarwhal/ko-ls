@@ -1,0 +1,13 @@
+# The matrix's relay as DI-Relay is deployed: TCP only. Railway gives a relay a
+# TCP proxy and nothing else, so the relay a ko-ls user meets announces no QUIC
+# address and every member reaches it over TCP. With QUIC on the relay too, two
+# members can reach it over different transports and learn external addresses
+# only for the one each used — and a hole-punch needs both on the same one.
+services:
+  relay:
+    command:
+      - relay
+      - --seed=1
+      - --network=1
+      - --listen=/ip4/0.0.0.0/tcp/4001
+      - --health-port=8080

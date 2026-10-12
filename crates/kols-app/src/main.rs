@@ -817,6 +817,7 @@ fn name_in(
 /// Offers a conversation to a member of a network this installation is in.
 #[tauri::command]
 fn start_conversation(
+    handle: tauri::AppHandle,
     app: tauri::State<'_, App>,
     network: String,
     with: String,
@@ -824,6 +825,11 @@ fn start_conversation(
     let shared = app.workspace.open(&network)?;
     let with = kols_node::parse_identity(&with)?;
     let started = kols_node::dm::start(&app.workspace, &shared, &with, None)?;
+    // **Its node starts now, not on the next pass.** The request cannot be
+    // delivered until the conversation's node has run and recorded an address
+    // for its invite to carry, and waiting for the supervisor's tick held it
+    // back by up to a minute: measured at 61 s across the NAT matrix.
+    reconcile_nodes(&handle, &app);
     Ok(to_hex(started.conversation.as_bytes()))
 }
 
@@ -2897,30 +2903,7 @@ fn reconcile_nodes(handle: &tauri::AppHandle, app: &tauri::State<'_, App>) {
         return;
     };
     let in_view = app.in_view.lock().ok().and_then(|view| *view);
-    let idle_timeout = app.workspace.idle_timeout();
-
-    let specs: Vec<kols_node::nodes::Spec> = app
-        .workspace
-        .list()
-        .into_iter()
-        .filter_map(|known| {
-            let store = kols_node::store::Store::open(known.path.clone()).ok()?;
-            Some(kols_node::nodes::Spec {
-                network: *store.network(),
-                set_aside: store.is_set_aside(),
-                // D41: a conversation nobody has talked in for the idle
-                // timeout runs no node until a send or a knock wakes it, and
-                // the sleep is recorded so raising the timeout wakes nothing.
-                asleep: kols_node::nodes::settle_sleep(
-                    known.profile,
-                    &store,
-                    std::time::SystemTime::now(),
-                    idle_timeout,
-                ),
-                root: known.path,
-            })
-        })
-        .collect();
+    let specs = kols_node::nodes::specs_for(&app.workspace, std::time::SystemTime::now());
 
     let total = app.unread.lock().ok().map(|mut unread| {
         for spec in &specs {

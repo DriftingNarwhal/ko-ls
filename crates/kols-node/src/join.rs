@@ -206,18 +206,66 @@ pub async fn redeem(
     // Ordered here rather than taken in the invite's order, because dialling
     // them one at a time meant `dial_candidates` only ever saw a single address
     // and its ordering never applied: direct before circuit, IPv6 before IPv4.
-    let mut dialed = Vec::new();
-    for parsed in intranet_transport::dial::order_candidates(candidates) {
-        match node.dial_candidates([parsed.clone()]) {
-            Ok(()) => {
-                crate::say!(report, "  dialing   {parsed}");
-                dialed.push(parsed.to_string());
-            }
-            Err(err) => refused.push(format!("{parsed} ({err})")),
+    // The whole join, reservations included, is bounded by the one timeout.
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(timeout_secs);
+
+    // **A circuit on the invite's relay before dialling anything.** A circuit is
+    // only a way to negotiate a hole punch (Core §5.2), and the join used to go
+    // over it instead, which §5.2 forbids ("a joiner who cannot establish a
+    // direct or hole-punched connection to a member does not join"). Once the
+    // transport stopped carrying it, a joiner without a reservation punched to
+    // nobody across the NAT matrix, and with one it punched in milliseconds
+    // (measured 2026-10-12). Why exactly is not established: the reservation
+    // also makes the relay connection, and identify's observation of it, exist
+    // before the circuit's negotiation starts.
+    let mut relays = Vec::new();
+    for candidate in &candidates {
+        if let Some(relay) = relay_of(candidate)
+            && !relays.contains(&relay)
+        {
+            relays.push(relay);
         }
     }
+    for relay in &relays {
+        crate::say!(report, "  relay     asking {relay} for a circuit");
+        let _ = node.reserve_via_relay(relay.clone()).await;
+    }
 
-    if dialed.is_empty() {
+    // **Direct addresses now; circuit addresses once a circuit is granted.**
+    // Both halves were measured across the NAT matrix (2026-10-12). Waiting for
+    // the grant before dialling anything held a same-LAN join up by the whole
+    // reservation window, 19 s, before its direct address was even tried; not
+    // waiting at all dialled the circuit before the grant, and the punch that
+    // followed never landed. So the circuit waits for the grant (`Listening`
+    // below) and nothing else does.
+    let (circuits, direct): (Vec<Multiaddr>, Vec<Multiaddr>) =
+        intranet_transport::dial::order_candidates(candidates)
+            .into_iter()
+            .partition(|address| relay_of(address).is_some());
+    let mut dialed = Vec::new();
+    let mut dial =
+        |address: Multiaddr, dialed: &mut Vec<String>, refused: &mut Vec<String>| match node
+            .dial_candidates([address.clone()])
+        {
+            Ok(()) => {
+                crate::say!(report, "  dialing   {address}");
+                dialed.push(address.to_string());
+            }
+            Err(err) => refused.push(format!("{address} ({err})")),
+        };
+    for address in direct {
+        dial(address, &mut dialed, &mut refused);
+    }
+    let mut held = Vec::new();
+    if relays.is_empty() {
+        for address in circuits {
+            dial(address, &mut dialed, &mut refused);
+        }
+    } else {
+        held = circuits;
+    }
+
+    if dialed.is_empty() && held.is_empty() {
         return Err(format!(
             "not one of the invite's address(es) could be dialled, so nothing was contacted \
              — not the issuer, and not their relay: {}",
@@ -233,8 +281,10 @@ pub async fn redeem(
         .set_peers(&invite.bootstrap_addresses)
         .map_err(|e| e.to_string())?;
 
-    let deadline = tokio::time::Instant::now() + Duration::from_secs(timeout_secs);
     let mut asked = false;
+    // Reached the issuer only through their relay: the punch is under way, or
+    // failed without saying so, which under CGNAT is the ordinary case (§5.2).
+    let mut issuer_behind_relay = false;
     // Whether a connection to the *issuer* was established, as opposed to one
     // to a relay on the way to them. See the `Connected` arm below.
     let mut reached_issuer = false;
@@ -261,7 +311,13 @@ pub async fn redeem(
                 if !refused.is_empty() {
                     why.push_str(&format!(". Could not be dialled: {}", refused.join("; ")));
                 }
-                if !dialed.iter().any(|address| address.contains("p2p-circuit")) {
+                if !held.is_empty() {
+                    why.push_str(
+                        ". The relay granted no circuit, so the invite's circuit address was \
+                         never dialled: without one, no hole punch could be negotiated",
+                    );
+                }
+                if held.is_empty() && !dialed.iter().any(|address| address.contains("p2p-circuit")) {
                     why.push_str(
                         ". None of these was a relay circuit, so they only reach somebody on \
                          the same network as the issuer — the invite may have been minted \
@@ -292,6 +348,15 @@ pub async fn redeem(
                 // network may have admitted this member already — so the honest
                 // report is that we do not know, and the store is kept so
                 // replay can settle it.
+                if issuer_behind_relay && !reached_issuer {
+                    why = format!(
+                        "the member who invited you was reached only through their relay, and \
+                         no direct connection to them formed within {timeout_secs}s. Core \
+                         \u{a7}5.2 does not let a relay carry a join. Unless one of you has \
+                         IPv6, an invite from them cannot be redeemed from where you are. \
+                         Details: {why}"
+                    );
+                }
                 if reached_issuer {
                     return Ok(Landed::Unanswered {
                         identity: intranet_crypto::to_hex(
@@ -305,7 +370,15 @@ pub async fn redeem(
         };
 
         match event {
-            NodeEvent::Connected { peer, .. } if !asked => {
+            // **The issuer, over a connection that may carry a join**: direct or
+            // hole-punched (Core §5.2). Reaching them through the relay is only
+            // the start of the negotiation; the punched connection arrives as
+            // its own `Connected` when it lands. And never a relay, which is
+            // often the first connection — dialling a circuit address connects
+            // to the relay whether or not the issuer is behind it.
+            NodeEvent::Connected { peer, tier, .. }
+                if !asked && peer == invite.issuer.peer_id() && !tier.relay_in_data_path() =>
+            {
                 crate::say!(report, "connected to {peer}");
                 // Asking the issuer, whom the invite names. Any member holding
                 // `approve-node` could answer, but the issuer is the one this
@@ -313,16 +386,41 @@ pub async fn redeem(
                 node.request_join(invite.issuer, invite.clone(), &identity);
                 asked = true;
                 // **Whether the request could have *arrived* is a different
-                // question from whether one was sent, and O21 turns on it.**
-                // The first connection is often a relay rather than the issuer:
-                // an invite carries a circuit address, and dialling it connects
-                // to the relay whether or not the issuer is behind it. Treating
-                // that as "delivered" would report a join that reached nobody as
-                // one whose answer was merely lost — which is the opposite of
-                // the honesty this is for, since it would tell somebody their
-                // join may have worked when nothing on the far side ever heard
-                // of them.
-                reached_issuer |= peer == invite.issuer.peer_id();
+                // question from whether one was sent, and O21 turns on it.** It
+                // is asked only over a connection to the issuer that can carry
+                // it, so asking is reaching them; the guard above is what keeps
+                // a join that reached nobody from being reported as one whose
+                // answer was merely lost.
+                reached_issuer = true;
+            }
+
+            NodeEvent::Connected { peer, .. } if peer == invite.issuer.peer_id() => {
+                issuer_behind_relay = true;
+            }
+
+            // The grant: now a punch through the relay can be negotiated.
+            NodeEvent::Listening(address) if !held.is_empty() && relay_of(&address).is_some() => {
+                for address in std::mem::take(&mut held) {
+                    match node.dial_candidates([address.clone()]) {
+                        Ok(()) => {
+                            crate::say!(report, "  dialing   {address}");
+                            dialed.push(address.to_string());
+                        }
+                        Err(err) => refused.push(format!("{address} ({err})")),
+                    }
+                }
+            }
+
+            // Says only what it knows: the invite names one member, so this is
+            // about reaching them, not about every member of the network.
+            NodeEvent::HolePunchFailed { peer } if !asked && peer == invite.issuer.peer_id() => {
+                return Err(
+                    "the member who invited you was reached only through their relay, and \
+                     the hole punch that would have connected you directly failed. Core \
+                     \u{a7}5.2 does not let a relay carry a join. Unless one of you has IPv6, \
+                     an invite from them cannot be redeemed from where you are"
+                        .to_owned(),
+                );
             }
 
             NodeEvent::Admitted { .. } => return Ok(Landed::Admitted),
@@ -351,4 +449,16 @@ pub async fn redeem(
             _ => {}
         }
     }
+}
+
+/// The relay a circuit address goes through: everything before `/p2p-circuit`.
+fn relay_of(address: &Multiaddr) -> Option<Multiaddr> {
+    let mut relay = Multiaddr::empty();
+    for part in address.iter() {
+        if matches!(part, libp2p::multiaddr::Protocol::P2pCircuit) {
+            return Some(relay);
+        }
+        relay.push(part);
+    }
+    None
 }

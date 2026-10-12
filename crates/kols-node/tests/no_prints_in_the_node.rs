@@ -19,14 +19,15 @@
 //! # What it can and cannot see
 //!
 //! It reads every `.rs` file under this crate's `src/` (subdirectories
-//! included) except `main.rs`, the `kols` binary — the test harness, which
-//! prints by design — and the window shell's `kols-app/src/main.rs`. Each print
-//! is attributed to the top-level item it sits in: a top-level `fn` by name,
-//! anything else unindented (`impl`, `mod`, `struct`, a `const`, a macro) as
-//! `<not a function>`, so a print in an `impl` placed after an allowed function
-//! is not allowed with it. Three functions may print, all serving only the
-//! harness: `lib.rs`'s `printing_report`, `serve.rs`'s `render` (the printing
-//! sink `kols serve` uses) and `join.rs`'s `run` (`kols join`).
+//! included) except `main.rs` and `drive.rs`, the `kols` and `kols-drive`
+//! binaries — test harnesses, which print by design — and the window shell's
+//! `kols-app/src/main.rs`. Each print is attributed to the top-level item it
+//! sits in: a top-level `fn` by name, anything else unindented (`impl`, `mod`,
+//! `struct`, a `const`, a macro) as `<not a function>`, so a print in an
+//! `impl` placed after an allowed function is not allowed with it. Three
+//! functions may print, all serving only the harness: `lib.rs`'s
+//! `printing_report`, `serve.rs`'s `render` (the printing sink `kols serve`
+//! uses) and `join.rs`'s `run` (`kols join`).
 //!
 //! "Prints" means one of the print macros, or naming `io::stdout()` or
 //! `io::stderr()` at all. A write reached some other way — a raw handle, a
@@ -147,7 +148,7 @@ fn window_sources() -> Vec<PathBuf> {
     let src = crate_dir.join("src");
     let mut files = Vec::new();
     sources(&src, &mut files);
-    files.retain(|path| path != &src.join("main.rs"));
+    files.retain(|path| path != &src.join("main.rs") && path != &src.join("drive.rs"));
     files.push(crate_dir.join("../kols-app/src/main.rs"));
     files.sort();
     assert!(

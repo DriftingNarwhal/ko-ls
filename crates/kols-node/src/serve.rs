@@ -1426,8 +1426,20 @@ pub async fn serve(
                 continue;
             }
 
-            NodeEvent::Connected { peer, .. } => {
-                crate::say!(report, "connected to {peer}");
+            // **Reached, not connected.** Core §5.2: a circuit carries the
+            // hole-punch negotiation and nothing else, and the transport keeps
+            // every protocol off it — so a peer reachable only this way is not
+            // somebody to sync with, knock, or show as present. If the punch
+            // lands, the direct connection arrives as its own `Connected` and is
+            // handled below; if not, the circuit is closed on its deadline.
+            NodeEvent::Connected { peer, tier, .. } if tier.relay_in_data_path() => {
+                crate::say!(
+                    report,
+                    "reached {peer} through a relay — negotiating a direct connection (Core §5.2)"
+                );
+            }
+            NodeEvent::Connected { peer, tier, .. } => {
+                crate::say!(report, "connected to {peer} ({tier:?})");
                 connected.insert(peer);
                 record_connected(&store, &connected, sink);
                 // **Somebody with a knock waiting for them just arrived** (D41).
@@ -1451,7 +1463,13 @@ pub async fn serve(
             }
 
             NodeEvent::Disconnected { peer } => {
-                connected.remove(&peer);
+                crate::say!(report, "disconnected from {peer}");
+                // A peer only ever reached through a relay was never here, so
+                // its circuit closing is not them leaving: noting it would mark
+                // as seen what they never received, and owe it no knock.
+                if !connected.remove(&peer) {
+                    continue;
+                }
                 record_connected(&store, &connected, sink);
                 // At the moment they left, so that anything written after it is
                 // owed a knock and nothing written before it is.

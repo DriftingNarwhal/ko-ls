@@ -24,6 +24,44 @@ Kept because this project keeps re-learning the same lessons and paying for them
 
 ---
 
+- **2026-10-12** — **The ten-second delivery was the chat riding a relayed circuit, which Core §5.2 forbids.**
+  The user's live test had messages sometimes taking about ten seconds, on one LAN and with one
+  machine on a mobile hotspot alike; loopback never showed it. To see it across NATs, a headless
+  installation was built, `kols-drive` (a test harness under D30, like `kols`: it runs the
+  window's supervisor and nodes without a window, driven by files in its home), and
+  `scripts/nat-dm.sh` runs two of them in DI's Docker NAT matrix, unchanged, to form a shared
+  network, start and accept a conversation, and time each message. Across two home NATs
+  (scenario 3), before any fix, ten messages arrived in 0.5–15.7 s, all live, and the request
+  arrived 61 s after it was started. Three causes, all measured. **The two sides never
+  hole-punched**: the matrix's relay offered TCP and QUIC, so the two sides learned their external
+  addresses on different transports and DCUtR punched on mismatched ones, every time. DI's own
+  scenario 3 passes because its peers use TCP only, and the deployed DI-Relay is TCP-only, so this
+  was not what the user saw; it is a weakness for any relay on both (recorded in DI's
+  `harness/README.md`). `nat-dm.sh` runs the relay TCP-only by default (`RELAY=both` keeps QUIC).
+  **The chat rode the circuit**: every protocol ran over a relayed connection until its deadline,
+  because libp2p hands a request to whatever connection a peer has, and the failed punch closed
+  the circuit with a 15 s redial behind it, so a message sent in the gap waited for it. **And the
+  listening side called the circuit direct**, so DI's own guard against syncing over one missed
+  it. The user ruled §5.2's "the relay carries the negotiation and nothing else" a hard rule, to
+  be enforced in DI structurally rather than in this client alone, and set the order: the punch,
+  the misclassification, §5.2, the conversation-start delay, then a rerun. DI now wraps each
+  payload-carrying behaviour so it never learns a circuit exists (DI `CLAUDE.md`). Here, a peer
+  reached only through a relay is *reached*, not connected: no sync, no knock, no presence. A join
+  asks the invite's relay for a circuit first, dials direct addresses at once and circuit
+  addresses only after the grant: waiting for the grant before dialling anything held a same-LAN
+  join up 19 s, and dialling a circuit before the grant never punched. Why the reservation is
+  needed for the punch at all is not established. A join asks the issuer only over a direct or
+  punched connection, and says plainly (§5.2) when the issuer was reached only through the relay.
+  `tests/invites.rs` turned out to have been joining through a relay all along, because its nodes
+  listened on loopback, which invites leave out; they bind every interface now. Starting a
+  conversation now reconciles at once, in the window and in `kols-drive`, where it had waited for
+  the 60 s supervisor pass. **After**: one LAN and two home NATs, 20 of 20 delivered in 0.3–2.1 s
+  each, the request seen at about 13 s and keyed at about 16 s; what is left is the sender's
+  two-second tick (`design/05` §4). Restricted NAT against CGNAT over IPv4 (scenario 4) is refused
+  at the join, as §5.2 says it must be. The consequence is the user's own case: a machine on a
+  mobile hotspot, likely behind CGNAT, can no longer reach a peer without IPv6. The earlier
+  hotspot test passing was **Inferred — verify**: probably carried by a circuit.
+
 - **2026-10-12** — **A clock step back lost a knock, so the activity clock is ordered by sequence, not by time.**
   The clock-step limit was recorded as being about the idle timer, and the open question was
   whether it mattered before a two-machine test. It did, for delivery: a failing test showed that

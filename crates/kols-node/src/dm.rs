@@ -21,8 +21,9 @@
 //! So starting a conversation **records a want and returns**, exactly as
 //! `FetchHistory` does for a page (`design/05` §5.1), and the daemon mints and
 //! sends on a later tick once there is an address to put in the invite. The
-//! supervisor is already running a node for the new network, because a joined
-//! network is warm (`09` §2) — this needs nothing new from it.
+//! node for the new network is the supervisor's, because a joined network is
+//! warm (`09` §2) — but only from its next pass, so a caller reconciles straight
+//! after starting one. Left to the tick, the request waited up to a minute.
 
 use intranet_identity::{NetworkId, PerNetworkIdentityId};
 

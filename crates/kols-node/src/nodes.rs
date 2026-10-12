@@ -261,6 +261,32 @@ pub fn settle_sleep(
     asleep
 }
 
+/// What a supervisor should be running for everything `workspace` holds, as of
+/// `now` — one pass of the policy, sleeps settled ([`settle_sleep`]).
+///
+/// Shared by every supervisor rather than written in each, so the window and a
+/// headless driver keep the same networks awake. A store that will not open is
+/// left out: there is nothing a node could run against.
+pub fn specs_for(workspace: &crate::workspace::Workspace, now: std::time::SystemTime) -> Vec<Spec> {
+    let idle_timeout = workspace.idle_timeout();
+    workspace
+        .list()
+        .into_iter()
+        .filter_map(|known| {
+            let store = crate::store::Store::open(known.path.clone()).ok()?;
+            Some(Spec {
+                network: *store.network(),
+                set_aside: store.is_set_aside(),
+                // D41: a conversation nobody has talked in for the idle
+                // timeout runs no node until a send or a knock wakes it, and
+                // the sleep is recorded so raising the timeout wakes nothing.
+                asleep: settle_sleep(known.profile, &store, now, idle_timeout),
+                root: known.path,
+            })
+        })
+        .collect()
+}
+
 /// What tier a network should be kept at — `design/09` §2's policy, applied.
 ///
 /// `in_view` is the network the member is looking at, if any. `set_aside` is
@@ -342,7 +368,15 @@ pub struct Nodes {
     /// A held handle removes the question: a caller supplies the runtime once,
     /// where it is known, and every spawn after that works from any thread.
     runtime: tokio::runtime::Handle,
+    /// Where each node's lifecycle lines go, told which network said them.
+    ///
+    /// Nowhere by default, which is what the window wants (`crate::quiet`). A
+    /// headless driver passes one so a run can be read afterwards.
+    report: TaggedReport,
 }
+
+/// A node's lifecycle lines, tagged with the network that said them.
+pub type TaggedReport = std::sync::Arc<dyn Fn(&NetworkId, &str) + Send + Sync>;
 
 /// Where a supervised node's events go, tagged with the network they came from.
 ///
@@ -372,7 +406,15 @@ impl Nodes {
             polled: BTreeMap::new(),
             checked: BTreeMap::new(),
             runtime,
+            report: std::sync::Arc::new(|_: &NetworkId, _: &str| {}),
         }
+    }
+
+    /// The same supervisor, with every node's lifecycle lines sent to `report`.
+    #[must_use]
+    pub fn with_report(mut self, report: TaggedReport) -> Self {
+        self.report = report;
+        self
     }
 
     /// A supervisor spawning onto the runtime the caller is already inside.
@@ -593,6 +635,11 @@ impl Nodes {
             tagged(&network, batch);
         });
 
+        let tagged_report = self.report.clone();
+        let report: crate::Report = std::sync::Arc::new(move |line: &str| {
+            tagged_report(&network, line);
+        });
+
         let handle = self.runtime.spawn(async move {
             // A refusal here is ordinary rather than exceptional: another
             // process may hold this network's claim, which is exactly what the
@@ -608,7 +655,7 @@ impl Nodes {
                 crate::serve::LIVE_WINDOW_MILLIS,
                 &crate::serve::Output {
                     events: &sink,
-                    report: &crate::quiet(),
+                    report: &report,
                 },
             )
             .await;

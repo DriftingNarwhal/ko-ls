@@ -14,6 +14,10 @@ path = "src/lib.rs"
 name = "kols"
 path = "src/main.rs"
 
+[[bin]]
+name = "kols-drive"
+path = "src/drive.rs"
+
 [dependencies]
 thiserror.workspace = true
 kols-core.workspace = true
@@ -33,6 +37,9 @@ argon2.workspace = true
 clap.workspace = true
 libp2p.workspace = true
 tokio = { workspace = true, features = ["rt-multi-thread", "macros", "time"] }
+# `kols-drive` only: `RUST_LOG` is how a run inside the NAT matrix shows what
+# libp2p decided (a hole-punch, a closed circuit), which no report line says.
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
 # Only to restrict a secret to its owner on Windows (`src/secret.rs`). Unix does
 # this with a chmod and needs nothing; Windows needs a DACL, and there is no
@@ -45,6 +52,3 @@ windows-sys = { version = "0.61", features = [
     "Win32_Storage_FileSystem",
     "Win32_System_Threading",
 ] }
-
-[dev-dependencies]
-tracing-subscriber = { version = "0.3", features = ["env-filter"] }

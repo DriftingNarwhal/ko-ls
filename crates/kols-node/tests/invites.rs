@@ -92,7 +92,12 @@ fn serving(home: &Home, port: u16) -> Daemon {
         .arg("--home")
         .arg(home.path())
         .args(["serve", "--listen"])
-        .arg(format!("/ip4/127.0.0.1/tcp/{port}"))
+        // **Every interface, not loopback.** An invite leaves loopback out, so a
+        // node bound to 127.0.0.1 alone is reachable only through its relay —
+        // and Core §5.2 does not let a relay carry a join. These tests joined
+        // that way until the transport stopped carrying it (2026-10-12); bound
+        // here, the invite carries an address the joiner can dial directly.
+        .arg(format!("/ip4/0.0.0.0/tcp/{port}"))
         .stdout(Stdio::null())
         // **Inherited rather than discarded.** These tests watch the store
         // rather than the daemon's output, so a daemon that exits early is
