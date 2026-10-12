@@ -33,6 +33,69 @@ fn an_empty_workspace_holds_nothing_and_is_not_an_error() {
     assert!(Workspace::at(dir.0.clone()).list().is_empty());
 }
 
+/// The idle timeout is a *this machine* setting (`design/09` §2, §4.2): an hour
+/// until changed, five minutes to a day, and a value outside that is refused
+/// rather than clamped (the user, 2026-10-11).
+#[test]
+fn the_idle_timeout_is_an_hour_until_set_and_refuses_what_is_out_of_range() {
+    use kols_node::nodes::{IDLE_TIMEOUT, MAX_IDLE_TIMEOUT, MIN_IDLE_TIMEOUT};
+    use std::time::Duration;
+
+    let dir = Dir::new("idle-timeout");
+    let workspace = Workspace::at(dir.0.clone());
+    assert_eq!(workspace.idle_timeout(), IDLE_TIMEOUT, "an hour by default");
+
+    workspace
+        .set_idle_timeout(MIN_IDLE_TIMEOUT)
+        .expect("five minutes is in range");
+    assert_eq!(workspace.idle_timeout(), MIN_IDLE_TIMEOUT);
+    workspace
+        .set_idle_timeout(MAX_IDLE_TIMEOUT)
+        .expect("a day is in range");
+    assert_eq!(workspace.idle_timeout(), MAX_IDLE_TIMEOUT);
+
+    for out in [
+        MIN_IDLE_TIMEOUT - Duration::from_secs(1),
+        MAX_IDLE_TIMEOUT + Duration::from_secs(1),
+        Duration::ZERO,
+    ] {
+        assert!(
+            workspace.set_idle_timeout(out).is_err(),
+            "{out:?} is refused"
+        );
+        assert_eq!(
+            workspace.idle_timeout(),
+            MAX_IDLE_TIMEOUT,
+            "and a refusal leaves the stored value alone"
+        );
+    }
+
+    // A file outside the range, written by hand or by a build with other
+    // bounds, is not honoured: it reads as the default.
+    std::fs::write(dir.0.join("idle-timeout"), "60").expect("writes");
+    assert_eq!(workspace.idle_timeout(), IDLE_TIMEOUT);
+
+    // And the setting is what decides: ten quiet minutes is asleep at five,
+    // and not at the default.
+    let now = std::time::SystemTime::now();
+    let quiet = Some(now - Duration::from_secs(10 * 60));
+    workspace
+        .set_idle_timeout(MIN_IDLE_TIMEOUT)
+        .expect("five minutes is in range");
+    assert!(kols_node::nodes::is_asleep(
+        kols_core::NetworkProfile::Conversation,
+        quiet,
+        now,
+        workspace.idle_timeout()
+    ));
+    assert!(!kols_node::nodes::is_asleep(
+        kols_core::NetworkProfile::Conversation,
+        quiet,
+        now,
+        IDLE_TIMEOUT
+    ));
+}
+
 #[test]
 fn a_created_network_is_replayable_and_its_founder_is_a_member() {
     // The check `kols init` has always made and the reason creation is one path:
@@ -3240,6 +3303,7 @@ fn a_message_written_to_a_sleeping_conversation_wakes_the_other_side() {
                     kols_core::NetworkProfile::Conversation,
                     &hers,
                     std::time::SystemTime::now(),
+                    kols_node::nodes::IDLE_TIMEOUT,
                 ),
                 "the creator stays awake through a late join"
             );
@@ -3253,11 +3317,54 @@ fn a_message_written_to_a_sleeping_conversation_wakes_the_other_side() {
                     kols_core::NetworkProfile::Conversation,
                     &hers,
                     std::time::SystemTime::now() + std::time::Duration::from_secs(2 * 3600),
+                    kols_node::nodes::IDLE_TIMEOUT,
                 ),
                 "an accepted conversation quiet past the timeout sleeps"
             );
 
-            // Bob's side goes to sleep.
+            // Both sides' sleeps are recorded, so they hold even at the longest
+            // timeout, which is what raising the setting must not undo (the
+            // user, 2026-10-11). Alice's goes through `settle_sleep`, as the
+            // window's supervisor records it, after an hour and more of quiet;
+            // Bob's `Founders` entry may not have reached his replay yet, so
+            // his is recorded and asked directly.
+            std::fs::File::options()
+                .write(true)
+                .open(alice_root.join("awake"))
+                .expect("her marker")
+                .set_modified(
+                    std::time::SystemTime::now() - std::time::Duration::from_secs(2 * 3600),
+                )
+                .expect("dates it back");
+            assert!(
+                kols_node::nodes::settle_sleep(
+                    kols_core::NetworkProfile::Conversation,
+                    &hers,
+                    std::time::SystemTime::now(),
+                    kols_node::nodes::IDLE_TIMEOUT,
+                ),
+                "quiet past the timeout, so the supervisor puts it to sleep"
+            );
+            assert!(
+                kols_node::nodes::should_sleep(
+                    kols_core::NetworkProfile::Conversation,
+                    &hers,
+                    std::time::SystemTime::now(),
+                    kols_node::nodes::MAX_IDLE_TIMEOUT,
+                ),
+                "a recorded sleep holds whatever the timeout"
+            );
+            {
+                let his = Store::open(bob_root.clone()).expect("his store");
+                std::thread::sleep(std::time::Duration::from_millis(20));
+                his.mark_asleep(std::time::SystemTime::now())
+                    .expect("records his sleep");
+                assert!(
+                    his.slept_since_activity(std::time::SystemTime::now()),
+                    "his sleep is recorded"
+                );
+            }
+
             bob_nodes.reconcile(
                 &[
                     spec(conversation, &bob_root, true),
@@ -3290,6 +3397,15 @@ fn a_message_written_to_a_sleeping_conversation_wakes_the_other_side() {
                     attachments: Vec::new(),
                 })
                 .expect("Alice is keyed and may speak");
+            assert!(
+                !kols_node::nodes::should_sleep(
+                    kols_core::NetworkProfile::Conversation,
+                    &hers,
+                    std::time::SystemTime::now(),
+                    kols_node::nodes::MAX_IDLE_TIMEOUT,
+                ),
+                "her send ends her recorded sleep"
+            );
 
             // The knock arrives and Bob's supervisor is asked to wake it.
             let knocked = within(60);
@@ -3309,6 +3425,10 @@ fn a_message_written_to_a_sleeping_conversation_wakes_the_other_side() {
                     kols_node::nodes::IDLE_TIMEOUT,
                 ),
                 "a knock marks the conversation awake"
+            );
+            assert!(
+                !his.slept_since_activity(std::time::SystemTime::now()),
+                "and the knock ends his recorded sleep"
             );
             bob_nodes.reconcile(
                 &[
@@ -3427,7 +3547,75 @@ fn a_conversation_waiting_for_its_second_member_does_not_sleep() {
         "two hours of nothing is past the idle timeout"
     );
     assert!(
-        !kols_node::nodes::should_sleep(kols_core::NetworkProfile::Conversation, &hers, later),
+        !kols_node::nodes::should_sleep(
+            kols_core::NetworkProfile::Conversation,
+            &hers,
+            later,
+            alice_ws.idle_timeout()
+        ),
         "but nobody has joined it yet, so it must stay up to be joined"
+    );
+}
+
+/// A sleep sticks until something happens (the user, 2026-10-11): raising the
+/// idle timeout must not wake a conversation nobody sent in, so the
+/// supervisor's record of the sleep holds it asleep until a send or a knock
+/// leaves newer activity.
+#[test]
+fn a_recorded_sleep_holds_until_something_happens_in_the_conversation() {
+    let (_a, _b, alice_ws, alice, _bob_ws, bob) = two_sides("dm-sleep-sticks");
+    let bob_id = bob.identity().expect("identity").id();
+    let started = kols_node::dm::start(&alice_ws, &alice, &bob_id, None).expect("starts");
+    let hers = Store::open(alice_ws.path_for(&started.conversation)).expect("hers");
+    let now = std::time::SystemTime::now;
+    assert!(
+        !hers.slept_since_activity(now()),
+        "starting it marks it awake, and nothing has put it to sleep"
+    );
+
+    // 20 ms apart, which orders the markers on a filesystem with finer mtimes
+    // than that (not on one with 1–2 s mtimes, where equal times read awake).
+    std::thread::sleep(std::time::Duration::from_millis(20));
+    hers.mark_asleep(now()).expect("records the sleep");
+    assert!(
+        hers.slept_since_activity(now()),
+        "asleep, whatever the timeout is now"
+    );
+
+    // After the clock steps back, the sleep is dated in the future. It is
+    // ignored, or a send (written at the earlier time) could not wake it.
+    let ahead = now() + std::time::Duration::from_secs(3600);
+    hers.mark_asleep(ahead).expect("dated ahead");
+    assert!(
+        !hers.slept_since_activity(now()),
+        "a sleep dated after now is ignored"
+    );
+    assert!(
+        hers.slept_since_activity(ahead),
+        "and holds again once the clock has passed it"
+    );
+
+    std::thread::sleep(std::time::Duration::from_millis(20));
+    hers.mark_asleep(now()).expect("records the sleep");
+    std::thread::sleep(std::time::Duration::from_millis(20));
+    hers.mark_awake().expect("a knock or a send");
+    assert!(
+        !hers.slept_since_activity(now()),
+        "anything newer than the sleep wakes it"
+    );
+
+    // Found awake, the supervisor clears the record, so a marker a clock step
+    // left in the future cannot come back into force after a wake. (Still
+    // waiting for its second member, so `settle_sleep` finds it awake.)
+    hers.mark_asleep(ahead).expect("dated ahead again");
+    assert!(!kols_node::nodes::settle_sleep(
+        kols_core::NetworkProfile::Conversation,
+        &hers,
+        now(),
+        kols_node::nodes::IDLE_TIMEOUT,
+    ));
+    assert!(
+        !hers.slept_since_activity(ahead),
+        "cleared, so it does not hold once the clock passes it"
     );
 }

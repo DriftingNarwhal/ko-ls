@@ -318,6 +318,20 @@ pub struct StorageCeiling {
     pub networks: usize,
 }
 
+/// How long a conversation here stays awake after the last message — D41.
+///
+/// In whole minutes, with the range the core accepts. The range is sent so the
+/// control can say it; the core refuses outside it regardless.
+#[derive(Debug, Serialize)]
+pub struct IdleTimeout {
+    /// The timeout now, in minutes.
+    pub minutes: u64,
+    /// The shortest the core accepts.
+    pub min_minutes: u64,
+    /// The longest the core accepts.
+    pub max_minutes: u64,
+}
+
 /// What this machine offers one network — Core §4.3.
 #[derive(Debug, Serialize)]
 pub struct Contribution {

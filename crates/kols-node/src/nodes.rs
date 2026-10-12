@@ -60,7 +60,8 @@
 //!
 //! `05` §4 says idle conversations "should be suspended and woken on demand
 //! rather than all held live", and D41 (2026-10-10) settles how: a conversation
-//! nobody has talked in for [`IDLE_TIMEOUT`] runs no node at all
+//! nobody has talked in for the idle timeout (a *this machine* setting,
+//! [`IDLE_TIMEOUT`] by default) runs no node at all
 //! ([`Tier::Asleep`]), and is woken by this member sending in it or by a knock
 //! from the other side through the network it was arranged in. An awake one is
 //! warm like anything else. Setting one aside is not offered.
@@ -148,9 +149,21 @@ pub const POLL_SETTLE: std::time::Duration = std::time::Duration::from_secs(45);
 
 /// How long a conversation stays awake after the last message either way — D41.
 ///
-/// The user's default, "an hour or something", meant to become a setting
-/// (`design/09` §2). Until it is one, this is the value.
+/// The user's default, "an hour or something". It is a *this machine* setting
+/// (`design/09` §2, §4.2), read with [`crate::workspace::Workspace::idle_timeout`];
+/// this is its value until somebody changes it.
 pub const IDLE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(3600);
+
+/// The shortest idle timeout the setting accepts: five minutes (the user,
+/// 2026-10-11). Shorter, and a conversation would sleep between two replies
+/// of an ordinary exchange, and every reply would pay a knock.
+pub const MIN_IDLE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5 * 60);
+
+/// The longest idle timeout the setting accepts: a day (the user, 2026-10-11).
+/// An awake conversation costs its pull loop whether anyone talks or not
+/// (`design/05` §4), and D41's point is that an idle one should not; there is
+/// deliberately no *never*.
+pub const MAX_IDLE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(24 * 3600);
 
 /// Whether a network is a conversation that has gone to sleep — D41.
 ///
@@ -185,12 +198,23 @@ pub fn is_asleep(
 /// `Founders` only and never in `everyone` (Core §2.3; DI governance genesis).
 /// Counting `everyone` saw one member forever in a pairwise conversation, so
 /// until 2026-10-12 no accepted conversation ever slept.
+///
+/// **A sleep sticks.** One already put to sleep ([`crate::store::Store::mark_asleep`])
+/// stays asleep until something happens in it, whatever `timeout` is now, so
+/// raising the setting wakes nothing (the user, 2026-10-11). [`settle_sleep`]
+/// is this plus the recording, and is what a supervisor calls.
+///
+/// **Pairwise only, for now.** Two `Founders` means *the first invitee joined*;
+/// a group conversation (D21, not built) would need *no invite outstanding*
+/// instead, or its creator would sleep while later invites are unredeemed.
 pub fn should_sleep(
     profile: kols_core::NetworkProfile,
     store: &crate::store::Store,
     now: std::time::SystemTime,
+    timeout: std::time::Duration,
 ) -> bool {
-    is_asleep(profile, store.last_activity(), now, IDLE_TIMEOUT)
+    (is_asleep(profile, store.last_activity(), now, timeout)
+        || (profile == kols_core::NetworkProfile::Conversation && store.slept_since_activity(now)))
         && store.state().is_ok_and(|state| {
             state
                 .groups
@@ -199,11 +223,43 @@ pub fn should_sleep(
         })
 }
 
+/// [`should_sleep`], recorded: what a supervisor asks each pass — D41.
+///
+/// A newly decided sleep is recorded dated at its idle deadline (the last
+/// activity plus `timeout`), not at now, so a send or an arrival that races
+/// the decision is newer than it and wakes the conversation. A conversation
+/// found awake has any old record cleared. A failed write only loses the
+/// stickiness and is retried next pass; the answer is unaffected.
+///
+/// Take `now` before calling: the deadline is capped at it, which is what
+/// keeps a send landing during the call newer than the record.
+pub fn settle_sleep(
+    profile: kols_core::NetworkProfile,
+    store: &crate::store::Store,
+    now: std::time::SystemTime,
+    timeout: std::time::Duration,
+) -> bool {
+    let asleep = should_sleep(profile, store, now, timeout);
+    if profile != kols_core::NetworkProfile::Conversation {
+        return asleep;
+    }
+    if !asleep {
+        let _ = store.clear_asleep();
+    } else if !store.slept_since_activity(now) {
+        let deadline = store
+            .last_activity()
+            .map_or(std::time::UNIX_EPOCH, |active| active + timeout)
+            .min(now);
+        let _ = store.mark_asleep(deadline);
+    }
+    asleep
+}
+
 /// What tier a network should be kept at — `design/09` §2's policy, applied.
 ///
 /// `in_view` is the network the member is looking at, if any. `set_aside` is
 /// whether the member has asked for this one to be kept cold. `asleep` is
-/// [`is_asleep`]'s answer, and wins over being in view: reading what somebody
+/// [`should_sleep`]'s answer, and wins over being in view: reading what somebody
 /// sent is not a reason to hold a connection open to them (the user,
 /// 2026-10-10), and the history being read is already on this machine.
 ///
@@ -298,7 +354,7 @@ pub struct Spec {
     pub root: std::path::PathBuf,
     /// Whether the member has asked for this network to be kept cold.
     pub set_aside: bool,
-    /// Whether this is a conversation asleep under D41 ([`is_asleep`]).
+    /// Whether this is a conversation asleep under D41 ([`should_sleep`]).
     pub asleep: bool,
 }
 

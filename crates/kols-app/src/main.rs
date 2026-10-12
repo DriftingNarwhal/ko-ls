@@ -1050,6 +1050,34 @@ fn set_storage_ceiling(app: tauri::State<'_, App>, bytes: u64) -> Result<(), Str
     app.workspace.set_ceiling(bytes)
 }
 
+/// How long a conversation here stays awake after the last message — D41.
+///
+/// A workspace command for the ceiling's reason: it is about every
+/// conversation on this installation, not one network (`design/09` §4.2).
+#[tauri::command]
+fn idle_timeout(app: tauri::State<'_, App>) -> dto::IdleTimeout {
+    dto::IdleTimeout {
+        minutes: app.workspace.idle_timeout().as_secs() / 60,
+        min_minutes: kols_node::nodes::MIN_IDLE_TIMEOUT.as_secs() / 60,
+        max_minutes: kols_node::nodes::MAX_IDLE_TIMEOUT.as_secs() / 60,
+    }
+}
+
+/// Sets how long a conversation here stays awake after the last message.
+///
+/// It takes effect at the next reconcile (within a supervisor tick): an awake
+/// conversation already quiet for longer than a shortened timeout goes to
+/// sleep then. Raising it wakes nothing: a conversation already asleep stays
+/// asleep until a send or a knock (`Store::mark_asleep`, the user, 2026-10-11).
+#[tauri::command]
+fn set_idle_timeout(app: tauri::State<'_, App>, minutes: u64) -> Result<(), String> {
+    let seconds = minutes
+        .checked_mul(60)
+        .ok_or_else(|| "the idle timeout is too long".to_owned())?;
+    app.workspace
+        .set_idle_timeout(std::time::Duration::from_secs(seconds))
+}
+
 /// Chooses how joiners are admitted.
 #[tauri::command]
 fn set_admission_mode(app: tauri::State<'_, App>, mode: String) -> Result<(), String> {
@@ -2851,6 +2879,7 @@ fn reconcile_nodes(handle: &tauri::AppHandle, app: &tauri::State<'_, App>) {
         return;
     };
     let in_view = app.in_view.lock().ok().and_then(|view| *view);
+    let idle_timeout = app.workspace.idle_timeout();
 
     let specs: Vec<kols_node::nodes::Spec> = app
         .workspace
@@ -2862,11 +2891,13 @@ fn reconcile_nodes(handle: &tauri::AppHandle, app: &tauri::State<'_, App>) {
                 network: *store.network(),
                 set_aside: store.is_set_aside(),
                 // D41: a conversation nobody has talked in for the idle
-                // timeout runs no node until a send or a knock wakes it.
-                asleep: kols_node::nodes::should_sleep(
+                // timeout runs no node until a send or a knock wakes it, and
+                // the sleep is recorded so raising the timeout wakes nothing.
+                asleep: kols_node::nodes::settle_sleep(
                     known.profile,
                     &store,
                     std::time::SystemTime::now(),
+                    idle_timeout,
                 ),
                 root: known.path,
             })
@@ -3215,6 +3246,8 @@ fn main() {
             set_presence,
             storage_ceiling,
             set_storage_ceiling,
+            idle_timeout,
+            set_idle_timeout,
             fetch_history,
             forget_network
         ])

@@ -176,6 +176,48 @@ impl Workspace {
         std::fs::write(self.root.join("ceiling"), bytes.to_string()).map_err(|err| err.to_string())
     }
 
+    /// How long a conversation here stays awake after the last message — D41.
+    ///
+    /// A *this machine* setting (`design/09` §4.2), outside the `kols-api`
+    /// vocabulary for the ceiling's reason: it is about every conversation on
+    /// this installation, not one network. Each side's timer is its own, so
+    /// nobody else ever needs to know it.
+    ///
+    /// A file holding a value outside the accepted range — edited by hand, or
+    /// written by a build with other bounds — reads as the default rather than
+    /// being honoured or clamped.
+    pub fn idle_timeout(&self) -> std::time::Duration {
+        std::fs::read_to_string(self.root.join("idle-timeout"))
+            .ok()
+            .and_then(|text| text.trim().parse().ok())
+            .map(std::time::Duration::from_secs)
+            .filter(|timeout| {
+                (crate::nodes::MIN_IDLE_TIMEOUT..=crate::nodes::MAX_IDLE_TIMEOUT).contains(timeout)
+            })
+            .unwrap_or(crate::nodes::IDLE_TIMEOUT)
+    }
+
+    /// Sets how long a conversation here stays awake after the last message.
+    ///
+    /// **Refuses a value outside five minutes to a day rather than clamping
+    /// it**, so what is stored is always what the member asked for.
+    pub fn set_idle_timeout(&self, timeout: std::time::Duration) -> Result<(), String> {
+        let range = crate::nodes::MIN_IDLE_TIMEOUT..=crate::nodes::MAX_IDLE_TIMEOUT;
+        if !range.contains(&timeout) {
+            return Err(format!(
+                "the idle timeout must be between {} minutes and {} hours",
+                range.start().as_secs() / 60,
+                range.end().as_secs() / 3600,
+            ));
+        }
+        std::fs::create_dir_all(&self.root).map_err(|err| err.to_string())?;
+        std::fs::write(
+            self.root.join("idle-timeout"),
+            timeout.as_secs().to_string(),
+        )
+        .map_err(|err| err.to_string())
+    }
+
     /// Takes this installation's application claim, or asks the holder to show itself.
     ///
     /// # What this is for, and what it is not

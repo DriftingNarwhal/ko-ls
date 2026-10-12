@@ -1679,6 +1679,58 @@ impl Store {
         )
     }
 
+    /// Notes that this conversation was put to sleep at `at` — D41.
+    ///
+    /// Dated at the moment the sleep was decided *from* (the idle deadline),
+    /// not at the moment it was written, so anything that happened after that
+    /// moment, including a send or an arrival racing the decision, is newer and
+    /// wakes it.
+    ///
+    /// What makes a sleep stick: [`slept_since_activity`](Self::slept_since_activity)
+    /// holds it asleep until something newer happens, so **raising the idle
+    /// timeout wakes nothing** (the user, 2026-10-11). Only a send or a knock
+    /// does, as D41 says; the new timeout applies from the next time a
+    /// conversation goes quiet.
+    pub fn mark_asleep(&self, at: std::time::SystemTime) -> Result<(), StoreError> {
+        let path = self.root.join("asleep");
+        write_atomically(
+            &self.root,
+            path.clone(),
+            now_millis().to_string().as_bytes(),
+        )?;
+        fs::File::options()
+            .write(true)
+            .open(path)?
+            .set_modified(at)?;
+        Ok(())
+    }
+
+    /// Forgets a recorded sleep, once the conversation is awake again.
+    ///
+    /// So a marker left dated in the future by a clock step back cannot come
+    /// back into force later, after the conversation has been woken and used.
+    pub fn clear_asleep(&self) -> Result<(), StoreError> {
+        match fs::remove_file(self.root.join("asleep")) {
+            Err(err) if err.kind() != io::ErrorKind::NotFound => Err(err.into()),
+            _ => Ok(()),
+        }
+    }
+
+    /// Whether this conversation was put to sleep and nothing has happened
+    /// since: the `asleep` marker is newer than [`last_activity`](Self::last_activity).
+    ///
+    /// Strictly newer, so a wake landing in the same mtime tick as the sleep
+    /// reads as awake, which is the safe direction. **A marker dated after
+    /// `now` is ignored**: after the clock steps back, a send would otherwise
+    /// write activity older than the sleep and could not wake the conversation
+    /// until the clock caught up. Read from mtimes like the rest of the
+    /// activity clock, with the same limits (`design/09` §2).
+    pub fn slept_since_activity(&self, now: std::time::SystemTime) -> bool {
+        modified(self.root.join("asleep")).is_some_and(|slept| {
+            slept <= now && self.last_activity().is_none_or(|active| slept > active)
+        })
+    }
+
     /// When anything last happened here: a record written or arrived, or the
     /// network woken — the clock D41's idle timeout runs against.
     ///

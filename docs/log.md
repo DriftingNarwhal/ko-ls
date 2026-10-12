@@ -24,6 +24,22 @@ Kept because this project keeps re-learning the same lessons and paying for them
 
 ---
 
+- **2026-10-12** — **No accepted conversation had ever slept.** D41's sleep and knock were built
+  and shipped on 2026-10-11, and ran only in the test that forced a conversation asleep. The rule
+  that keeps a conversation awake until the other member joins counted `everyone`, and a
+  network's creator is in `Founders` only, never in `everyone` (Core §2.3, DI's governance
+  genesis), so a pairwise conversation's `everyone` held one member forever. Every participant
+  is a `Founder` (spec 07 §1.2), so that is the count now. **What hid it:** the knock test set
+  the asleep state directly in the supervisor's spec, which bypassed `should_sleep`, the one
+  function that was wrong. The test now asks `should_sleep` on an accepted conversation, and
+  fails against the old rule.
+  Fixing it exposed a second bug that could not happen before: admitting the joiner writes
+  governance only, which the activity clock does not read, so a request accepted after the
+  timeout let the creator's side sleep before the joiner had the key. The join now marks the
+  creator awake.
+  The same day the idle timeout became a setting, five minutes to a day, and **a sleep sticks**,
+  so raising the timeout wakes nothing (the user, 2026-10-11). `design/09` §2 has both.
+
 - **2026-10-11** — **A conversation sleeps, and a knock wakes it (D41, built).** Built on the
   user's go-ahead, with spec 07 v0.15 §6.2's text. `design/09` §2 records the result. Three things
   were learned building it.

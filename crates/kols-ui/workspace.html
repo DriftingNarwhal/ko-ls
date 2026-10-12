@@ -276,6 +276,20 @@
               members until there is room. Your own reading is never what gives
               way.
             </p>
+
+            <form id="idle-form" class="settings-form">
+              <label for="idle-minutes">a quiet conversation sleeps after, minutes</label>
+              <input id="idle-minutes" type="number" step="1" />
+              <button type="submit">save</button>
+            </form>
+            <p class="settings-error" id="idle-error" hidden></p>
+            <p class="dim" id="idle-range"></p>
+            <p class="dim">
+              A direct conversation nobody has written in for this long stops
+              running here, and costs nothing until somebody sends a message,
+              which wakes it on both sides. Opening it to read does not wake it.
+              This machine's timer is its own; the other person's may differ.
+            </p>
           </section>
           </div>
         </div>

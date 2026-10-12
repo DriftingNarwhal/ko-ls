@@ -717,6 +717,16 @@ async function drawCeiling() {
     `across ${limit.networks} network${limit.networks === 1 ? "" : "s"}.`;
 }
 
+async function drawIdleTimeout() {
+  const idle = await invoke("idle_timeout");
+  el("idle-minutes").value = String(idle.minutes);
+  el("idle-minutes").min = String(idle.min_minutes);
+  el("idle-minutes").max = String(idle.max_minutes);
+  el("idle-range").textContent =
+    `Between ${idle.min_minutes} minutes and ${idle.max_minutes / 60} hours; ` +
+    `an hour unless you change it.`;
+}
+
 for (const button of document.querySelectorAll(".settings-tab")) {
   button.addEventListener("click", async () => {
     showSettings(button.dataset.tab);
@@ -730,6 +740,11 @@ async function drawSettings() {
     await drawCeiling();
   } catch (err) {
     settingsSays("ceiling-error", String(err && err.message ? err.message : err));
+  }
+  try {
+    await drawIdleTimeout();
+  } catch (err) {
+    settingsSays("idle-error", String(err && err.message ? err.message : err));
   }
 }
 
@@ -761,6 +776,20 @@ el("ceiling-form").addEventListener("submit", async (event) => {
     await drawCeiling();
   } catch (err) {
     settingsSays("ceiling-error", String(err && err.message ? err.message : err));
+  }
+});
+
+// Not clamped here: the core refuses a value outside its range, and saying so
+// beats quietly saving something other than what was typed.
+el("idle-form").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  el("idle-error").hidden = true;
+  const minutes = Math.floor(Number(el("idle-minutes").value) || 0);
+  try {
+    await invoke("set_idle_timeout", { minutes });
+    await drawIdleTimeout();
+  } catch (err) {
+    settingsSays("idle-error", String(err && err.message ? err.message : err));
   }
 });
 

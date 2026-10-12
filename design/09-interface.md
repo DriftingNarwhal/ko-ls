@@ -1,6 +1,6 @@
 # Interface
 
-**Document status:** v0.46 — §2's sleeping conversation and knock are **built**, 2026-10-11, with spec 07 v0.15 §6.2's text. *Not built* is struck through where it was said. A new block after the design records where the build departs from it: the knock leaves once the conversation's node runs, not after its reservation. *Nothing pending* means the other member has joined. *Seen* is a connection, and the *not blocked* check consults nothing, since no block list exists. The block also lists what is not built: the presence-beat resend, §1.9's *waiting for them* line, and the timeout as a setting. It covers the limits of reading activity from file mtimes, one of which can wake a conversation on opening. §1.10 follows. Previously v0.45 — §2's two fixes the knock needed first are done, 2026-10-11, and are struck through with a note rather than removed: acks are matched to their send and `Received` is answered only to a declared kind (E18, Core v1.8 §5.1, `06` §18), and `dm::accept` reports a failed `origin` write. Point 6's divergence is fixed; clearing the knock on connect rather than on the ack still stands, since a client from before E18 still answers `Received` to any kind. The knock itself is still not built. Previously v0.44 — §2 designs D41's knock, 2026-10-11, not built: a send or a knock wakes a sleeping conversation and opening it does not; the knock (`chat`/`dm-knock` on E10) carries only the conversation id: no identity link, since the receiver checks it against the conversation's stored origin, and no addresses, since that would be E13's deferred address exchange with a gate the request's sender cannot meet, so the woken side dials through the borrowed relay as now; it is cleared when the peer connects, never on the carrier's ack; it is resent every 15 s and when the peer is seen; an asleep tier with no node; a per-side idle timer. It records what the knock needs first (acks matched to their send, a protocol change; the accepter's `origin` write failing loudly), an honest limit on the request sender's side, the protocol's `Received` divergence from Core §5.1, and that the dial is no longer the wake signal for a conversation. Previously v0.43 — §2's measured idle traffic is corrected from 1.8 to about 0.6 KB/s each way; `05` §4 has why. Previously v0.42 — §2 records D41, the user's decision of 2026-10-10: a direct conversation **sleeps**, with no node running, until a knock sent through the shared network wakes it, and goes back to sleep after an idle timeout of about an hour that the user can change. Designed in outline and **not built**; what it leaves open is listed there. It supersedes §7's ninth question, whether a conversation can be set aside, and §2's flag that carried it, and the paragraph saying a conversation needs no case of its own. §2 also points at what an idle conversation was measured to cost on 2026-10-10 (`05` §4). §1.10's conversation rows follow. Previously v0.41 — §1.6's per-message delivery state is two states, *sent* and *delivered*, by the user's decision of 2026-10-10; *read* is no longer owed, and a read receipt is a possible later opt-in. §4.3 and §7.7 say read state is local only and never published, and §7.7 no longer says it becomes shared when multi-device lands — only that whether one person's devices share it is open. Previously v0.40 — §1.3's row contents are **built**, 2026-10-10: unread per network and conversation, the workspace window's total in its title, the connection dot, and the tier with a set-aside row's *last checked*. Building them found that §1.3 and §4.3 had not held since a node ran per network: unread was counted by the network window from the events it heard, so a message in any network it was not showing was counted by nobody. **§4.3's mechanism moves to the shell**, which hears every network's events, and §1.3 states the limits of what it counts. §1.10's set-aside control is placed on network rows and not on conversations, following §2, against a code comment that said otherwise — recorded in §2 and as §7's ninth question rather than settled. §1.12's lock closes conversation windows too, which it had not. §1's *leave or forget* follows the node per network: *leave* wherever a node runs, and a set-aside network's departure is never reported as told. §1.10 says the local order is not built. §1.9's heading, printed twice, is printed once. Previously v0.39 — §1.12's note that `05` §1.1 needed amending now says it was, in `05` v1.35 on 2026-10-10; the amendment had been owed since this section was written. Previously v0.38 — §3 records that the address exchange it describes as the DM bootstrap is **E13, deferred by the user on 2026-10-05**, and is not built: direct messages reach each other through D39's borrowed rendezvous instead. §3 now says so where the mechanism is described, keeps the disclosure gate for if it is picked up, and marks the bounded-fallback paragraph as describing a circuit Core §5.2 no longer permits. Previously v0.37 — §3 gains relay *management*, which a network had none of: a relay
+**Document status:** v0.47 — §2's idle timeout is a **setting**, built 2026-10-12: a *this machine* value from five minutes to a day, an hour unless changed, refused rather than clamped outside that range (the user, 2026-10-11), and placed beside the storage ceiling under §4.2's *this device* and §1.13's *mine*. **A sleep sticks**: raising the timeout wakes nothing, only a send or a knock does (the user, 2026-10-11). The not-built item and the open question about the timeout's ceiling are struck through rather than removed. §2 also records that **no accepted conversation slept until 2026-10-12**: the never-sleep-while-waiting rule counted `everyone`, which never holds a network's creator, and now counts `Founders`; and that a request accepted after the timeout now keeps the creator's side awake through the join. The activity clock's limits gain three: the sleep record is an mtime like the rest, a re-fold can still clear it, and *two Founders* holds only for a pairwise conversation. §4.2's *this device* no longer says it is empty. Previously v0.46 — §2's sleeping conversation and knock are **built**, 2026-10-11, with spec 07 v0.15 §6.2's text. *Not built* is struck through where it was said. A new block after the design records where the build departs from it: the knock leaves once the conversation's node runs, not after its reservation. *Nothing pending* means the other member has joined. *Seen* is a connection, and the *not blocked* check consults nothing, since no block list exists. The block also lists what is not built: the presence-beat resend, §1.9's *waiting for them* line, and the timeout as a setting. It covers the limits of reading activity from file mtimes, one of which can wake a conversation on opening. §1.10 follows. Previously v0.45 — §2's two fixes the knock needed first are done, 2026-10-11, and are struck through with a note rather than removed: acks are matched to their send and `Received` is answered only to a declared kind (E18, Core v1.8 §5.1, `06` §18), and `dm::accept` reports a failed `origin` write. Point 6's divergence is fixed; clearing the knock on connect rather than on the ack still stands, since a client from before E18 still answers `Received` to any kind. The knock itself is still not built. Previously v0.44 — §2 designs D41's knock, 2026-10-11, not built: a send or a knock wakes a sleeping conversation and opening it does not; the knock (`chat`/`dm-knock` on E10) carries only the conversation id: no identity link, since the receiver checks it against the conversation's stored origin, and no addresses, since that would be E13's deferred address exchange with a gate the request's sender cannot meet, so the woken side dials through the borrowed relay as now; it is cleared when the peer connects, never on the carrier's ack; it is resent every 15 s and when the peer is seen; an asleep tier with no node; a per-side idle timer. It records what the knock needs first (acks matched to their send, a protocol change; the accepter's `origin` write failing loudly), an honest limit on the request sender's side, the protocol's `Received` divergence from Core §5.1, and that the dial is no longer the wake signal for a conversation. Previously v0.43 — §2's measured idle traffic is corrected from 1.8 to about 0.6 KB/s each way; `05` §4 has why. Previously v0.42 — §2 records D41, the user's decision of 2026-10-10: a direct conversation **sleeps**, with no node running, until a knock sent through the shared network wakes it, and goes back to sleep after an idle timeout of about an hour that the user can change. Designed in outline and **not built**; what it leaves open is listed there. It supersedes §7's ninth question, whether a conversation can be set aside, and §2's flag that carried it, and the paragraph saying a conversation needs no case of its own. §2 also points at what an idle conversation was measured to cost on 2026-10-10 (`05` §4). §1.10's conversation rows follow. Previously v0.41 — §1.6's per-message delivery state is two states, *sent* and *delivered*, by the user's decision of 2026-10-10; *read* is no longer owed, and a read receipt is a possible later opt-in. §4.3 and §7.7 say read state is local only and never published, and §7.7 no longer says it becomes shared when multi-device lands — only that whether one person's devices share it is open. Previously v0.40 — §1.3's row contents are **built**, 2026-10-10: unread per network and conversation, the workspace window's total in its title, the connection dot, and the tier with a set-aside row's *last checked*. Building them found that §1.3 and §4.3 had not held since a node ran per network: unread was counted by the network window from the events it heard, so a message in any network it was not showing was counted by nobody. **§4.3's mechanism moves to the shell**, which hears every network's events, and §1.3 states the limits of what it counts. §1.10's set-aside control is placed on network rows and not on conversations, following §2, against a code comment that said otherwise — recorded in §2 and as §7's ninth question rather than settled. §1.12's lock closes conversation windows too, which it had not. §1's *leave or forget* follows the node per network: *leave* wherever a node runs, and a set-aside network's departure is never reported as told. §1.10 says the local order is not built. §1.9's heading, printed twice, is printed once. Previously v0.39 — §1.12's note that `05` §1.1 needed amending now says it was, in `05` v1.35 on 2026-10-10; the amendment had been owed since this section was written. Previously v0.38 — §3 records that the address exchange it describes as the DM bootstrap is **E13, deferred by the user on 2026-10-05**, and is not built: direct messages reach each other through D39's borrowed rendezvous instead. §3 now says so where the mechanism is described, keeps the disclosure gate for if it is picked up, and marks the bounded-fallback paragraph as describing a circuit Core §5.2 no longer permits. Previously v0.37 — §3 gains relay *management*, which a network had none of: a relay
 could be designated and never taken back out, so one that no longer existed was dialled by every
 member, carried in every invite, and fixable by nobody. Each designated relay now has a remove,
 gated on the capability and refusing the last one with the reason. **The client does not remove
@@ -693,7 +693,8 @@ application deciding what is on screen, and doing it from state that may have go
 sign for the rule in §1.1. Its three groups already sort by what a click costs; they now also
 sort by window, and the same line does both:
 
-- ***Mine*** — appearance, this device, and the installation-wide storage ceiling (`05` §5.1):
+- ***Mine*** — appearance, this device, the installation-wide storage ceiling (`05` §5.1) and
+  the conversations' idle timeout (§2):
   the **workspace window**, because none of it is about one network.
 - ***The network's*** — identity, the network's name, relays, admission, limits, retention,
   permissions: that **network's window**, because every one of them writes an entry that network
@@ -920,7 +921,8 @@ looks exactly like somebody offline.
 
 *The idle timer* is each side's own. A conversation goes back to sleep once nothing has been
 sent or received in it for the timeout: an hour by default, a *this machine* setting (§4.2),
-whose ceiling is still to be chosen when the setting is built. Arriving by knock counts as
+~~whose ceiling is still to be chosen when the setting is built~~ from five minutes to a day
+(the user, 2026-10-11; built 2026-10-12, below). Arriving by knock counts as
 activity. The two sides time out independently. When one sleeps, the other's connection drops,
 and its next send knocks again, so neither needs to know the other's timer.
 
@@ -954,7 +956,8 @@ A's `origin` names the person A *sent* the request to, and a bearer invite can b
 B handed it to C, B can still knock on a conversation B is not in. What that costs A is a woken
 node, a failed dial, and B learning that A is online. Griefing, at five a minute, not access.
 
-*Still open:* the timeout's ceiling and where its control sits; whether catching up after a long
+*Still open:* ~~the timeout's ceiling and where its control sits~~ (**answered 2026-10-11 by the
+user**: five minutes to a day, beside the storage ceiling; built 2026-10-12, below); whether catching up after a long
 sleep needs more than sync on connect (to check by running); whether `send_direct` reaches a
 member of a server network who is not already connected (to check by running, since it decides
 whether the 15-second resend works there or only the presence-triggered one does).
@@ -978,11 +981,16 @@ other side over real nodes, and only the person a conversation was arranged with
   reservation (step 2). The woken side redials every 15 seconds, so the two converge.
 - **"Nothing pending" in the asleep rule is read as "the other member has joined".** A
   conversation whose `Founders` group has fewer than two members never sleeps: every participant
-  is a `Founder` (spec 07 §1.2), and the creator is never in `everyone`. Until 2026-10-12 the
-  code counted `everyone`, which holds one member forever in a pairwise conversation, so no
-  accepted conversation slept. Its request
-  carries this node's addresses, and a request accepted more than an hour later would otherwise
-  name a node that is not running.
+  is a `Founder` (spec 07 §1.2), and the creator is never in `everyone`. Its request
+  carries this node's addresses, and a request accepted more than the idle timeout later would
+  otherwise name a node that is not running. Until 2026-10-12 the code counted `everyone`, which
+  holds one member forever in a pairwise conversation, so no accepted conversation slept: the
+  sleep and the knock ran only in a test that forced the asleep state rather than asking
+  `should_sleep`. **And the join itself keeps the creator awake** (2026-10-12): admitting the
+  second `Founder` writes governance only, which the activity clock does not read, so a request
+  accepted after the timeout let the creator's side sleep as soon as the joiner was in, before
+  the joiner had the key only the creator's node holds. `admit_redeemers` now marks the creator's
+  side awake, as accepting already marks the joiner's.
 - **Who was last seen** is taken from the conversation's own connections. A message written while
   the other was connected counts as received. That is flagged in the code (`keep_knock`).
 - **Step 4's *not blocked* check consults nothing**, because the client has no block list. The
@@ -993,8 +1001,29 @@ other side over real nodes, and only the person a conversation was arranged with
 - **The early resend on a presence beat.** Only a connection from the other person in the shared
   network sends a pending knock early.
 - **§1.9's *waiting for them* line** while a knock is unanswered.
-- **The timeout as a setting.** It is the constant `kols_node::nodes::IDLE_TIMEOUT`, one hour. Its
-  ceiling is not chosen either.
+- ~~**The timeout as a setting.** It is the constant `kols_node::nodes::IDLE_TIMEOUT`, one hour. Its
+  ceiling is not chosen either.~~ **Built 2026-10-12**, next paragraph.
+
+**The idle timeout as a setting, built 2026-10-12.** The range is the user's, 2026-10-11: **five
+minutes to a day, inclusive**, an hour until changed (`IDLE_TIMEOUT` is now the default, with
+`MIN_IDLE_TIMEOUT` and `MAX_IDLE_TIMEOUT` beside it in `kols_node::nodes`). A value outside the
+range is **refused, not clamped**, so what is stored is what the member asked for, and a stored
+value outside it (edited by hand, or written by a build with other bounds) reads as the default.
+It is a *this machine* setting held by the workspace (`Workspace::idle_timeout`, a file of
+seconds), outside `kols-api` for the storage ceiling's reason: it is about every conversation on
+this installation, not one network (`05` §3.1). Each side's timer is its own, so nobody else
+needs to know it. The window reaches it through two shell commands in minutes, and its control
+sits beside the storage ceiling (§4.2, §1.13). **It takes effect at the next reconcile**, within
+the supervisor's 60-second tick.
+
+**A sleep sticks** (the user, 2026-10-11): raising the timeout wakes nothing; only a send or a
+knock does, as D41 says. The supervisor records a new sleep (`nodes::settle_sleep`,
+`Store::mark_asleep`) and clears the record once the conversation is awake, and `should_sleep`
+holds a recorded sleep until something newer happens in the conversation. The record is dated
+at the idle deadline, the last activity plus the timeout, and not at the moment it is written,
+so a send or an arrival that races the decision is newer and wakes the conversation. A record
+dated after *now* is ignored, so a clock stepped back cannot hold a conversation asleep against
+a send. Those two choices were Claude's, checked by the reviewer.
 
 *Limits of the activity clock.* Activity is read from file modification times: the newest
 `arrivals` of the conversation's channels and an `awake` marker file for the idle timer, and the
@@ -1003,7 +1032,14 @@ wall-clock step, can misjudge the timer. Rebuilding `own-readings` without a sen
 spurious knock. A stale re-fold during a read rewrites `arrivals` (`rebuild_arrivals`), which
 can wake a conversation on opening it. That goes against *opening does not wake* above. It is
 rare, and it is recorded as a limit. A possible follow-up is to store the times (milliseconds or
-an HLC reading) rather than read mtimes.
+an HLC reading) rather than read mtimes. Three more since 2026-10-12:
+- **The sleep record is an mtime too** (an `asleep` marker), with the same limits as the rest.
+- **The same re-fold can clear a recorded sleep**: a rewritten `arrivals` is newer than the
+  record, so the conversation reads as awake and its node starts, as on opening above, and it
+  then stays awake for the current timeout, however long the member raised it to.
+- **"The other member has joined" is read as two `Founders`, which holds only for a pairwise
+  conversation.** A group conversation (D21, not built) would need *no invite outstanding*
+  instead, or its creator would sleep while later invites are unredeemed.
 
 *Idle cost.* `tests/idle_cost.rs` was not re-run. An asleep conversation runs no node, so its idle
 cost is zero by construction. What an awake one costs is unchanged (`05` §4).
@@ -1394,9 +1430,10 @@ without that they are two words and the line between them is the whole point.
   makes reset-without-the-theme's-cooperation a precondition of shipping theming at all, so
   the section describes what is coming and why the order is that way round rather than
   offering a control that would be a reassurance instead of a reset.
-- **This device** — anything nothing else needs to know. Empty today, and named so that the
-  first local preference has somewhere obvious to land instead of being filed under the
-  network's business.
+- **This device** — anything nothing else needs to know. ~~Empty today~~ It holds the account
+  and its lock, the installation-wide storage ceiling (`05` §5.1) and, since 2026-10-12, how long
+  a quiet conversation stays awake (§2's idle timeout). It was named so that the first local
+  preference had somewhere obvious to land instead of being filed under the network's business.
 
 **The network's — signed, replayed by every joiner, permanent.**
 

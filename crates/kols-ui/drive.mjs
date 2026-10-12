@@ -154,6 +154,7 @@ const asked = [];
 // Empty unless a check is exercising the shared-relay warning.
 let sharedRelays = [];
 let ceiling = { ceiling: 2 * 1024 * 1024 * 1024, used: 1_288_490_188, networks: 3 };
+let idleMinutes = 60;
 
 const dom = new JSDOM(html, { runScripts: "outside-only", pretendToBeVisual: true, url: "http://localhost/" });
 const { window } = dom;
@@ -1068,6 +1069,15 @@ const wsAnswers = {
     ceiling = { ...ceiling, ceiling: args.bytes };
     return null;
   },
+  idle_timeout: () => ({ minutes: idleMinutes, min_minutes: 5, max_minutes: 1440 }),
+  set_idle_timeout: (args) => {
+    // What the core does: refuse outside the range, never clamp.
+    if (args.minutes < 5 || args.minutes > 1440) {
+      throw new Error("the idle timeout must be between 5 minutes and 24 hours");
+    }
+    idleMinutes = args.minutes;
+    return null;
+  },
   export_bundle: () => 2,
   import_bundle: () => ({ added: [], skipped: [], refused: [] }),
   create_account: () => null,
@@ -1583,6 +1593,33 @@ wsEl("ceiling-form").dispatchEvent(
 await settled();
 say("a ceiling is floored at one gigabyte, never zero",
     ceiling.ceiling === 1024 * 1024 * 1024, String(ceiling.ceiling));
+
+// ── how long a quiet conversation stays awake (D41) ────────────────────
+await wsWindow.eval('drawIdleTimeout()');
+say("the idle timeout shows an hour by default", wsEl("idle-minutes").value === "60",
+    wsEl("idle-minutes").value);
+say("and says its range",
+    wsEl("idle-range").textContent.includes("5 minutes") &&
+      wsEl("idle-range").textContent.includes("24 hours"),
+    wsEl("idle-range").textContent);
+
+wsEl("idle-minutes").value = "15";
+wsEl("idle-form").dispatchEvent(
+  new wsWindow.Event("submit", { bubbles: true, cancelable: true }),
+);
+await settled();
+say("a timeout in range is saved as typed", idleMinutes === 15, String(idleMinutes));
+
+// Out of range is refused and said, not clamped into something else.
+wsEl("idle-minutes").value = "2";
+wsEl("idle-form").dispatchEvent(
+  new wsWindow.Event("submit", { bubbles: true, cancelable: true }),
+);
+await settled();
+say("a timeout out of range is refused, not clamped",
+    idleMinutes === 15 && !wsEl("idle-error").hidden &&
+      wsEl("idle-error").textContent.includes("between"),
+    `${idleMinutes} / ${wsEl("idle-error").textContent}`);
 
 // ── the conversation window ────────────────────────────────────────────
 //
