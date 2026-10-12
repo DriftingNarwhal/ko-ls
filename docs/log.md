@@ -24,6 +24,21 @@ Kept because this project keeps re-learning the same lessons and paying for them
 
 ---
 
+- **2026-10-12** — **A presence beat sends a knock early, and wakes a conversation only once.**
+  The early resend on a beat (D41, `design/09` §2) was first written to wake a sleeping
+  conversation on every fresh beat, as a connection does on every arrival. The review caught that
+  a beat is level-triggered: it repeats every thirty seconds while the person is around, and a
+  knock that never lands stays pending, so the conversation would be woken every thirty seconds
+  and never sleep, defeating D41. The bound is one beat-wake per pending knock per run (Claude's
+  choice; waking on every beat and leaving it as an honest limit were the alternatives).
+  **Measured while building**, in a scratch test against `intranet-transport`, since deleted:
+  `send_direct` to a member not currently connected dials them if the swarm knows an address and
+  is delivered; with no address it fails at once with `DirectFailed`. On loopback with discovery
+  on, two members sharing only a third connect directly within about half a second. That answers
+  `design/09` §2's open question about the 15-second resend. **Untested:** a beat bringing a
+  running conversation's round forward. A test would have to tell a two-second tick from a
+  fifteen-second round by timing, so only the sleeping branch has a test.
+
 - **2026-10-12** — **No accepted conversation had ever slept.** D41's sleep and knock were built
   and shipped on 2026-10-11, and ran only in the test that forced a conversation asleep. The rule
   that keeps a conversation awake until the other member joins counted `everyone`, and a

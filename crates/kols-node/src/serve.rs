@@ -1431,29 +1431,14 @@ pub async fn serve(
                 connected.insert(peer);
                 record_connected(&store, &connected, sink);
                 // **Somebody with a knock waiting for them just arrived** (D41).
-                // A knock for a conversation whose node is running goes now
-                // rather than at the next round, still spaced by `Directs`. One
-                // whose conversation went back to sleep is woken first, once,
-                // here on the arrival rather than on every round they stay:
-                // knocking would have them dial a node that is not running.
-                for (conversation, to) in store.pending_knocks() {
-                    if to.peer_id() != peer || directs.cannot_be_knocked.contains(&to) {
-                        continue;
-                    }
-                    let Some(workspace) = crate::workspace::Workspace::containing(&store) else {
-                        break;
-                    };
-                    let Ok(theirs) = Store::open(workspace.path_for(&conversation)) else {
-                        continue;
-                    };
-                    if theirs.is_being_served() {
-                        last_offered = None;
-                    } else if theirs.mark_awake().is_ok() {
-                        sink(&[Event::ConversationWoken {
-                            network: conversation,
-                        }]);
-                    }
-                }
+                knock_early(
+                    &store,
+                    peer,
+                    Noticed::Connected,
+                    &mut directs,
+                    &mut last_offered,
+                    sink,
+                );
                 note_peer_seen(&store, &node, &identity.id(), peer, &mut peer_seen_written);
                 // A new peer is a new place to walk from. The routing table is
                 // filled from peers this node connects to and nothing else, so
@@ -1757,10 +1742,24 @@ pub async fn serve(
                     crate::chat::now_millis(),
                     &mut reported_ahead,
                 ) {
-                    Ok(Some(beat)) => sink(&[Event::MemberPresence {
-                        identity: intranet_crypto::to_hex(beat.who.verifying_key().as_bytes()),
-                        state: beat.state.name().to_owned(),
-                    }]),
+                    Ok(Some(beat)) => {
+                        sink(&[Event::MemberPresence {
+                            identity: intranet_crypto::to_hex(beat.who.verifying_key().as_bytes()),
+                            state: beat.state.name().to_owned(),
+                        }]);
+                        // **A beat is somebody around too** (D41): a member of a
+                        // network this node holds no connection to is still
+                        // heard through whoever relays their gossip, and
+                        // `send_direct` dials them if an address is known.
+                        knock_early(
+                            &store,
+                            beat.who.peer_id(),
+                            Noticed::Beat,
+                            &mut directs,
+                            &mut last_offered,
+                            sink,
+                        );
+                    }
                     Ok(None) => {}
                     // Worth seeing and not worth stopping, the same as a refused
                     // record: either a peer is sending what it should not, or
@@ -4030,6 +4029,9 @@ struct Directs {
     /// People whose node answered a knock `Unsupported`; not knocked again by
     /// this run.
     cannot_be_knocked: BTreeSet<intranet_identity::PerNetworkIdentityId>,
+    /// Conversations a presence beat has woken while their knock is pending,
+    /// so a later beat does not wake them again ([`knock_early`]).
+    woken_by_beat: BTreeSet<intranet_identity::NetworkId>,
 }
 
 impl Directs {
@@ -4139,14 +4141,15 @@ fn keep_knock(
 /// For each knock this machine left here: if the conversation's node is
 /// running, the knock goes to the other person, spaced by [`Directs`]. If the
 /// conversation has gone back to sleep, sending would wake them to dial a node
-/// that is not there, so nothing is sent; the `Connected` arm wakes it when
-/// they next arrive here, and its knock goes on a later round. A knock for a
-/// conversation no longer on this disk is forgotten.
+/// that is not there, so nothing is sent; [`knock_early`] wakes it when they
+/// next connect here or beat, and its knock goes on a later round. A knock for
+/// a conversation no longer on this disk is forgotten.
 ///
-/// **Only a connection here counts as their being around.** A member of a big
-/// server this node is not connected to, or one whose presence is invisible,
-/// is not noticed, and what was written waits for one of them to send in the
-/// conversation.
+/// **A connection or a presence beat counts as their being around.** A member
+/// who is invisible and not connected here is not noticed, and what was written
+/// waits for one of them to send in the conversation. One who beats but whose
+/// address this node does not know is noticed and still not reached: the dial
+/// fails, as this round's would, and their beat has woken this side once.
 #[allow(clippy::too_many_arguments)]
 fn send_knocks(
     store: &Store,
@@ -4185,6 +4188,68 @@ fn send_knocks(
                     conversation.short()
                 );
             }
+        }
+    }
+}
+
+/// How the person a knock waits for was just noticed.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Noticed {
+    /// They connected here: an arrival, which happens once per connection.
+    Connected,
+    /// One of their presence beats was heard, which repeats every
+    /// [`kols_core::BEAT_MILLIS`] for as long as they are around.
+    Beat,
+}
+
+/// Sends a pending knock to `peer` early, because they were just noticed (D41).
+///
+/// Run when they connect here and when one of their presence beats is heard.
+/// A knock for a conversation whose node is running goes at the next tick
+/// rather than the next round, still spaced by [`Directs`]. One whose
+/// conversation went back to sleep is woken instead: knocking would have them
+/// dial a node that is not running, so its knock goes on a later round.
+///
+/// **A beat wakes a conversation once per pending knock.** Beats repeat, and a
+/// knock that never lands (their address unknown here, or their conversation
+/// node unable to reach this one) stays pending, so waking on every beat would
+/// keep the conversation from ever staying asleep while they are around. The
+/// record is this run's, so a restart allows one more.
+///
+/// **Flagged:** when a client wakes its own side to resend a knock is client
+/// policy that spec 07 §6.2 does not cover; this is ko-ls's choice.
+fn knock_early(
+    store: &Store,
+    peer: PeerId,
+    noticed: Noticed,
+    directs: &mut Directs,
+    last_offered: &mut Option<Instant>,
+    sink: &Sink,
+) {
+    let pending = store.pending_knocks();
+    directs.woken_by_beat.retain(|woken| {
+        pending
+            .iter()
+            .any(|(conversation, _)| conversation == woken)
+    });
+    for (conversation, to) in pending {
+        if to.peer_id() != peer || directs.cannot_be_knocked.contains(&to) {
+            continue;
+        }
+        let Some(workspace) = crate::workspace::Workspace::containing(store) else {
+            return;
+        };
+        let Ok(theirs) = Store::open(workspace.path_for(&conversation)) else {
+            continue;
+        };
+        if theirs.is_being_served() {
+            *last_offered = None;
+        } else if noticed == Noticed::Beat && !directs.woken_by_beat.insert(conversation) {
+            continue;
+        } else if theirs.mark_awake().is_ok() {
+            sink(&[Event::ConversationWoken {
+                network: conversation,
+            }]);
         }
     }
 }

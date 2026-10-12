@@ -3471,6 +3471,137 @@ fn a_message_written_to_a_sleeping_conversation_wakes_the_other_side() {
 }
 
 #[test]
+fn a_presence_beat_wakes_a_sleeping_conversation_with_a_knock_for_its_sender() {
+    use kols_node::nodes::{Nodes, Spec};
+
+    // D41's early resend. Alice and Bob are already connected in the shared
+    // network when a knock for Bob is left, so no new connection will arrive to
+    // send it early. Alice's side of the conversation is asleep, which the
+    // round never knocks for. What notices Bob is his next presence beat.
+    let (_a, _b, alice_ws, alice, _bob_ws, bob) = two_sides("dm-beat-knock");
+    let bob_id = bob.identity().expect("identity").id();
+    let shared = *alice.network();
+    let conversation = kols_node::dm::start(&alice_ws, &alice, &bob_id, None)
+        .expect("starts")
+        .conversation;
+    let seal = kols_node::serve::SEAL_TARGET_BYTES;
+    let quiet: kols_node::nodes::TaggedSink = std::sync::Arc::new(|_, _| {});
+
+    let heard = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let woken = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let alice_sink: kols_node::nodes::TaggedSink = {
+        let heard = std::sync::Arc::clone(&heard);
+        let woken = std::sync::Arc::clone(&woken);
+        std::sync::Arc::new(move |_, events: &[kols_api::Event]| {
+            for event in events {
+                match event {
+                    kols_api::Event::MemberPresence { .. } => {
+                        heard.store(true, std::sync::atomic::Ordering::SeqCst)
+                    }
+                    kols_api::Event::ConversationWoken { network } => {
+                        woken.lock().expect("lock").push(*network)
+                    }
+                    _ => {}
+                }
+            }
+        })
+    };
+    let spec = |root: &std::path::Path| Spec {
+        network: shared,
+        root: root.to_path_buf(),
+        set_aside: false,
+        asleep: false,
+    };
+    let within = |secs| std::time::Instant::now() + std::time::Duration::from_secs(secs);
+
+    tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+        .expect("a runtime")
+        .block_on(async {
+            // Only the shared network runs on either side: Alice's
+            // conversation has no node, which is what asleep means.
+            let mut alice_nodes = Nodes::here();
+            alice_nodes.reconcile(
+                &[spec(alice.root())],
+                None,
+                &alice_sink,
+                seal,
+                std::time::Instant::now(),
+            );
+            let listening = within(30);
+            while alice.addresses().is_empty() {
+                assert!(std::time::Instant::now() < listening, "never listened");
+                tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+            }
+            bob.set_peers(&alice.addresses()).expect("peers");
+            let mut bob_nodes = Nodes::here();
+            bob_nodes.reconcile(
+                &[spec(bob.root())],
+                None,
+                &quiet,
+                seal,
+                std::time::Instant::now(),
+            );
+
+            // A beat heard means connected, keyed and meshed, so the arrival
+            // has already happened when the knock is left.
+            let beat = within(60);
+            while !heard.load(std::sync::atomic::Ordering::SeqCst) {
+                assert!(
+                    std::time::Instant::now() < beat,
+                    "Alice never heard Bob beat"
+                );
+                tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+            }
+            alice
+                .want_knock(&conversation, &bob_id)
+                .expect("leaves a knock");
+
+            // His next beat, at most one interval on, wakes her side.
+            let next = within(kols_core::BEAT_MILLIS as u64 / 1000 + 20);
+            while !woken.lock().expect("lock").contains(&conversation) {
+                assert!(
+                    std::time::Instant::now() < next,
+                    "a beat from the person a knock waits for never woke the conversation"
+                );
+                tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+            }
+
+            // Nothing here starts her conversation's node, so the knock stays
+            // pending, as one that never lands does. Bob's next beat must not
+            // wake it again, or a conversation whose knock cannot land would
+            // never stay asleep while he is around.
+            tokio::time::sleep(std::time::Duration::from_millis(
+                kols_core::BEAT_MILLIS as u64 + 10_000,
+            ))
+            .await;
+            assert!(
+                alice.knock_pending(&conversation),
+                "the knock is still waiting"
+            );
+            assert_eq!(
+                woken
+                    .lock()
+                    .expect("lock")
+                    .iter()
+                    .filter(|woken| **woken == conversation)
+                    .count(),
+                1,
+                "a beat wakes a conversation once per pending knock"
+            );
+
+            for task in alice_nodes
+                .stop_all()
+                .into_iter()
+                .chain(bob_nodes.stop_all())
+            {
+                let _ = task.await;
+            }
+        });
+}
+
+#[test]
 fn only_the_person_a_conversation_was_arranged_with_can_wake_it() {
     // D41's knock carries only a conversation id, so everything about who may
     // send one is the receiver's own record of where it was arranged. Checked
