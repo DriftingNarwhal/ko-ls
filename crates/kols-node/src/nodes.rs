@@ -215,12 +215,22 @@ pub fn should_sleep(
 ) -> bool {
     (is_asleep(profile, store.last_activity(), now, timeout)
         || (profile == kols_core::NetworkProfile::Conversation && store.slept_since_activity(now)))
-        && store.state().is_ok_and(|state| {
-            state
-                .groups
-                .get(&intranet_governance::GroupId::founders())
-                .is_some_and(|founders| founders.members.len() >= 2)
-        })
+        && second_member_joined(store)
+}
+
+/// Whether a conversation's second member has joined: two `Founders` — D41.
+///
+/// What [`should_sleep`] and `Workspace::knock_unanswered` both mean by
+/// *joined*, with the same limits: see [`should_sleep`] for why it counts
+/// `Founders` rather than `everyone`, and why it holds only for a pairwise
+/// conversation. Replays the membership, so ask it last.
+pub fn second_member_joined(store: &crate::store::Store) -> bool {
+    store.state().is_ok_and(|state| {
+        state
+            .groups
+            .get(&intranet_governance::GroupId::founders())
+            .is_some_and(|founders| founders.members.len() >= 2)
+    })
 }
 
 /// [`should_sleep`], recorded: what a supervisor asks each pass — D41.

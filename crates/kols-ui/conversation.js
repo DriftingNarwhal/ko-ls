@@ -67,6 +67,20 @@ async function drawWho() {
   } else {
     stopped.hidden = true;
   }
+
+  // A knock this machine left and nobody has answered (`09` §1.9, D41). Only
+  // when there is somewhere to meet: adrift, a knock cannot land anyway and
+  // the sentence above is the true one. It says *waiting* and never *offline*,
+  // because somebody away and a client too old to understand a knock look the
+  // same from here.
+  const waiting = el("waiting");
+  if (who.waiting && who.state !== "adrift") {
+    waiting.hidden = false;
+    waiting.textContent =
+      "Waiting for them. What you write here arrives the next time you're both online.";
+  } else {
+    waiting.hidden = true;
+  }
 }
 
 /// Draws the messages.

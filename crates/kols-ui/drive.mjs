@@ -1790,6 +1790,32 @@ await cvWindow.eval("drawWho()");
 await settled();
 say("and the notice goes when it is no longer true", cvEl("stopped").hidden);
 
+// ── A knock unanswered — §1.9, D41 ─────────────────────────────────────
+//
+// Writing while the other person is not connected leaves a knock, and until
+// they are, once they have joined, the window says it is waiting for them.
+// Never "offline": a client too old to understand a knock looks exactly like
+// somebody away.
+say("a conversation with no knock pending says nothing about waiting", cvEl("waiting").hidden);
+who = { ...who, waiting: true };
+await cvWindow.eval("drawWho()");
+await settled();
+say("an unanswered knock says the conversation is waiting for them",
+    !cvEl("waiting").hidden && /waiting for them/i.test(cvEl("waiting").textContent),
+    cvEl("waiting").textContent.slice(0, 50));
+say("and says when what is written will arrive",
+    /next time you're both online/.test(cvEl("waiting").textContent));
+say("it never calls them offline", !/offline/i.test(cvEl("waiting").textContent));
+who = { ...who, state: "adrift" };
+await cvWindow.eval("drawWho()");
+await settled();
+say("adrift, only the nowhere-to-meet sentence shows",
+    !cvEl("stopped").hidden && cvEl("waiting").hidden);
+who = { ...who, state: "joined", waiting: false };
+await cvWindow.eval("drawWho()");
+await settled();
+say("and the waiting line goes when the knock is answered", cvEl("waiting").hidden);
+
 // A window the shell opened without one says so, rather than sitting blank and
 // looking like a conversation with nothing in it.
 const strayDom = new JSDOM(cvHtml, { runScripts: "outside-only", url: "http://localhost/conversation.html" });

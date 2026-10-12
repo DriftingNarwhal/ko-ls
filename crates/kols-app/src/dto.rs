@@ -1050,7 +1050,8 @@ pub struct Conversation {
     /// a member *where they were met* — a name alone is not an identity, and
     /// the network it was claimed in is part of what makes it mean anything.
     pub shared: String,
-    /// `asked`, `offered` or `joined`.
+    /// `asked`, `offered` or `joined`; `conversation_who` also answers
+    /// `adrift` for a joined one with nowhere left to meet (`09` §1.9).
     ///
     /// **`offered` never becomes `answered`**, and that is the honest limit
     /// rather than a missing state: nothing is sent when somebody declines
@@ -1067,4 +1068,12 @@ pub struct Conversation {
     /// [`Network::connected`]: `None` when no node is running for it, which
     /// includes a request with no network yet.
     pub connected: Option<u32>,
+    /// Whether a knock this machine left for it is still unanswered —
+    /// `09` §1.9's *waiting for them* line, `Workspace::knock_unanswered`,
+    /// for both `conversation_who` and `conversations`.
+    ///
+    /// **Waiting, never offline**: somebody away and a client too old to
+    /// understand a knock look the same from here. False until the other
+    /// person has joined, so always false for an `asked` or `offered` row.
+    pub waiting: bool,
 }

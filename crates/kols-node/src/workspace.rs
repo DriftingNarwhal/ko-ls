@@ -431,6 +431,43 @@ impl Workspace {
         }
     }
 
+    /// Whether a knock for `conversation` is still unanswered — `design/09`
+    /// §1.9's *waiting for them* line, D41.
+    ///
+    /// The knock is left in the shared network's store (`Store::want_knock`)
+    /// whenever this member writes while the other is not connected in the
+    /// conversation, asleep or not, and is pending from then, whether or not it
+    /// has gone out yet: a sleeping conversation, a person who answered
+    /// `Unsupported` and the per-person spacing all hold it back. It is
+    /// forgotten once the other person is connected in the conversation itself,
+    /// or the conversation is gone (`serve.rs`). **It cannot say why they have
+    /// not answered**: somebody offline and a client too old to understand a
+    /// knock look exactly alike from here, which is why the line says *waiting*
+    /// and never *offline*.
+    ///
+    /// **False until the other person has joined** ([`crate::nodes::second_member_joined`]).
+    /// Before that a knock can be left too, but what the line promises, that
+    /// what is written arrives once both are online, holds only if they accept,
+    /// and a sender cannot tell a decline from a request nobody has looked at
+    /// (`09` §1.8). A conversation with no origin, or whose shared network is
+    /// gone, has nowhere to leave a knock and reads as not waiting; §1.9's other
+    /// sentence covers that one.
+    pub fn knock_unanswered(&self, conversation: &Store) -> bool {
+        conversation
+            .origin()
+            .and_then(|(shared, _)| self.store_for(&shared))
+            .is_some_and(|shared| Self::knock_unanswered_in(&shared, conversation))
+    }
+
+    /// [`Self::knock_unanswered`], for a caller already holding the shared
+    /// network's store — the workspace window's list, which polls and would
+    /// otherwise open every store once per conversation (`store_for`).
+    /// `shared` must be the conversation's origin network.
+    pub fn knock_unanswered_in(shared: &Store, conversation: &Store) -> bool {
+        shared.knock_pending(conversation.network())
+            && crate::nodes::second_member_joined(conversation)
+    }
+
     /// Which of `relays` another of this member's networks already designates.
     ///
     /// D29, and the concern is mechanical rather than stylistic: `kad` runs

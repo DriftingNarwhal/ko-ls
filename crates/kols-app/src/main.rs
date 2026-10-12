@@ -697,6 +697,7 @@ fn conversations(app: tauri::State<'_, App>) -> Result<Vec<dto::Conversation>, S
                 label: name_in(store, &who),
                 unread: 0,
                 connected: None,
+                waiting: false,
             });
         }
         // One this member offered and the daemon has not delivered, or has
@@ -711,6 +712,7 @@ fn conversations(app: tauri::State<'_, App>) -> Result<Vec<dto::Conversation>, S
                 label: name_in(store, &who),
                 unread: 0,
                 connected: None,
+                waiting: false,
             });
         }
     }
@@ -738,6 +740,7 @@ fn conversations(app: tauri::State<'_, App>) -> Result<Vec<dto::Conversation>, S
                     label: store.label().unwrap_or_default(),
                     unread: 0,
                     connected: None,
+                    waiting: false,
                 });
                 continue;
             }
@@ -747,6 +750,14 @@ fn conversations(app: tauri::State<'_, App>) -> Result<Vec<dto::Conversation>, S
             .find(|other| other.network() == &shared)
             .map(|other| name_in(other, &who))
             .unwrap_or_else(|| to_hex(who.verifying_key().as_bytes())[..8].to_owned());
+        // One reading of *waiting*, the window's and the row's: the joined
+        // check inside it is what keeps a request nobody has answered from
+        // promising arrival (`09` §1.8). Given the shared store already open,
+        // since this list is polled.
+        let waiting = stores
+            .iter()
+            .find(|other| other.network() == &shared)
+            .is_some_and(|other| Workspace::knock_unanswered_in(other, store));
         found.push(dto::Conversation {
             network: to_hex(store.network().as_bytes()),
             who: to_hex(who.verifying_key().as_bytes()),
@@ -755,6 +766,7 @@ fn conversations(app: tauri::State<'_, App>) -> Result<Vec<dto::Conversation>, S
             label,
             unread: 0,
             connected: None,
+            waiting,
         });
     }
 
@@ -951,6 +963,8 @@ fn conversation_who(
     // arranged in. A conversation that has stopped connecting and one where
     // nobody is talking render identically, and only the first is worth saying.
     let reachable = app.workspace.borrowable_relay(&store).is_some();
+    // `09` §1.9's other line: a knock this machine left is still unanswered.
+    let waiting = app.workspace.knock_unanswered(&store);
     Ok(dto::Conversation {
         network,
         who: who
@@ -965,6 +979,7 @@ fn conversation_who(
         label,
         unread: 0,
         connected: None,
+        waiting,
     })
 }
 

@@ -24,6 +24,22 @@ Kept because this project keeps re-learning the same lessons and paying for them
 
 ---
 
+- **2026-10-12** — **"Waiting for them" waits for them to have joined, and a gate can make a test unable to fail.**
+  `design/09` §1.9's *waiting for them* line (D41) reads a pending knock, and a pending knock is
+  one *left*, not one *sent*: `want_knock` writes it at once, and a sleeping conversation, a
+  person whose client answered `Unsupported`, and the one-per-15-seconds spacing all hold it back.
+  It is forgotten when the other member is connected **in the conversation itself** (`keep_knock`
+  in `serve.rs`), not in the shared network, or when the conversation's store is gone. First
+  written, the line read the knock alone. The review found that before the other person accepts,
+  `keep_knock` can leave a knock as soon as the creator writes, and the line would then promise
+  arrival on an acceptance the sender cannot see (`design/09` §1.8). So it also asks that the
+  second member has joined (`nodes::second_member_joined`, pulled out of `should_sleep` so both
+  mean the same thing). Adding that `&&` turned an older negative assertion in the test, *no
+  origin, so not waiting*, into one that held whatever the origin lookup did, because the gate
+  alone already answered no. The fix was to satisfy the gate in that case, so only the missing
+  origin can answer no. The test was then mutation-checked three ways. The wording, the window
+  before the workspace row, and the nowhere-to-meet sentence taking precedence are the user's.
+
 - **2026-10-12** — **A presence beat sends a knock early, and wakes a conversation only once.**
   The early resend on a beat (D41, `design/09` §2) was first written to wake a sleeping
   conversation on every fresh beat, as a connection does on every arrival. The review caught that

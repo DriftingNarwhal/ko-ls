@@ -1840,6 +1840,17 @@ dialog::backdrop { background: var(--veil); }
   padding: 8px var(--gap);
 }
 
+/* A knock unanswered (`09` §1.9, D41) — quieter than the line above it,
+   because nothing has stopped: what is written arrives when both are online. */
+.conversation-waiting {
+  border-bottom: 1px solid var(--line);
+  color: var(--dim);
+  font-size: 11px;
+  line-height: 1.5;
+  margin: 0;
+  padding: 8px var(--gap);
+}
+
 .conversation-messages {
   display: flex;
   flex-direction: column;

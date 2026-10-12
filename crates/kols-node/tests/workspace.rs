@@ -1943,6 +1943,75 @@ fn a_conversation_with_no_origin_borrows_nothing() {
 }
 
 #[test]
+fn a_conversation_is_waiting_for_them_while_its_knock_is_pending() {
+    // `design/09` §1.9: the line shows from the knock being left until it is
+    // forgotten, which happens when the other person connects.
+    let dir = Dir::new("knock-unanswered");
+    let (workspace, shared, conversation, _founder, peer) = conversation_with_origin(&dir);
+
+    assert!(!workspace.knock_unanswered(&conversation));
+    shared
+        .want_knock(conversation.network(), &peer)
+        .expect("leaves a knock");
+    // Not before they have accepted: a sender cannot tell a decline from a
+    // request nobody has looked at (`09` §1.8), so promising arrival would be
+    // inventing an answer.
+    assert!(
+        !workspace.knock_unanswered(&conversation),
+        "a conversation the other person has not joined is not waiting for them"
+    );
+
+    // They accept: the issuer admits them to `Founders` (spec 07 §6.2).
+    let joined = |conversation: &Store| {
+        let creator = conversation.identity().expect("identity");
+        let joiner = intranet_identity::MasterSeed::from_entropy([77u8; 32])
+            .identity_for(conversation.network())
+            .expect("identity")
+            .id();
+        let parent = conversation
+            .log()
+            .expect("log")
+            .canonical_chain()
+            .last()
+            .copied();
+        conversation
+            .append_entry(&LogEntry::create(
+                &creator,
+                parent,
+                intranet_crypto::Timestamp::from_millis(150),
+                EntryBody::MembershipChange {
+                    group: GroupId::founders(),
+                    identity: joiner,
+                    action: MembershipAction::Add { via_invite: None },
+                },
+            ))
+            .expect("admits");
+    };
+    joined(&conversation);
+    assert!(
+        workspace.knock_unanswered(&conversation),
+        "a pending knock must read as waiting for them"
+    );
+    shared
+        .forget_knock(conversation.network())
+        .expect("forgets the knock");
+    assert!(!workspace.knock_unanswered(&conversation));
+
+    // With no origin recorded there is no shared store to look in, so a knock
+    // left for it is not found.
+    // Joined, so only the missing origin can answer no.
+    let orphan = workspace.create_conversation("nobody").expect("creates");
+    joined(&orphan);
+    shared
+        .want_knock(orphan.network(), &peer)
+        .expect("leaves a knock");
+    assert!(
+        !workspace.knock_unanswered(&orphan),
+        "with no origin there is nowhere this conversation's knock could be"
+    );
+}
+
+#[test]
 fn nothing_about_borrowing_is_written_into_the_conversation() {
     // The conversation's own designated relays stay empty throughout, which is
     // what makes this borrowing rather than designating — there is no state to
