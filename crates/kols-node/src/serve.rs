@@ -2815,6 +2815,20 @@ fn admit_redeemers(
         }) {
             Ok(_) => {
                 admissions.owed.remove(&joiner);
+                // The join is activity (D41): this node holds the key the
+                // joiner is still asking for, so its idle timer runs from here,
+                // as the joiner's does from accepting. Without it, a request
+                // accepted more than a timeout after it was sent would let this
+                // side sleep the moment the second Founder is in.
+                if let Err(err) = store.mark_awake() {
+                    admissions.fail(
+                        sink,
+                        format!(
+                            "{} joined and could not be marked awake: {err}",
+                            joiner.short()
+                        ),
+                    );
+                }
             }
             Err(err) => admissions.fail(
                 sink,
