@@ -154,7 +154,10 @@ async function drawConversations() {
     }
     open.append(...unreadBadge(it.unread));
 
-    if (it.state === "joined") {
+    // Adrift is still joined: nothing new can cross, and what is already
+    // there stays readable and can be left (`09` §1.9).
+    const joined = it.state === "joined" || it.state === "adrift";
+    if (joined) {
       open.addEventListener("click", () => void openConversation(it));
     } else {
       open.disabled = true;
@@ -162,7 +165,7 @@ async function drawConversations() {
 
     item.append(open, conversationNote(it));
     if (it.state === "asked") item.append(...answerButtons(it));
-    if (it.state === "joined") item.append(leaveConversation(it));
+    if (joined) item.append(leaveConversation(it));
     list.append(item);
   }
   el("conversations-empty").hidden = found.length > 0;
@@ -262,6 +265,16 @@ function conversationNote(it) {
     // who has not looked — and a row that claimed to know would be inventing
     // the difference (`09` §1.8).
     note.textContent = "asked — they will see it when you are both online";
+  } else if (it.state === "adrift") {
+    // `09` §1.9, on the row as in the window: a conversation that has stopped
+    // connecting and one where nobody is talking otherwise look the same. It
+    // wins over *waiting*, because a knock cannot land with nowhere to meet.
+    note.textContent = "nowhere to meet them: you no longer share a network";
+  } else if (it.waiting) {
+    // A knock this machine left and nobody has answered (`09` §1.9, D41).
+    // *Waiting*, never *offline*: somebody away and a client too old to
+    // understand a knock look the same from here.
+    note.textContent = "waiting for them — what you write arrives the next time you're both online";
   } else {
     note.textContent = "";
   }
@@ -285,7 +298,11 @@ function leaveConversation(it) {
   const leave = document.createElement("button");
   leave.className = "forget";
   leave.textContent = "leave";
-  leave.title = "tell them you are leaving, then remove this side of the conversation";
+  // Adrift, there is nowhere to meet them, so nothing carries the departure
+  // until there is: said at that strength rather than promising they are told.
+  leave.title = it.state === "adrift"
+    ? "remove this side of the conversation; with nowhere to meet them, they may not hear that you left"
+    : "tell them you are leaving, then remove this side of the conversation";
   leave.addEventListener("click", async (event) => {
     event.stopPropagation();
     const who = it.label || (it.who ? it.who.slice(0, 8) : "this conversation");

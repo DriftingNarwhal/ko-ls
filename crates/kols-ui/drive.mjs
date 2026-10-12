@@ -1389,6 +1389,41 @@ await settled();
 say("and one that is joined opens through the shell",
     wsCalls.includes("open_conversation"), JSON.stringify(wsCalls));
 
+// `09` §1.9 on the row as well as in the window: a knock nobody has answered
+// says *waiting for them*, and nowhere to meet says that instead and wins.
+const rowNote = (name) =>
+  [...wsEl("conversations").querySelectorAll("li")]
+    .find((r) => r.textContent.includes(name))
+    .querySelector(".workspace-note").textContent;
+conversationsAnswer = [
+  { network: "cc".repeat(32), who: AA, label: "mallory", shared: "aa".repeat(32), state: "joined", waiting: false },
+  { network: "ee".repeat(32), who: BB, label: "frank", shared: "aa".repeat(32), state: "joined", waiting: true },
+  { network: "ff".repeat(32), who: "44".repeat(32), label: "grace", shared: "aa".repeat(32), state: "adrift", waiting: true },
+];
+await wsWindow.eval("draw()");
+await settled();
+say("a row with no knock pending says nothing about waiting",
+    !/waiting/i.test(rowNote("mallory")), rowNote("mallory"));
+say("a row with an unanswered knock says it is waiting for them",
+    /waiting for them/i.test(rowNote("frank")) && /both online/.test(rowNote("frank")) &&
+      !/offline/i.test(rowNote("frank")),
+    rowNote("frank"));
+say("nowhere to meet takes precedence over waiting on the row",
+    /nowhere to meet/i.test(rowNote("grace")) && !/waiting/i.test(rowNote("grace")),
+    rowNote("grace"));
+const adriftRow = [...wsEl("conversations").querySelectorAll("li")].find((r) =>
+  r.textContent.includes("grace"));
+wsCalls.length = 0;
+adriftRow.querySelector(".workspace-open").dispatchEvent(new wsWindow.MouseEvent("click", { bubbles: true }));
+await settled();
+say("an adrift conversation still opens, and can still be left",
+    wsCalls.includes("open_conversation") && adriftRow.querySelector(".forget")?.textContent === "leave",
+    JSON.stringify(wsCalls));
+say("and leaving it does not promise they are told",
+    /may not hear/.test(adriftRow.querySelector(".forget").title) &&
+      !/^tell them/.test(adriftRow.querySelector(".forget").title),
+    adriftRow.querySelector(".forget").title);
+
 // The empty case says what to do rather than nothing at all.
 conversationsAnswer = [];
 await wsWindow.eval("draw()");

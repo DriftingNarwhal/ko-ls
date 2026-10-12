@@ -1836,6 +1836,39 @@ fn a_conversation_borrows_the_shared_networks_relay_while_both_are_members() {
 }
 
 #[test]
+fn the_workspace_lists_reading_of_borrowable_agrees_and_needs_the_origin() {
+    // The workspace window's list asks with the shared store it already holds
+    // (`borrowable_relay_in`); its row and the conversation window must say the
+    // same thing, and a store that is not the origin lends nothing.
+    let dir = Dir::new("borrow-in");
+    let (workspace, shared, conversation, founder, peer) = conversation_with_origin(&dir);
+    let borrowed = Workspace::borrowable_relay_in(&shared, &conversation);
+    assert!(
+        borrowed.is_some(),
+        "both are members, so there is somewhere to meet"
+    );
+    assert_eq!(borrowed, workspace.borrowable_relay(&conversation));
+
+    // Another network that would pass every other check — a relay, and both
+    // ids members — so only the origin guard can refuse it.
+    let other = workspace
+        .create(
+            "elsewhere",
+            vec![format!("/dns4/relay.example/tcp/443/p2p/{RELAY}")],
+        )
+        .expect("creates");
+    let other_founder = other.identity().expect("identity");
+    admit_to(&other, &other_founder, &peer);
+    assert!(
+        Workspace::borrowable_relay_in(&other, &conversation).is_none(),
+        "only the network it was arranged in can lend it a relay"
+    );
+
+    remove_from(&shared, &founder, &peer);
+    assert!(Workspace::borrowable_relay_in(&shared, &conversation).is_none());
+}
+
+#[test]
 fn the_relay_stops_being_borrowable_when_the_peer_leaves_the_shared_network() {
     // **The whole point of borrowing rather than designating.** A designated
     // relay would still be in the conversation's policy here, and nothing in the

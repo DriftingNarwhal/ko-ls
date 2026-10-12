@@ -1050,8 +1050,9 @@ pub struct Conversation {
     /// a member *where they were met* — a name alone is not an identity, and
     /// the network it was claimed in is part of what makes it mean anything.
     pub shared: String,
-    /// `asked`, `offered` or `joined`; `conversation_who` also answers
-    /// `adrift` for a joined one with nowhere left to meet (`09` §1.9).
+    /// `asked`, `offered`, `joined`, or `adrift` for a joined one with nowhere
+    /// left to meet (`09` §1.9). An adrift one can still be opened and left:
+    /// what is already there stays readable.
     ///
     /// **`offered` never becomes `answered`**, and that is the honest limit
     /// rather than a missing state: nothing is sent when somebody declines

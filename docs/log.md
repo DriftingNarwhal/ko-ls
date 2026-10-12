@@ -24,6 +24,19 @@ Kept because this project keeps re-learning the same lessons and paying for them
 
 ---
 
+- **2026-10-12** — **The workspace row never said a conversation was adrift, so it could not say "waiting" alone.**
+  Putting `design/09` §1.9's *waiting for them* line on the workspace row looked like a UI-only
+  change. It was not: the shell's `conversations` list and `conversation_who` each had their own
+  reading of a conversation's state, and only `conversation_who` ever answered `adrift`. The list
+  called every conversation with an origin `joined`, so a row-only *waiting* line would have
+  promised arrival on a conversation with nowhere to meet, against the user's rule that the
+  nowhere-to-meet sentence takes precedence. The user chose to put both sentences on the row
+  rather than ship *waiting* with that gap recorded. The list now asks the same question the
+  window does through `Workspace::borrowable_relay_in`, given the shared store it already holds;
+  that store's state is already replayed on the same `Store` for the label, so the poll gains no
+  replay. A conversation with no recorded origin, which the list called joined and its window
+  called adrift, now lists as adrift too.
+
 - **2026-10-12** — **"Waiting for them" waits for them to have joined, and a gate can make a test unable to fail.**
   `design/09` §1.9's *waiting for them* line (D41) reads a pending knock, and a pending knock is
   one *left*, not one *sent*: `want_knock` writes it at once, and a sleeping conversation, a

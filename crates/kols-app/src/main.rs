@@ -730,13 +730,14 @@ fn conversations(app: tauri::State<'_, App>) -> Result<Vec<dto::Conversation>, S
             Some(origin) => origin,
             // A conversation with no origin recorded borrows no relay and can
             // say nothing about who it is with (`Store::origin`). Listed
-            // anyway, because it is on this disk and hiding it would be worse.
+            // anyway, because it is on this disk and hiding it would be worse;
+            // and adrift, as its window says, since there is nowhere to meet.
             None => {
                 found.push(dto::Conversation {
                     network: to_hex(store.network().as_bytes()),
                     who: String::new(),
                     shared: String::new(),
-                    state: "joined".to_owned(),
+                    state: "adrift".to_owned(),
                     label: store.label().unwrap_or_default(),
                     unread: 0,
                     connected: None,
@@ -745,24 +746,26 @@ fn conversations(app: tauri::State<'_, App>) -> Result<Vec<dto::Conversation>, S
                 continue;
             }
         };
-        let label = stores
-            .iter()
-            .find(|other| other.network() == &shared)
+        let origin = stores.iter().find(|other| other.network() == &shared);
+        let label = origin
             .map(|other| name_in(other, &who))
             .unwrap_or_else(|| to_hex(who.verifying_key().as_bytes())[..8].to_owned());
         // One reading of *waiting*, the window's and the row's: the joined
         // check inside it is what keeps a request nobody has answered from
         // promising arrival (`09` §1.8). Given the shared store already open,
         // since this list is polled.
-        let waiting = stores
-            .iter()
-            .find(|other| other.network() == &shared)
-            .is_some_and(|other| Workspace::knock_unanswered_in(other, store));
+        let waiting = origin.is_some_and(|other| Workspace::knock_unanswered_in(other, store));
+        // And one reading of *nowhere to meet*, which the row says too and which
+        // wins over *waiting* there as in the window (`09` §1.9): a knock cannot
+        // land where there is nowhere to meet.
+        let reachable = origin
+            .and_then(|other| Workspace::borrowable_relay_in(other, store))
+            .is_some();
         found.push(dto::Conversation {
             network: to_hex(store.network().as_bytes()),
             who: to_hex(who.verifying_key().as_bytes()),
             shared: to_hex(shared.as_bytes()),
-            state: "joined".to_owned(),
+            state: if reachable { "joined" } else { "adrift" }.to_owned(),
             label,
             unread: 0,
             connected: None,

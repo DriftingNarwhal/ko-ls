@@ -412,10 +412,25 @@ impl Workspace {
     /// keep using their old network's infrastructure to reach somebody still in
     /// it, which is precisely the standing dependency this avoids.
     pub fn borrowable_relay(&self, conversation: &Store) -> Option<Vec<String>> {
-        let (shared, peer) = conversation.origin()?;
+        let (shared, _) = conversation.origin()?;
         // The shared network has to still be on this disk, still be replayable,
         // and still hold both of us.
-        let store = self.store_for(&shared)?;
+        Self::borrowable_relay_in(&self.store_for(&shared)?, conversation)
+    }
+
+    /// [`Self::borrowable_relay`], for a caller already holding the shared
+    /// network's store — the workspace window's list, which polls and would
+    /// otherwise open every store once per conversation (`store_for`). A store
+    /// caches its replayed state, so conversations arranged in one network
+    /// replay it once between them.
+    ///
+    /// A `shared` that is not the conversation's origin lends nothing.
+    pub fn borrowable_relay_in(shared: &Store, conversation: &Store) -> Option<Vec<String>> {
+        let (origin, peer) = conversation.origin()?;
+        if *shared.network() != origin {
+            return None;
+        }
+        let store = shared;
 
         let state = store.state().ok()?;
         let mine = store.identity().ok()?.id();
