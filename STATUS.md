@@ -1,6 +1,6 @@
 # ko-ls — Status
 
-**Updated:** 2026-10-12
+**Updated:** 2026-10-13
 **Phase:** P2 has started. P1's register was cleared, both working branches merged on 2026-09-09,
 and the client now **runs a node per network** rather than one for whichever is in view — which is
 what direct messages were actually waiting on, and what `v0.13.1` carries. The flow itself was
@@ -104,7 +104,7 @@ sequencing.
 |---|---|
 | **Milestone** | A client that can be handed to somebody else, so two people **on entirely separate networks** can talk, using a bootstrap relay and no VPS. The first test is two of the user's own laptops, one on a mobile hotspot |
 | **Blocked on** | Nothing |
-| **Next decision needed** | One, the user's, from the sleeping conversation (D41). **Whether the two-second refresh should back off when nothing has changed**: it is what an awake idle conversation's traffic is (`design/05` §4). ~~**How long the idle timeout may be at most, and where it is set**~~ answered by the user 2026-10-11 and built 2026-10-12 (`design/09` §2). **O26 no longer stands in front of the two-machine test** — it does not reproduce on 2026-09-10 in any of the three shapes it was seen in, including the one it failed in five times running, so the trigger was machine state that is gone rather than a fault the suite can still show. What that session's attribution was pointing at *is* fixed, and it was on the client: the ask for a key was gated on publishing succeeding, so anything transient there stranded a joiner permanently and the log called it non-membership. §2's row carries the measurements |
+| **Next decision needed** | ~~One, the user's, from the sleeping conversation (D41). **Whether the two-second refresh should back off when nothing has changed**: it is what an awake idle conversation's traffic is (`design/05` §4).~~ Answered by the user 2026-10-13 and built: the pulls from connected peers back off to ten seconds while nothing changes, sends do not (D42, `design/05` §4). ~~**How long the idle timeout may be at most, and where it is set**~~ answered by the user 2026-10-11 and built 2026-10-12 (`design/09` §2). **O26 no longer stands in front of the two-machine test** — it does not reproduce on 2026-09-10 in any of the three shapes it was seen in, including the one it failed in five times running, so the trigger was machine state that is gone rather than a fault the suite can still show. What that session's attribution was pointing at *is* fixed, and it was on the client: the ask for a key was gated on publishing succeeding, so anything transient there stranded a joiner permanently and the log called it non-membership. §2's row carries the measurements |
 
 **What P2 starts with** — and the order changed on 2026-09-10, because the thing blocking direct
 messages turned out not to be on the list at all.
@@ -248,7 +248,8 @@ next paragraph.
 through the shared network wakes it, and sleeps again after an idle timeout of about an hour that
 the user can change. It closes `09` §7.9. `design/09` §2 has the design and, since the build, what
 was built and what was left out; `design/03` §4.5 the overlap it now needs. The idle traffic is found: the two-second
-refresh pulls from every connected peer whether anything changed (`design/05` §4). **The knock
+refresh pulled from every connected peer whether anything changed, and since 2026-10-13 those pulls back off
+while nothing does (D42, `design/05` §4). **The knock
 is designed, 2026-10-11, ~~not built~~** (`design/09` §2): what wakes a conversation, the knock and
 its checks, retrying, the idle timer and the *asleep* tier; `design/03` §4.5 has the limit on the
 request sender's side, and `design/06` §13 why E13 stays deferred. **The two fixes it needed
@@ -279,7 +280,7 @@ run on macOS to see.
 
 What led to it was **measuring what an idle conversation costs** (`design/05` §4,
 `tests/idle_cost.rs`, ignored by default): per side, about 12 MB, 0.1–0.3% of a core,
-0.6 KB/s each way and ten sockets, loopback only. Measuring found two bugs, both fixed the same
+0.6 KB/s each way (about 0.13 KB/s since the pulls back off, 2026-10-13) and ten sockets, loopback only. Measuring found two bugs, both fixed the same
 day:
 
 - **CPU grew with the square of the networks held.** Every node walked every store in the
@@ -688,7 +689,7 @@ as a fix nobody had got round to.
 | `kols-core` | Encoding, author logs, merge, collision recovery, chat policy, channel structure, `sidebar_order`, reader-side limits, and `Scope` — the one construction of a capability's name, used by the writer and the resolver alike, the direct-message request payload with the identity-link check no platform can make for it, and the knock that wakes a sleeping conversation. 163 tests |
 | `kols-net` | Publish and fetch over a running node, refusing a segment past the network's ceiling from its manifest alone, and holding one that understates its length to what it declares through the fetch (`design/06` §17). Five two-node tests |
 | `kols-api` | The whole boundary — all three of `design/05` §3's properties held. 25 commands, 12 events, 50 tests, and the consent drift test is guarded at both ends: a new command stops the suite compiling until it is sampled, which is how `LeaveNetwork` was caught unsampled the moment it existed |
-| `kols-node` | `kols`, its node daemon, `kols-drive` (a whole installation run headless, for `scripts/nat-dm.sh` across DI's NAT matrix; a test harness like `kols`, D30), the executor, the store, the workspace and the unread counts the shell keeps for every network — the supervisor's tiers including D41's *asleep*, the window's entire backend, and the largest crate here at 248 tests, plus four ignored measurements (`cost`, `idle_cost`). Seventeen of them run over a live wire between separate processes (`two_nodes`, `three_nodes`, `relay`); the rest cover the workspace, the store, roles and grants, invites, names, records and the paged read |
+| `kols-node` | `kols`, its node daemon, `kols-drive` (a whole installation run headless, for `scripts/nat-dm.sh` across DI's NAT matrix; a test harness like `kols`, D30), the executor, the store, the workspace and the unread counts the shell keeps for every network — the supervisor's tiers including D41's *asleep*, the window's entire backend, and the largest crate here at 251 tests, plus four ignored measurements (`cost`, `idle_cost`). Seventeen of them run over a live wire between separate processes (`two_nodes`, `three_nodes`, `relay`); the rest cover the workspace, the store, roles and grants, invites, names, records and the paged read |
 | `kols-app` | The Tauri shell, holding a workspace, an executor for whichever network is open, **the supervisor running a node for every network** (`design/09` §2), and the unread counts, since it is the one place that hears every network's events (`design/05` §1). Builds `kols-desktop`. 11 tests, one of which resolves the webview's ACL against the real configuration — the boundary whose failure produces no output |
 | `kols-ui` | The interface: a page and a script per window (`app.js`, `workspace.js`, `conversation.js`) and one stylesheet, holding no keys, no sockets and no files |
 | `kols-store` | The read-side projection, **built and switched on**: the schema, the range and target queries, the stored rate verdict and its fingerprint. 14 tests — six compare its verdicts against `kols_core::withheld` itself rather than a second implementation of the fold, and eight walk a channel whose records share a reading, which is the boundary a bare clock reading cannot cut. This row said 19 until 2026-09-09, while its own breakdown summed to 14 |

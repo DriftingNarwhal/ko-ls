@@ -646,6 +646,9 @@ pub async fn serve(
     // published view is, never whether it converges.
     let mut refresh = tokio::time::interval(std::time::Duration::from_secs(2));
     refresh.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+    // The tick's pulls from connected peers, which are what an idle node's
+    // traffic is; they back off while nothing changes (`design/05` §4).
+    let mut pulls = PullBackoff::new();
 
     // A reservation is not held once, it is *kept*.
     //
@@ -777,7 +780,11 @@ pub async fn serve(
             }
             _ = refresh.tick() => {
                 admit_redeemers(&store, &node, &identity, &mut admissions, sink);
-                adopt_local_changes(&store, &mut node, &identity, seal_bytes, sink)?;
+                // Somebody using this installation is the likeliest time for an
+                // answer, so a local write starts the pulls over too.
+                if adopt_local_changes(&store, &mut node, &identity, seal_bytes, sink)? > 0 {
+                    pulls.activity();
+                }
                 // Recomputed on the tick rather than only when somebody knocks.
                 // Admission is a governance entry, and the node drops whoever
                 // its log now names a member from its room as the entry lands
@@ -792,14 +799,17 @@ pub async fn serve(
                 // neither on nor off.
                 if live {
                     subscribe_channels(&store, &mut node)?;
-                    publish_unsent_live(
+                    if publish_unsent_live(
                         &store,
                         &mut node,
                         &identity,
                         &mut broadcast,
                         live_window,
                         report,
-                    )?;
+                    )? > 0
+                    {
+                        pulls.activity();
+                    }
                     beat_presence(&store, &mut node, &identity, &mut last_beat)?;
                 }
                 if holds_group {
@@ -1158,10 +1168,12 @@ pub async fn serve(
                     }]);
                 }
 
-                for peer in connected.iter().copied() {
-                    node.sync_with(peer);
-                    node.sync_ledger_with(peer);
-                    node.sync_pointers_with(peer);
+                if pulls.due(!keyed) {
+                    for peer in connected.iter().copied() {
+                        node.sync_with(peer);
+                        node.sync_ledger_with(peer);
+                        node.sync_pointers_with(peer);
+                    }
                 }
 
                 // **A conversation's own half of D41's knock.** Kept here, on the
@@ -1460,6 +1472,7 @@ pub async fn serve(
                 // every member connected to every other one.
                 node.bootstrap_dht();
                 start_sync(&mut node, peer);
+                pulls.activity();
             }
 
             NodeEvent::Disconnected { peer } => {
@@ -1479,6 +1492,7 @@ pub async fn serve(
             // Governance first. Everything else is gated on it, so a peer's
             // content is not worth asking for until this settles.
             NodeEvent::Synced { accepted, peer, .. } if accepted > 0 => {
+                pulls.activity();
                 let learned = persist_governance(&store, &node)?;
                 if learned > 0 {
                     sink(&[Event::Governance { learned }]);
@@ -1575,9 +1589,9 @@ pub async fn serve(
                 // asking and the node could never recover.
                 //
                 // Nothing is lost by waiting: the pointer sync re-plans every
-                // couple of seconds anyway, so a holder that becomes reachable
-                // is found on the next ordinary pass rather than by spinning
-                // between them.
+                // two to ten seconds anyway (the pulls back off while idle), so
+                // a holder that becomes reachable is found on the next ordinary
+                // pass rather than by spinning between them.
                 // **History nobody will produce, said out loud.** This number
                 // was computed and discarded, and it is the whole answer to the
                 // failure that is hardest to see from inside the application:
@@ -1587,7 +1601,7 @@ pub async fn serve(
                 // draw, because a node cannot draw what it has never held.
                 //
                 // Reported when the set *changes* rather than on every pass: a
-                // fetch is re-planned every couple of seconds, and a banner
+                // fetch is re-planned every two to ten seconds, and a banner
                 // rewritten that often is furniture rather than news.
                 if !unavailable.is_empty() {
                     let now: std::collections::BTreeSet<_> = unavailable.iter().copied().collect();
@@ -1610,6 +1624,7 @@ pub async fn serve(
                     // Something arrived, so whatever could not be had before is
                     // worth reporting again if it fails again.
                     unreachable_history = None;
+                    pulls.activity();
                     request_foreign_segments(
                         &store,
                         &mut node,
@@ -1787,25 +1802,45 @@ pub async fn serve(
                     // non-member, is reported on every copy, so replaying one fills
                     // the screen exactly as rule 5's silent drop exists to prevent.
                     // Spec 07 §6.4 does not cover it, and it predates the floor.
-                    Err(why) => sink(&[Event::Degraded {
-                        reason: format!("refused a presence beat: {why}"),
-                    }]),
+                    // Refused for want of a key or a membership this node has
+                    // not pulled yet is governance having moved on, so it
+                    // pulls on the next tick rather than at the backoff's.
+                    Err(why) => {
+                        pulls.activity();
+                        sink(&[Event::Degraded {
+                            reason: format!("refused a presence beat: {why}"),
+                        }]);
+                    }
                 }
             }
 
             NodeEvent::LiveReceived { payload, .. } => match admit_live(&store, &payload) {
-                Ok(Some(record)) => sink(&[Event::Records {
-                    channel: record.channel,
-                    records: vec![record],
-                    arrival: Arrival::Live,
-                }]),
+                // A message arriving is the conversation being live, and what
+                // it touched may need a pull to follow.
+                Ok(Some(record)) => {
+                    pulls.activity();
+                    sink(&[Event::Records {
+                        channel: record.channel,
+                        records: vec![record],
+                        arrival: Arrival::Live,
+                    }]);
+                }
                 Ok(None) => {}
                 // Surfaced rather than swallowed: a refusal is either a peer
                 // sending what it should not, or this node missing a key it
                 // should have. Both are worth seeing; neither is worth stopping.
-                Err(why) => sink(&[Event::Degraded {
-                    reason: format!("refused a live payload: {why}"),
-                }]),
+                //
+                // The second is usually governance this node has not pulled
+                // yet — a rotation sealed under at once, an admission, a role —
+                // so it pulls on the next tick rather than at the backoff's. A
+                // peer sending refusable payloads on purpose holds the pulls at
+                // the every-tick rate they all ran at before the backoff.
+                Err(why) => {
+                    pulls.activity();
+                    sink(&[Event::Degraded {
+                        reason: format!("refused a live payload: {why}"),
+                    }]);
+                }
             },
 
             // A chunk this node fetched makes it a source for that chunk
@@ -3092,6 +3127,65 @@ fn next_relay_backoff(previous: std::time::Duration) -> std::time::Duration {
     (previous * 2).min(RELAY_BACKOFF_CEILING)
 }
 
+/// The longest gap between pulls from a connected peer while nothing changes,
+/// in two-second refresh ticks: ten seconds.
+///
+/// **Governance, the ledger and pointers reach a connected peer by these pulls
+/// and nothing else.** A sync is a request answered, never pushed back, and
+/// none of the three is gossiped, so this is also how late a new channel, a
+/// role or a removal can reach a member whose node has gone quiet. Chat
+/// messages are not held by it: they are gossiped, and one arriving resets the
+/// gap. Ten seconds is the user's choice of 2026-10-13. Measured idle, one side
+/// of a paired conversation sent 136 B/s against 582 when every tick pulled
+/// (132 against 575 at ten conversations; `design/05` §4).
+const PULL_CEILING_TICKS: u32 = 5;
+
+/// When the refresh tick pulls from connected peers.
+///
+/// Every tick while anything is happening, then doubling — two, four, eight
+/// seconds — up to [`PULL_CEILING_TICKS`] while nothing is. Only the pulls back
+/// off: the same tick still picks up local writes every two seconds, which is
+/// what bounds how long a sent message waits before it is gossiped.
+///
+/// Separated from the loop so that the schedule is testable without a peer.
+#[derive(Debug)]
+struct PullBackoff {
+    /// Ticks between the last pull and the next.
+    every: u32,
+    /// Ticks still to skip before the next pull.
+    left: u32,
+}
+
+impl PullBackoff {
+    fn new() -> Self {
+        Self { every: 1, left: 0 }
+    }
+
+    /// Something changed, so pull on the next tick and start the doubling over.
+    fn activity(&mut self) {
+        *self = Self::new();
+    }
+
+    /// Called once a tick; whether this one pulls.
+    ///
+    /// `waiting` is a node still waiting to be admitted or keyed in. It pulls
+    /// every tick, because what it waits for is a governance entry, and a
+    /// joiner who has sat quiet at the door should not see their admission
+    /// late for having been patient.
+    fn due(&mut self, waiting: bool) -> bool {
+        if waiting {
+            self.activity();
+        }
+        if self.left > 0 {
+            self.left -= 1;
+            return false;
+        }
+        self.left = self.every - 1;
+        self.every = (self.every * 2).min(PULL_CEILING_TICKS);
+        true
+    }
+}
+
 /// How often to re-dial a known peer this node is not connected to.
 ///
 /// Long enough not to hammer a peer that is genuinely away, short enough that a
@@ -3494,13 +3588,15 @@ fn replayable(store: &Store) -> Option<std::sync::Arc<intranet_governance::Gover
 ///
 /// Governance entries first, then republishing, because a channel this node did
 /// not know about is one it cannot have published records for.
+///
+/// Returns how many governance entries it loaded.
 fn adopt_local_changes(
     store: &Store,
     node: &mut MemberNode,
     identity: &intranet_identity::PerNetworkIdentity,
     seal_bytes: usize,
     sink: &Sink,
-) -> Result<Option<()>, String> {
+) -> Result<usize, String> {
     let held: BTreeSet<_> = node
         .governance_log()
         .canonical_chain()
@@ -3527,11 +3623,11 @@ fn adopt_local_changes(
     // re-derives to the same CID, so this costs a re-announcement rather than a
     // re-upload. Kademlia provider records expire, so the re-announcement is
     // work worth doing anyway.
-    if ready(store, node, identity, seal_bytes).is_ok() {
-        Ok(Some(()))
-    } else {
-        Ok(None)
-    }
+    //
+    // Not yet being a member is the usual reason it fails, which is a state to
+    // sync out of (see `ready`), not an error to stop on.
+    let _ = ready(store, node, identity, seal_bytes);
+    Ok(adopted)
 }
 
 /// Rotates the epoch away from anybody the log has removed.
@@ -3821,6 +3917,8 @@ fn dating(at: i64, now: i64, skew: i64) -> Dating {
 ///
 /// Records are remembered as sent so that republishing a segment does not
 /// rebroadcast its whole history every couple of seconds.
+///
+/// Returns how many went out.
 fn publish_unsent_live(
     store: &Store,
     node: &mut MemberNode,
@@ -3828,13 +3926,13 @@ fn publish_unsent_live(
     sent: &mut BTreeSet<kols_core::MessageId>,
     window_millis: i64,
     report: &crate::Report,
-) -> Result<(), String> {
+) -> Result<usize, String> {
     let mut broadcast = 0usize;
     let Some(state) = replayable(store) else {
-        return Ok(());
+        return Ok(0);
     };
     let (Ok(epoch), Ok(rotation)) = (store.epoch_key(), store.rotation_ref()) else {
-        return Ok(());
+        return Ok(0);
     };
     let (channels, _) = network::channels(store, &state).map_err(|e| e.to_string())?;
     let now = crate::chat::now_millis();
@@ -3877,7 +3975,7 @@ fn publish_unsent_live(
     if broadcast > 0 {
         crate::say!(report, "broadcast {broadcast} record(s) live");
     }
-    Ok(())
+    Ok(broadcast)
 }
 
 /// Opens a live payload and stores the record it carries, if it is admissible.
@@ -4312,7 +4410,10 @@ fn start_sync(node: &mut MemberNode, peer: PeerId) {
 
 #[cfg(test)]
 mod tests {
-    use super::{RELAY_BACKOFF_CEILING, RELAY_RECHECK, next_relay_backoff, retires};
+    use super::{
+        PULL_CEILING_TICKS, PullBackoff, RELAY_BACKOFF_CEILING, RELAY_RECHECK, next_relay_backoff,
+        retires,
+    };
     use kols_core::Retention;
 
     const DAY: i64 = 86_400_000;
@@ -4356,6 +4457,39 @@ mod tests {
             wait = next_relay_backoff(wait);
         }
         assert_eq!(wait, RELAY_BACKOFF_CEILING);
+    }
+
+    /// The ticks on which a quiet node pulls, out of `ticks`.
+    fn pulling_ticks(pulls: &mut PullBackoff, ticks: u32) -> Vec<u32> {
+        (0..ticks).filter(|_| pulls.due(false)).collect()
+    }
+
+    #[test]
+    fn pulls_double_while_quiet_and_stop_at_ten_seconds() {
+        // Two-second ticks: pulls at 0, then gaps of 2, 4, 8 and 10 seconds.
+        let mut pulls = PullBackoff::new();
+        assert_eq!(pulling_ticks(&mut pulls, 18), [0, 1, 3, 7, 12, 17]);
+        assert_eq!(PULL_CEILING_TICKS * 2, 10, "the user's ceiling, in seconds");
+    }
+
+    #[test]
+    fn activity_pulls_on_the_next_tick_and_starts_over() {
+        let mut pulls = PullBackoff::new();
+        pulling_ticks(&mut pulls, 30);
+        pulls.activity();
+        assert_eq!(pulling_ticks(&mut pulls, 8), [0, 1, 3, 7]);
+    }
+
+    #[test]
+    fn a_node_waiting_to_be_let_in_pulls_every_tick() {
+        // Admission and the key are what it waits for, and admission reaches
+        // it only by a pull.
+        let mut pulls = PullBackoff::new();
+        pulling_ticks(&mut pulls, 30);
+        assert!((0..10).all(|_| pulls.due(true)));
+        // Let in, it backs off from the start (gaps of 2 then 4 seconds after
+        // its last pull) rather than from where it had got to.
+        assert_eq!(pulling_ticks(&mut pulls, 4), [0, 2]);
     }
 
     #[test]

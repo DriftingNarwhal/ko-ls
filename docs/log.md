@@ -24,6 +24,22 @@ Kept because this project keeps re-learning the same lessons and paying for them
 
 ---
 
+- **2026-10-13** — **A backoff needs its reset signals measured: the first one never backed off.**
+  The user decided (D42) that the refresh's pulls from connected peers back off while nothing
+  changes, to ten seconds, and that sends keep the two-second pickup. The first build of it cut
+  nothing: re-measured with `tests/idle_cost.rs`, the traffic was where it started. Temporary
+  instrumentation showed two of the signals meant to start the pulls over firing on every tick.
+  `adopt_local_changes` returned `Some` when `ready()` succeeded, not when it adopted anything, so
+  it was taken for activity each time; and a ledger pull accepts something on every reply,
+  because each tick re-signs this node's advertisement. Neither was visible from reading the
+  loop. With `adopt_local_changes` returning the count it adopted and ledger replies no longer
+  counted, a debug build measured 582 → 136 B/s a side at one paired conversation and 575 → 132
+  at ten (`design/05` §4). Asked while choosing the ceiling: governance, the ledger and pointers
+  reach a connected peer only by these pulls, since a sync is answered and never pushed and none
+  of the three is gossiped, so the ceiling is also how late a governance change reaches an idle
+  peer, and a write on one side cannot speed up the other's schedule. Measured in debug rather
+  than release to stay inside the disk budget; bytes do not depend on the profile, CPU does.
+
 - **2026-10-12** — **The ten-second delivery was the chat riding a relayed circuit, which Core §5.2 forbids.**
   The user's live test had messages sometimes taking about ten seconds, on one LAN and with one
   machine on a mobile hotspot alike; loopback never showed it. To see it across NATs, a headless
