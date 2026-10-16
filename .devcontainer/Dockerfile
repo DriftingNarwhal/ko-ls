@@ -78,7 +78,7 @@ RUN install -m 0755 -d /etc/apt/keyrings \
     && apt-get update && apt-get install -y --no-install-recommends nodejs \
     && rm -rf /var/lib/apt/lists/*
 
-# CLAUDE.md gates work on `cargo test --workspace` *and*
+# The gate (CONTRIBUTING.md) runs `cargo test --workspace` *and*
 # `cargo clippy --workspace --all-targets`, so clippy has to be present.
 RUN rustup component add clippy rustfmt
 
