@@ -23,8 +23,19 @@
 //! waits for the answer beside it, and prints it. Files rather than a socket so
 //! it builds everywhere `kols` does, with nothing but the standard library.
 //!
-//! Starting, accepting and sending each reconcile at once, as the window's
+//! Starting, accepting and sending in a conversation each reconcile at once, as the window's
 //! commands do; anything else waits for the tick.
+//!
+//! A server network's channels are reached with `channel` and `post`, which
+//! write through the running process's store as the window does; `kols post`
+//! cannot, because the running node holds the store's claim. `post` writes one
+//! message per request, so a steady stream is a shell loop. Five minutes of one
+//! member posting a 200-byte message every 5 s:
+//!
+//! ```text
+//! pad=$(printf 'x%.0s' $(seq 192))
+//! for i in $(seq 60); do kols-drive --home W post <net> busy "$(printf '%08d' $i)$pad"; sleep 5; done
+//! ```
 
 #![deny(missing_docs)]
 
@@ -129,6 +140,22 @@ enum Command {
         /// What to say.
         body: Vec<String>,
     },
+    /// Define a public channel in a server network. Prints its id.
+    Channel {
+        /// The network, by the start of its id.
+        network: String,
+        /// The channel's name.
+        name: String,
+    },
+    /// Say something in a server network's channel. Prints the record's id.
+    Post {
+        /// The network, by the start of its id.
+        network: String,
+        /// The channel, by name or by the start of its id.
+        channel: String,
+        /// What to say.
+        body: Vec<String>,
+    },
     /// Print the running nodes and their tiers.
     Running,
 }
@@ -164,6 +191,16 @@ fn request_line(request: &Command) -> Vec<String> {
         Command::Accept { network, from } => vec!["accept", network, from],
         Command::Send { conversation, body } => {
             let mut words = vec!["send", conversation.as_str()];
+            words.extend(body.iter().map(String::as_str));
+            words
+        }
+        Command::Channel { network, name } => vec!["channel", network, name],
+        Command::Post {
+            network,
+            channel,
+            body,
+        } => {
+            let mut words = vec!["post", network.as_str(), channel.as_str()];
             words.extend(body.iter().map(String::as_str));
             words
         }
@@ -350,8 +387,7 @@ fn handle(held: &Held, words: &[String]) -> Result<String, String> {
         "addresses" => Ok(lines(ws.open(word(1)?)?.addresses())),
         "invite" => {
             let store = ws.open(word(1)?)?;
-            let outcome = Executor::open(store.root().to_path_buf())
-                .map_err(|e| e.to_string())?
+            let outcome = executor(&store)?
                 .submit(ApiCommand::CreateInvite {
                     uses: 1,
                     valid_for_hours: 24,
@@ -386,8 +422,7 @@ fn handle(held: &Held, words: &[String]) -> Result<String, String> {
         "admit" => {
             let store = ws.open(word(1)?)?;
             let identity = kols_node::parse_identity(word(2)?)?;
-            Executor::open(store.root().to_path_buf())
-                .map_err(|e| e.to_string())?
+            executor(&store)?
                 .submit(ApiCommand::AdmitMember {
                     identity,
                     via_invite: None,
@@ -440,8 +475,7 @@ fn handle(held: &Held, words: &[String]) -> Result<String, String> {
             let store = ws.open(word(1)?)?;
             let conversation = *store.network();
             let body = words[2..].join(" ");
-            let outcome = Executor::open(store.root().to_path_buf())
-                .map_err(|e| e.to_string())?
+            let outcome = executor(&store)?
                 .submit(ApiCommand::SendMessage {
                     channel: kols_core::conversation_channel_id(&conversation),
                     body,
@@ -456,6 +490,50 @@ fn handle(held: &Held, words: &[String]) -> Result<String, String> {
             held.reconcile();
             Ok(format!("{}\n", record.short()))
         }
+        "channel" => {
+            let store = ws.open(word(1)?)?;
+            let outcome = executor(&store)?
+                .submit(ApiCommand::CreateChannel {
+                    name: word(2)?.to_owned(),
+                    category: None,
+                    privacy: kols_core::Privacy::Public,
+                    topic: String::new(),
+                })
+                .map_err(|e| e.to_string())?;
+            let Outcome::ChannelCreated { channel, .. } = outcome else {
+                return Err(format!("unexpected {outcome:?}"));
+            };
+            log(&format!(
+                "{} defined {}",
+                store.network().short(),
+                channel.short()
+            ));
+            Ok(format!("{}\n", to_hex(channel.as_bytes())))
+        }
+        "post" => {
+            let store = ws.open(word(1)?)?;
+            let network = *store.network();
+            let executor = executor(&store)?;
+            let channel = executor
+                .resolve_channel(word(2)?)
+                .map_err(|e| e.to_string())?;
+            let outcome = executor
+                .submit(ApiCommand::SendMessage {
+                    channel,
+                    body: words[3..].join(" "),
+                    reply_to: None,
+                    attachments: Vec::new(),
+                })
+                .map_err(|e| e.to_string())?;
+            let Outcome::Wrote { record } = outcome else {
+                return Err(format!("unexpected {outcome:?}"));
+            };
+            // No reconcile: the window's channel send makes none either; only a
+            // conversation's send wakes anything (D41). Its node publishes on
+            // its own local-write pass.
+            log(&format!("{} posted {}", network.short(), record.short()));
+            Ok(format!("{}\n", record.short()))
+        }
         "running" => {
             let nodes = held.nodes.lock().map_err(|_| "poisoned")?;
             Ok(lines(nodes.running().into_iter().map(|(network, tier)| {
@@ -464,6 +542,11 @@ fn handle(held: &Held, words: &[String]) -> Result<String, String> {
         }
         other => Err(format!("unknown request {other}")),
     }
+}
+
+/// The boundary's executor for one network's store.
+fn executor(store: &kols_node::store::Store) -> Result<Executor, String> {
+    Executor::open(store.root().to_path_buf()).map_err(|e| e.to_string())
 }
 
 fn lines(items: impl IntoIterator<Item = String>) -> String {

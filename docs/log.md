@@ -24,6 +24,22 @@ Kept because this project keeps re-learning the same lessons and paying for them
 
 ---
 
+- **2026-10-16** — **Nothing could post into a server channel on a running node, so `kols-drive` can.**
+  Measuring a busy server channel for the workspace's footprint baseline needed a running node
+  writing into one, and neither harness could: `kols-drive`'s `send` writes only to a
+  conversation, and `kols post` opens the store itself, which a running node has claimed.
+  `kols-drive` gains `channel` (define a public channel; a fresh network has none, and
+  `kols channel create` hits the same claim) and `post` (one message per request, the channel by
+  name or id prefix; a steady stream is a shell loop, shown in the module doc). `post` does not
+  reconcile, to match the window's channel send, which makes none; only a conversation's send
+  reconciles (D41). That choice and the loop over count/interval flags were Claude's, not the
+  user's. Checked live with two installations on a dev relay posting both ways in one channel:
+  each received the other's records live, 1.5–1.9 s behind. Getting there cost a detour: a dev
+  relay listening on `127.0.0.1` grants reservations, but the node reports
+  `Relay { reserved: None }` and records no circuit address, probably because Core §5.4 forbids announcing
+  loopback (not traced in the code), so `invite` is refused for holding no relay circuit. Listening on `0.0.0.0` and
+  dialling the container's address fixed it.
+
 - **2026-10-13** — **A backoff needs its reset signals measured: the first one never backed off.**
   The user decided (D42) that the refresh's pulls from connected peers back off while nothing
   changes, to ten seconds, and that sends keep the two-second pickup. The first build of it cut
